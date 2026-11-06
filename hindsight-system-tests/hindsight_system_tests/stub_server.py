@@ -268,6 +268,9 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         """
         body = await request.json()
         validate_systemone(body)
+        if stubs.rerank.fail_with_status is not None:
+            status = stubs.rerank.fail_with_status
+            return _provider_error(f"stub provider error {status}", code="stub_error", status=status)
 
         answers = {}
         state = body["state"]

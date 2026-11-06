@@ -10,7 +10,8 @@ import pytest
 
 from hindsight_api.config import DecisionModelConfig
 from hindsight_api.engine import decision_rerank_interface
-from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel
+from hindsight_api.engine.cross_encoder import CrossEncoderModel
+from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel, DecisionRefusedError
 from hindsight_api.engine.decision_rerank_interface import MAX_MEMORY_TOKENS, MAX_SHARED_CONTEXT_TOKENS
 from hindsight_api.engine.search.decision_reranker import (
     DecisionModelReranker,
@@ -104,7 +105,7 @@ class TestRanking:
         assert scores[1] > scores[0] > scores[2] > 0.0
 
     def test_it_is_built_for_recall_when_recall_has_a_decision_model(self, monkeypatch):
-        """And replaces the configured reranker outright."""
+        """In the configured reranker's place: that one ranks only with the fallback on (TestFallback)."""
         from hindsight_api import config as config_module
 
         monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_PROVIDER", "typesafe")
@@ -421,3 +422,75 @@ class TestDedupAlike:
 @pytest.fixture(autouse=True)
 def _no_shared_context():
     assert rerank_shared_context.get() is None
+
+
+class _CrossEncoder(CrossEncoderModel):
+    """Scores by document length and records the pairs it was handed."""
+
+    def __init__(self):
+        self.pairs: list[tuple[str, str]] = []
+        self.initialized = False
+
+    @property
+    def provider_name(self) -> str:
+        return "fake-cross-encoder"
+
+    async def initialize(self) -> None:
+        self.initialized = True
+
+    async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+        self.pairs.extend(pairs)
+        return [len(doc) / 100 for _, doc in pairs]
+
+
+def _refusing_reranker() -> DecisionModelReranker:
+    client = _Client()
+
+    async def refuse(state, questions, *, scope):
+        raise DecisionRefusedError("decision model refused to answer 'm0'")
+
+    client.ask_all = refuse  # type: ignore[method-assign]
+    return _reranker(client)
+
+
+class TestFallback:
+    """HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK (#6242): a recall the decision model fails."""
+
+    PROFILE = "Profile: the user runs a bakery"
+
+    async def test_without_a_fallback_the_failure_fails_the_recall(self):
+        reranker = CrossEncoderReranker(cross_encoder=_refusing_reranker())
+        with pytest.raises(DecisionRefusedError):
+            await reranker.rerank("q", [_candidate("a"), _candidate("bb")])
+
+    async def test_with_one_the_cross_encoder_ranks_it_and_is_named_the_provider(self):
+        """Named, so recall applies the boosts a cross-encoder's scores need; and its pairs
+        are its own, each memory with its context, not the decision model's pooled state."""
+        fallback = _CrossEncoder()
+        reranker = CrossEncoderReranker(
+            cross_encoder=_refusing_reranker(), fallback=CrossEncoderReranker(cross_encoder=fallback)
+        )
+        result = await reranker.rerank(
+            "q", [_candidate("a", self.PROFILE), _candidate("bbbb", self.PROFILE)], prune=True, dedup=True
+        )
+        assert result.provider_name == "fake-cross-encoder"
+        assert [r.candidate.retrieval.text for r in result.results] == ["bbbb", "a"]
+        assert fallback.initialized
+        assert fallback.pairs == [("q", f"{self.PROFILE}: a"), ("q", f"{self.PROFILE}: bbbb")]
+
+    def test_built_from_the_environment_only_when_asked(self, monkeypatch):
+        from hindsight_api import config as config_module
+
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_PROVIDER", "typesafe")
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_API_KEY", "k")
+        monkeypatch.setenv("HINDSIGHT_API_RERANKER_PROVIDER", "rrf")
+        monkeypatch.setattr(config_module, "get_config", config_module.HindsightConfig.from_env)
+        assert CrossEncoderReranker().fallback is None
+
+        monkeypatch.setenv("HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK", "true")
+        fallback = CrossEncoderReranker().fallback
+        assert fallback is not None and fallback.cross_encoder.provider_name == "rrf"
+
+        # Without a decision model the configured reranker is the reranker, with nothing behind it.
+        monkeypatch.setenv("HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER", "none")
+        assert CrossEncoderReranker().fallback is None

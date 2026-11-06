@@ -317,26 +317,33 @@ class CrossEncoderReranker:
     Default local model is hindsight-ai/hs-rerank-1.
     """
 
-    def __init__(self, cross_encoder=None):
+    def __init__(self, cross_encoder=None, fallback: "CrossEncoderReranker | None" = None):
         """
         Initialize cross-encoder reranker.
 
         Args:
             cross_encoder: CrossEncoderModel instance. If None, creates one from
                           environment variables (defaults to local provider)
+            fallback: Ranks a recall this one fails to. Built from the environment when
+                cross_encoder is None: the configured reranker chain behind a decision model,
+                with HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK on.
         """
         if cross_encoder is None:
             from hindsight_api.config import get_config
             from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
 
-            # A decision model set up for recall replaces the configured reranker outright.
-            decision_model = get_config().decision_model_config("recall")
-            cross_encoder = (
-                DecisionModelReranker.from_config(decision_model)
-                if decision_model is not None
-                else create_cross_encoder_from_env()
-            )
+            # A decision model set up for recall replaces the configured reranker, which then
+            # only ranks the recalls the decision model fails, and only when asked to.
+            config = get_config()
+            decision_model = config.decision_model_config("recall")
+            if decision_model is None:
+                cross_encoder = create_cross_encoder_from_env()
+            else:
+                cross_encoder = DecisionModelReranker.from_config(decision_model)
+                if config.recall_decision_model_fallback:
+                    fallback = CrossEncoderReranker(create_cross_encoder_from_env())
         self.cross_encoder = cross_encoder
+        self.fallback = fallback
         self._initialized = False
 
     async def ensure_initialized(self):
@@ -381,6 +388,32 @@ class CrossEncoderReranker:
         prune: bool = False,
         dedup: bool = False,
         embeddings: asyncio.Task[dict[str, np.ndarray] | None] | None = None,
+    ) -> RerankResult:
+        """Rerank candidates; see _rerank. With a fallback, a failed rerank is ranked by it.
+
+        The fallback ranks from scratch: the pairs it is handed are built for its own model, and
+        the result names it as the provider, so recall applies the boosts its scores need.
+        """
+        try:
+            return await self._rerank(query, candidates, now=now, prune=prune, dedup=dedup, embeddings=embeddings)
+        except Exception as exc:
+            if self.fallback is None:
+                raise
+            logger.warning(
+                f"Reranking: {getattr(self.cross_encoder, 'provider_name', None)} failed ({exc!r}); "
+                f"ranking with the fallback reranker"
+            )
+            await self.fallback.ensure_initialized()
+            return await self.fallback.rerank(query, candidates, now=now)
+
+    async def _rerank(
+        self,
+        query: str,
+        candidates: list[MergedCandidate],
+        now: datetime | None,
+        prune: bool,
+        dedup: bool,
+        embeddings: asyncio.Task[dict[str, np.ndarray] | None] | None,
     ) -> RerankResult:
         """
         Rerank candidates using cross-encoder scores.

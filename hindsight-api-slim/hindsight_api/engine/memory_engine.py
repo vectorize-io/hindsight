@@ -6316,6 +6316,10 @@ class MemoryEngine(MemoryEngineInterface):
                 await cross_encoder.initialize()
             # Mark reranker as initialized
             self._cross_encoder_reranker._initialized = True
+            # Loaded now, not on the first failure: a local model would otherwise download
+            # inside the recall that needed it.
+            if self._cross_encoder_reranker.fallback is not None:
+                await self._cross_encoder_reranker.fallback.ensure_initialized()
 
         async def init_query_analyzer():
             """Initialize query analyzer model."""
