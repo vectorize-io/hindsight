@@ -495,3 +495,177 @@ async def test_append_mode_preserves_document_metadata_projection(memory_no_llm,
 
     finally:
         await memory_no_llm.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+@pytest.mark.parametrize("seed", range(12))
+async def test_concurrent_same_content_retains_out_of_order_store_each_chunk_once(
+    memory_no_llm, request_context, monkeypatch, seed
+):
+    """Chunks finish extracting in a random order, so the two runs batch different chunks.
+
+    Whichever run reaches a chunk first stores it; the document ends complete with one fact per
+    chunk, never with gaps (the failure an abort-on-overlap fix produced).
+    """
+    import random
+    from collections import Counter
+
+    from hindsight_api.engine.retain import orchestrator
+    from hindsight_api.engine.retain.fact_extraction import chunk_text
+
+    rng = random.Random(seed)
+    real = orchestrator._extract_and_embed
+
+    async def jittered(*args, **kwargs):
+        await asyncio.sleep(rng.random() * 0.05)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "_extract_and_embed", jittered)
+
+    bank_id = f"test_concurrent_same_ooo_{_ts()}_{seed}"
+    document_id = "same-content-doc"
+    memory_no_llm._config_resolver._global_config.retain_chunk_batch_size = 2
+    content = "\n\n".join(f"Section {i}: " + f"Person_{i} works at Company_{i}. " * 120 for i in range(12))
+    expected_chunks = chunk_text(content, max_chars=3000)
+
+    try:
+        await asyncio.gather(
+            *[
+                memory_no_llm.retain_async(
+                    bank_id=bank_id, content=content, document_id=document_id, request_context=request_context
+                )
+                for _ in range(2)
+            ]
+        )
+        listing = await memory_no_llm.list_memory_units(
+            bank_id, document_id=document_id, limit=1000, request_context=request_context
+        )
+        unit_texts = [r["text"] for r in listing["items"]]
+        assert not {t[:80]: n for t, n in Counter(unit_texts).items() if n > 1}
+        assert len(unit_texts) == len(expected_chunks)
+    finally:
+        await memory_no_llm.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+@pytest.mark.parametrize("batch_tokens", [None, 1000])
+async def test_same_content_retain_started_after_first_commit_stores_each_chunk_once(
+    memory_no_llm, request_context, monkeypatch, batch_tokens
+):
+    """The second retain starts once the first has committed a batch (delta / recovery paths)."""
+    import random
+    from collections import Counter
+
+    from hindsight_api.engine.retain import orchestrator
+    from hindsight_api.engine.retain.fact_extraction import chunk_text
+
+    rng = random.Random(7)
+    real = orchestrator._extract_and_embed
+
+    async def jittered(*args, **kwargs):
+        await asyncio.sleep(0.05 + rng.random() * 0.1)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(orchestrator, "_extract_and_embed", jittered)
+    cfg = memory_no_llm._config_resolver._global_config
+    cfg.retain_chunk_batch_size = 2
+    if batch_tokens is not None:
+        monkeypatch.setattr(cfg, "retain_batch_tokens", batch_tokens)
+
+    bank_id = f"test_same_staggered_{_ts()}_{batch_tokens}"
+    document_id = "same-content-doc"
+    content = "\n\n".join(f"Section {i}: " + f"Person_{i} works at Company_{i}. " * 120 for i in range(12))
+    expected_chunks = chunk_text(content, max_chars=3000)
+
+    async def retain():
+        await memory_no_llm.retain_async(
+            bank_id=bank_id, content=content, document_id=document_id, request_context=request_context
+        )
+
+    try:
+        first = asyncio.create_task(retain())
+        for _ in range(400):
+            await asyncio.sleep(0.02)
+            try:
+                listing = await memory_no_llm.list_memory_units(
+                    bank_id, document_id=document_id, limit=1000, request_context=request_context
+                )
+            except Exception:
+                continue  # bank not created yet
+            if listing["items"]:
+                break
+        assert not first.done()
+        await asyncio.gather(first, retain())
+        listing = await memory_no_llm.list_memory_units(
+            bank_id, document_id=document_id, limit=1000, request_context=request_context
+        )
+        unit_texts = [r["text"] for r in listing["items"]]
+        assert not {t[:80]: n for t, n in Counter(unit_texts).items() if n > 1}
+        assert len(unit_texts) == len(expected_chunks)
+    finally:
+        await memory_no_llm.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+@pytest.mark.parametrize("seed", range(4))
+async def test_concurrent_same_content_delta_retains_store_each_chunk_once(
+    memory_no_llm, request_context, monkeypatch, seed
+):
+    """Two retains replacing a stored document with the same new content take the delta path at once."""
+    import random
+    from collections import Counter
+
+    from hindsight_api.engine.retain import orchestrator
+    from hindsight_api.engine.retain.fact_extraction import chunk_text
+
+    bank_id = f"test_concurrent_same_delta_{_ts()}_{seed}"
+    document_id = "same-content-doc"
+    old = "\n\n".join(f"Section {i}: " + f"Person_{i} works at Company_{i}. " * 120 for i in range(8))
+    new = "\n\n".join(
+        f"Section {i}: " + (f"Person_{i} lives in City_{i}. " if i % 2 else f"Person_{i} works at Company_{i}. ") * 120
+        for i in range(8)
+    )
+    expected_chunks = chunk_text(new, max_chars=3000)
+
+    try:
+        await memory_no_llm.retain_async(
+            bank_id=bank_id, content=old, document_id=document_id, request_context=request_context
+        )
+
+        rng = random.Random(seed)
+        real = orchestrator._extract_and_embed
+        delta_writes = 0
+        real_delta = orchestrator._try_delta_retain
+
+        async def jittered(*args, **kwargs):
+            await asyncio.sleep(rng.random() * 0.05)
+            return await real(*args, **kwargs)
+
+        async def counted(*args, **kwargs):
+            nonlocal delta_writes
+            delta_writes += 1
+            return await real_delta(*args, **kwargs)
+
+        monkeypatch.setattr(orchestrator, "_extract_and_embed", jittered)
+        monkeypatch.setattr(orchestrator, "_try_delta_retain", counted)
+
+        await asyncio.gather(
+            *[
+                memory_no_llm.retain_async(
+                    bank_id=bank_id, content=new, document_id=document_id, request_context=request_context
+                )
+                for _ in range(2)
+            ]
+        )
+        assert delta_writes >= 2
+        listing = await memory_no_llm.list_memory_units(
+            bank_id, document_id=document_id, limit=1000, request_context=request_context
+        )
+        unit_texts = [r["text"] for r in listing["items"]]
+        assert not {t[:80]: n for t, n in Counter(unit_texts).items() if n > 1}
+        assert len(unit_texts) == len(expected_chunks)
+    finally:
+        await memory_no_llm.delete_bank(bank_id, request_context=request_context)
