@@ -588,7 +588,7 @@ somewhere else.
 |-------|----------|
 | `effective_mode` | Whether the run ended up `full` or `delta` |
 | `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped` |
-| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed). The operation record adds two the executor cannot produce, because they happen outside a run: `refresh_failed_structured_output` and `refresh_failed_error` (a retrieval tool raised, the agent produced no answer, or something unforeseen escaped the refresh) |
+| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed). The operation record adds three the executor cannot produce, because they happen outside a run: `refresh_failed_structured_output`, `refresh_failed_candidate_rejected` (an [operation validator](../extensions.md) rejected the new document) and `refresh_failed_error` (a retrieval tool raised, the agent produced no answer, or something unforeseen escaped the refresh) |
 | `tool_calls[]` | Per call: `tool`, the agent's `reason`, the full `input`, `result_count`, `duration_ms`, and the `iteration` it belongs to |
 | `llm_calls[]` | Per call: `scope` (`agent_1`, `agent_2`, …, `final`) and `duration_ms` |
 | `delta_operations` | The operations emitted in delta mode, `applied` and `skipped` |
@@ -778,7 +778,7 @@ The endpoint returns a list of history entries, most recent first:
 | `changed_at` | string | ISO 8601 timestamp of when the change occurred |
 | `kind` | `"refresh_failed"` \| absent | Present only on a **failure record** — a refresh that refused to write. Absent on version snapshots |
 | `outcome` | string \| absent | On a failure record: the operation outcome, e.g. `refresh_failed_error` |
-| `failure_reason` | string \| absent | On a failure record: why it refused — `retrieval_failed`, `no_answer`, `unexpected_error`, `empty_candidate`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped`, `delta_not_applied`, `structured_output_failed` |
+| `failure_reason` | string \| absent | On a failure record: why it refused — `retrieval_failed`, `no_answer`, `unexpected_error`, `empty_candidate`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped`, `delta_not_applied`, `structured_output_failed`, `candidate_rejected` |
 | `error_message` | string \| absent | On a failure record: the exception, as the operation reports it |
 
 Each version entry captures the **content before the change** and when it happened. The current content is returned by the standard [Get a Mental Model](#get-a-mental-model) endpoint.

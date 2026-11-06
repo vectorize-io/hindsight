@@ -1891,6 +1891,7 @@
     "failureReasonDeltaOpsAllSkipped": "所有增量操作皆遭拒絕",
     "failureReasonDeltaNotApplied": "未套用增量",
     "failureReasonStructuredOutput": "結構化輸出擷取失敗",
+    "failureReasonCandidateRejected": "被操作驗證器拒絕",
     "failureAttempts": "· {count} 次嘗試",
     "tabErrors": "錯誤",
     "noErrors": "沒有失敗的重新整理。",

@@ -1891,6 +1891,7 @@
     "failureReasonDeltaOpsAllSkipped": "所有增量操作均被拒绝",
     "failureReasonDeltaNotApplied": "未应用增量",
     "failureReasonStructuredOutput": "结构化输出提取失败",
+    "failureReasonCandidateRejected": "被操作验证器拒绝",
     "failureAttempts": "· {count} 次尝试",
     "tabErrors": "错误",
     "noErrors": "没有失败的刷新。",

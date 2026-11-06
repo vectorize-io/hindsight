@@ -65,6 +65,7 @@ from hindsight_api.extensions.operation_validator import (
     MemoryCurationAction,
     MemoryUpdateContext,
     MemoryUpdateResult,
+    MentalModelCandidateContext,
     # Mental Model operations
     MentalModelGetContext,
     MentalModelGetResult,
@@ -155,6 +156,7 @@ __all__ = [
     # Operation Validator - Mental Model
     "MentalModelGetContext",
     "MentalModelGetResult",
+    "MentalModelCandidateContext",
     "MentalModelRefreshContext",
     "MentalModelRefreshResult",
     # Tenant/Auth

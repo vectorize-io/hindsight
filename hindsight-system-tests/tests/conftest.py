@@ -220,6 +220,49 @@ def scoped_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iter
     server.stop()
 
 
+#: The schema of the publication-rules server. Its own, because the hook it tests runs in
+#: the worker: on the shared schema the default server's worker (no validator) claimed its
+#: refreshes about half the time and stored the page the validator would have refused.
+PUBLISHING_SCHEMA = "systest_publishing"
+
+
+@pytest.fixture(scope="session")
+def publishing_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server whose operation validator refuses mental-model pages that break a rule.
+
+    The validator (``server_extensions/publication_rules_validator.py``) is server-level, so
+    it costs a process of its own. Session-scoped and started lazily, like ``typesafe_server``.
+    """
+    log_path: Path = tmp_path_factory.mktemp("publishing-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={
+            "HINDSIGHT_API_DATABASE_SCHEMA": PUBLISHING_SCHEMA,
+            "HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION": "publication_rules_validator:PublicationRules",
+            "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "server_extensions"),
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+async def publishing_client(publishing_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=publishing_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def publishing_bank(publishing_client: Hindsight) -> AsyncIterator[str]:
+    """A bank of this test's own on ``publishing_server``, deleted when the test ends."""
+    name = f"{BANK_PREFIX}{uuid.uuid4().hex[:12]}"
+    yield name
+    with contextlib.suppress(Exception):
+        await publishing_client.banks.delete_bank(name)
+
+
 @pytest.fixture(scope="session")
 def retrying_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """A server that will actually re-ask the extraction model once.

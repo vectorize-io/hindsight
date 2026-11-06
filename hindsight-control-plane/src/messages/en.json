@@ -1891,6 +1891,7 @@
     "failureReasonDeltaOpsAllSkipped": "All delta operations rejected",
     "failureReasonDeltaNotApplied": "Delta not applied",
     "failureReasonStructuredOutput": "Structured output extraction failed",
+    "failureReasonCandidateRejected": "Rejected by the operation validator",
     "failureAttempts": "· {count} attempts",
     "tabErrors": "Errors",
     "noErrors": "No failed refreshes.",
