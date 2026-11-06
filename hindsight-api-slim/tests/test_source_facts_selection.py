@@ -141,3 +141,45 @@ class TestPerObservationBudget:
 
         assert selection.ids == []
         assert selection.truncated is True
+
+
+class TestTokenCounting:
+    """Counting is the cost here (issue #6329): each source is counted at most once."""
+
+    @staticmethod
+    def _select_counting(**kwargs) -> tuple[list[str], list[str]]:
+        counted: list[str] = []
+
+        def count(text: str) -> int:
+            counted.append(text)
+            return _count_words(text)
+
+        by_obs = kwargs["by_obs"]
+        ordered = list(dict.fromkeys(sid for sids in by_obs.values() for sid in sids))
+        selection = select_source_facts_within_budget(
+            source_ids_ordered=ordered,
+            source_fact_ids_by_obs=by_obs,
+            text_by_id=kwargs["texts"],
+            max_total_tokens=kwargs.get("max_total_tokens", -1),
+            max_tokens_per_observation=kwargs.get("max_tokens_per_observation", -1),
+            count_tokens=count,
+        )
+        return selection.ids, counted
+
+    def test_shared_source_is_counted_once_but_charged_to_every_observation(self):
+        ids, counted = self._select_counting(
+            by_obs={"obs-1": ["shared"], "obs-2": ["shared", "extra"]},
+            texts={"shared": "two words", "extra": "one"},
+            max_tokens_per_observation=2,
+        )
+        # obs-2 still pays for "shared", so "extra" does not fit its budget.
+        assert ids == ["shared"]
+        assert counted == ["two words", "one"]
+
+    def test_unlimited_budget_counts_nothing(self):
+        ids, counted = self._select_counting(
+            by_obs={"obs-1": ["present", "missing"]},
+            texts={"present": "a source"},
+        )
+        assert ids == ["present"]
+        assert counted == []

@@ -64,14 +64,18 @@ def select_source_facts_within_budget(
 
     if max_tokens_per_observation >= 0:
         # Per-observation capping: each observation independently selects source
-        # facts up to its own budget.
+        # facts up to its own budget. Observations often cite the same source, so
+        # each source's text is counted once and charged to every budget it enters.
+        tokens_by_id: dict[str, int] = {}
         for sids in source_fact_ids_by_obs.values():
             obs_tokens = 0
             for sid in sids:
                 text = text_by_id.get(sid)
                 if text is None:
                     continue
-                fact_tokens = count_tokens(text)
+                fact_tokens = tokens_by_id.get(sid)
+                if fact_tokens is None:
+                    fact_tokens = tokens_by_id[sid] = count_tokens(text)
                 if obs_tokens + fact_tokens > max_tokens_per_observation:
                     skipped.add(sid)
                     continue
@@ -79,13 +83,20 @@ def select_source_facts_within_budget(
                 _take(sid)
         return SourceFactSelection(ids=selected, truncated=bool(skipped - seen))
 
+    if max_total_tokens < 0:
+        # Unlimited: every resolvable source fits, nothing to count.
+        for sid in source_ids_ordered:
+            if sid in text_by_id:
+                _take(sid)
+        return SourceFactSelection(ids=selected, truncated=False)
+
     total_tokens = 0
     for sid in source_ids_ordered:
         text = text_by_id.get(sid)
         if text is None:
             continue
         fact_tokens = count_tokens(text)
-        if max_total_tokens >= 0 and total_tokens + fact_tokens > max_total_tokens:
+        if total_tokens + fact_tokens > max_total_tokens:
             skipped.add(sid)
             continue
         total_tokens += fact_tokens
