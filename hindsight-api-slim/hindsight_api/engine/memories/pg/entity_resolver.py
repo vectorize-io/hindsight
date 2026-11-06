@@ -526,8 +526,9 @@ class EntityResolver:
         """Un-queue one mention-count increment per id in ``entity_ids``, for the current task.
 
         For mentions resolved and then dropped before writing (their facts were already stored by
-        a concurrent retain of the same content), so the mentions are not counted twice. The stats
-        for one entity in one resolve share the same group date, so which one goes does not matter.
+        a concurrent retain of the same content), so the mentions are not counted twice. Which of
+        an entity's stats goes only matters for its date, and the dropped facts carry the same
+        dates as the copies already stored.
         """
         pending = self._pending_stats.get(self._task_key())
         if not pending:

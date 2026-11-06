@@ -48,6 +48,7 @@ from ..schema import fq_table
 if TYPE_CHECKING:
     from ...extensions.operation_validator import OperationValidatorExtension
     from ...models import RequestContext
+    from ..memories.base import EntityResolverHandle
     from .attachment_store import RetainAttachmentLoader
 
 
@@ -820,7 +821,7 @@ def _drop_committed_chunks(
     extracted: list[ExtractedFact],
     processed: list[ProcessedFact],
     phase1: Phase1Result,
-    entity_resolver,
+    entity_resolver: "EntityResolverHandle",
 ) -> Phase1Result:
     """Remove the chunks in ``dropped`` and their facts from a batch, in place.
 

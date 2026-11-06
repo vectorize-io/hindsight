@@ -62,7 +62,7 @@ async def load_existing_chunks(
 
     ``chunk_indices`` limits the read to those positions.
     """
-    only_indices = "" if chunk_indices is None else "AND chunk_index = ANY($3::int[])"
+    only_indices = "" if chunk_indices is None else "AND chunk_index = ANY($3::integer[])"
     rows = await conn.fetch(
         f"""
         SELECT chunk_id, chunk_index, content_hash

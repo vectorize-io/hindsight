@@ -595,8 +595,18 @@ async def test_same_content_retain_overtaken_between_load_and_write_stores_each_
             delta_results.append(result)
         return result
 
+    b_drops = 0
+    real_drop = orchestrator._drop_committed_chunks
+
+    def counted_drop(*args, **kwargs):
+        nonlocal b_drops
+        if who.get() == "B":
+            b_drops += 1
+        return real_drop(*args, **kwargs)
+
     monkeypatch.setattr(orchestrator, "_extract_and_embed", paused_extract)
     monkeypatch.setattr(orchestrator, "_try_delta_retain", recorded_delta)
+    monkeypatch.setattr(orchestrator, "_drop_committed_chunks", counted_drop)
     cfg = memory_no_llm._config_resolver._global_config
     monkeypatch.setattr(cfg, "retain_chunk_batch_size", 2)
     # One batch for the whole document takes the delta path; a small budget splits it into slices,
@@ -622,15 +632,19 @@ async def test_same_content_retain_overtaken_between_load_and_write_stores_each_
 
     try:
         first = asyncio.create_task(retain("A"))
-        # A cannot get past its first batch, so this ends as soon as that batch commits.
-        while True:
-            try:
-                if await stored_units():
-                    break
-            except Exception:
-                pass  # the bank is not created yet
-            assert not first.done()
-            await asyncio.sleep(0.01)
+
+        async def first_batch_committed() -> None:
+            # A cannot get past its first batch, so this ends as soon as that batch commits.
+            while True:
+                try:
+                    if await stored_units():
+                        return
+                except Exception:
+                    pass  # the bank is not created yet
+                assert not first.done()
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(first_batch_committed(), timeout=60)
 
         second = asyncio.create_task(retain("B"))
         await asyncio.wait_for(b_reached.wait(), timeout=60)
@@ -641,6 +655,9 @@ async def test_same_content_retain_overtaken_between_load_and_write_stores_each_
 
         if path == "delta":
             assert delta_results and delta_results[0] is not None, "B did not write through the delta path"
+        else:
+            assert all(r is None for r in delta_results), "B wrote through the delta path, not streaming"
+        assert b_drops, "B never reached the chunk guard, so the test proves nothing"
         unit_texts = await stored_units()
         assert not {t[:80]: n for t, n in Counter(unit_texts).items() if n > 1}
         assert len(unit_texts) == len(expected_chunks)
