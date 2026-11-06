@@ -15,7 +15,6 @@ Each release ships `hindsight-windows-amd64.exe`. Download it from PowerShell, t
 
 ```powershell
 Invoke-WebRequest https://github.com/vectorize-io/hindsight/releases/latest/download/hindsight-windows-amd64.exe -OutFile hindsight.exe
-.\hindsight.exe --version
 ```
 
 Configuration and profiles work the same as on Linux and macOS. `hindsight fs mount` works in the foreground; background mounts (`fs start`, `mount --detach`) are Unix-only. Windows ARM64 is not built.
