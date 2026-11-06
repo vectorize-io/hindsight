@@ -719,6 +719,18 @@ class _ScopeGroupKey:
     """Whether that predicate can be answered from the GIN index on ``tags`` alone."""
 
 
+@dataclass(frozen=True)
+class _ScopeFilterKey:
+    """What makes two scopes in one group the same filter, so one lookup answers both.
+
+    Sorted, because every tag mode and the fact-type filter are set semantics:
+    ``[a, b]`` and ``[b, a]`` select the same rows.
+    """
+
+    tags: tuple[str, ...]
+    fact_types: tuple[str, ...]
+
+
 async def any_memory_updated_since_batch(
     *,
     conn,
@@ -834,9 +846,9 @@ async def any_memory_updated_since_batch(
         # matching write?" — only their cutoffs differ. Ask it once per filter and
         # compare each page's own cutoff against it, instead of re-scanning the
         # same rows for every page (#6325).
-        by_filter: dict[tuple[tuple[str, ...], tuple[str, ...]], list[MemoryScopeWatermark]] = {}
+        by_filter: dict[_ScopeFilterKey, list[MemoryScopeWatermark]] = {}
         for scope in group:
-            filter_key = (tuple(sorted(scope.tags or ())), tuple(sorted(scope.fact_types or ())))
+            filter_key = _ScopeFilterKey(tuple(sorted(scope.tags or ())), tuple(sorted(scope.fact_types or ())))
             by_filter.setdefault(filter_key, []).append(scope)
         filters = list(by_filter.values())
         payload = [

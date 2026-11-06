@@ -1586,6 +1586,10 @@ class TestMentalModelStaleness:
         await self._insert_memory(memory, bank_id, tags=["user_a", "team_red"], fact_type="experience")
         pool = await memory._get_pool()
         async with pool.acquire() as conn:
+            # Read straight from the table, like `_insert_memory` writes to it: the
+            # cutoffs are placed around the store's own `updated_at`, the internal
+            # column the staleness check compares against, and the "at" case needs
+            # it exactly.
             written = await conn.fetchval(
                 f"SELECT max(updated_at) FROM {fq_store_table('memory_units')} WHERE bank_id = $1", bank_id
             )
