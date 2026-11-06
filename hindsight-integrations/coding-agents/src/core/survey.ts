@@ -12,7 +12,7 @@
  * **Harness-portable.** The survey used to hardcode headless `claude`, so a Codex/Antigravity/opencode
  * user without the `claude` binary silently lost the survey (the git-log seed still ran). It now
  * builds a per-agent headless recipe and runs the survey under **the current harness's own CLI**
- * (falling back to any other available agent), so whichever agent you use can seed its own repo:
+ * and no other, so whichever agent you use seeds its own repo on its own account:
  *   - claude : `claude -p … --mcp-config <inline> --disallowedTools …`   (inline MCP, self-contained)
  *   - codex  : `codex exec --sandbox read-only -c mcp_servers.hindsight…` (inline MCP, self-contained)
  *   - antigravity : `agy -p … --mode=plan --cwd <repo>` (read-only planning mode; MCP from the
@@ -29,8 +29,8 @@
  * (`auto_mode.py:HeadlessMCPGuardMiddleware`). `hindsight_ingest_document` writes, so it is gated
  * by design and no flag lifts it: `--yolo`/`-y` are documented as ignored in headless mode. A
  * survey that cannot call the one tool it exists to call would spend a model budget and ingest
- * nothing, so Dcode falls back to another installed agent's CLI below — the same treatment as
- * Cursor, Copilot, Devin, Grok Build, Cline, Kilo and Prime Agent. Verified against
+ * nothing, so Dcode gets no survey — the same as every harness without a recipe here (Cursor,
+ * Copilot, Devin, Grok Build, Cline, Kilo, pi, Prime Agent, opencode2, …). Verified against
  * deepagents-code 0.1.65; revisit if Dcode gains a headless approval policy.
  *
  * Fire-and-forget and fail-safe throughout, mirroring core/seed.ts's `startBackgroundSeed`: a
@@ -128,7 +128,7 @@ function resolveAgentBin(harness: SurveyHarness, claudeBin?: string): string | u
     case "opencode":
       return process.env.HINDSIGHT_OPENCODE_BIN || "opencode";
     default:
-      // The host has no survey recipe (pi, opencode2, kilo, …): the next agent in line runs it.
+      // The host has no survey recipe (pi, opencode2, kilo, …): it gets no survey.
       return undefined;
   }
 }
@@ -344,9 +344,8 @@ function surveyAttempts(file: string, sha: string): number {
 
 /**
  * Spawn a DETACHED headless agent to survey `repoDir` and ingest structural findings via the
- * `hindsight_ingest_document` tool. Runs the survey under the current harness's own CLI when
- * available, else falls back to any available agent (claude → codex → antigravity → opencode — claude and
- * codex first because their inline-MCP recipes are self-contained). The agent runs under the
+ * `hindsight_ingest_document` tool. Runs the survey under the current harness's own CLI only; a
+ * harness without a recipe (or whose CLI is missing) gets no survey. The agent runs under the
  * detached lease supervisor (survey-supervisor.ts), so only one survey per destination runs at a
  * time (#4255). With `sha`, a commit that already had SURVEY_MAX_ATTEMPTS launches is skipped.
  * Resolves once launched, not when the survey finishes; false means no launch. Never throws.
@@ -375,118 +374,106 @@ export async function startCodebaseSurvey(
     const mcpServerPath =
       opts.mcpServerPath ?? join(dirname(fileURLToPath(import.meta.url)), "mcp-server.js");
 
-    // Survey-agent priority: the current harness's own CLI first, then any other available agent.
-    const preferred = opts.harness ?? "claude-code";
-    const order: SurveyHarness[] = [
-      preferred,
-      "claude-code",
-      "codex",
-      "antigravity-cli",
-      "opencode",
-    ];
-    const seen = new Set<SurveyHarness>();
+    // The survey runs under the current harness's own CLI and nothing else: borrowing another
+    // installed agent ran a Pi or Kilo user's survey on their Claude account.
+    const harness = opts.harness ?? "claude-code";
+    const name = resolveAgentBin(harness, opts.claudeBin);
+    if (!name) {
+      log.info("survey", `${harness}: no headless survey for this agent, skipping the survey`);
+      return false;
+    }
+    const bin = resolveBin(name);
+    if (!bin) {
+      log.info("survey", `${harness}: ${name} not found, skipping the survey`);
+      return false;
+    }
+    // A runner that cannot have the survey agent would only fail after the lease is taken.
+    if (
+      harness === "opencode" &&
+      !(opts.opencodeDefinesAgent ?? opencodeCanDefineSurveyAgent)(bin)
+    ) {
+      log.info("survey", `${harness}: ${bin} cannot define the survey agent, skipping the survey`);
+      return false;
+    }
 
-    for (const harness of order) {
-      if (seen.has(harness)) continue;
-      seen.add(harness);
-      const name = resolveAgentBin(harness, opts.claudeBin);
-      // Without this check binOnPath threw on the host's missing recipe and no survey ran (#6251).
-      if (!name) continue;
-      const bin = resolveBin(name);
-      if (!bin) {
-        log.info("survey", `${harness}: ${name} not found, trying the next agent`);
-        continue;
-      }
-      // A runner that cannot have the survey agent would only fail after the lease is taken.
-      if (
-        harness === "opencode" &&
-        !(opts.opencodeDefinesAgent ?? opencodeCanDefineSurveyAgent)(bin)
-      ) {
-        log.info("survey", `${harness}: ${bin} cannot define the survey agent, trying the next`);
-        continue;
-      }
-
-      const plan = buildSurveyPlan(harness, bin, repoDir, {
-        model: opts.model,
-        budgetUsd: opts.budgetUsd,
-        mcpServerPath,
-      });
-      // Use the SAME resolver as the selected agent's MCP/plugin, including fallback harnesses
-      // and bank overrides. Hash credentials too: equal bank ids on one API can belong to
-      // different tenants, but neither tokens nor bank names should appear in scratch paths.
-      const { cfg, bankId } = resolveHostConfig(harness, repoDir);
-      if (cfg.disabled) return false;
-      const key = createHash("sha256")
-        .update(JSON.stringify([cfg.apiUrl.replace(/\/+$/, ""), cfg.apiToken ?? "", bankId]))
-        .digest("hex");
-      const leaseDir = opts.lease?.dir ?? join(tmpdir(), "hindsight-coding-agent", "surveys");
-      const lease = acquireLease(leaseDir, key, opts.lease?.staleMs ?? LEASE_STALE_MS);
-      if (!lease) return false;
-      const attemptsFile = join(
-        leaseDir,
-        `attempts-${createHash("sha256")
-          .update(JSON.stringify([key, repoDir]))
-          .digest("hex")}.json`
-      );
-      const attempts = opts.sha ? surveyAttempts(attemptsFile, opts.sha) : 0;
-      if (attempts >= SURVEY_MAX_ATTEMPTS) {
-        log.info("survey", `${attempts} surveys already launched at ${opts.sha}, skipping`);
-        releaseLease(lease);
-        return false;
-      }
-      const spec: SurveySupervisorSpec = {
-        lease,
-        bin: plan.bin,
-        args: plan.args,
-        ...(opts.lease?.heartbeatMs ? { heartbeatMs: opts.lease.heartbeatMs } : {}),
-      };
-      const supervisorPath =
-        opts.supervisorPath ??
-        join(dirname(fileURLToPath(import.meta.url)), "survey-supervisor.js");
-      return await new Promise<boolean>((resolve) => {
-        try {
-          // The agent inherits the supervisor's cwd and env. The spec rides in the environment,
-          // never argv — see SURVEY_SPEC_ENV for the endpoint-security kill that argv triggers.
-          const child = spawnFn("node", [supervisorPath], {
-            cwd: repoDir,
-            detached: true,
-            stdio: "ignore",
-            windowsHide: true,
-            env: { ...plan.env, [SURVEY_SPEC_ENV]: JSON.stringify(spec) },
-          });
-          let spawned = false;
-          // spawn() failures (node not found, EACCES, sandboxes) arrive as an async 'error' event;
-          // unhandled, it would crash the caller.
-          child.on("error", (e) => {
-            if (spawned) return; // the supervisor owns the lease now
-            log.warn("survey", `survey supervisor failed to launch: ${describeError(e)}`);
-            releaseLease(lease);
-            resolve(false);
-          });
-          child.once("spawn", () => {
-            spawned = true;
-            child.unref();
-            if (opts.sha) {
-              try {
-                writeFileSync(
-                  attemptsFile,
-                  JSON.stringify({ sha: opts.sha, attempts: attempts + 1 }),
-                  { mode: 0o600 }
-                );
-              } catch {
-                /* best-effort: an unwritable count only loses the limit */
-              }
-            }
-            resolve(true);
-          });
-        } catch (e) {
+    const plan = buildSurveyPlan(harness, bin, repoDir, {
+      model: opts.model,
+      budgetUsd: opts.budgetUsd,
+      mcpServerPath,
+    });
+    // Use the SAME resolver as this harness's MCP/plugin, including bank overrides. Hash
+    // credentials too: equal bank ids on one API can belong to
+    // different tenants, but neither tokens nor bank names should appear in scratch paths.
+    const { cfg, bankId } = resolveHostConfig(harness, repoDir);
+    if (cfg.disabled) return false;
+    const key = createHash("sha256")
+      .update(JSON.stringify([cfg.apiUrl.replace(/\/+$/, ""), cfg.apiToken ?? "", bankId]))
+      .digest("hex");
+    const leaseDir = opts.lease?.dir ?? join(tmpdir(), "hindsight-coding-agent", "surveys");
+    const lease = acquireLease(leaseDir, key, opts.lease?.staleMs ?? LEASE_STALE_MS);
+    if (!lease) return false;
+    const attemptsFile = join(
+      leaseDir,
+      `attempts-${createHash("sha256")
+        .update(JSON.stringify([key, repoDir]))
+        .digest("hex")}.json`
+    );
+    const attempts = opts.sha ? surveyAttempts(attemptsFile, opts.sha) : 0;
+    if (attempts >= SURVEY_MAX_ATTEMPTS) {
+      log.info("survey", `${attempts} surveys already launched at ${opts.sha}, skipping`);
+      releaseLease(lease);
+      return false;
+    }
+    const spec: SurveySupervisorSpec = {
+      lease,
+      bin: plan.bin,
+      args: plan.args,
+      ...(opts.lease?.heartbeatMs ? { heartbeatMs: opts.lease.heartbeatMs } : {}),
+    };
+    const supervisorPath =
+      opts.supervisorPath ?? join(dirname(fileURLToPath(import.meta.url)), "survey-supervisor.js");
+    return await new Promise<boolean>((resolve) => {
+      try {
+        // The agent inherits the supervisor's cwd and env. The spec rides in the environment,
+        // never argv — see SURVEY_SPEC_ENV for the endpoint-security kill that argv triggers.
+        const child = spawnFn("node", [supervisorPath], {
+          cwd: repoDir,
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+          env: { ...plan.env, [SURVEY_SPEC_ENV]: JSON.stringify(spec) },
+        });
+        let spawned = false;
+        // spawn() failures (node not found, EACCES, sandboxes) arrive as an async 'error' event;
+        // unhandled, it would crash the caller.
+        child.on("error", (e) => {
+          if (spawned) return; // the supervisor owns the lease now
           log.warn("survey", `survey supervisor failed to launch: ${describeError(e)}`);
           releaseLease(lease);
           resolve(false);
-        }
-      });
-    }
-    // No capable agent found — fail open (the git-log seed already ran; the survey is a bonus).
+        });
+        child.once("spawn", () => {
+          spawned = true;
+          child.unref();
+          if (opts.sha) {
+            try {
+              writeFileSync(
+                attemptsFile,
+                JSON.stringify({ sha: opts.sha, attempts: attempts + 1 }),
+                { mode: 0o600 }
+              );
+            } catch {
+              /* best-effort: an unwritable count only loses the limit */
+            }
+          }
+          resolve(true);
+        });
+      } catch (e) {
+        log.warn("survey", `survey supervisor failed to launch: ${describeError(e)}`);
+        releaseLease(lease);
+        resolve(false);
+      }
+    });
   } catch {
     /* best-effort: a failed spawn must not break the caller */
   }

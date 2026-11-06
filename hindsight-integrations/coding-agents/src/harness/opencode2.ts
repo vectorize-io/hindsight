@@ -23,9 +23,9 @@
  *    the config file is not a sandbox either: the user's own global `permissions` are appended
  *    AFTER an agent's rules (verified against 0.0.0-beta-18743, where `explore`'s `edit: deny`
  *    ends up followed by a user's `edit: allow`). The survey reads untrusted repo files, so
- *    without a guaranteed read-only boundary it must not run under this host — opencode2 falls
- *    back to another installed agent's CLI, the same treatment kilo/cline/cursor/dcode already
- *    get (core/survey.ts). Revisit if v2 gains plugin-defined agents.
+ *    without a guaranteed read-only boundary it must not run under this host — opencode2 gets no
+ *    survey, the same as kilo/cline/cursor/dcode (core/survey.ts). Revisit if v2 gains
+ *    plugin-defined agents.
  *
  *  - NO toast. v2's plugin client can OBSERVE `tui.toast.show` events but cannot publish one, so
  *    the seed banner is logged rather than shown. `RuntimeCore.notify` is optional and fail-open.
