@@ -712,7 +712,9 @@ async def test_dedup_update_all_updated_sources_deleted_skips_fold_and_delete() 
 
 def _batch_engine():
     return types.SimpleNamespace(
-        embeddings=object(), _consolidation_llm_config=types.SimpleNamespace(with_config=lambda *a, **k: object())
+        embeddings=object(),
+        _consolidation_llm_config=types.SimpleNamespace(with_config=lambda *a, **k: object()),
+        _validator_with_hook=lambda name: None,
     )
 
 
@@ -847,6 +849,7 @@ async def test_process_batch_embeds_all_actions_in_one_call() -> None:
             memory_engine=types.SimpleNamespace(
                 embeddings=object(),
                 _consolidation_llm_config=types.SimpleNamespace(with_config=lambda *a, **k: object()),
+                _validator_with_hook=lambda name: None,
             ),
             llm_config=object(),
             bank_id="bank1",

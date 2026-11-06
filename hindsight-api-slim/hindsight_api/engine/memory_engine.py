@@ -8108,6 +8108,9 @@ class MemoryEngine(MemoryEngineInterface):
             # join the same trace (and read as part of this retain) instead of as unattributed calls.
             retain_trace = trace_context_of(retain_llm)
             retain_trace_token = set_trace_context(retain_trace) if retain_trace is not None else None
+            # Local: the orchestrator imports this module.
+            from .retain.orchestrator import RetainFactFilter
+
             try:
                 result = await self._retain_batch_with_append_retry(
                     pool=self._backend,
@@ -8138,6 +8141,11 @@ class MemoryEngine(MemoryEngineInterface):
                     progress_callback=self._write_operation_progress,
                     webhook_manager=self._webhook_manager,
                     memory_defense_extension=self._memory_defense,
+                    fact_filter=(
+                        RetainFactFilter(validator=fact_validator, bank_id=bank_id, request_context=request_context)
+                        if (fact_validator := self._validator_with_hook("filter_retain_facts")) is not None
+                        else None
+                    ),
                     audit_logger=self._audit_logger,
                     # One loader per retain, so a document that shows the same image in
                     # several sections fetches its bytes once rather than once per chunk.
@@ -8171,6 +8179,20 @@ class MemoryEngine(MemoryEngineInterface):
     # itself on the sync path); failing then is better than looping, because
     # the operation-level retry re-runs the whole submission anyway.
     _APPEND_CONFLICT_ATTEMPTS = 3
+
+    def _validator_with_hook(self, name: str) -> "OperationValidatorExtension | None":
+        """The loaded validator if it implements the optional hook ``name``, else None.
+
+        Lets a hot path (every retain batch, every consolidation batch) skip building a hook's
+        context when the extension left the hook at its no-op default.
+        """
+        validator = self._operation_validator
+        # A validator that is not an OperationValidatorExtension subclass (duck-typed) may not
+        # have the hook at all: that reads as "not implemented", like the inherited no-op.
+        implementation = getattr(type(validator), name, None)
+        if implementation is None or implementation is getattr(OperationValidatorExtension, name):
+            return None
+        return validator
 
     async def _retain_batch_with_append_retry(self, **kwargs) -> "RetainBatchResult":
         """Run ``orchestrator.retain_batch``, redoing an append that lost its race.

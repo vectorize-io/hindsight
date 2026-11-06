@@ -447,6 +447,37 @@ hard length limit or "no repeated sections".
 If the hook raises, the document is not stored either. The dry run does not
 call this hook.
 
+#### Memory review hooks
+
+Two optional hooks let a validator see what is about to be written and drop it
+or change its tags. Each returns one `MemoryReview(keep=True, tags=None)` per
+item, in order, or `None` to keep everything as is. `tags`, when set, replaces
+the item's tags. Text can't be changed.
+
+- `filter_retain_facts(ctx: RetainFactsContext)` runs after a retain extracts
+  its memories and before they are embedded and stored. `ctx.facts` holds each
+  memory's `text`, `fact_type`, `tags` and `entities`, and `ctx.document_id`
+  names the document. A large document is extracted in batches, so one retain
+  can call the hook several times. When a document is retained again, the
+  memories of its unchanged chunks are kept without passing through the hook.
+  The extraction dry run calls no validator hook, so its preview still lists
+  the memories this hook would drop.
+- `filter_consolidation_actions(ctx: ConsolidationActionsContext)` runs after a
+  consolidation batch decides its observation writes and before they are
+  applied. Each `ReviewedConsolidationAction` is a `create` or an `update` (of
+  `observation_id`), with its `text`, `tags` and `source_memory_ids`. An update
+  adds its tags to the observation's current ones. `merge_into` is set when
+  the write will be folded into an existing near-duplicate. A fold keeps that
+  observation's tags, so new tags have no effect there, but dropping the action
+  still stops the fold. The source memories of a dropped action are still
+  marked consolidated.
+
+```python
+class DropPasswords(OperationValidatorExtension):
+    async def filter_retain_facts(self, ctx: RetainFactsContext):
+        return [MemoryReview(keep="password" not in f.text.lower()) for f in ctx.facts]
+```
+
 #### Transfer-archive import hooks
 
 Importing a transfer archive (a document import, or a whole-bank restore) brings

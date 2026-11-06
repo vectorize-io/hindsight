@@ -24,6 +24,11 @@ from ...extensions.memory_defense import (
     apply_redaction,
     parse_policy,
 )
+from ...extensions.operation_validator import (
+    RetainFactsContext,
+    ReviewedFact,
+    resolve_reviews,
+)
 from ...metrics import get_metrics_collector
 from ...worker.stage import set_stage
 from ..bank_life import assert_job_bank_alive_on_pool
@@ -41,6 +46,8 @@ from ..memory_engine import count_tokens
 from ..schema import fq_table
 
 if TYPE_CHECKING:
+    from ...extensions.operation_validator import OperationValidatorExtension
+    from ...models import RequestContext
     from .attachment_store import RetainAttachmentLoader
 
 
@@ -1380,7 +1387,9 @@ async def _extract_and_embed(
     operation_id: str | None = None,
     schema: str | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    fact_filter: "RetainFactFilter | None" = None,
     vlm_config: "LLMConfig | None" = None,
+    document_id: str | None = None,
 ) -> _EmbeddedExtraction:
     """Shared pipeline: extract facts from contents and generate embeddings."""
     set_stage("retain.extract_and_embed")
@@ -1416,6 +1425,13 @@ async def _extract_and_embed(
         for fact in extracted_facts:
             fact.fact_type = fact_type_override
 
+    # Reviewed before embedding, so a dropped memory costs no embedding and every later step
+    # (entities, links, observations) sees only what the extension kept.
+    if fact_filter is not None:
+        extracted_facts = await fact_filter.review(extracted_facts, document_id)
+        if not extracted_facts:
+            return _EmbeddedExtraction(extracted_facts, [], chunks, usage)
+
     step_start = time.perf_counter()
     augmented_texts = embedding_processing.augment_texts_with_dates(extracted_facts, format_date_fn)
     async with _timing.timed("embed"):
@@ -1425,6 +1441,48 @@ async def _extract_and_embed(
     fact_batch = _process_extracted_facts(extracted_facts, embeddings)
 
     return _EmbeddedExtraction(fact_batch.extracted_facts, fact_batch.processed_facts, chunks, usage)
+
+
+@dataclass(frozen=True)
+class RetainFactFilter:
+    """The extension that reviews this retain's extracted memories (``filter_retain_facts``)."""
+
+    validator: "OperationValidatorExtension"
+    bank_id: str
+    request_context: "RequestContext"
+
+    async def review(self, facts: list[ExtractedFact], document_id: str | None) -> list[ExtractedFact]:
+        """The facts the extension keeps, with the tags it gave them."""
+        ctx = RetainFactsContext(
+            bank_id=self.bank_id,
+            document_id=document_id,
+            request_context=self.request_context,
+            facts=[
+                ReviewedFact(text=f.fact_text, fact_type=f.fact_type, tags=list(f.tags), entities=list(f.entities))
+                for f in facts
+            ],
+        )
+        reviews = resolve_reviews(await self.validator.filter_retain_facts(ctx), len(facts), "filter_retain_facts")
+        kept: list[ExtractedFact] = []
+        retained_index_by_original: list[int | None] = []
+        for fact, review in zip(facts, reviews, strict=True):
+            if not review.keep:
+                retained_index_by_original.append(None)
+                continue
+            if review.tags is not None:
+                fact.tags = list(review.tags)
+            retained_index_by_original.append(len(kept))
+            kept.append(fact)
+        if len(kept) < len(facts):
+            # Causal relations point at fact ordinals: drop the ones into a dropped fact and
+            # renumber the rest, as _process_extracted_facts does for degenerate facts.
+            for fact, relations in zip(
+                kept,
+                _remap_causal_relations([f.causal_relations for f in facts], retained_index_by_original),
+                strict=True,
+            ):
+                fact.causal_relations = relations
+        return kept
 
 
 def _remap_causal_relations(
@@ -1537,6 +1595,7 @@ async def retain_batch(
     memory_defense_extension: "MemoryDefenseExtension | None" = None,
     audit_logger: Any = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    fact_filter: "RetainFactFilter | None" = None,
     vlm_config: "LLMConfig | None" = None,
 ) -> RetainBatchResult:
     """
@@ -1702,6 +1761,7 @@ async def retain_batch(
                     # resolving inline attachment placeholders into prompt blocks (leaving raw
                     # placeholders in the prompt) and dropping multimodal vision routing.
                     attachment_loader=attachment_loader,
+                    fact_filter=fact_filter,
                     vlm_config=vlm_config,
                 )
                 # Returned rather than merged in place: the groups may run concurrently, and the
@@ -2063,6 +2123,7 @@ async def retain_batch(
                 document_body_hash=document_body_hash,
                 append_base_hash=append_base_hash,
                 attachment_loader=attachment_loader,
+                fact_filter=fact_filter,
                 vlm_config=vlm_config,
             )
         if delta_result is not None:
@@ -2151,6 +2212,7 @@ async def retain_batch(
             append_base_hash=append_base_hash,
             force_reextract=force_reextract,
             attachment_loader=attachment_loader,
+            fact_filter=fact_filter,
             vlm_config=vlm_config,
         )
     await _record_retain_event(
@@ -2578,6 +2640,7 @@ async def _streaming_retain_batch(
     append_base_hash: str | None = None,
     force_reextract: bool = False,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    fact_filter: "RetainFactFilter | None" = None,
     vlm_config: "LLMConfig | None" = None,
 ) -> RetainBatchResult:
     """
@@ -2899,7 +2962,9 @@ async def _streaming_retain_batch(
                     operation_id,
                     schema,
                     attachment_loader=attachment_loader,
+                    fact_filter=fact_filter,
                     vlm_config=vlm_config,
+                    document_id=effective_doc_id,
                 )
             finally:
                 reset_call_metadata(meta_token)
@@ -3840,6 +3905,7 @@ async def _try_delta_retain(
     document_body_hash: str | None = None,
     append_base_hash: str | None = None,
     attachment_loader: "RetainAttachmentLoader | None" = None,
+    fact_filter: "RetainFactFilter | None" = None,
     vlm_config: "LLMConfig | None" = None,
 ) -> RetainBatchResult | None:
     """
@@ -4144,7 +4210,9 @@ async def _try_delta_retain(
             operation_id,
             schema,
             attachment_loader=attachment_loader,
+            fact_filter=fact_filter,
             vlm_config=vlm_config,
+            document_id=effective_doc_id,
         )
     finally:
         reset_call_metadata(meta_token)

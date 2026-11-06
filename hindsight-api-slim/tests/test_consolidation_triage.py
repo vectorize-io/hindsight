@@ -271,7 +271,7 @@ async def test_a_batch_whose_llm_call_fails_writes_no_triage_verdict():
     ):
         _, _, failed = await consolidator._process_memory_batch(
             pool=SimpleNamespace(),
-            memory_engine=SimpleNamespace(embeddings=object()),
+            memory_engine=SimpleNamespace(embeddings=object(), _validator_with_hook=lambda name: None),
             llm_config=object(),
             bank_id="bank",
             memories=memories,

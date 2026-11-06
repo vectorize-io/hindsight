@@ -383,6 +383,94 @@ class ConsolidateResult:
 
 
 # =============================================================================
+# Memory Review Contexts (filter_retain_facts / filter_consolidation_actions)
+# =============================================================================
+
+
+@dataclass
+class MemoryReview:
+    """An extension's verdict on one extracted memory or one consolidation action.
+
+    Deliberately small: an extension may drop the item or replace its tags, nothing else.
+    Rewriting text is not offered — the text is what the embedding, entities and links
+    are built from, and a rewrite would have to redo all of them. Add fields here when a
+    concrete need comes up, not before.
+    """
+
+    #: False drops the item: the memory is not stored, the observation is not written.
+    keep: bool = True
+    #: The item's new tag set, replacing the one shown. None leaves the tags as they are.
+    tags: list[str] | None = None
+
+
+@dataclass
+class ReviewedFact:
+    """One memory extracted by a retain, before it is stored."""
+
+    text: str
+    fact_type: str
+    #: The tags the memory will be stored with (the item's and document's tags).
+    tags: list[str]
+    entities: list[str]
+
+
+@dataclass
+class RetainFactsContext:
+    """The memories extracted from one batch of a retain's chunks.
+
+    A large document is extracted and stored in batches, so one retain can call the hook
+    several times, each with a slice of the document's memories. Memories of chunks that
+    did not change on a re-retain are kept as they are and never shown.
+    """
+
+    bank_id: str
+    document_id: str | None
+    request_context: "RequestContext"
+    facts: list[ReviewedFact]
+
+
+@dataclass
+class ReviewedConsolidationAction:
+    """One observation write a consolidation batch decided, before it is applied."""
+
+    #: "create" writes a new observation; "update" rewrites ``observation_id``.
+    kind: Literal["create", "update"]
+    text: str
+    #: Tags the action writes. A create gets exactly these; an update adds them to the
+    #: observation's current tags (it never removes any).
+    tags: list[str]
+    #: The memories this observation is built from.
+    source_memory_ids: list[str]
+    observation_id: str | None = None
+    #: Set when the action will instead be folded into this existing near-duplicate
+    #: observation. A fold keeps the twin's tags, so ``MemoryReview.tags`` has no effect on
+    #: the twin; dropping the action still prevents the fold.
+    merge_into: str | None = None
+
+
+@dataclass
+class ConsolidationActionsContext:
+    """The creates and updates decided for one consolidation batch.
+
+    Dropping an action does not send its source memories back to the queue: they are
+    marked consolidated with the rest of the batch.
+    """
+
+    bank_id: str
+    request_context: "RequestContext"
+    actions: list[ReviewedConsolidationAction]
+
+
+def resolve_reviews(reviews: "list[MemoryReview] | None", count: int, hook: str) -> list[MemoryReview]:
+    """One review per item: None means keep everything; a wrong-length answer is a bug."""
+    if reviews is None:
+        return [MemoryReview() for _ in range(count)]
+    if len(reviews) != count:
+        raise ValueError(f"{hook} returned {len(reviews)} reviews for {count} items")
+    return reviews
+
+
+# =============================================================================
 # Bank Management Contexts
 # =============================================================================
 
@@ -969,6 +1057,32 @@ class OperationValidatorExtension(Extension, ABC):
                 - error: Error message (if failed)
         """
         pass
+
+    # =========================================================================
+    # Memory review hooks (optional - default keeps everything)
+    # =========================================================================
+
+    async def filter_retain_facts(self, ctx: RetainFactsContext) -> list[MemoryReview] | None:
+        """
+        Review the memories a retain extracted, before they are embedded and stored.
+
+        Return one ``MemoryReview`` per ``ctx.facts`` item, in order, to drop a memory or
+        replace its tags; return None to keep them all unchanged. Runs once per extraction
+        batch (see ``RetainFactsContext``). Dropping every memory of a chunk still stores
+        the chunk itself.
+        """
+        return None
+
+    async def filter_consolidation_actions(self, ctx: ConsolidationActionsContext) -> list[MemoryReview] | None:
+        """
+        Review the observation creates and updates of one consolidation batch, before they
+        are written.
+
+        Return one ``MemoryReview`` per ``ctx.actions`` item, in order, to drop an action or
+        replace its tags; return None to keep them all unchanged. Runs before the batch's
+        write transaction, so it may be slow without holding locks.
+        """
+        return None
 
     # =========================================================================
     # File Conversion - Post-operation hook (optional - override to implement)
