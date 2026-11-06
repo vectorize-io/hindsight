@@ -147,6 +147,21 @@ class TestHeapTrim:
             trim = _resolve_heap_trim()
         assert callable(trim)
 
+    def test_windows_compacts_the_process_heap(self):
+        # #5478: Windows used to fall through to the no-op.
+        calls = []
+        kernel32 = types.SimpleNamespace(
+            HeapCompact=lambda h, flags: calls.append((h, flags)) or 0,
+            GetProcessHeap=lambda: 1234,
+        )
+        with (
+            patch.object(sys, "platform", "win32"),
+            patch.object(local_device.ctypes, "WinDLL", lambda name: kernel32, create=True),
+        ):
+            trim = _resolve_heap_trim()
+        trim()
+        assert calls == [(1234, 0)]
+
     def test_unknown_platform_is_noop(self):
         with patch.object(sys, "platform", "sunos5"):
             trim = _resolve_heap_trim()

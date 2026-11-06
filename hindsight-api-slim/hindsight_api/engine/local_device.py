@@ -64,8 +64,9 @@ silently degrading recall.
 Local CPU inference allocates large transient numpy/tensor buffers per call. The
 allocator keeps those freed pages as a high-water mark, so RSS grows monotonically
 across many calls (issue #1717). We return them to the OS after each batch —
-``malloc_trim`` on glibc/Linux, ``malloc_zone_pressure_relief`` on macOS (the
-original #1717 fix covered only Linux). When the model ran on a GPU we also empty
+``malloc_trim`` on glibc/Linux, ``malloc_zone_pressure_relief`` on macOS,
+``HeapCompact`` on Windows (the original #1717 fix covered only Linux; Windows
+was a no-op until #5478). When the model ran on a GPU we also empty
 that backend's allocator pool via ``torch.<backend>.empty_cache()``.
 """
 
@@ -199,8 +200,14 @@ def _resolve_heap_trim():
     """Return a callable that asks the C allocator to release freed pages to the OS.
 
     glibc (Linux) exposes ``malloc_trim``; macOS exposes
-    ``malloc_zone_pressure_relief``. Resolved once at import; returns a no-op on
-    platforms where neither is available (musl, Windows).
+    ``malloc_zone_pressure_relief``; Windows exposes ``HeapCompact`` on the process
+    heap the CRT allocates from (what ``_heapmin`` does). Resolved once at import;
+    returns a no-op where none is available (musl).
+
+    Windows deliberately does not use ``EmptyWorkingSet`` /
+    ``SetProcessWorkingSetSizeEx(-1, -1)``: those page out *live* memory too (model
+    weights included), so every batch would fault them back in, and they free no
+    committed memory — the pages only move to the standby list (issue #5478).
     """
     if sys.platform == "linux":
         libc_path = ctypes.util.find_library("c")
@@ -228,6 +235,19 @@ def _resolve_heap_trim():
             return lambda: None
         # pressure_relief(zone, goal=0) reclaims as much as possible.
         return lambda: relief(default_zone(), 0)
+
+    if sys.platform == "win32":
+        try:
+            kernel32 = ctypes.WinDLL("kernel32")  # ty: ignore[unresolved-attribute]
+            compact = kernel32.HeapCompact
+            heap = kernel32.GetProcessHeap
+        except (OSError, AttributeError):
+            return lambda: None
+        heap.restype = ctypes.c_void_p
+        compact.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        compact.restype = ctypes.c_size_t
+        # Coalesces free blocks and decommits them; live pages stay resident.
+        return lambda: compact(heap(), 0)
 
     return lambda: None
 
