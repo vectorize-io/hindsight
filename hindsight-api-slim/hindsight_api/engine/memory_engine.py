@@ -21219,13 +21219,14 @@ class MemoryEngine(MemoryEngineInterface):
                 root = next((r for r in all_rows if r["id"] == node_id), None)
                 if root is None:
                     return False
-                # BFS the subtree rooted at node_id, collecting page mental models.
+                # Walk the subtree rooted at node_id, collecting page mental models.
                 # `visited` bounds the walk: a tree corrupted before the bank lock
                 # existed (or restored from such an export) contains a parent cycle
                 # the FK does not forbid, and an unguarded walk would spin forever
                 # holding a connection and an open transaction. Visiting each node
                 # once still deletes every reachable node.
-                # The stack holds rows, not ids, so no node is looked up twice.
+                # The stack holds rows, not ids. It used to hold ids and re-scan all_rows
+                # for each one, which cost O(bank pages x folder pages) (#6323).
                 stack = [root]
                 visited: set[str] = set()
                 mm_ids: list[str] = []
