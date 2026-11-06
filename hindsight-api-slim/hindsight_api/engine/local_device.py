@@ -64,8 +64,9 @@ silently degrading recall.
 Local CPU inference allocates large transient numpy/tensor buffers per call. The
 allocator keeps those freed pages as a high-water mark, so RSS grows monotonically
 across many calls (issue #1717). We return them to the OS after each batch —
-``malloc_trim`` on glibc/Linux, ``malloc_zone_pressure_relief`` on macOS (the
-original #1717 fix covered only Linux). When the model ran on a GPU we also empty
+``malloc_trim`` on glibc/Linux, ``malloc_zone_pressure_relief`` on macOS,
+``HeapCompact`` on Windows (the original #1717 fix covered only Linux; Windows
+was a no-op until #5478). When the model ran on a GPU we also empty
 that backend's allocator pool via ``torch.<backend>.empty_cache()``.
 """
 
