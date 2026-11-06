@@ -2754,6 +2754,31 @@ def test_no_tool_input_schema_is_recursive(mock_memory):
                     todo |= _refs(defs.get(ref, {}))
 
 
+@pytest.mark.parametrize("include_bank_id_param", [True, False])
+def test_no_tool_wraps_its_json_text_in_structured_content(mock_memory, include_bank_id_param):
+    """A ``-> str`` tool with FastMCP's wrap-result schema sends its JSON twice (#6279)."""
+    from fastmcp import FastMCP
+
+    mcp = FastMCP("test")
+    register_mcp_tools(
+        mcp,
+        mock_memory,
+        MCPToolsConfig(
+            bank_id_resolver=lambda: "b", include_bank_id_param=include_bank_id_param, tools=set(_ALL_TOOLS)
+        ),
+    )
+    for name, tool in _tools(mcp).items():
+        assert not (tool.output_schema or {}).get("x-fastmcp-wrap-result"), f"{name} duplicates its result"
+
+
+@pytest.mark.asyncio
+async def test_multi_bank_tool_result_is_sent_once(mcp_server_with_mental_models):
+    tool = _tools(mcp_server_with_mental_models)["list_mental_models"]
+    result = await tool.run({"bank_id": "test-bank"})
+    assert result.structured_content is None
+    assert len(result.content) == 1 and '"mm-1"' in result.content[0].text
+
+
 class TestMentalModelTriggerInput:
     """The MCP trigger input contract: HTTP parity, patch shape, merge semantics."""
 
