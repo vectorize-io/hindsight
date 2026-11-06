@@ -470,7 +470,7 @@ def main():
         server.should_exit = True
 
         print("Waiting for poller to finish...")
-        await poller.shutdown_graceful(timeout=30.0)
+        await poller.shutdown_graceful(timeout=config.worker_shutdown_drain_seconds)
         poller_task.cancel()
         try:
             await poller_task

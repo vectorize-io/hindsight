@@ -18,7 +18,8 @@ api:
   enabled: true
   replicaCount: 1
   # Seconds Kubernetes waits after SIGTERM before SIGKILL. The process drains
-  # in-flight tasks for 30s, cancels the rest, then hands them back (~45s).
+  # in-flight tasks for HINDSIGHT_API_WORKER_SHUTDOWN_DRAIN_SECONDS (20s), cancels
+  # the rest, then hands them back (~27s).
   terminationGracePeriodSeconds: 60
   # revisionHistoryLimit: 3  # overrides the global revisionHistoryLimit
   image:
@@ -169,7 +170,8 @@ worker:
   enabled: false
   replicaCount: 2
   # Seconds Kubernetes waits after SIGTERM before SIGKILL. The process drains
-  # in-flight tasks for 30s, cancels the rest, then hands them back (~45s).
+  # in-flight tasks for HINDSIGHT_API_WORKER_SHUTDOWN_DRAIN_SECONDS (20s), cancels
+  # the rest, then hands them back (~27s).
   terminationGracePeriodSeconds: 60
   image:
     repository: ghcr.io/vectorize-io/hindsight-api

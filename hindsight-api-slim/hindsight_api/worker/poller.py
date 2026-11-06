@@ -427,6 +427,9 @@ class WorkerPoller:
 
         self._optional_routines = OptionalRoutines(self._backend)
         self._shutdown = asyncio.Event()
+        # Loop time at which shutdown began: the drain budget counts from here, so a
+        # drain started by a signal overlaps the HTTP server's own drain (#6021).
+        self._shutdown_started_at: float | None = None
         # Set when a task finishes: the idle poll wakes at once to fill the freed slot
         # instead of sleeping out the rest of poll_interval_ms (#5650). A new submit
         # deliberately does NOT wake it: the wait is what lets repeated refresh and
@@ -1983,6 +1986,19 @@ class WorkerPoller:
 
         logger.info(f"Worker {self._worker_id} polling loop stopped")
 
+    def begin_shutdown(self) -> float:
+        """Stop claiming new work and start the drain clock. Idempotent.
+
+        Call it the moment the process is told to stop (the API does, from its
+        SIGTERM handler): every claim taken after the signal is work that must
+        then fit into what is left of the platform's grace period (#6021).
+        """
+        if self._shutdown_started_at is None:
+            self._shutdown_started_at = asyncio.get_running_loop().time()
+            logger.info(f"Worker {self._worker_id} stopped claiming new tasks")
+        self._shutdown.set()
+        return self._shutdown_started_at
+
     async def shutdown_graceful(self, timeout: float = 30.0):
         """
         Signal shutdown and wait for current tasks to complete.
@@ -1992,15 +2008,16 @@ class WorkerPoller:
         write that never landed — is handed back to 'pending' before returning.
 
         Args:
-            timeout: Maximum time to wait for in-flight tasks (seconds)
+            timeout: Maximum time to wait for in-flight tasks (seconds), counted
+                from `begin_shutdown` when that ran first.
         """
         logger.info(f"Worker {self._worker_id} initiating graceful shutdown")
-        self._shutdown.set()
+        started_at = self.begin_shutdown()
 
         # Wait for in-flight tasks to complete
         drained = False
-        start_time = asyncio.get_event_loop().time()
-        while asyncio.get_event_loop().time() - start_time < timeout:
+        loop = asyncio.get_running_loop()
+        while loop.time() - started_at < timeout:
             async with self._in_flight_lock:
                 in_flight = self._in_flight_count
                 active_task_objects = [info.bg_task for info in self._active_tasks.values()]
