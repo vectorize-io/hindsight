@@ -224,21 +224,21 @@ describe("startCodebaseSurvey", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  // #6251: a host with no survey recipe of its own (pi, opencode2, kilo, …) hands the survey to the
-  // next agent. The lookup used to reach binOnPath with no name, throw, and start no survey at all.
-  it("hands a host without a survey recipe to the next agent in line", async () => {
+  // A host with no survey recipe of its own (pi, opencode2, kilo, …) gets no survey: it must never
+  // run on another installed agent's account. Every installed agent is offered here.
+  it.each(["pi", "opencode2", "kilo"])("%s: no survey, never another agent's CLI", async (h) => {
     const spawn = fakeSpawn();
     const ok = await startCodebaseSurvey("/repo", {
-      harness: "pi" as never,
+      harness: h as never,
       spawn,
-      // binOnPath's contract: a name in, a path or undefined out — it throws on no name at all.
+      // binOnPath's contract: it throws on no name at all (#6251).
       resolveBin: (b) => {
         if (typeof b !== "string") throw new TypeError("no bin name");
-        return b === "codex" ? "/bin/codex" : undefined;
+        return `/bin/${b}`;
       },
     });
-    expect(ok).toBe(true);
-    expect(launched(spawn)[0]).toBe("/bin/codex");
+    expect(ok).toBe(false);
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   // #6075: terminal managers name the user's pane in env vars and hook the agent's Stop, so a
@@ -332,18 +332,17 @@ describe("startCodebaseSurvey", () => {
     expect(launched(spawn)[0]).toBe("/opt/codex");
   });
 
-  it("falls back to another available agent when the preferred harness's CLI is missing", async () => {
+  it("runs nothing when the harness's own CLI is missing, even with another agent installed", async () => {
     const spawn = fakeSpawn();
-    // Prefer Antigravity, but only codex is installed → survey runs under codex.
-    await startCodebaseSurvey("/repo", {
+    // Antigravity is the host, only codex is installed → no survey.
+    const ok = await startCodebaseSurvey("/repo", {
       harness: "antigravity-cli",
       mcpServerPath: "/x/mcp-server.js",
       spawn,
       resolveBin: (b) => (b === "codex" ? b : undefined),
     });
-    const [bin, argv] = launched(spawn);
-    expect(bin).toBe("codex");
-    expect(argv[0]).toBe("exec");
+    expect(ok).toBe(false);
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it("no capable agent found → no spawn (fail open; the git-log seed still ran)", async () => {

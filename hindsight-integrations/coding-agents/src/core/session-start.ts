@@ -278,7 +278,7 @@ export async function buildSessionStartContext(args: {
           // bank).
           if (cold) {
             if (cfg.codebaseSurvey !== false) {
-              // Run the survey under the current harness's own CLI (falls back to any available agent).
+              // Run the survey under the current harness's own CLI only (none without a recipe).
               const sha = resolveHeadSha(cwd);
               const started = await startSurvey(cwd, {
                 harness: harness as SurveyHarness,
