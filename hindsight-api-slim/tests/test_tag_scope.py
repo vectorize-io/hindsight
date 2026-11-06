@@ -225,6 +225,18 @@ async def test_writes_outside_the_scope_are_refused(memory, scoped_bank):
             request_context=dan,
         )
     assert refused.value.status_code == 403
+    # In a batch, Dan's own document and a new one don't let Kate's through (#6327).
+    with pytest.raises(OperationValidationError) as batch_refused:
+        await memory.retain_batch_async(
+            bank_id=scoped_bank,
+            contents=[
+                {"content": "New note.", "document_id": "dan-new", "tags": ["user:dan"]},
+                {"content": "More notes.", "document_id": "dan-notes", "tags": ["user:dan"]},
+                {"content": "Dan's addition.", "document_id": "kate-sync", "tags": ["user:dan"]},
+            ],
+            request_context=dan,
+        )
+    assert batch_refused.value.status_code == 403 and "kate-sync" in batch_refused.value.reason
     with pytest.raises(OperationValidationError) as missing:
         await memory.delete_document("kate-sync", scoped_bank, request_context=dan)
     assert missing.value.status_code == 404
