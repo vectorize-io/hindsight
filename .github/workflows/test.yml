@@ -3099,6 +3099,48 @@ jobs:
       working-directory: hindsight-cli
       run: cargo build --release --target aarch64-unknown-linux-gnu
 
+  # Release ships a Windows CLI binary; build it on every CLI change so a
+  # Unix-only API surfaces here, not on release day. No server needed.
+  build-rust-cli-windows:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.cli == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          hindsight-cli/target
+        key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Build release binary
+      working-directory: hindsight-cli
+      run: cargo build --release
+
+    - name: Smoke-test the executable
+      shell: pwsh
+      run: |
+        $cli = './hindsight-cli/target/release/hindsight.exe'
+        & $cli --version
+        if ($LASTEXITCODE -ne 0) { throw '--version failed' }
+        foreach ($command in @('retain', 'recall', 'reflect')) {
+          & $cli memory $command --help
+          if ($LASTEXITCODE -ne 0) { throw "memory $command --help failed" }
+        }
+
   test-rust-client:
     needs: [detect-changes]
     if: >-
@@ -5891,6 +5933,7 @@ jobs:
       - test-typescript-client-oracle
       - test-typescript-client-deno
       - build-rust-cli-arm64
+      - build-rust-cli-windows
       - test-rust-client
       - test-go-client
       - test-openclaw-integration
