@@ -20,6 +20,8 @@ var _ MappedNullable = &UpdateDocumentRequest{}
 // UpdateDocumentRequest Request model for updating a document's mutable fields.
 type UpdateDocumentRequest struct {
 	Tags []string `json:"tags,omitempty"`
+	AddTags []string `json:"add_tags,omitempty"`
+	RemoveTags []string `json:"remove_tags,omitempty"`
 	ObservationScopes NullableUpdateDocumentObservationScopes `json:"observation_scopes,omitempty"`
 }
 
@@ -71,6 +73,72 @@ func (o *UpdateDocumentRequest) HasTags() bool {
 // SetTags gets a reference to the given []string and assigns it to the Tags field.
 func (o *UpdateDocumentRequest) SetTags(v []string) {
 	o.Tags = v
+}
+
+// GetAddTags returns the AddTags field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *UpdateDocumentRequest) GetAddTags() []string {
+	if o == nil {
+		var ret []string
+		return ret
+	}
+	return o.AddTags
+}
+
+// GetAddTagsOk returns a tuple with the AddTags field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *UpdateDocumentRequest) GetAddTagsOk() ([]string, bool) {
+	if o == nil || IsNil(o.AddTags) {
+		return nil, false
+	}
+	return o.AddTags, true
+}
+
+// HasAddTags returns a boolean if a field has been set.
+func (o *UpdateDocumentRequest) HasAddTags() bool {
+	if o != nil && !IsNil(o.AddTags) {
+		return true
+	}
+
+	return false
+}
+
+// SetAddTags gets a reference to the given []string and assigns it to the AddTags field.
+func (o *UpdateDocumentRequest) SetAddTags(v []string) {
+	o.AddTags = v
+}
+
+// GetRemoveTags returns the RemoveTags field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *UpdateDocumentRequest) GetRemoveTags() []string {
+	if o == nil {
+		var ret []string
+		return ret
+	}
+	return o.RemoveTags
+}
+
+// GetRemoveTagsOk returns a tuple with the RemoveTags field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *UpdateDocumentRequest) GetRemoveTagsOk() ([]string, bool) {
+	if o == nil || IsNil(o.RemoveTags) {
+		return nil, false
+	}
+	return o.RemoveTags, true
+}
+
+// HasRemoveTags returns a boolean if a field has been set.
+func (o *UpdateDocumentRequest) HasRemoveTags() bool {
+	if o != nil && !IsNil(o.RemoveTags) {
+		return true
+	}
+
+	return false
+}
+
+// SetRemoveTags gets a reference to the given []string and assigns it to the RemoveTags field.
+func (o *UpdateDocumentRequest) SetRemoveTags(v []string) {
+	o.RemoveTags = v
 }
 
 // GetObservationScopes returns the ObservationScopes field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -127,6 +195,12 @@ func (o UpdateDocumentRequest) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	if o.Tags != nil {
 		toSerialize["tags"] = o.Tags
+	}
+	if o.AddTags != nil {
+		toSerialize["add_tags"] = o.AddTags
+	}
+	if o.RemoveTags != nil {
+		toSerialize["remove_tags"] = o.RemoveTags
 	}
 	if o.ObservationScopes.IsSet() {
 		toSerialize["observation_scopes"] = o.ObservationScopes.Get()

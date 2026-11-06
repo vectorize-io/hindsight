@@ -102,12 +102,23 @@ async def test_an_explicit_scope_list_takes_exactly_those_combinations(client, b
     assert await _observation_tags(client, bank_id) == [[STUDENT], sorted([STUDENT, TEACHER])]
 
 
-async def test_renaming_a_tag_moves_the_explicit_scopes_with_it(client, bank_id, settled):
+RENAMED = "student:alicia"
+
+
+@pytest.mark.parametrize(
+    "rename",
+    [
+        pytest.param(UpdateDocumentRequest(tags=[RENAMED, TEACHER]), id="full-set"),
+        # The partial form changes only the one tag; the teacher tag it never names stays (#6339).
+        pytest.param(UpdateDocumentRequest(remove_tags=[STUDENT], add_tags=[RENAMED]), id="add-remove"),
+    ],
+)
+async def test_renaming_a_tag_moves_the_explicit_scopes_with_it(client, bank_id, settled, rename):
     """An explicit scope list freezes tag strings at retain time. Renaming a tag
     on the document must carry the rename into that list, or re-consolidation
     rebuilds the observations under the old tag, where recall by the new one
     can no longer reach them (#4609)."""
-    renamed = "student:alicia"
+    renamed = RENAMED
     await _retain(
         client,
         bank_id,
@@ -117,9 +128,11 @@ async def test_renaming_a_tag_moves_the_explicit_scopes_with_it(client, bank_id,
         observation_scopes=[[STUDENT], [STUDENT, TEACHER]],
     )
 
-    await client.documents.update_document(bank_id, "lesson", UpdateDocumentRequest(tags=[renamed, TEACHER]))
+    await client.documents.update_document(bank_id, "lesson", rename)
     await settled(bank_id)
 
+    document = await client.documents.get_document(bank_id, "lesson")
+    assert sorted(document.tags) == sorted([renamed, TEACHER])
     assert await _observation_tags(client, bank_id) == [[renamed], sorted([renamed, TEACHER])]
 
 

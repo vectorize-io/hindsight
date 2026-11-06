@@ -11741,6 +11741,8 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         tags: list[str] | None = None,
+        add_tags: list[str] | None = None,
+        remove_tags: list[str] | None = None,
         observation_scopes: list[list[str]] | str | None = None,
         request_context: "RequestContext",
     ) -> bool:
@@ -11775,6 +11777,10 @@ class MemoryEngine(MemoryEngineInterface):
             tags: New tags to apply to the document and all its memory units (optional).
                 Compared as a set against the document's current tags; equal means no
                 retag and no re-consolidation.
+            add_tags / remove_tags: A partial change instead of ``tags`` (#6339): the new set is
+                the current tags minus ``remove_tags``, plus ``add_tags``. Resolved against the
+                tags read inside the update's transaction, so concurrent partial changes do not
+                drop each other's tags. Not combined with ``tags``.
             observation_scopes: New observation scoping for every memory of the document
                 (optional), with the values retain accepts. Overrides the rename a retag
                 would otherwise carry into an explicit scope list.
@@ -11789,7 +11795,14 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.UPDATE_DOCUMENT, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._require_writable(bank_id, request_context, document_id=document_id, new_tags=tags)
+        partial = add_tags is not None or remove_tags is not None
+        if partial and tags is not None:
+            raise OperationValidationError("Send either tags or add_tags/remove_tags, not both", status_code=422)
+        # A partial change only writes the tags it adds: the rest are the document's own, which
+        # the document check below already requires writable.
+        await self._require_writable(
+            bank_id, request_context, document_id=document_id, new_tags=add_tags if partial else tags
+        )
         if observation_scopes is not None:
             self._refuse_unwritable_scopes(observation_scopes, await self._write_tag_scope(bank_id, request_context))
         backend = await self._get_backend()
@@ -11818,6 +11831,14 @@ class MemoryEngine(MemoryEngineInterface):
                         conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
                     )
                     current_tags = _current.tags
+                    if partial and _current.found:
+                        if current_tags is None:
+                            raise OperationValidationError(
+                                "This bank's memory store does not support add_tags/remove_tags", status_code=400
+                            )
+                        removed = set(remove_tags or [])
+                        kept = [t for t in current_tags if t not in removed]
+                        tags = kept + [t for t in dict.fromkeys(add_tags or []) if t not in kept]
 
                     # `None` means "could not read the current tags" (document not found, or
                     # a store record that does not carry them) — never claim unchanged on a

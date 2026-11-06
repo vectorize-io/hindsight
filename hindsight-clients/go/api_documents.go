@@ -1082,7 +1082,9 @@ UpdateDocument Update document
 
 Update mutable fields on a document without re-processing its content.
 
-**Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).
+**Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag.
+
+**Partial tag change** (`add_tags`, `remove_tags`): adds or removes only the listed tags and keeps the rest, e.g. `{"add_tags": ["team-c"], "remove_tags": ["team-a"]}`. Removals apply first. Cannot be combined with `tags` (422).
 
 The new tags are propagated to all associated memory units.
 

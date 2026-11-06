@@ -547,6 +547,10 @@ async def test_every_other_surface_respects_both_scopes(memory, scoped_bank):
     with pytest.raises(OperationValidationError) as e:
         await memory.update_document("dan-notes", scoped_bank, tags=["user:dan", "kind:rule"], request_context=dan)
     assert e.value.status_code == 403
+    # ... and so must the tags a partial change adds (#6339).
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_document("dan-notes", scoped_bank, add_tags=["kind:rule"], request_context=dan)
+    assert e.value.status_code == 403
     with pytest.raises(OperationValidationError) as e:
         await memory.reprocess_document(scoped_bank, "kate-sync", request_context=dan)
     assert e.value.status_code == 404
