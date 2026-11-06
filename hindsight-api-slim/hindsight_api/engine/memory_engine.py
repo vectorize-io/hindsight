@@ -8186,7 +8186,10 @@ class MemoryEngine(MemoryEngineInterface):
         context when the extension left the hook at its no-op default.
         """
         validator = self._operation_validator
-        if validator is None or getattr(type(validator), name) is getattr(OperationValidatorExtension, name):
+        # A validator that is not an OperationValidatorExtension subclass (duck-typed) may not
+        # have the hook at all: that reads as "not implemented", like the inherited no-op.
+        implementation = getattr(type(validator), name, None)
+        if implementation is None or implementation is getattr(OperationValidatorExtension, name):
             return None
         return validator
 
