@@ -19,6 +19,7 @@ from hindsight_api.engine.embeddings import (
     RemoteTEIEmbeddings,
     SplitEmbeddings,
     create_embeddings_from_env,
+    embedding_model_id,
 )
 from hindsight_api.engine.retain import embedding_utils
 
@@ -243,3 +244,9 @@ async def test_a_local_side_loads_off_the_event_loop() -> None:
 
     await _wrap(_Local("q"), _Fake("d")).initialize()
     assert seen and seen[0] != loop_thread
+
+
+def test_the_written_model_is_the_document_side() -> None:
+    """A re-embed's write guard compares the model that writes stored vectors."""
+    document = _Fake("d")
+    assert embedding_model_id(_wrap(_Fake("q"), document)) == embedding_model_id(document)

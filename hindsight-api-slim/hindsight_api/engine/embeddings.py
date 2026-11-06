@@ -2542,6 +2542,10 @@ def is_embedding_model_mismatch(exc: BaseException) -> bool:
 
 def embedding_model_id(embeddings: Embeddings) -> str:
     """A stable name for the model ``embeddings`` writes with: provider, model and dimension."""
+    # A split deployment writes every stored vector with its document side; the query
+    # side only reads, so it is not part of what a re-embed's write guard compares.
+    if isinstance(embeddings, SplitEmbeddings):
+        embeddings = embeddings.document
     model = getattr(embeddings, "model_name", None) or getattr(embeddings, "model", None) or ""
     return f"{embeddings.provider_name}:{model}:{embeddings.dimension}"
 
