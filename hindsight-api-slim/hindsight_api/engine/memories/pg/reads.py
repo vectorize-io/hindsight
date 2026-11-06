@@ -719,6 +719,18 @@ class _ScopeGroupKey:
     """Whether that predicate can be answered from the GIN index on ``tags`` alone."""
 
 
+@dataclass(frozen=True)
+class _ScopeFilterKey:
+    """What makes two scopes in one group the same filter, so one lookup answers both.
+
+    Sorted, because every tag mode and the fact-type filter are set semantics:
+    ``[a, b]`` and ``[b, a]`` select the same rows.
+    """
+
+    tags: tuple[str, ...]
+    fact_types: tuple[str, ...]
+
+
 async def any_memory_updated_since_batch(
     *,
     conn,
@@ -740,23 +752,34 @@ async def any_memory_updated_since_batch(
     whose clause that index can serve, the time-ordered ``LIMIT 1`` for the rest.
     Read that docstring first; what follows is what the *batched* form adds.
 
-    Three details in the SQL are load-bearing:
+    Within a group, scopes with the same tags and fact types are asked once. They
+    differ only in their cutoff, so each distinct filter is asked for its newest
+    matching write, and every page compares its own cutoff against it in Python.
+    Asking per page instead re-read the same rows once per page: 53 pages on one
+    shared tag paid 53 scans of that tag (#6325).
 
-    * ``ORDER BY mu.updated_at DESC`` inside the ``LIMIT 1`` LATERAL. It does not
-      change the answer — we only ask whether a row exists — but without it the
-      planner estimates the ``LIMIT 1`` will be satisfied early, picks a sequential
-      scan, and the whole point is lost (measured: 13 ms per scope instead of
-      0.03 ms). It makes the ``(bank_id, updated_at DESC)`` index the obvious way
-      to run the join, which is the cheapest **when the scope has a match** — and
-      a walk to the end of the index when it does not. That is the cost the other
-      shape exists to avoid, and for the modes still on this one it is the
+    Four details in the SQL are load-bearing:
+
+    * ``ORDER BY mu.updated_at DESC`` inside the ``LIMIT 1`` LATERAL. Without it
+      the planner estimates the ``LIMIT 1`` will be satisfied early, picks a
+      sequential scan, and the whole point is lost (measured: 13 ms per scope
+      instead of 0.03 ms). It also makes the row found the filter's newest write,
+      which is the answer. The walk starts from the *earliest* cutoff in the
+      filter: a later cutoff can only be crossed by a later write, so that row
+      answers every page. It is the cheapest form **when the scope has a match**
+      — and a walk to the end of the index when it does not. That is the cost the
+      other shape exists to avoid, and for the modes still on this one it is the
       caller's bank-wide watermark check that keeps them off it.
-    * ``COALESCE(h.hit, false)`` in the aggregate shape against
-      ``(h.hit IS NOT NULL)`` in the other. A ``LIMIT 1`` LATERAL yields no row for
-      a scope with no match; ``bool_or`` yields one row holding NULL. Projecting
-      either as "not stale" is the same answer, but only if each is spelled for its
-      own shape — read the wrong way round, every quiet scope reports stale.
-    * ``LEFT JOIN LATERAL`` rather than a correlated ``EXISTS``. A scalar subquery
+    * ``FILTER (WHERE mu.updated_at IS NOT NULL)`` on the aggregate shape's
+      ``max``. It never changes the answer (the column is NOT NULL), but a bare
+      ``max`` lets the planner rewrite it as a newest-first walk of
+      ``(bank_id, updated_at DESC)`` — fast for a hot tag, a walk of the whole bank
+      for a filter that matches nothing (measured: 0.5 ms to 15 ms on 100k rows).
+      The FILTER keeps it on the tag index, bounded by the scope.
+    * A NULL ``latest`` means "nothing written". ``max`` over no rows yields one
+      row holding NULL; a ``LIMIT 1`` LATERAL with no match yields NULL through the
+      ``LEFT JOIN``. Both read as "not stale".
+    * ``LEFT JOIN LATERAL`` rather than a correlated subquery. A scalar subquery
       over a function scan gets no useful row estimate and falls back to a
       sequential scan for the same reason.
 
@@ -819,36 +842,46 @@ async def any_memory_updated_since_batch(
 
     for key, group in by_clause.items():
         tag_clause = key.tag_clause
+        # Pages with the same filter share one answer to "when was the newest
+        # matching write?" — only their cutoffs differ. Ask it once per filter and
+        # compare each page's own cutoff against it, instead of re-scanning the
+        # same rows for every page (#6325).
+        by_filter: dict[_ScopeFilterKey, list[MemoryScopeWatermark]] = {}
+        for scope in group:
+            filter_key = _ScopeFilterKey(tuple(sorted(scope.tags or ())), tuple(sorted(scope.fact_types or ())))
+            by_filter.setdefault(filter_key, []).append(scope)
+        filters = list(by_filter.values())
         payload = [
             {
-                "scope_key": scope.key,
-                "since": _as_utc(scope.since).isoformat(),
-                "tags": list(scope.tags) if scope.tags else None,
+                "filter_id": i,
+                # The walk shape only needs rows past the earliest cutoff in the
+                # filter: a later cutoff can only be crossed by a later write.
+                "since": min(_as_utc(scope.since) for scope in scoped).isoformat(),
+                "tags": list(scoped[0].tags) if scoped[0].tags else None,
                 # Empty means "no fact-type filter", exactly as in the single-scope
                 # query; NULL is how the SQL below spells that.
-                "fact_types": list(scope.fact_types) if scope.fact_types else None,
+                "fact_types": list(scoped[0].fact_types) if scoped[0].fact_types else None,
             }
-            for scope in group
+            for i, scoped in enumerate(filters)
         ]
         # `tags` must be varchar[], matching memory_units.tags: there is no
         # `varchar[] @> text[]` operator, so a text[] column here fails to resolve
         # the containment operators the tag clauses are built from.
         scope_set = (
             "FROM jsonb_to_recordset($2::jsonb)\n"
-            "     AS s(scope_key text, since timestamptz, tags varchar[], fact_types text[])"
+            "     AS s(filter_id int, since timestamptz, tags varchar[], fact_types text[])"
         )
         fact_type_clause = "AND (s.fact_types IS NULL OR mu.fact_type = ANY(s.fact_types))"
         if key.indexable:
-            # The tag predicate is the only index-eligible filter, deliberately: the
-            # time comparison rides inside the aggregate so the planner reaches the
-            # GIN index on `tags` and touches only the scope's own rows. `bool_or`
-            # over an empty set is NULL, hence the COALESCE — unlike `LIMIT 1`,
-            # which simply yields no row.
+            # The tag predicate is the only index-eligible filter, deliberately: no
+            # time comparison in the WHERE, so the planner reaches the GIN index on
+            # `tags` and touches only the filter's own rows. MAX over an empty set
+            # is NULL, which reads as "nothing written".
             sql = f"""
-            SELECT s.scope_key, COALESCE(h.hit, false) AS stale
+            SELECT s.filter_id, h.latest
             {scope_set}
             LEFT JOIN LATERAL (
-                SELECT bool_or(mu.updated_at > s.since) AS hit
+                SELECT max(mu.updated_at) FILTER (WHERE mu.updated_at IS NOT NULL) AS latest
                 FROM {table} mu
                 WHERE mu.bank_id = $1
                   {tag_clause}
@@ -857,10 +890,10 @@ async def any_memory_updated_since_batch(
             """
         else:
             sql = f"""
-            SELECT s.scope_key, (h.hit IS NOT NULL) AS stale
+            SELECT s.filter_id, h.latest
             {scope_set}
             LEFT JOIN LATERAL (
-                SELECT 1 AS hit
+                SELECT mu.updated_at AS latest
                 FROM {table} mu
                 WHERE mu.bank_id = $1
                   AND mu.updated_at > s.since
@@ -871,7 +904,10 @@ async def any_memory_updated_since_batch(
             ) h ON TRUE
             """
         rows = await conn.fetch(sql, bank_id, json.dumps(payload))
-        results.update({row["scope_key"]: row["stale"] for row in rows})
+        for row in rows:
+            latest = row["latest"]
+            for scope in filters[row["filter_id"]]:
+                results[scope.key] = latest is not None and latest > _as_utc(scope.since)
 
     return results
 
