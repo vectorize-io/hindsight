@@ -2,15 +2,17 @@
 
 A dead embeddings endpoint used to be discovered only after fact extraction had been
 paid for, on every retry. The engine now keeps an in-memory note of transient embedding
-failures and checks it before extraction: free while healthy, one tiny probe per interval
-while down, and a deferral (not a failure) when the probe fails.
+failures and checks it before extraction: free while healthy, one tiny probe while the
+note is set, and a deferral (not a failure) when the probe fails.
 """
 
+import uuid
 import weakref
 from datetime import UTC, datetime
 
 import pytest
 
+from hindsight_api.models import RequestContext
 from hindsight_api.engine.retain import embedding_utils, fact_extraction
 from hindsight_api.engine.retain.embedding_utils import (
     EmbeddingsUnavailableError,
@@ -40,16 +42,13 @@ class _FakeBackend:
 @pytest.fixture(autouse=True)
 def _fresh_health(monkeypatch):
     # Session-scoped backends are shared across tests: never leak a "down" note.
-    monkeypatch.setattr(embedding_utils, "_down_since", weakref.WeakKeyDictionary())
+    monkeypatch.setattr(embedding_utils, "_down_backends", weakref.WeakSet())
 
 
-def _age_note(backend: object, monkeypatch) -> None:
-    """Make the last failure older than the probe interval, so the next check probes."""
-    monkeypatch.setitem(
-        embedding_utils._down_since,
-        backend,
-        embedding_utils._down_since[backend] - embedding_utils.EMBEDDINGS_PROBE_INTERVAL_SECONDS - 1,
-    )
+async def _fail_once(backend: _FakeBackend) -> None:
+    backend.error = ConnectionRefusedError(111, "Connection refused")
+    with pytest.raises(Exception, match="Failed to generate batch embeddings"):
+        await generate_embeddings_batch(backend, ["hello"])
 
 
 @pytest.mark.asyncio
@@ -60,26 +59,21 @@ async def test_healthy_backend_costs_no_extra_calls():
 
 
 @pytest.mark.asyncio
-async def test_transient_failure_blocks_next_retain_without_calling_backend():
+async def test_after_a_transient_failure_the_next_retain_probes_and_stops_while_down():
     backend = _FakeBackend()
-    backend.error = ConnectionRefusedError(111, "Connection refused")
-    with pytest.raises(Exception, match="Failed to generate batch embeddings"):
-        await generate_embeddings_batch(backend, ["hello"])
+    await _fail_once(backend)
     calls = backend.calls
 
     with pytest.raises(EmbeddingsUnavailableError):
         await ensure_embeddings_reachable(backend)
-    assert backend.calls == calls  # trusted the recent failure, no probe
+    assert backend.calls == calls + 1  # one probe, no trust window
 
 
 @pytest.mark.asyncio
-async def test_probe_after_interval_clears_note_when_backend_is_back(monkeypatch):
+async def test_a_recovered_backend_is_never_blocked():
     backend = _FakeBackend()
-    backend.error = ConnectionRefusedError(111, "Connection refused")
-    with pytest.raises(Exception):
-        await generate_embeddings_batch(backend, ["hello"])
-    backend.error = None
-    _age_note(backend, monkeypatch)
+    await _fail_once(backend)
+    backend.error = None  # back right away: a trust window would wrongly block here
 
     await ensure_embeddings_reachable(backend)  # one probe, succeeds
     calls = backend.calls
@@ -88,17 +82,14 @@ async def test_probe_after_interval_clears_note_when_backend_is_back(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_probe_after_interval_raises_while_still_down(monkeypatch):
+async def test_a_real_success_clears_the_note():
     backend = _FakeBackend()
-    backend.error = ConnectionRefusedError(111, "Connection refused")
-    with pytest.raises(Exception):
-        await generate_embeddings_batch(backend, ["hello"])
-    _age_note(backend, monkeypatch)
+    await _fail_once(backend)
+    backend.error = None
+    await generate_embeddings_batch(backend, ["hello"])  # e.g. a recall
     calls = backend.calls
-
-    with pytest.raises(EmbeddingsUnavailableError):
-        await ensure_embeddings_reachable(backend)
-    assert backend.calls == calls + 1
+    await ensure_embeddings_reachable(backend)
+    assert backend.calls == calls
 
 
 @pytest.mark.asyncio
@@ -115,8 +106,12 @@ async def test_retain_skips_extraction_when_embeddings_down(memory, request_cont
     async def extraction_must_not_run(*_args, **_kwargs):
         raise AssertionError("LLM extraction ran although embeddings are down")
 
+    async def backend_down(_texts: list[str]) -> list[list[float]]:
+        raise ConnectionRefusedError(111, "Connection refused")
+
     monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", extraction_must_not_run)
-    monkeypatch.setitem(embedding_utils._down_since, memory.embeddings, embedding_utils.time.monotonic())
+    monkeypatch.setattr(memory.embeddings, "encode_documents", backend_down)
+    embedding_utils._down_backends.add(memory.embeddings)
 
     with pytest.raises(EmbeddingsUnavailableError):
         await memory.retain_batch_async(
@@ -132,10 +127,11 @@ async def test_worker_defers_retain_instead_of_failing(memory, monkeypatch):
         raise EmbeddingsUnavailableError("embeddings backend is unreachable")
 
     monkeypatch.setattr(memory, "_handle_batch_retain", embeddings_down_retain)
+    # A retain job only runs for a bank that exists: one for a missing bank is skipped (#6344).
+    bank_id = f"test-emb-preflight-defer-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id, request_context=RequestContext(internal=True))
 
     with pytest.raises(DeferOperation) as exc_info:
-        await memory.execute_task(
-            {"type": "batch_retain", "bank_id": "test-emb-preflight-defer", "contents": [{"content": "x"}]}
-        )
+        await memory.execute_task({"type": "batch_retain", "bank_id": bank_id, "contents": [{"content": "x"}]})
     assert not isinstance(exc_info.value, RetryTaskAt)
     assert exc_info.value.exec_date > datetime.now(UTC)

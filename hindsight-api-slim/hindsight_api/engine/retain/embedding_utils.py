@@ -4,7 +4,7 @@ Embedding generation utilities for memory units.
 
 import logging
 import math
-import time
+import threading
 import weakref
 from typing import Literal, Protocol
 
@@ -162,9 +162,9 @@ async def generate_embeddings_batch(
         raise
     except Exception as e:
         if _is_transient_chain(e):
-            _mark_down(embeddings_backend)
+            _set_down(embeddings_backend, True)
         raise Exception(f"Failed to generate batch embeddings: {str(e)}") from e
-    _down_since.pop(embeddings_backend, None)
+    _set_down(embeddings_backend, False)
 
     # Guarantee 1:1 alignment with input texts. A silent length mismatch here
     # propagates downstream as zip() drops items, eventually surfacing as an
@@ -185,14 +185,27 @@ class EmbeddingsUnavailableError(Exception):
     """The embeddings backend is failing right now; raised before a retain spends LLM tokens."""
 
 
-# How long a failed probe is trusted before the next retain probes again.
-EMBEDDINGS_PROBE_INTERVAL_SECONDS = 30.0
+# In-memory health note (issue #5999): the backends whose last real embedding call failed
+# with a transient error. Set and cleared only by the real calls in
+# generate_embeddings_batch, so a healthy backend costs no extra requests. Weak, so a
+# replaced backend drops out on its own. Guarded by a threading lock because the backends
+# are process-wide and reachable from more than one loop; every critical section is
+# await-free.
+_down_backends: "weakref.WeakSet[object]" = weakref.WeakSet()
+_down_lock = threading.Lock()
 
-# In-memory health note per backend (issue #5999). An entry means "a real embedding call
-# failed with a transient error and nothing has succeeded since"; the value is when the
-# backend was last seen failing. Set and cleared by the real calls in
-# generate_embeddings_batch, so a healthy backend costs no extra requests.
-_down_since: "weakref.WeakKeyDictionary[object, float]" = weakref.WeakKeyDictionary()
+
+def _set_down(backend: object, down: bool) -> None:
+    with _down_lock:
+        if down:
+            _down_backends.add(backend)
+        else:
+            _down_backends.discard(backend)
+
+
+def _is_down(backend: object) -> bool:
+    with _down_lock:
+        return backend in _down_backends
 
 
 def _is_transient_chain(exc: BaseException) -> bool:
@@ -211,28 +224,19 @@ def _is_transient_chain(exc: BaseException) -> bool:
     return False
 
 
-def _mark_down(backend: object) -> None:
-    try:
-        _down_since[backend] = time.monotonic()
-    except TypeError:
-        pass  # not weak-referenceable: no health note, behave as before
-
-
 async def ensure_embeddings_reachable(embeddings_backend: EmbeddingsBackend) -> None:
-    """Fail fast when the embeddings backend is known to be down, before any LLM spend.
+    """Fail fast when the embeddings backend is down, before any LLM spend.
 
-    No-op unless a real embedding call recently failed with a transient error. Then one
-    one-word probe decides: success clears the note and the retain proceeds, failure
-    raises EmbeddingsUnavailableError. A failed probe is trusted for
-    EMBEDDINGS_PROBE_INTERVAL_SECONDS, so an outage costs at most one tiny embed per
-    process per interval. A single blip therefore never blocks a retain: it only makes
-    the next one check with a real call.
+    No-op unless the last real embedding call failed with a transient error. Then a
+    one-word probe decides: success clears the note and the retain proceeds, a transient
+    failure raises EmbeddingsUnavailableError. The probe runs on every check while the
+    note is set rather than trusting the earlier failure for a while: a trusted window
+    would keep blocking retains after the backend came back (a false positive), and a
+    failing probe costs nothing to pay for. A single blip therefore never blocks a
+    retain: it only makes the next one check with a real call.
     """
-    last_failure = _down_since.get(embeddings_backend)
-    if last_failure is None:
+    if not _is_down(embeddings_backend):
         return
-    if time.monotonic() - last_failure < EMBEDDINGS_PROBE_INTERVAL_SECONDS:
-        raise EmbeddingsUnavailableError("embeddings backend is unreachable (recent request failed)")
     try:
         await generate_embeddings_batch(embeddings_backend, ["ping"])
     except Exception as e:
@@ -240,4 +244,4 @@ async def ensure_embeddings_reachable(embeddings_backend: EmbeddingsBackend) -> 
             raise EmbeddingsUnavailableError(f"embeddings backend is unreachable: {e}") from e
         # The backend answered, just not well (bad key, dimension mismatch): not an
         # outage. Let the retain run and surface that error the usual way.
-        _down_since.pop(embeddings_backend, None)
+        _set_down(embeddings_backend, False)
