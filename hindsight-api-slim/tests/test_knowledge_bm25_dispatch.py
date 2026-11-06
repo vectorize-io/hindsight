@@ -114,7 +114,7 @@ def test_vchord_ranks_over_bm25vector_search_vector():
     # Negated <&> distance over the bm25vector column and the mental_models index,
     # gated on a positive score — the same operator build_bm25_arm uses.
     assert arm.order_by == (
-        "-(mm.search_vector <&> to_bm25query('idx_mental_models_text_search', tokenize($3, 'llmlingua2'))) DESC"
+        "-(mm.search_vector <&> (SELECT to_bm25query('idx_mental_models_text_search', tokenize($3, 'llmlingua2')))) DESC"
     )
     assert arm.match_filter.endswith(" > 0")
     assert "ts_rank_cd" not in arm.order_by

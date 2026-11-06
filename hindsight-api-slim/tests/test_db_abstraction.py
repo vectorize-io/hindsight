@@ -273,7 +273,8 @@ class TestPostgreSQLDialect:
             text_search_extension="vchord",
         )
         assert (
-            "-(search_vector <&> to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2'))) > 0" in arm
+            "-(search_vector <&> (SELECT to_bm25query('idx_memory_units_text_search', tokenize($4, 'llmlingua2')))) > 0"
+            in arm
         )
 
     def test_build_bm25_arm_vchord_honors_custom_min_score(self, d):
