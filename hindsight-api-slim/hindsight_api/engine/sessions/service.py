@@ -836,6 +836,8 @@ class SessionService:
             for seq, note in sorted(notes.items())
         ]
         logs = [log for log in logs if log is not None]
+        if cfg.get("session_learn_rules"):
+            logs += await self._retire_rejected_rules(bank_id, notes, rc)
         if not logs:
             return
         async with acquire_with_retry(backend) as conn:
@@ -847,6 +849,51 @@ class SessionService:
                 ):
                     for log in logs:
                         await self._log(conn, bank_id, session_id, "learn", log.model_dump(exclude_none=True))
+
+    async def _retire_rejected_rules(
+        self, bank_id: str, notes: dict[int, NoteLog], rc: RequestContext
+    ) -> list[L.LearnLog]:
+        """Retire each learned rule a rejected note was built from, once agents rejected its notes
+        RETIRE_AFTER times and used none (see learn.RETIRE_AFTER)."""
+        logs: list[L.LearnLog] = []
+        for seq, note in sorted(notes.items()):
+            if note.feedback is None or note.feedback.verdict == "used":
+                continue
+            for rule_id in [i for i in note.memory_ids if i.startswith(L.RULE_ID_PREFIX)]:
+                backend = await self._engine._get_backend()
+                async with acquire_with_retry(backend) as conn:
+                    verdicts = [
+                        r["verdict"]
+                        for r in await conn.fetch(
+                            f"""
+                            SELECT payload->'feedback'->>'verdict' AS verdict FROM {fq_table("session_events")}
+                            WHERE bank_id = $1 AND kind = 'note' AND payload->'memory_ids' ? $2
+                              AND payload ? 'feedback'
+                            """,
+                            bank_id,
+                            rule_id,
+                        )
+                    ]
+                if "used" in verdicts or len(verdicts) < L.RETIRE_AFTER:
+                    continue
+                rule = await self._engine.get_mental_model(bank_id, rule_id, request_context=rc)
+                tags = list((rule or {}).get("tags") or [])
+                if rule is None or L.RETIRED_TAG in tags:
+                    continue
+                await self._engine.update_mental_model(
+                    bank_id, rule_id, tags=[*tags, L.RETIRED_TAG], request_context=rc
+                )
+                logger.info(f"session learn: {bank_id} retired {rule_id} after {len(verdicts)} rejected notes")
+                logs.append(
+                    L.LearnLog(
+                        note_seq=seq,
+                        outcome="retired",
+                        mental_model_id=rule_id,
+                        name=str(rule.get("name") or ""),
+                        reason=f"{len(verdicts)} notes from it rejected, none used",
+                    )
+                )
+        return logs
 
     async def _learn_one(
         self, bank_id: str, seq: int, note: NoteLog, goal: str, request_file: str, rc: RequestContext
@@ -1074,7 +1121,11 @@ class SessionService:
             models = (
                 await self._engine.list_mental_models(bank_id, detail="metadata", limit=None, request_context=rc)
             ).items
-            other_models = [str(x["id"]) for x in models if not str(x["id"]).startswith(L.RULE_ID_PREFIX)]
+            other_models = [
+                str(x["id"])
+                for x in models
+                if not str(x["id"]).startswith(L.RULE_ID_PREFIX) or L.RETIRED_TAG in (x.get("tags") or [])
+            ]
             has_rules = len(other_models) < len(models)
             result = await asyncio.wait_for(
                 self._engine.reflect_async(

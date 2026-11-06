@@ -1078,6 +1078,57 @@ async def test_a_bank_without_rules_keeps_mental_models_out_of_checks(memory, re
     assert calls and calls[0]["exclude_mental_models"] is True
 
 
+async def test_a_rule_whose_notes_are_rejected_twice_is_retired_not_deleted(memory, request_context, monkeypatch):
+    """Live, a rule learned from one run's free port came back to every test run and was rejected each time."""
+    from hindsight_api.engine.sessions.learn import RETIRED_TAG
+
+    bank = _bank()
+    await memory.ensure_bank_profile(bank, request_context=request_context)
+    await memory.create_mental_model(
+        bank,
+        "Tests: port 5617",
+        "Which port?",
+        "Tests must use port 5617.",
+        mental_model_id="rule-port",
+        request_context=request_context,
+    )
+    _learning_on(memory, monkeypatch)
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: _LearnStub(0.05))
+    s = memory.sessions
+    # Two different requests: a rerun of the same request inherits what the first run set aside.
+    for session, request in (
+        ("s1", "Run the database tests in conftest.py"),
+        ("s2", "Fix the flaky queue test in conftest.py"),
+    ):
+        monkeypatch.setattr(
+            memory,
+            "reflect_async",
+            _reflect_stub([("Before you change conftest.py: use port 5617.", ["rule-port"])], []),
+        )
+        ask = {"id": "u", "role": "user", "text": request}
+        await s.append(bank, session, _req(ask, live=True, retain="off"), request_context=request_context)
+        log = (await s.events(bank, session, request_context=request_context)).items
+        notes = [e for e in log if e.kind == "note"]
+        assert len(notes) == 1, (session, [(e.kind, e.payload) for e in log])
+        (note,) = notes
+        reply = f"> 🧠 Hindsight thought #{note.payload['number']} — use 5617; no change: I used my own free port."
+        await s.append(
+            bank, session, _req({"id": "a", "role": "assistant", "text": reply}), request_context=request_context
+        )
+    learned = [
+        e.payload for e in (await s.events(bank, "s2", request_context=request_context)).items if e.kind == "learn"
+    ]
+    assert [x["outcome"] for x in learned if x["outcome"] == "retired"] == ["retired"]
+    rule = await memory.get_mental_model(bank, "rule-port", request_context=request_context)
+    assert rule is not None and RETIRED_TAG in rule["tags"], "tagged, not deleted"
+    # The next check reads no rule: the bank's only rule is retired.
+    calls: list[dict] = []
+    monkeypatch.setattr(memory, "reflect_async", _reflect_stub([], calls))
+    ask = {"id": "u", "role": "user", "text": "Run the database tests in conftest.py again"}
+    await s.append(bank, "s3", _req(ask, live=True, retain="off"), request_context=request_context)
+    assert calls and calls[0]["exclude_mental_models"] is True
+
+
 async def test_a_rule_the_jobs_own_file_states_is_not_learned(memory, request_context, monkeypatch):
     """A scheduled job reads its JOB.md every run: a rule restating it would come back to every run."""
     from hindsight_api.engine.response_models import LLMCallResult
