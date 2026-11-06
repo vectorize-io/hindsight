@@ -991,7 +991,7 @@ class _FactBatchResponse(BaseModel):
         code compares the times, gemma-4 got them wrong both ways. ``marked``: the prompt told the
         model so (``(stated after this fact)`` or ``newer_than_input_facts``). A marked change adds
         the fact to the observation as its earlier state, in brackets after the current text, most
-        recent first, and the fact creates nothing — its ``new`` would restate that earlier state as
+        recent first and at most :data:`_MAX_EARLIER_STATES` of them, and the fact creates nothing — its ``new`` would restate that earlier state as
         current. The code writes that note, not the model: asked for it, gemini-3.1-flash-lite
         wrote an older rule as the removal of the newer one ("until it was removed"), or repeated
         the whole observation. An unmarked change was written as if the fact were newer: the
