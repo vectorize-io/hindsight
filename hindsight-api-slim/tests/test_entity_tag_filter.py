@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 import pytest
 
 from hindsight_api import RequestContext
+from hindsight_api.engine.memories.pg import curation
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.search.tags import TagGroupLeaf, TagGroupNot, build_tag_filter_clause, tag_filter_active
 
@@ -183,7 +184,7 @@ async def test_graph_is_rebuilt_from_the_matching_memories(
 
 @pytest.mark.asyncio
 async def test_observations_lend_their_sources_entities_under_a_filter(
-    memory: MemoryEngine, request_context: RequestContext
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch: pytest.MonkeyPatch
 ):
     """An observation has no `unit_entities` rows of its own; it mentions what its sources
     mention. When only the observation matches the filter, its entities must still show up
@@ -215,8 +216,18 @@ async def test_observations_lend_their_sources_entities_under_a_filter(
     assert _counts(listing) == {"Carol": 1, "Dave": 1}
     assert listing["items"][0]["last_seen"] == MAR.isoformat()
 
-    detail = await memory.get_entity(bank_id, str(carol), **both)
-    assert detail is not None and detail["mention_count"] == 1
+    # A name search and the detail read narrow to their entities while those have few
+    # postings, and read every visible mention past the cap (#6330). Both paths reach
+    # Carol through the observation, once although both its sources name her.
+    for few_postings in (curation.FEW_POSTINGS, 0):
+        monkeypatch.setattr(curation, "FEW_POSTINGS", few_postings)
+        searched = await memory.list_entities(bank_id, search="car", **both)
+        assert _counts(searched) == {"Carol": 1}
+        assert searched["total"] == 1
+        assert searched["items"][0]["last_seen"] == MAR.isoformat()
+
+        detail = await memory.get_entity(bank_id, str(carol), **both)
+        assert detail is not None and detail["mention_count"] == 1
 
     graph = await memory.get_entity_graph(bank_id, **both)
     assert {n["data"]["label"] for n in graph["nodes"]} == {"Carol", "Dave"}

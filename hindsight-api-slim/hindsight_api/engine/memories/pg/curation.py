@@ -538,7 +538,12 @@ def _entity_list_item(row: Any) -> dict[str, Any]:
     }
 
 
-def visible_entity_mentions_sql(fq_table, ops, tag_clause_sql: str) -> str:
+# How many postings the wanted entities may have before a scoped entity read stops
+# narrowing to them. See visible_entity_mentions_sql.
+FEW_POSTINGS = 5000
+
+
+def visible_entity_mentions_sql(fq_table, ops, tag_clause_sql: str, few_entities_sql: str | None = None) -> str:
     """``SELECT unit_id, entity_id, seen_at`` — one row per entity a tag-matching memory mentions.
 
     The one rowset every tag-filtered entity read aggregates (list, detail, graph), so they
@@ -555,6 +560,15 @@ def visible_entity_mentions_sql(fq_table, ops, tag_clause_sql: str) -> str:
     clause built WITHOUT a table alias: the Oracle rewriter turns ``tags && :n`` into
     a ``JSON_TABLE`` probe by matching a bare column name, so ``mu.tags`` would come
     out as ``mu.EXISTS(...)``. That is why the filter runs on an unaliased subquery.
+
+    ``few_entities_sql`` (a subquery or parameter yielding entity ids) is a speed hint
+    for a read that wants only those entities, a name search or a detail view (#6330).
+    When they have at most ``FEW_POSTINGS`` postings, only their mentions are read,
+    found from those postings rather than from every visible memory. Past that, the
+    rowset is the unnarrowed one: a broad search (20k matching entities on 300k
+    memories) ran for minutes when walked from its postings, against under a second
+    for reading everything. Either way the caller keeps its own filter on the
+    entities it wants.
     """
     ue = fq_table("unit_entities")
     sources = "" if ops.uses_observation_sources_table else ", source_memory_ids"
@@ -564,42 +578,78 @@ def visible_entity_mentions_sql(fq_table, ops, tag_clause_sql: str) -> str:
             WHERE bank_id = $1 {tag_clause_sql}
         )"""
     if ops.uses_observation_sources_table:
-        inherited_from = (
+        sources_join = (
+            f"FROM {visible} vu "
             f"JOIN {fq_table('observation_sources')} os ON os.observation_id = vu.id "
             f"JOIN {ue} src_ue ON src_ue.unit_id = os.source_id"
         )
     else:
-        inherited_from = (
+        sources_join = (
+            f"FROM {visible} vu "
             f"CROSS JOIN LATERAL unnest(vu.source_memory_ids) AS src_id JOIN {ue} src_ue ON src_ue.unit_id = src_id"
         )
-    return f"""
+
+    def mentions_sql(gate: str = "1 = 1", narrow: bool = False) -> str:
+        def only(col: str) -> str:
+            return f"AND {col} IN ({few_entities_sql})" if narrow else ""
+
+        cites = ""
+        if narrow and not ops.uses_observation_sources_table:
+            # PG can only reach the observations citing a posting by unnesting every
+            # visible one, unless it asks the GIN index on source_memory_ids: one `&&`
+            # probe with all the postings gathered up front. (A join probing once per
+            # posting was costed blind by the planner, which scanned every observation.)
+            # Oracle's junction is an equi-join the planner already starts from postings.
+            cites = (
+                f"AND vu.source_memory_ids && ARRAY(SELECT unit_id FROM {ue} WHERE entity_id IN ({few_entities_sql}))"
+            )
+        return f"""
         SELECT ue.unit_id, ue.entity_id, vu.seen_at
         FROM {ue} ue
         JOIN {visible} vu ON vu.id = ue.unit_id
+        WHERE {gate} {only("ue.entity_id")}
         UNION
         SELECT vu.id AS unit_id, src_ue.entity_id, vu.seen_at
-        FROM {visible} vu
-        {inherited_from}
-        WHERE vu.fact_type = 'observation'
+        {sources_join}
+        WHERE {gate}
+          AND vu.fact_type = 'observation'
           AND NOT EXISTS (SELECT 1 FROM {ue} d WHERE d.unit_id = vu.id)
+          {only("src_ue.entity_id")}
+          {cites}
+        """
+
+    if not few_entities_sql:
+        return mentions_sql()
+    # The gate is uncorrelated, so PG and Oracle evaluate it once and skip the branch
+    # it disables; exactly one of the two produces rows.
+    # ponytail: fixed cap measured on 300k memories (#6330); move to a planner-visible
+    # choice if a junction table ever replaces source_memory_ids on PG.
+    few = f"""(SELECT COUNT(*) FROM (
+            SELECT 1 FROM {ue} WHERE entity_id IN ({few_entities_sql}) FETCH FIRST {FEW_POSTINGS + 1} ROWS ONLY
+        ) capped) <= {FEW_POSTINGS}"""
+    return f"""
+        SELECT * FROM ({mentions_sql(few, narrow=True)}) narrowed
+        UNION ALL
+        SELECT * FROM ({mentions_sql(f"NOT ({few})")}) everything
     """
 
 
-def visible_entity_stats_sql(fq_table, ops, tag_clause_sql: str) -> str:
+def visible_entity_stats_sql(fq_table, ops, tag_clause_sql: str, few_entities_sql: str | None = None) -> str:
     """``SELECT entity_id, mention_count, first_seen, last_seen`` over the memories a tag filter lets through.
 
     The stored ``entities.mention_count`` / ``first_seen`` / ``last_seen`` count every
     memory in the bank, so a tag-filtered read that returned them would tell the
     reader how much out-of-scope memories mention an entity (#5031). These are
     recomputed from :func:`visible_entity_mentions_sql` instead. An entity with no
-    visible mention has no row, which is what hides it.
+    visible mention has no row, which is what hides it. ``few_entities_sql`` is the
+    speed hint described on :func:`visible_entity_mentions_sql`.
     """
     return f"""
         SELECT vm.entity_id,
                COUNT(*) AS mention_count,
                MIN(vm.seen_at) AS first_seen,
                MAX(vm.seen_at) AS last_seen
-        FROM ({visible_entity_mentions_sql(fq_table, ops, tag_clause_sql)}) vm
+        FROM ({visible_entity_mentions_sql(fq_table, ops, tag_clause_sql, few_entities_sql)}) vm
         GROUP BY vm.entity_id
     """
 
@@ -621,19 +671,22 @@ async def _list_entities_tag_filtered(
     Counts, dates and the ordering all come from the matching memories, never from
     the stored totals. This is a GROUP BY over the bank's postings rather than a
     read of the materialised counters, so it costs more — the unfiltered list keeps
-    the fast path.
+    the fast path. A name search counts only the entities it matches.
     """
     built = build_tag_filter_clause(tags, tags_match, tag_groups, param_offset=2)
     params: list[Any] = [bank_id, *built.params]
     search_clause = ""
+    matching_ids_sql = None
     if search:
         params.append(f"%{search}%")
         search_clause = f"AND canonical_name ILIKE ${len(params)}"
+        # Count only the entities the name matches, not every entity in scope.
+        matching_ids_sql = f"SELECT id FROM {fq_table('entities')} WHERE bank_id = $1 {search_clause}"
     # The stats are aggregated first and joined after, rather than grouping the
     # entities row directly: Oracle cannot GROUP BY the `metadata` JSON column.
     from_sql = f"""
         FROM {fq_table("entities")} e
-        JOIN ({visible_entity_stats_sql(fq_table, _ops_for(conn), built.sql)}) s ON s.entity_id = e.id
+        JOIN ({visible_entity_stats_sql(fq_table, _ops_for(conn), built.sql, matching_ids_sql)}) s ON s.entity_id = e.id
         WHERE e.bank_id = $1 {search_clause}
     """
 
