@@ -118,6 +118,25 @@ async def test_raise_for_status_keeps_body_and_is_classified():
     await holder.close()
 
 
+@pytest.mark.asyncio
+async def test_requests_identify_as_hindsight_unless_the_caller_says_otherwise():
+    seen: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        seen.append(request.headers["User-Agent"])
+        return web.Response(text="ok")
+
+    default = LoopLocalSession(timeout=per_phase_timeout(5.0), headers={"Authorization": "Bearer k"})
+    custom = LoopLocalSession(timeout=per_phase_timeout(5.0), headers={"user-agent": "mine/1"})
+    async with stub_server(handler) as base_url:
+        for holder in (default, custom):
+            async with holder.get().get(f"{base_url}/x") as response:
+                await raise_for_status(response)
+    assert seen == [f"hindsight/{hindsight_api.__version__}", "mine/1"]
+    await default.close()
+    await custom.close()
+
+
 def test_aiohttp_connection_errors_are_transient():
     assert is_transient_remote_error(aiohttp.ClientConnectionError("reset"))
     assert is_transient_remote_error(aiohttp.ServerTimeoutError("read timed out"))
