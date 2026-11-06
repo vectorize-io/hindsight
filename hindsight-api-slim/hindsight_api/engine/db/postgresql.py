@@ -7,6 +7,7 @@ avoiding Python-level wrapping overhead (~570K __getitem__ calls per
 20-query benchmark → measurable regression when wrapped).
 """
 
+import importlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -220,6 +221,40 @@ class _NoResetConnection(asyncpg.Connection):
         return ""
 
 
+ConnectFn = Callable[..., Awaitable[asyncpg.Connection]]
+
+
+def resolve_connect_hook() -> ConnectFn | None:
+    """The HINDSIGHT_API_DATABASE_CONNECT_HOOK callable, or None when unset.
+
+    asyncpg reuses the pool's DSN for every new physical connection, so a
+    rotated or short-lived password breaks pool growth and reconnects. The hook
+    (``module.path:function``, same signature as ``asyncpg.connect``) runs on
+    every new connection instead, and can fetch the current credential (#6163).
+    """
+    from ...config import ENV_DATABASE_CONNECT_HOOK, get_config
+
+    path = get_config().database_connect_hook
+    if not path:
+        return None
+    module_path, sep, attr = path.rpartition(":")
+    if not sep or not module_path or not attr:
+        raise ValueError(f"{ENV_DATABASE_CONNECT_HOOK}='{path}' must be 'module.path:function'")
+    try:
+        hook = getattr(importlib.import_module(module_path), attr)
+    except (ImportError, AttributeError) as e:
+        raise ValueError(f"{ENV_DATABASE_CONNECT_HOOK}='{path}' could not be loaded: {e}") from e
+    if not callable(hook):
+        raise ValueError(f"{ENV_DATABASE_CONNECT_HOOK}='{path}' is not callable")
+    return cast(ConnectFn, hook)
+
+
+async def connect_direct(dsn: str, **kwargs: Any) -> asyncpg.Connection:
+    """Open a standalone connection, through the connect hook when one is set."""
+    hook = resolve_connect_hook()
+    return await (hook or asyncpg.connect)(dsn, **kwargs)
+
+
 class PostgreSQLBackend(DatabaseBackend):
     """DatabaseBackend implementation wrapping an asyncpg connection pool."""
 
@@ -314,6 +349,7 @@ class PostgreSQLBackend(DatabaseBackend):
             init=pool_init,
             setup=pool_setup,
             connection_class=_NoResetConnection,
+            connect=resolve_connect_hook(),
         )
         logger.info(
             f"PostgreSQL pool created (min={min_size}, max={max_size}, "
