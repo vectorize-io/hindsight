@@ -2428,6 +2428,36 @@ def _with_request_concurrency(backend: Embeddings, config: "ConfigLike") -> Embe
     return backend
 
 
+#: Session setting every server connection carries, naming the embedding model it writes with.
+#: Read only by the write guard ``hindsight-admin reembed`` installs, which refuses vector writes
+#: from a connection on any other model; without that guard nothing reads it.
+EMBEDDING_MODEL_SETTING = "hindsight.embedding_model"
+
+#: SQLSTATE that guard raises. The message also carries "writes are shed", which the worker
+#: already treats as "defer and retry later" (worker/backpressure.py).
+REEMBED_GUARD_SQLSTATE = "HS503"
+
+
+def is_embedding_model_mismatch(exc: BaseException) -> bool:
+    """Did Postgres refuse ``exc``'s statement because this server runs a different embedding model?
+
+    Either the re-embed write guard, or pgvector rejecting a vector of the old dimension after the
+    swap (that check fires before any trigger). Both last only until the server restarts on the
+    new model, so callers answer "retry later" instead of failing. A server on the wrong model
+    outside a re-embed does not get here: startup refuses a dimension mismatch.
+    """
+    if getattr(exc, "sqlstate", None) == REEMBED_GUARD_SQLSTATE:
+        return True
+    text = str(exc)
+    return "different vector dimensions" in text or (" dimensions, not " in text and "expected " in text)
+
+
+def embedding_model_id(embeddings: Embeddings) -> str:
+    """A stable name for the model ``embeddings`` writes with: provider, model and dimension."""
+    model = getattr(embeddings, "model_name", None) or getattr(embeddings, "model", None) or ""
+    return f"{embeddings.provider_name}:{model}:{embeddings.dimension}"
+
+
 def create_embeddings_from_env() -> Embeddings:
     """
     Create an Embeddings instance based on configuration.

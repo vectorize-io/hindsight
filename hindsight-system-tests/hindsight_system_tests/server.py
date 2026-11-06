@@ -225,6 +225,32 @@ def start_hindsight_worker(
     return _start(command, env=env, url=f"http://127.0.0.1:{port}", log_path=log_path)
 
 
+def run_hindsight_admin(
+    args: list[str], *, stub_url: str, log_path: Path, extra_env: dict[str, str] | None = None
+) -> str:
+    """Run one ``hindsight-admin`` command to completion, as an operator would; return its output.
+
+    Same environment and scratch directory as a server, so it reaches the same database and
+    providers. Raises with the output when the command fails.
+    """
+    run_dir = log_path.parent / "run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / ".env").write_text("# intentionally empty: see start_hindsight_server\n")
+    result = subprocess.run(
+        ["uv", "run", "--project", str(API_DIR), "hindsight-admin", *args],
+        cwd=run_dir,
+        env=_server_env(stub_url, extra_env),
+        capture_output=True,
+        text=True,
+        timeout=SERVER_STARTUP_TIMEOUT,
+    )
+    output = result.stdout + result.stderr
+    log_path.write_text(output)
+    if result.returncode != 0:
+        raise RuntimeError(f"hindsight-admin {' '.join(args)} exited {result.returncode}:\n{output}")
+    return output
+
+
 def _server_env(stub_url: str, extra_env: dict[str, str] | None) -> dict[str, str]:
     env = os.environ.copy()
     # The repo .env is for the developer's own server; a system test must depend

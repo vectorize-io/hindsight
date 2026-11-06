@@ -223,19 +223,17 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
         raw_input = body["input"]
         inputs = [raw_input] if isinstance(raw_input, str) else raw_input
 
+        # Any width a deployment asks for: the re-embed story moves a schema to a second one.
         dimensions = body.get("dimensions", EMBEDDING_DIMENSION)
-        if dimensions != EMBEDDING_DIMENSION:
-            raise RequestRejected(
-                f"stub embeddings only serve {EMBEDDING_DIMENSION}-dim vectors (the width of the "
-                f"server's vector columns); asked for {dimensions}"
-            )
+        if not isinstance(dimensions, int) or dimensions < 1:
+            raise RequestRejected(f"'dimensions' must be a positive integer; got {dimensions!r}")
 
         return JSONResponse(
             {
                 "object": "list",
                 "model": body["model"],
                 "data": [
-                    {"object": "embedding", "index": index, "embedding": stubs.embeddings.embed(text)}
+                    {"object": "embedding", "index": index, "embedding": stubs.embeddings.embed(text, dimensions)}
                     for index, text in enumerate(inputs)
                 ],
                 "usage": {"prompt_tokens": sum(len(text.split()) for text in inputs), "total_tokens": 0},

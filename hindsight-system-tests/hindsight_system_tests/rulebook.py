@@ -467,10 +467,10 @@ class EmbeddingStub:
     #: stories about what the server leaves behind when its embeddings backend is down.
     fail_with_status: int | None = None
 
-    def embed(self, text: str) -> list[float]:
+    def embed(self, text: str, dimension: int) -> list[float]:
         from .lexical import lexical_embedding
 
-        return lexical_embedding(text)
+        return lexical_embedding(text, dimension)
 
 
 class RerankStub:

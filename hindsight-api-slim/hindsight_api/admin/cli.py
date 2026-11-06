@@ -36,6 +36,7 @@ from ..engine.vector_index_health import (
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 from ..schema_context import _current_schema
+from .reembed import SchemaReembed, finish_schema, reembed_schema
 
 # Setup logging
 logging.basicConfig(
@@ -1715,6 +1716,105 @@ def worker_status(
                 f"  running={running_for}  last_update={last_update} ago"
             )
         typer.echo("")
+
+
+async def _run_reembed(
+    db_url: str, schemas: list[str], *, finish: bool, batch_size: int, concurrency: int, sleep_s: float
+) -> list[SchemaReembed]:
+    from ..engine.embeddings import create_embeddings_from_env, embedding_model_id
+
+    resolved_url = await resolve_database_url(db_url)
+    embeddings = None
+    if not finish:
+        embeddings = create_embeddings_from_env()
+        await embeddings.initialize()
+        typer.echo(f"New embedding model: {embedding_model_id(embeddings)}")
+    conn = await _admin_connect(db_url)
+    results: list[SchemaReembed] = []
+    try:
+        for target_schema in schemas:
+            if finish:
+                results.append(await finish_schema(conn, target_schema))
+            else:
+                assert embeddings is not None
+                typer.echo(f"Re-embedding schema '{target_schema}'...")
+                results.append(
+                    await reembed_schema(
+                        conn,
+                        resolved_url,
+                        target_schema,
+                        embeddings,
+                        batch_size=batch_size,
+                        concurrency=concurrency,
+                        sleep_s=sleep_s,
+                    )
+                )
+    finally:
+        await conn.close()
+    return results
+
+
+@app.command(name="reembed")
+def reembed(
+    schema: str | None = typer.Option(
+        None, "--schema", "-s", help="Schema to re-embed. Mutually exclusive with --all-schemas."
+    ),
+    all_schemas: bool = typer.Option(
+        False, "--all-schemas", help="Re-embed the base schema and every discovered tenant schema, one at a time."
+    ),
+    finish: bool = typer.Option(
+        False, "--finish", help="Remove the write guard, once every server runs the new embedding model."
+    ),
+    batch_size: int = typer.Option(256, "--batch-size", help="Rows embedded and written per transaction."),
+    concurrency: int = typer.Option(
+        4,
+        "--concurrency",
+        min=1,
+        help="Batches sent to the embedding model at once. Postgres still sees one connection.",
+    ),
+    sleep_s: float = typer.Option(0.0, "--sleep", help="Seconds to pause between batches, to go easy on Postgres."),
+):
+    """Re-embed every stored vector with the embedding model configured in the environment.
+
+    Run it with the NEW model's HINDSIGHT_API_EMBEDDINGS_* settings; servers keep running on the
+    old one. Recall keeps working on the old vectors (without their index) while the new ones are
+    written to a side column in small batches; then a short write lock swaps the columns. From
+    then on Postgres refuses vector writes from servers still on the old model (workers retry
+    them later, HTTP answers 503): restart every server with the new model, then run
+    `reembed --finish`. Until a server restarts its recall embeds queries with the old model.
+
+    PostgreSQL only. Resumable: re-run after an interruption and it continues.
+    """
+    if bool(schema) == all_schemas:
+        typer.echo("Error: pass exactly one of --schema <name> or --all-schemas.", err=True)
+        raise typer.Exit(2)
+    config = HindsightConfig.from_env()
+    if not config.database_url:
+        typer.echo("Error: Database URL not configured.", err=True)
+        raise typer.Exit(1)
+    if is_oracle_url(config.database_url):
+        typer.echo("Error: reembed is PostgreSQL-only.", err=True)
+        raise typer.Exit(1)
+    if get_memories().store_owned:
+        typer.echo("Error: a custom memories store owns the vectors; it must re-embed them itself.", err=True)
+        raise typer.Exit(1)
+
+    schemas = [schema] if schema else asyncio.run(_resolve_schemas(config.database_schema))
+    results = asyncio.run(
+        _run_reembed(
+            config.database_url,
+            schemas,
+            finish=finish,
+            batch_size=batch_size,
+            concurrency=concurrency,
+            sleep_s=sleep_s,
+        )
+    )
+    for r in results:
+        rows = f", {r.rows_embedded} rows embedded" if r.rows_embedded else ""
+        typer.echo(f"  {r.schema}: {r.status}{rows}")
+    if not finish:
+        typer.echo("Next: restart every server with the new model, then run `hindsight-admin reembed --finish`.")
 
 
 @app.command(

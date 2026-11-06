@@ -195,6 +195,7 @@ from hindsight_api.engine.bank_templates import (
     apply_bank_template_manifest,
     validate_bank_template,
 )
+from hindsight_api.engine.embeddings import is_embedding_model_mismatch
 from hindsight_api.engine.memories.base import StoreWriteUnavailable
 from hindsight_api.engine.memory_engine import (
     KEEP_PARENT,
@@ -381,6 +382,9 @@ def _store_unavailable(exc: BaseException) -> HTTPException | None:
                 detail=str(cur),
                 headers={"Retry-After": str(cur.retry_after)},
             )
+        # This server is still on the embedding model a `hindsight-admin reembed` just replaced.
+        if is_embedding_model_mismatch(cur):
+            return HTTPException(status_code=503, detail=str(cur), headers={"Retry-After": "30"})
     return None
 
 

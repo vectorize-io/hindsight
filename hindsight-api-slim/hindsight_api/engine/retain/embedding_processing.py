@@ -5,11 +5,17 @@ Handles augmenting fact texts with temporal information and generating embedding
 """
 
 import logging
+from datetime import datetime
 
 from . import embedding_utils
 from .types import ExtractedFact
 
 logger = logging.getLogger(__name__)
+
+
+def format_readable_date(dt: datetime) -> str:
+    """The "Month Year" form a fact's date takes in its embedded text (e.g. "June 2024")."""
+    return dt.strftime("%B %Y")
 
 
 def augment_texts_with_dates(facts: list[ExtractedFact], format_date_fn) -> list[str]:
@@ -41,7 +47,10 @@ def augment_texts_with_dates(facts: list[ExtractedFact], format_date_fn) -> list
         else:
             augmented_text = fact.fact_text
         if fact.entities:
-            augmented_text = f"{augmented_text} [{', '.join(fact.entities)}]"
+            # Deduplicated and sorted, so every path that embeds a fact (retain, edit, revert,
+            # import, admin reembed) builds the same text from the same names, whatever order
+            # it read them in.
+            augmented_text = f"{augmented_text} [{', '.join(sorted(set(fact.entities)))}]"
         augmented_texts.append(augmented_text)
     return augmented_texts
 

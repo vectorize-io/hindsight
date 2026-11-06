@@ -414,6 +414,19 @@ def test_augment_texts_with_entities():
     assert "User attended workshop" in augmented[0]
 
 
+def test_augment_texts_entities_are_order_independent():
+    """Every embed path reads entity names in its own order; the embedded text must not care."""
+    from hindsight_api.engine.retain.embedding_processing import augment_texts_with_dates
+    from hindsight_api.engine.retain.types import ExtractedFact
+
+    def facts(names):
+        return [ExtractedFact(fact_text="Bob met Alice", fact_type="world", entities=names)]
+
+    a = augment_texts_with_dates(facts(["Bob", "Alice", "Bob"]), str)
+    b = augment_texts_with_dates(facts(["Alice", "Bob"]), str)
+    assert a == b == ["Bob met Alice [Alice, Bob]"]
+
+
 # ─── _inject_label_tags ───────────────────────────────────────────────────────
 
 
@@ -2106,9 +2119,9 @@ async def test_entity_resolution_does_not_merge_distinct_label_values(memory, re
     With the 0.6 merge threshold and temporal/co-occurrence boosts, the resolver
     might incorrectly merge them into a single entity.
     """
-    from hindsight_api.engine.schema import fq_store_table
     from hindsight_api.engine.retain.entity_processing import resolve_entities
     from hindsight_api.engine.retain.types import EntityRef, ProcessedFact
+    from hindsight_api.engine.schema import fq_store_table
 
     bank_id = f"test-1558-resolve-{uuid.uuid4().hex[:8]}"
     try:
