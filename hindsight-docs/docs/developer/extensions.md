@@ -460,6 +460,8 @@ the item's tags. Text can't be changed.
   names the document. A large document is extracted in batches, so one retain
   can call the hook several times. When a document is retained again, the
   memories of its unchanged chunks are kept without passing through the hook.
+  The extraction dry run calls no validator hook, so its preview still lists
+  the memories this hook would drop.
 - `filter_consolidation_actions(ctx: ConsolidationActionsContext)` runs after a
   consolidation batch decides its observation writes and before they are
   applied. Each `ReviewedConsolidationAction` is a `create` or an `update` (of
