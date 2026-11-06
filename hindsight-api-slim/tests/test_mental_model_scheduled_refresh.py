@@ -555,6 +555,30 @@ async def test_the_failure_is_visible_on_the_model_and_cleared_by_a_success(memo
     assert await memory._automatic_refresh_paused(bank, mm_id) is False
 
 
+@pytest.mark.asyncio
+async def test_bank_stats_count_paused_models_until_a_success(memory: MemoryEngine, request_context):
+    """An operator never opens the page, so the paused count on /stats is how a
+    model that stopped refreshing itself gets noticed (#6077)."""
+    bank = await _make_bank(memory, request_context)
+    async with memory._pool.acquire() as conn:
+        mm_id = await _insert_mm(conn, bank, refresh_cron=None, last_refreshed_offset="1 day")
+        await _insert_mm(conn, bank, refresh_cron=None, last_refreshed_offset="1 day")
+
+    async def paused() -> int:
+        stats = await memory.get_bank_stats(bank, request_context=request_context, force_refresh=True)
+        return stats["paused_mental_models"]
+
+    assert await paused() == 0
+    await memory._record_mental_model_refresh_failure(
+        bank, mm_id, outcome="refresh_failed_error", failure_reason="unexpected_error", error_message="boom"
+    )
+    assert await paused() == 1
+    assert await memory._automatic_refresh_paused(bank, mm_id) is True
+
+    await memory.update_mental_model(bank, mm_id, content="a fresh answer", request_context=request_context)
+    assert await paused() == 0
+
+
 # ── scheduled full refresh (trigger.full_refresh_cron, #4340) ────────────────
 
 

@@ -221,6 +221,8 @@ When `refresh_cron` is set, Hindsight checks the schedule on the server's mental
 
 **A failed refresh pauses the automatic ones.** A failed refresh is retried by the worker (`HINDSIGHT_API_WORKER_MAX_RETRIES`, 3 by default) and then stops. None of `refresh_after_consolidation`, `refresh_cron` or `full_refresh_cron` queues that model again until a refresh succeeds, so a refresh that cannot work (a prompt too large for the model, an empty account, a delta that will not apply) costs a few attempts instead of an LLM bill every tick. The failure shows in the model's [history](#history). Fix the cause and refresh the model yourself: a successful refresh resumes the automatic ones. A refresh cut off by `HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, which bounds a whole refresh the same way it bounds a reflect, counts as a failure too.
 
+To catch a paused model without opening it, watch `paused_mental_models` on bank stats (`GET /v1/default/banks/{bank_id}/stats`): it counts the models in the bank that are paused right now, so an alert on it being above 0 tells you a page has stopped updating.
+
 ### Rate-limiting automatic refreshes
 
 A refresh is a full reflect run: retrieval plus an agentic LLM loop. With

@@ -279,6 +279,13 @@ def _knowledge_snippet(content: str | None) -> str:
 # absent means version — no backfill needed.
 _MM_HISTORY_KIND_FAILURE = "refresh_failed"
 
+# A mental model whose last refresh failed after its last success: the automatic
+# triggers skip it (#4532). One predicate, shared by the scheduler's check and the
+# bank stats count, so the two can never disagree about what "paused" means.
+_MM_REFRESH_PAUSED_SQL = (
+    "last_refresh_failed_at IS NOT NULL AND (last_refreshed_at IS NULL OR last_refresh_failed_at > last_refreshed_at)"
+)
+
 #: Marks a queued ``refresh_mental_model`` operation as *automatically* triggered — by
 #: consolidation or by the cron scan — and therefore subject to the minimum-interval
 #: floor. Explicit refreshes omit it and always run at once.
@@ -17063,6 +17070,13 @@ class MemoryEngine(MemoryEngineInterface):
             # candidate predicate, so a permanently failed fact is counted only as failed.
             consolidation_row = await store.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
 
+            # Models the automatic triggers are skipping until someone refreshes them by
+            # hand — a page that silently stops updating, so an operator's probe must see it.
+            paused_mental_models = await conn.fetchval(
+                f"SELECT COUNT(*) FROM {fq_table('mental_models')} WHERE bank_id = $1 AND {_MM_REFRESH_PAUSED_SQL}",
+                bank_id,
+            )
+
             ops_by_status = {row["status"]: row["count"] for row in ops_stats}
             last_consolidated_at = consolidation_row["last_consolidated_at"] if consolidation_row else None
             # The bank's write watermark rides along on the aggregate above at no
@@ -17092,6 +17106,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "pending_consolidation": consolidation_row["pending"] if consolidation_row else 0,
                 "failed_consolidation": consolidation_row["failed"] if consolidation_row else 0,
                 "total_observations": node_counts.get("observation", 0),
+                "paused_mental_models": int(paused_mental_models),
             }
 
     async def get_bank_freshness(
@@ -24481,15 +24496,13 @@ class MemoryEngine(MemoryEngineInterface):
         """
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"SELECT last_refresh_failed_at, last_refreshed_at FROM {fq_table('mental_models')} "
-                "WHERE bank_id = $1 AND id = $2",
+            paused = await conn.fetchval(
+                f"SELECT 1 FROM {fq_table('mental_models')} "
+                f"WHERE bank_id = $1 AND id = $2 AND {_MM_REFRESH_PAUSED_SQL}",
                 bank_id,
                 mental_model_id,
             )
-        if row is None or row["last_refresh_failed_at"] is None:
-            return False
-        return row["last_refreshed_at"] is None or row["last_refresh_failed_at"] > row["last_refreshed_at"]
+        return paused is not None
 
     async def _clear_refresh_park(self, operation_id: str, bank_id: str) -> None:
         """Make a queued refresh claimable now, and no longer min-interval eligible.

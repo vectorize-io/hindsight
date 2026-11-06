@@ -9357,6 +9357,12 @@
             "title": "Total Observations",
             "description": "Total number of observations",
             "default": 0
+          },
+          "paused_mental_models": {
+            "type": "integer",
+            "title": "Paused Mental Models",
+            "description": "Number of mental models whose last refresh failed, so the automatic triggers (`refresh_after_consolidation`, `refresh_cron`, `full_refresh_cron`) skip them until an explicit refresh succeeds. Their content stops updating, so alert on this being above 0. Each model's `last_refresh_failed_at` says which ones, and its history says why.",
+            "default": 0
           }
         },
         "type": "object",
@@ -9402,6 +9408,7 @@
             "observation": 20,
             "preference": 30
           },
+          "paused_mental_models": 0,
           "pending_consolidation": 0,
           "pending_operations": 2,
           "total_documents": 10,

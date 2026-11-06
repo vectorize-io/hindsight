@@ -42,7 +42,8 @@ class BankStatsResponse(BaseModel):
     pending_consolidation: Optional[StrictInt] = Field(default=0, description="Number of source memories (world/experience) still queued for consolidation into observations. Excludes memories whose consolidation permanently failed — those are counted only in failed_consolidation — so this drains to 0 when the consolidator catches up.")
     failed_consolidation: Optional[StrictInt] = Field(default=0, description="Number of source memories (world/experience) whose consolidation permanently failed and can be retried via the consolidation recovery endpoint.")
     total_observations: Optional[StrictInt] = Field(default=0, description="Total number of observations")
-    __properties: ClassVar[List[str]] = ["bank_id", "total_nodes", "total_links", "total_documents", "nodes_by_fact_type", "links_by_link_type", "links_by_fact_type", "links_breakdown", "pending_operations", "failed_operations", "operations_by_status", "last_consolidated_at", "last_memory_write_at", "pending_consolidation", "failed_consolidation", "total_observations"]
+    paused_mental_models: Optional[StrictInt] = Field(default=0, description="Number of mental models whose last refresh failed, so the automatic triggers (`refresh_after_consolidation`, `refresh_cron`, `full_refresh_cron`) skip them until an explicit refresh succeeds. Their content stops updating, so alert on this being above 0. Each model's `last_refresh_failed_at` says which ones, and its history says why.")
+    __properties: ClassVar[List[str]] = ["bank_id", "total_nodes", "total_links", "total_documents", "nodes_by_fact_type", "links_by_link_type", "links_by_fact_type", "links_breakdown", "pending_operations", "failed_operations", "operations_by_status", "last_consolidated_at", "last_memory_write_at", "pending_consolidation", "failed_consolidation", "total_observations", "paused_mental_models"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -120,7 +121,8 @@ class BankStatsResponse(BaseModel):
             "last_memory_write_at": obj.get("last_memory_write_at"),
             "pending_consolidation": obj.get("pending_consolidation") if obj.get("pending_consolidation") is not None else 0,
             "failed_consolidation": obj.get("failed_consolidation") if obj.get("failed_consolidation") is not None else 0,
-            "total_observations": obj.get("total_observations") if obj.get("total_observations") is not None else 0
+            "total_observations": obj.get("total_observations") if obj.get("total_observations") is not None else 0,
+            "paused_mental_models": obj.get("paused_mental_models") if obj.get("paused_mental_models") is not None else 0
         })
         return _obj
 
