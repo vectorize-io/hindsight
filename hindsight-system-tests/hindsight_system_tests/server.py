@@ -98,13 +98,6 @@ class HindsightServer:
     def stop(self) -> None:
         self.terminate_like_a_platform(grace=30)
 
-    def _kill(self) -> None:
-        # The whole group: `_process` is `uv run`, and SIGKILL is not forwarded, so
-        # killing it alone would leave the server itself running as an orphan.
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(self._process.pid, signal.SIGKILL)
-        self._process.wait(timeout=10)
-
     def terminate_like_a_platform(self, grace: float) -> bool:
         """SIGTERM, then SIGKILL once ``grace`` seconds pass — what a rollout does.
 
@@ -118,7 +111,11 @@ class HindsightServer:
             self._process.wait(timeout=grace)
             return True
         except subprocess.TimeoutExpired:
-            self._kill()
+            # The whole group: SIGKILL is not forwarded, so killing `uv run` alone
+            # would leave the server itself running as an orphan.
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self._process.pid, signal.SIGKILL)
+            self._process.wait(timeout=10)
             return False
 
     def logs(self) -> str:

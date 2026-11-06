@@ -70,7 +70,7 @@ async def test_a_rollout_hands_in_flight_work_to_the_new_pod(stub_server, llm, t
             started = time.monotonic()
             exited_in_time = await asyncio.to_thread(old_pod.terminate_like_a_platform, GRACE_SECONDS)
             stopped_after = time.monotonic() - started
-        with contextlib.suppress(BaseException):
+        with contextlib.suppress(Exception):  # it dies with the old pod; only the operation matters
             await slow_request
     finally:
         await old_client.aclose()
