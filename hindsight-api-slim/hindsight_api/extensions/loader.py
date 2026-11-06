@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=Extension)
+C = TypeVar("C")
 
 
 class ExtensionLoadError(Exception):
@@ -23,8 +24,11 @@ class ExtensionLoadError(Exception):
     pass
 
 
-def _resolve_extension_class(ext_path: str, base_class: type[T]) -> type[T]:
+def resolve_class_path(ext_path: str, base_class: type[C]) -> type[C]:
     """Import and validate the class named by ``module.path:ClassName``, no instance.
+
+    Raises ExtensionLoadError when the path is malformed, the import fails, or the
+    class does not inherit from ``base_class``.
 
     Split out so a caller that only needs the class does not have to construct one:
     a constructor may have process-wide side effects, and running it to answer a
@@ -66,7 +70,7 @@ def resolve_configured_extension_class(
     ext_path = os.getenv(f"{env_prefix}_{prefix}_EXTENSION")
     if not ext_path:
         return None
-    return _resolve_extension_class(ext_path, base_class)
+    return resolve_class_path(ext_path, base_class)
 
 
 def load_extension(
@@ -112,7 +116,7 @@ def load_extension(
 
     logger.info(f"Loading extension from {env_var}={ext_path}")
 
-    ext_class = _resolve_extension_class(ext_path, base_class)
+    ext_class = resolve_class_path(ext_path, base_class)
 
     # Collect configuration from environment variables
     config = _collect_config(env_prefix, prefix)

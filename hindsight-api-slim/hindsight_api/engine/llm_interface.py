@@ -14,7 +14,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Callable, Self
 
-from .response_models import LLMCallResult
+from .response_models import BatchRequest, BatchResult, BatchStatus, BatchSubmission, LLMCallResult
 
 logger = logging.getLogger(__name__)
 
@@ -308,55 +308,32 @@ class LLMInterface(ABC):
         """
         return None
 
-    async def submit_batch(
-        self,
-        requests: list[dict[str, Any]],
-        endpoint: str = "/v1/chat/completions",
-        completion_window: str = "24h",
-    ) -> dict[str, Any]:
-        """
-        Submit a batch of requests to the provider's batch API.
+    async def submit_batch(self, requests: list[BatchRequest]) -> BatchSubmission:
+        """Submit requests to the provider's batch API.
 
-        Args:
-            requests: List of request dicts in JSONL format (custom_id, method, url, body)
-            endpoint: API endpoint for the batch (e.g., "/v1/chat/completions")
-            completion_window: Completion window (e.g., "24h")
-
-        Returns:
-            Dict with batch metadata: {"batch_id": str, "status": str, ...}
+        Called only when ``supports_batch_api()`` is True. Each request's ``body`` is an
+        OpenAI chat-completions body; a provider with another wire format translates it.
 
         Raises:
-            NotImplementedError: If provider doesn't support batch API
+            NotImplementedError: If the provider has no batch API.
         """
         raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
 
-    async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
-        """
-        Get the status of a batch job.
-
-        Args:
-            batch_id: Batch identifier returned from submit_batch
-
-        Returns:
-            Dict with status info: {"batch_id": str, "status": str, "completed_at": str, ...}
+    async def get_batch_status(self, batch_id: str) -> BatchStatus:
+        """Report where a submitted batch is (see ``BatchStatus.status`` for the values).
 
         Raises:
-            NotImplementedError: If provider doesn't support batch API
+            NotImplementedError: If the provider has no batch API.
         """
         raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
 
-    async def retrieve_batch_results(self, batch_id: str) -> list[dict[str, Any]]:
-        """
-        Retrieve completed batch results.
+    async def retrieve_batch_results(self, batch_id: str) -> list[BatchResult]:
+        """Download the results of a completed batch, one per request (matched by custom_id).
 
-        Args:
-            batch_id: Batch identifier returned from submit_batch
-
-        Returns:
-            List of result dicts (one per request, matched by custom_id)
+        A request that failed is returned with ``error`` set, not dropped.
 
         Raises:
-            NotImplementedError: If provider doesn't support batch API
+            NotImplementedError: If the provider has no batch API.
         """
         raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
 

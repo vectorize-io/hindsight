@@ -12,7 +12,6 @@ import re
 from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, tzinfo
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator
@@ -33,7 +32,7 @@ from ..llm_wrapper import (
 )
 from ..operation_metadata import RetainExtractionErrors
 from ..remote_retry import status_code_of
-from ..response_models import TokenUsage
+from ..response_models import BATCH_TERMINAL_FAILURE_STATUSES, BatchRequest, TokenUsage
 from ..stored_dates import is_placeholder_date
 from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
@@ -3040,9 +3039,7 @@ async def extract_facts_from_contents_batch_api(
                 extraction_prompt.response_schema,
             )
 
-            batch_requests.append(
-                {"custom_id": custom_id, "method": "POST", "url": "/v1/chat/completions", "body": request_body}
-            )
+            batch_requests.append(BatchRequest(custom_id=custom_id, body=request_body))
 
     if not batch_requests and not batch_id:  # No requests and not resuming
         return ExtractionResult([], [], TokenUsage())
@@ -3051,8 +3048,8 @@ async def extract_facts_from_contents_batch_api(
     if not batch_id:
         logger.info(f"Submitting batch with {len(batch_requests)} chunk requests")
 
-        batch_metadata = await batch_impl.submit_batch(batch_requests)
-        batch_id = batch_metadata["batch_id"]
+        submission = await batch_impl.submit_batch(batch_requests)
+        batch_id = submission.batch_id
 
         logger.info(f"Batch submitted: {batch_id}, polling every {config.retain_batch_poll_interval_seconds}s")
 
@@ -3094,20 +3091,19 @@ async def extract_facts_from_contents_batch_api(
     start_time = time.perf_counter()
     while True:
         status_info = await batch_impl.get_batch_status(batch_id)
-        status = status_info["status"]
+        status = status_info.status
 
         elapsed = time.perf_counter() - start_time
         logger.info(
             f"Batch {batch_id}: status={status}, "
-            f"completed={status_info['request_counts']['completed']}/{status_info['request_counts']['total']}, "
+            f"completed={status_info.request_counts.completed}/{status_info.request_counts.total}, "
             f"elapsed={elapsed:.0f}s"
         )
 
         if status == "completed":
             break
-        elif status in ("failed", "expired", "cancelled"):
-            error_msg = status_info.get("errors", "Unknown error")
-            raise RuntimeError(f"Batch {batch_id} failed with status {status}: {error_msg}")
+        elif status in BATCH_TERMINAL_FAILURE_STATUSES:
+            raise RuntimeError(f"Batch {batch_id} failed with status {status}: {status_info.error or 'Unknown error'}")
 
         # Wait before polling again
         await asyncio.sleep(config.retain_batch_poll_interval_seconds)
@@ -3121,7 +3117,7 @@ async def extract_facts_from_contents_batch_api(
     batch_results = sanitize_value(await batch_impl.retrieve_batch_results(batch_id))
 
     # Map results by custom_id
-    results_by_id = {result["custom_id"]: result for result in batch_results}
+    results_by_id = {result.custom_id: result for result in batch_results}
 
     # Step 5: Parse results into facts (same as sync mode)
     all_facts_from_llm = []
@@ -3147,8 +3143,8 @@ async def extract_facts_from_contents_batch_api(
             continue
 
         # Check for errors
-        if result.get("error"):
-            message = f"{custom_id}: {result['error']}"
+        if result.error:
+            message = f"{custom_id}: {result.error}"
             logger.error(f"Error in {message}")
             extraction_errors.add(message)
             chunks_metadata.append(
@@ -3159,11 +3155,8 @@ async def extract_facts_from_contents_batch_api(
             continue
 
         # Extract response
-        response_body = result.get("response", {}).get("body", {})
-        choices = response_body.get("choices", [])
-
-        if not choices:
-            message = f"{custom_id}: no choices in response"
+        if result.content is None:
+            message = f"{custom_id}: no content in response"
             logger.warning(message)
             extraction_errors.add(message)
             chunks_metadata.append(
@@ -3173,15 +3166,11 @@ async def extract_facts_from_contents_batch_api(
             )
             continue
 
-        # Parse JSON content
-        message = choices[0].get("message", {})
-        content_str = message.get("content", "{}")
-
         try:
             # #2701: use the lenient parser (strips markdown fences, scrubs
             # embedded control chars) so recoverable batch responses — e.g.
             # transient Gemini quirks — aren't dropped along with all their facts.
-            extraction_response_json = parse_llm_json(content_str)
+            extraction_response_json = parse_llm_json(result.content)
         except json.JSONDecodeError as e:
             message = f"{custom_id}: failed to parse JSON: {e}"
             logger.error(message)
@@ -3404,17 +3393,7 @@ async def extract_facts_from_contents_batch_api(
             )
         )
 
-        # Track token usage
-        usage_data = response_body.get("usage", {})
-        if usage_data:
-            # Same OpenAI usage block a live call returns, so it is read the same
-            # way: cached prompt tokens and reasoning tokens included.
-            # Imported here: that module loads the openai SDK, which a process
-            # must not pay for at startup unless it actually reads batch results.
-            from ..providers.openai_compatible_llm import visible_token_usage
-
-            usage_obj = json.loads(json.dumps(usage_data), object_hook=lambda d: SimpleNamespace(**d))
-            total_usage = total_usage + visible_token_usage(SimpleNamespace(usage=usage_obj))
+        total_usage = total_usage + result.usage
 
     # Step 6: Convert to ExtractedFact objects with proper chunk mapping
     # Group facts by chunk

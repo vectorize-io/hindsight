@@ -35,8 +35,19 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
 )
 
 
+def is_custom_llm_provider(provider: str) -> bool:
+    """Whether ``provider`` names an operator's own LLMInterface class (``package.module:ClassName``).
+
+    No built-in provider name contains a colon, so the colon alone tells them apart.
+    """
+    return ":" in provider
+
+
 def requires_api_key(provider: str) -> bool:
     """Return True if the given provider requires an API key to operate."""
+    # A custom provider decides for itself; it can refuse a missing key in verify_connection.
+    if is_custom_llm_provider(provider):
+        return False
     provider = provider.lower()
     # Workload Identity Federation: the Anthropic SDK trades a platform identity token
     # for short-lived access tokens itself, so no static key is needed (issue #5502).

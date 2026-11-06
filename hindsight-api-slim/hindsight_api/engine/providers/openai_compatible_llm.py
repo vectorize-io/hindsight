@@ -28,6 +28,7 @@ import time
 from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
+from types import SimpleNamespace
 from typing import Any, Callable, Literal
 from urllib.parse import parse_qs, urlparse, urlunparse
 
@@ -59,7 +60,14 @@ from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
 from hindsight_api.engine.remote_retry import jittered_backoff
-from hindsight_api.engine.response_models import TokenUsage
+from hindsight_api.engine.response_models import (
+    BatchRequest,
+    BatchRequestCounts,
+    BatchResult,
+    BatchStatus,
+    BatchSubmission,
+    TokenUsage,
+)
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.worker.stage import set_stage
@@ -72,6 +80,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_LLM_SEED = 4242
 JSON_MODE_USER_HINT = "Return valid json only."
 DEFAULT_VERIFICATION_MAX_COMPLETION_TOKENS = 512
+OPENAI_BATCH_ENDPOINT: Literal["/v1/chat/completions"] = "/v1/chat/completions"
 
 
 def _validate_ollama_num_ctx(value: Any) -> int | None:
@@ -544,6 +553,27 @@ def visible_token_usage(response: Any) -> TokenUsage:
         cached_tokens=cached_tokens,
         thoughts_tokens=thoughts_tokens,
     )
+
+
+def batch_result_from_chat_completion(custom_id: str, body: dict[str, Any] | None, error: Any = None) -> BatchResult:
+    """One batch output line, given as an OpenAI chat-completion ``body`` (or an ``error``), as a BatchResult.
+
+    Shared by the providers whose batch output is OpenAI-shaped. A line whose body is
+    an error response (non-2xx, no choices) is a failed request, not an empty answer.
+    """
+    if error:
+        return BatchResult(custom_id=custom_id, error=str(error))
+    body = body or {}
+    choices = body.get("choices") or []
+    if not choices and body.get("error"):
+        return BatchResult(custom_id=custom_id, error=str(body["error"]))
+    content = (choices[0].get("message") or {}).get("content") if choices else None
+    usage = TokenUsage()
+    if body.get("usage"):
+        # The same usage block a live call returns, read the same way (cached and reasoning tokens included).
+        usage_obj = json.loads(json.dumps(body["usage"]), object_hook=lambda d: SimpleNamespace(**d))
+        usage = visible_token_usage(SimpleNamespace(usage=usage_obj))
+    return BatchResult(custom_id=custom_id, content=content, usage=usage)
 
 
 def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1949,137 +1979,76 @@ class OpenAICompatibleLLM(LLMInterface):
         # Only OpenAI and Groq support batch API
         return self.provider in ("openai", "groq")
 
-    async def submit_batch(
-        self,
-        requests: list[dict[str, Any]],
-        # The SDK's own literals: batch creation accepts exactly these, and a plain `str` here
-        # let a typo reach the API as a runtime error instead of failing at the call site.
-        endpoint: Literal["/v1/responses", "/v1/chat/completions", "/v1/embeddings", "/v1/completions"] = (
-            "/v1/chat/completions"
-        ),
-        completion_window: Literal["24h"] = "24h",
-    ) -> dict[str, Any]:
-        """
-        Submit a batch of requests to OpenAI/Groq Batch API.
-
-        Args:
-            requests: List of request dicts with custom_id, method, url, body
-            endpoint: API endpoint (e.g., "/v1/chat/completions")
-            completion_window: Completion window (e.g., "24h")
-
-        Returns:
-            Dict with batch metadata including batch_id
-
-        Raises:
-            NotImplementedError: If provider doesn't support batch API
-        """
+    async def submit_batch(self, requests: list[BatchRequest]) -> BatchSubmission:
+        """Upload the requests as a JSONL file and create an OpenAI/Groq batch over it."""
         if not await self.supports_batch_api():
             raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
 
         logger.info(f"Submitting batch with {len(requests)} requests to {self.provider}")
 
-        # Format requests as JSONL
-        jsonl_content = "\n".join(json.dumps(req, ensure_ascii=False) for req in requests)
-
-        # Upload file to provider (wrap in BytesIO with filename)
+        jsonl_content = "\n".join(
+            json.dumps(
+                {"custom_id": req.custom_id, "method": "POST", "url": OPENAI_BATCH_ENDPOINT, "body": req.body},
+                ensure_ascii=False,
+            )
+            for req in requests
+        )
         file_bytes = io.BytesIO(jsonl_content.encode("utf-8"))
         file_bytes.name = "batch_input.jsonl"  # OpenAI SDK needs a filename
 
-        file_response = await self._client.files.create(
-            file=file_bytes,
-            purpose="batch",
-        )
-
+        file_response = await self._client.files.create(file=file_bytes, purpose="batch")
         logger.debug(f"Uploaded batch file: {file_response.id}")
 
-        # Create batch
         batch_response = await self._client.batches.create(
             input_file_id=file_response.id,
-            endpoint=endpoint,
-            completion_window=completion_window,
+            endpoint=OPENAI_BATCH_ENDPOINT,
+            completion_window="24h",
+        )
+        logger.info(f"Batch submitted: {batch_response.id}, status={batch_response.status}")
+        return BatchSubmission(batch_id=batch_response.id, status=batch_response.status)
+
+    async def get_batch_status(self, batch_id: str) -> BatchStatus:
+        """Get the status of an OpenAI/Groq batch."""
+        if not await self.supports_batch_api():
+            raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
+
+        batch = await self._client.batches.retrieve(batch_id)
+        counts = batch.request_counts
+        return BatchStatus(
+            batch_id=batch.id,
+            status=batch.status,
+            request_counts=BatchRequestCounts(
+                total=counts.total if counts else 0,
+                completed=counts.completed if counts else 0,
+                failed=counts.failed if counts else 0,
+            ),
+            error=str(batch.errors) if batch.errors else None,
         )
 
-        logger.info(f"Batch submitted: {batch_response.id}, status={batch_response.status}")
-
-        return {
-            "batch_id": batch_response.id,
-            "status": batch_response.status,
-            "input_file_id": file_response.id,
-            "created_at": batch_response.created_at,
-            "request_count": len(requests),
-        }
-
-    async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
-        """
-        Get the status of a batch job.
-
-        Args:
-            batch_id: Batch identifier
-
-        Returns:
-            Dict with status info (batch_id, status, completed_at, etc.)
-        """
+    async def retrieve_batch_results(self, batch_id: str) -> list[BatchResult]:
+        """Download a completed OpenAI/Groq batch's output file."""
         if not await self.supports_batch_api():
             raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
 
         batch = await self._client.batches.retrieve(batch_id)
-
-        result = {
-            "batch_id": batch.id,
-            "status": batch.status,
-            "created_at": batch.created_at,
-            "request_counts": {
-                "total": batch.request_counts.total if batch.request_counts else 0,
-                "completed": batch.request_counts.completed if batch.request_counts else 0,
-                "failed": batch.request_counts.failed if batch.request_counts else 0,
-            },
-        }
-
-        if batch.completed_at:
-            result["completed_at"] = batch.completed_at
-        if batch.output_file_id:
-            result["output_file_id"] = batch.output_file_id
-        if batch.error_file_id:
-            result["error_file_id"] = batch.error_file_id
-        if batch.errors:
-            result["errors"] = batch.errors
-
-        return result
-
-    async def retrieve_batch_results(self, batch_id: str) -> list[dict[str, Any]]:
-        """
-        Retrieve completed batch results.
-
-        Args:
-            batch_id: Batch identifier
-
-        Returns:
-            List of result dicts (one per request, matched by custom_id)
-        """
-        if not await self.supports_batch_api():
-            raise NotImplementedError(f"Batch API not supported for provider: {self.provider}")
-
-        # Get batch status
-        batch = await self._client.batches.retrieve(batch_id)
-
         if batch.status != "completed":
             raise ValueError(f"Batch {batch_id} is not completed yet (status: {batch.status})")
-
         if not batch.output_file_id:
             raise ValueError(f"Batch {batch_id} has no output file")
 
-        # Download results file
         logger.debug(f"Downloading results for batch {batch_id} from file {batch.output_file_id}")
         file_content = await self._client.files.content(batch.output_file_id)
 
-        # Parse JSONL results
         results = []
         for line in file_content.text.strip().split("\n"):
             if line:
-                results.append(json.loads(line))
+                entry = json.loads(line)
+                response = entry.get("response") or {}
+                results.append(
+                    batch_result_from_chat_completion(entry["custom_id"], response.get("body"), entry.get("error"))
+                )
 
         logger.info(f"Retrieved {len(results)} results for batch {batch_id}")
-
         return results
 
     async def cleanup(self) -> None:

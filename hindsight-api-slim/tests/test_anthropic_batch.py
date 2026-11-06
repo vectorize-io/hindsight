@@ -1,10 +1,9 @@
 """Anthropic Message Batches support for the provider batch interface.
 
 The engine's batch path (retain fact extraction, gated on
-``retain_batch_enabled``) speaks the OpenAI batch wire shape: JSONL entries
-with ``custom_id``/``method``/``url``/``body`` going in, and
-``response.body.choices[0].message.content`` (+ OpenAI-keyed ``usage``) coming
-out. ``AnthropicLLM`` translates both directions onto the Message Batches API,
+``retain_batch_enabled``) hands the provider ``BatchRequest``s whose ``body`` is an
+OpenAI chat-completions body, and expects ``BatchResult``s (content + TokenUsage)
+back. ``AnthropicLLM`` translates both directions onto the Message Batches API,
 which bills all token usage at 50% of standard price.
 
 Translation rules mirror the provider's synchronous ``call()`` path:
@@ -22,6 +21,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from hindsight_api.engine.response_models import BatchRequest, TokenUsage
 
 pytestmark = pytest.mark.asyncio
 
@@ -48,7 +49,7 @@ _SCHEMA = {
 }
 
 
-def _openai_request(custom_id: str, *, strict: bool = True, temperature: float | None = 0.1) -> dict:
+def _openai_request(custom_id: str, *, strict: bool = True, temperature: float | None = 0.1) -> BatchRequest:
     body = {
         "model": "claude-sonnet-5",
         "messages": [
@@ -63,7 +64,7 @@ def _openai_request(custom_id: str, *, strict: bool = True, temperature: float |
     }
     if temperature is not None:
         body["temperature"] = temperature
-    return {"custom_id": custom_id, "method": "POST", "url": "/v1/chat/completions", "body": body}
+    return BatchRequest(custom_id=custom_id, body=body)
 
 
 def _batch(status: str = "in_progress", **counts) -> SimpleNamespace:
@@ -139,9 +140,8 @@ async def test_submit_batch_translates_openai_requests():
     assert params["output_config"] == {"format": {"type": "json_schema", "schema": _SCHEMA}}
     assert "tools" not in params and "tool_choice" not in params
 
-    assert metadata["batch_id"] == "msgbatch_test1"
-    assert metadata["status"] == "in_progress"
-    assert metadata["request_count"] == 2
+    assert metadata.batch_id == "msgbatch_test1"
+    assert metadata.status == "in_progress"
 
 
 async def test_uncapped_request_gets_the_headroom_default():
@@ -154,9 +154,9 @@ async def test_uncapped_request_gets_the_headroom_default():
 
     provider = _make_provider()
     request = _openai_request("chunk_0")
-    del request["body"]["max_completion_tokens"]
+    del request.body["max_completion_tokens"]
 
-    params = provider._translate_batch_body(request["body"])
+    params = provider._translate_batch_body(request.body)
 
     assert params["max_tokens"] == _DEFAULT_MAX_TOKENS
     assert _DEFAULT_MAX_TOKENS >= 64000
@@ -209,8 +209,7 @@ async def test_submit_batch_without_system_message_sends_no_system_param():
         "messages": [{"role": "user", "content": "no system here"}],
         "max_completion_tokens": 1000,
     }
-    request = {"custom_id": "chunk_0", "method": "POST", "url": "/v1/chat/completions", "body": body}
-    await provider.submit_batch([request])
+    await provider.submit_batch([BatchRequest(custom_id="chunk_0", body=body)])
 
     params = provider._client.messages.batches.create.await_args.kwargs["requests"][0]["params"]
     assert "system" not in params
@@ -225,10 +224,10 @@ async def test_get_batch_status_in_progress():
 
     status = await provider.get_batch_status("msgbatch_test1")
 
-    assert status["batch_id"] == "msgbatch_test1"
-    assert status["status"] == "in_progress"
-    assert status["request_counts"]["total"] == 4
-    assert status["request_counts"]["completed"] == 1
+    assert status.batch_id == "msgbatch_test1"
+    assert status.status == "in_progress"
+    assert status.request_counts.total == 4
+    assert status.request_counts.completed == 1
 
 
 async def test_get_batch_status_ended_maps_to_completed():
@@ -238,14 +237,13 @@ async def test_get_batch_status_ended_maps_to_completed():
 
     status = await provider.get_batch_status("msgbatch_test1")
 
-    assert status["status"] == "completed"
-    assert status["request_counts"]["total"] == 4
-    assert status["request_counts"]["completed"] == 4
-    assert status["request_counts"]["failed"] == 1
-    assert status["completed_at"] == "2026-07-08T00:30:00Z"
+    assert status.status == "completed"
+    assert status.request_counts.total == 4
+    assert status.request_counts.completed == 4
+    assert status.request_counts.failed == 1
 
 
-async def test_retrieve_batch_results_translates_to_openai_shape():
+async def test_retrieve_batch_results_translates_to_batch_results():
     provider = _make_provider()
     provider._client.messages.batches.retrieve = AsyncMock(return_value=_batch("ended", succeeded=1, errored=1))
     entries = [
@@ -256,24 +254,19 @@ async def test_retrieve_batch_results_translates_to_openai_shape():
 
     results = await provider.retrieve_batch_results("msgbatch_test1")
 
-    by_id = {r["custom_id"]: r for r in results}
+    by_id = {r.custom_id: r for r in results}
     ok = by_id["chunk_0"]
-    body = ok["response"]["body"]
-    # The engine reads choices[0].message.content and json.loads() it.
-    assert json.loads(body["choices"][0]["message"]["content"]) == {"facts": ["Alice is an engineer."]}
-    # Usage arrives under the OpenAI key names the engine sums.
-    # Cache reads ride in the OpenAI detail block, as a live call reports them (#5487),
-    # and count in prompt_tokens, which Anthropic reports without them (#5541).
-    assert body["usage"] == {
-        "prompt_tokens": 160,
-        "completion_tokens": 40,
-        "total_tokens": 200,
-        "prompt_tokens_details": {"cached_tokens": 60},
-    }
+    # The engine json-parses the content.
+    assert ok.content is not None
+    assert json.loads(ok.content) == {"facts": ["Alice is an engineer."]}
+    assert ok.error is None
+    # Cache reads are reported as cached tokens, as a live call reports them (#5487),
+    # and count in input_tokens, which Anthropic reports without them (#5541).
+    assert ok.usage == TokenUsage(input_tokens=160, output_tokens=40, total_tokens=200, cached_tokens=60)
 
     failed = by_id["chunk_1"]
-    assert failed["error"]
-    assert "response" not in failed
+    assert failed.error
+    assert failed.content is None
 
 
 async def test_retrieve_batch_results_text_content_passthrough():
@@ -291,7 +284,7 @@ async def test_retrieve_batch_results_text_content_passthrough():
 
     results = await provider.retrieve_batch_results("msgbatch_test1")
 
-    assert results[0]["response"]["body"]["choices"][0]["message"]["content"] == '{"facts": []}'
+    assert results[0].content == '{"facts": []}'
 
 
 async def test_retrieve_batch_results_raises_when_not_ended():

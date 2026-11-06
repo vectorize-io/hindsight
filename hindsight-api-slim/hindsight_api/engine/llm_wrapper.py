@@ -30,6 +30,7 @@ from ..config import (
     ENV_RETAIN_LLM_MAX_CONCURRENT,
     _get_raw_config,
 )
+from ..provider_auth import is_custom_llm_provider
 
 # Re-exported: this module is where callers have always imported it from.
 from ..provider_auth import requires_api_key as requires_api_key
@@ -489,6 +490,43 @@ def _validate_ollama_num_ctx(value: Any) -> int | None:
     return value
 
 
+def _create_custom_llm_provider(
+    *,
+    provider: str,
+    api_key: str,
+    base_url: str,
+    model: str,
+    reasoning_effort: str | None,
+    timeout: float | None,
+    extra_body: dict[str, Any] | None,
+    default_headers: dict[str, str] | None,
+) -> LLMInterface:
+    """Build the operator's own provider named by ``provider`` (``package.module:ClassName``).
+
+    The class must subclass ``LLMInterface``. It is constructed with keyword arguments
+    only: the ``LLMInterface.__init__`` ones plus ``extra_body`` and ``default_headers``,
+    so a subclass of ``OpenAICompatibleLLM`` takes them as-is and a direct
+    ``LLMInterface`` subclass receives the last two in ``**kwargs``.
+    """
+    # Lazy: the extensions package imports the engine.
+    from ..extensions.loader import ExtensionLoadError, resolve_class_path
+
+    try:
+        provider_class = resolve_class_path(provider, LLMInterface)
+    except ExtensionLoadError as e:
+        raise ValueError(f"Cannot load custom LLM provider {provider!r}: {e}") from e
+    return provider_class(
+        provider=provider,
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        timeout=timeout,
+        extra_body=extra_body,
+        default_headers=default_headers,
+    )
+
+
 def create_llm_provider(
     provider: str,
     api_key: str,
@@ -574,6 +612,18 @@ def create_llm_provider(
 
     # Each provider (and its SDK) loads only when chosen; see providers/__init__.py.
     from . import providers
+
+    if is_custom_llm_provider(provider):
+        return _create_custom_llm_provider(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            timeout=timeout,
+            extra_body=extra_body,
+            default_headers=default_headers,
+        )
 
     provider_lower = provider.lower()
     if provider_lower == "gemini":
@@ -960,7 +1010,8 @@ class LLMProvider:
         pure function of its arguments — which is what lets each member of a multi-LLM chain be
         configured independently.
         """
-        self.provider = provider.lower()
+        # A custom provider is a class path, and class names are case-sensitive.
+        self.provider = provider if is_custom_llm_provider(provider) else provider.lower()
         self.api_key = api_key
         self.base_url = base_url
         self.model = model
@@ -1041,8 +1092,11 @@ class LLMProvider:
             "xai-oauth",
             "meta",
         ]
-        if self.provider not in valid_providers:
-            raise ValueError(f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}")
+        if self.provider not in valid_providers and not is_custom_llm_provider(self.provider):
+            raise ValueError(
+                f"Invalid LLM provider: {self.provider}. Must be one of: {', '.join(valid_providers)}, "
+                "or package.module:ClassName for a custom provider."
+            )
 
         # Set default base URLs
         if not self.base_url:

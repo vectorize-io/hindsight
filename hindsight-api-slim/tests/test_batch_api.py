@@ -17,6 +17,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from hindsight_api.config import HindsightConfig
+from hindsight_api.engine.providers.openai_compatible_llm import batch_result_from_chat_completion
+from hindsight_api.engine.response_models import (
+    BatchRequestCounts,
+    BatchResult,
+    BatchStatus,
+    BatchSubmission,
+    TokenUsage,
+)
 from hindsight_api.engine.retain.fact_extraction import (
     RetainContent,
     extract_facts_from_contents,
@@ -25,6 +33,16 @@ from hindsight_api.engine.retain.fact_extraction import (
 from hindsight_api.worker.poller import WorkerPoller
 
 logger = logging.getLogger(__name__)
+
+
+def _status(batch_id: str, status: str = "completed", total: int = 1, completed: int = 1) -> BatchStatus:
+    return BatchStatus(
+        batch_id=batch_id, status=status, request_counts=BatchRequestCounts(total=total, completed=completed)
+    )
+
+
+def _usage(input_tokens: int = 100, output_tokens: int = 50) -> TokenUsage:
+    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=input_tokens + output_tokens)
 
 
 @pytest.fixture
@@ -100,80 +118,56 @@ async def test_batch_api_normal_flow(mock_llm_config, test_contents, hindsight_c
 
         # Mock submit_batch - returns batch metadata
         mock_llm_config._provider_impl.submit_batch = AsyncMock(
-            return_value={
-                "batch_id": batch_id,
-                "status": "validating",
-                "request_counts": {"total": 2, "completed": 0, "failed": 0},
-            }
+            return_value=BatchSubmission(batch_id=batch_id, status="validating")
         )
 
         # Mock get_batch_status - simulate polling sequence
         status_sequence = [
-            {"status": "in_progress", "request_counts": {"total": 2, "completed": 1, "failed": 0}},
-            {"status": "completed", "request_counts": {"total": 2, "completed": 2, "failed": 0}},
+            _status(batch_id, status="in_progress", total=2, completed=1),
+            _status(batch_id, total=2, completed=2),
         ]
         mock_llm_config._provider_impl.get_batch_status = AsyncMock(side_effect=status_sequence)
 
         # Mock retrieve_batch_results - returns fact extraction results
         mock_results = [
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [
+            BatchResult(
+                custom_id="chunk_0",
+                content=json.dumps(
+                    {
+                        "facts": [
                             {
-                                "message": {
-                                    "content": json.dumps(
-                                        {
-                                            "facts": [
-                                                {
-                                                    "what": "Alice is a senior software engineer at TechCorp",
-                                                    "when": "present",
-                                                    "where": "TechCorp",
-                                                    "who": "Alice",
-                                                    "why": "Professional background information",
-                                                    "fact_type": "world",
-                                                    "fact_kind": "conversation",
-                                                }
-                                            ]
-                                        }
-                                    )
-                                }
+                                "what": "Alice is a senior software engineer at TechCorp",
+                                "when": "present",
+                                "where": "TechCorp",
+                                "who": "Alice",
+                                "why": "Professional background information",
+                                "fact_type": "world",
+                                "fact_kind": "conversation",
                             }
-                        ],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                        ]
                     }
-                },
-            },
-            {
-                "custom_id": "chunk_1",
-                "response": {
-                    "body": {
-                        "choices": [
+                ),
+                usage=_usage(),
+            ),
+            BatchResult(
+                custom_id="chunk_1",
+                content=json.dumps(
+                    {
+                        "facts": [
                             {
-                                "message": {
-                                    "content": json.dumps(
-                                        {
-                                            "facts": [
-                                                {
-                                                    "what": "Bob joined the team last month as a junior developer",
-                                                    "when": "last month",
-                                                    "where": "team",
-                                                    "who": "Bob",
-                                                    "why": "New team member information",
-                                                    "fact_type": "world",
-                                                    "fact_kind": "conversation",
-                                                }
-                                            ]
-                                        }
-                                    )
-                                }
+                                "what": "Bob joined the team last month as a junior developer",
+                                "when": "last month",
+                                "where": "team",
+                                "who": "Bob",
+                                "why": "New team member information",
+                                "fact_type": "world",
+                                "fact_kind": "conversation",
                             }
-                        ],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                        ]
                     }
-                },
-            },
+                ),
+                usage=_usage(),
+            ),
         ]
         mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(return_value=mock_results)
 
@@ -227,44 +221,28 @@ async def test_batch_api_accepts_top_level_fact_list(mock_llm_config, test_conte
     batch_id = "batch_top_level_facts"
     mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
     mock_llm_config._provider_impl.submit_batch = AsyncMock(
-        return_value={
-            "batch_id": batch_id,
-            "status": "validating",
-            "request_counts": {"total": 1, "completed": 0, "failed": 0},
-        }
+        return_value=BatchSubmission(batch_id=batch_id, status="validating")
     )
-    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
-    )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch"))
     mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
         return_value=[
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [
-                            {
-                                "message": {
-                                    "content": json.dumps(
-                                        [
-                                            {
-                                                "what": "Alice is a senior software engineer at TechCorp",
-                                                "when": "present",
-                                                "where": "TechCorp",
-                                                "who": "Alice",
-                                                "why": "Professional background information",
-                                                "fact_type": "world",
-                                                "fact_kind": "conversation",
-                                            }
-                                        ]
-                                    )
-                                }
-                            }
-                        ],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
-                    }
-                },
-            }
+            BatchResult(
+                custom_id="chunk_0",
+                content=json.dumps(
+                    [
+                        {
+                            "what": "Alice is a senior software engineer at TechCorp",
+                            "when": "present",
+                            "where": "TechCorp",
+                            "who": "Alice",
+                            "why": "Professional background information",
+                            "fact_type": "world",
+                            "fact_kind": "conversation",
+                        }
+                    ]
+                ),
+                usage=_usage(),
+            )
         ]
     )
 
@@ -290,32 +268,15 @@ async def test_batch_api_accepts_top_level_fact_list(mock_llm_config, test_conte
 
 @pytest.mark.asyncio
 async def test_batch_api_usage_keeps_cached_and_reasoning_tokens(mock_llm_config, test_contents, hindsight_config):
-    """Batch usage is read like a live call's: cached prompt and reasoning tokens survive (#5487)."""
+    """The consumer sums each result's usage whole: cached prompt and reasoning tokens survive (#5487)."""
+    usage = TokenUsage(input_tokens=100, output_tokens=30, total_tokens=130, cached_tokens=80, thoughts_tokens=20)
     mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
     mock_llm_config._provider_impl.submit_batch = AsyncMock(
-        return_value={"batch_id": "batch_usage", "status": "validating", "request_counts": {"total": 1}}
+        return_value=BatchSubmission(batch_id="batch_usage", status="validating")
     )
-    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
-    )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch"))
     mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
-        return_value=[
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [{"message": {"content": json.dumps({"facts": []})}}],
-                        "usage": {
-                            "prompt_tokens": 100,
-                            "completion_tokens": 50,
-                            "total_tokens": 150,
-                            "prompt_tokens_details": {"cached_tokens": 80},
-                            "completion_tokens_details": {"reasoning_tokens": 20},
-                        },
-                    }
-                },
-            }
-        ]
+        return_value=[BatchResult(custom_id="chunk_0", content=json.dumps({"facts": []}), usage=usage)]
     )
 
     extraction = await extract_facts_from_contents_batch_api(
@@ -327,10 +288,48 @@ async def test_batch_api_usage_keeps_cached_and_reasoning_tokens(mock_llm_config
         schema=None,
     )
 
-    assert extraction.usage.input_tokens == 100
-    assert extraction.usage.cached_tokens == 80
-    assert extraction.usage.thoughts_tokens == 20
-    assert extraction.usage.output_tokens == 30  # reasoning folded into completion is split out
+    assert extraction.usage == usage
+
+
+def test_batch_result_from_chat_completion_reads_usage_like_a_live_call():
+    """An OpenAI batch output line's usage is read like a live call's: cached prompt
+    and reasoning tokens survive, and folded reasoning is split out of output (#5487)."""
+    result = batch_result_from_chat_completion(
+        "chunk_0",
+        {
+            "choices": [{"message": {"content": '{"facts": []}'}}],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+                "prompt_tokens_details": {"cached_tokens": 80},
+                "completion_tokens_details": {"reasoning_tokens": 20},
+            },
+        },
+    )
+
+    assert result.custom_id == "chunk_0"
+    assert result.content == '{"facts": []}'
+    assert result.error is None
+    assert result.usage.input_tokens == 100
+    assert result.usage.cached_tokens == 80
+    assert result.usage.thoughts_tokens == 20
+    assert result.usage.output_tokens == 30  # reasoning folded into completion is split out
+
+
+@pytest.mark.parametrize(
+    ("body", "error", "expected"),
+    [
+        (None, {"code": "server_error", "message": "boom"}, "boom"),
+        # A non-2xx line: the body is an error response, not an empty completion.
+        ({"error": {"message": "Invalid request parameters"}}, None, "Invalid request parameters"),
+    ],
+)
+def test_batch_result_from_chat_completion_reports_a_failed_request(body, error, expected):
+    result = batch_result_from_chat_completion("chunk_0", body, error)
+
+    assert result.content is None
+    assert result.error is not None and expected in result.error
 
 
 @pytest.mark.asyncio
@@ -338,22 +337,12 @@ async def test_batch_api_rejects_top_level_non_fact_list(mock_llm_config, test_c
     """Batch extraction records malformed top-level lists instead of crashing."""
     batch_id = "batch_malformed_list"
     mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
-    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
-    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value=BatchSubmission(batch_id=batch_id, status="validating")
     )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch"))
     mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
-        return_value=[
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [{"message": {"content": json.dumps(["not a fact dict"])}}],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
-                    }
-                },
-            }
-        ]
+        return_value=[BatchResult(custom_id="chunk_0", content=json.dumps(["not a fact dict"]), usage=_usage())]
     )
 
     extraction = await extract_facts_from_contents_batch_api(
@@ -387,34 +376,24 @@ async def test_batch_api_records_schema_drifted_facts_as_extraction_errors(
     """
     batch_id = "batch_schema_drift"
     mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
-    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
-    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value=BatchSubmission(batch_id=batch_id, status="validating")
     )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch"))
     mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
         return_value=[
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [
-                            {
-                                "message": {
-                                    "content": json.dumps(
-                                        {
-                                            "facts": [
-                                                {"when": "2024", "who": "Alice", "fact_type": "world"},
-                                                {"what": "", "fact_type": "world"},
-                                            ]
-                                        }
-                                    )
-                                }
-                            }
-                        ],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            BatchResult(
+                custom_id="chunk_0",
+                content=json.dumps(
+                    {
+                        "facts": [
+                            {"when": "2024", "who": "Alice", "fact_type": "world"},
+                            {"what": "", "fact_type": "world"},
+                        ]
                     }
-                },
-            }
+                ),
+                usage=_usage(),
+            )
         ]
     )
 
@@ -457,23 +436,13 @@ async def test_batch_api_records_missing_facts_key_as_extraction_error(
     """Issue #5582: a reply with no top-level 'facts' list is a broken envelope,
     not an empty extraction — it must reach extraction_errors, not pass as 0 facts."""
     mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
-    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": "batch_no_facts_key"})
-    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value=BatchSubmission(batch_id="batch_no_facts_key", status="validating")
     )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch"))
     wrapped = {"final": {"facts": [{"what": "Alice visited Paris", "fact_type": "world"}]}}
     mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
-        return_value=[
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [{"message": {"content": json.dumps(wrapped)}}],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
-                    }
-                },
-            }
-        ]
+        return_value=[BatchResult(custom_id="chunk_0", content=json.dumps(wrapped), usage=_usage())]
     )
 
     recorded = []
@@ -532,22 +501,12 @@ async def test_batch_api_recovers_fenced_and_control_char_json(mock_llm_config, 
         json.loads(unparseable_content)
 
     mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
-    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
-    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value=BatchSubmission(batch_id=batch_id, status="validating")
     )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch"))
     mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
-        return_value=[
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [{"message": {"content": unparseable_content}}],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
-                    }
-                },
-            }
-        ]
+        return_value=[BatchResult(custom_id="chunk_0", content=unparseable_content, usage=_usage())]
     )
 
     extraction = await extract_facts_from_contents_batch_api(
@@ -583,22 +542,12 @@ async def test_batch_api_unparseable_json_still_records_error(mock_llm_config, t
         json.loads(unparseable_content)
 
     mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
-    mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
-    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value=BatchSubmission(batch_id=batch_id, status="validating")
     )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch"))
     mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
-        return_value=[
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [{"message": {"content": unparseable_content}}],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
-                    }
-                },
-            }
-        ]
+        return_value=[BatchResult(custom_id="chunk_0", content=unparseable_content, usage=_usage())]
     )
 
     extraction = await extract_facts_from_contents_batch_api(
@@ -660,72 +609,49 @@ async def test_batch_api_crash_recovery(mock_llm_config, test_contents, hindsigh
 
         # Mock get_batch_status - batch already in progress
         mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-            return_value={
-                "status": "completed",
-                "request_counts": {"total": 2, "completed": 2, "failed": 0},
-            }
+            return_value=_status(batch_id, total=2, completed=2)
         )
 
         # Mock retrieve_batch_results
         mock_results = [
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [
+            BatchResult(
+                custom_id="chunk_0",
+                content=json.dumps(
+                    {
+                        "facts": [
                             {
-                                "message": {
-                                    "content": json.dumps(
-                                        {
-                                            "facts": [
-                                                {
-                                                    "what": "Alice is a senior software engineer",
-                                                    "when": "present",
-                                                    "where": "TechCorp",
-                                                    "who": "Alice",
-                                                    "why": "Background",
-                                                    "fact_type": "world",
-                                                    "fact_kind": "conversation",
-                                                }
-                                            ]
-                                        }
-                                    )
-                                }
+                                "what": "Alice is a senior software engineer",
+                                "when": "present",
+                                "where": "TechCorp",
+                                "who": "Alice",
+                                "why": "Background",
+                                "fact_type": "world",
+                                "fact_kind": "conversation",
                             }
-                        ],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                        ]
                     }
-                },
-            },
-            {
-                "custom_id": "chunk_1",
-                "response": {
-                    "body": {
-                        "choices": [
+                ),
+                usage=_usage(),
+            ),
+            BatchResult(
+                custom_id="chunk_1",
+                content=json.dumps(
+                    {
+                        "facts": [
                             {
-                                "message": {
-                                    "content": json.dumps(
-                                        {
-                                            "facts": [
-                                                {
-                                                    "what": "Bob is a junior developer",
-                                                    "when": "last month",
-                                                    "where": "team",
-                                                    "who": "Bob",
-                                                    "why": "New member",
-                                                    "fact_type": "world",
-                                                    "fact_kind": "conversation",
-                                                }
-                                            ]
-                                        }
-                                    )
-                                }
+                                "what": "Bob is a junior developer",
+                                "when": "last month",
+                                "where": "team",
+                                "who": "Bob",
+                                "why": "New member",
+                                "fact_type": "world",
+                                "fact_kind": "conversation",
                             }
-                        ],
-                        "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                        ]
                     }
-                },
-            },
+                ),
+                usage=_usage(),
+            ),
         ]
         mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(return_value=mock_results)
 
@@ -792,44 +718,33 @@ async def test_batch_api_records_non_fatal_extraction_errors(
 
         batch_id = "batch_partial_errors"
         mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
-        mock_llm_config._provider_impl.submit_batch = AsyncMock(return_value={"batch_id": batch_id})
+        mock_llm_config._provider_impl.submit_batch = AsyncMock(
+            return_value=BatchSubmission(batch_id=batch_id, status="validating")
+        )
         mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-            return_value={
-                "status": "completed",
-                "request_counts": {"total": 2, "completed": 2, "failed": 0},
-            }
+            return_value=_status(batch_id, total=2, completed=2)
         )
         mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
             return_value=[
-                {
-                    "custom_id": "chunk_0",
-                    "response": {
-                        "body": {
-                            "choices": [
+                BatchResult(
+                    custom_id="chunk_0",
+                    content=json.dumps(
+                        {
+                            "facts": [
                                 {
-                                    "message": {
-                                        "content": json.dumps(
-                                            {
-                                                "facts": [
-                                                    {
-                                                        "what": "Alice is a senior software engineer",
-                                                        "when": "present",
-                                                        "where": "TechCorp",
-                                                        "who": "Alice",
-                                                        "why": "Background",
-                                                        "fact_type": "world",
-                                                        "fact_kind": "conversation",
-                                                    }
-                                                ]
-                                            }
-                                        )
-                                    }
+                                    "what": "Alice is a senior software engineer",
+                                    "when": "present",
+                                    "where": "TechCorp",
+                                    "who": "Alice",
+                                    "why": "Background",
+                                    "fact_type": "world",
+                                    "fact_kind": "conversation",
                                 }
-                            ],
-                            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                            ]
                         }
-                    },
-                }
+                    ),
+                    usage=_usage(),
+                )
             ]
         )
 
@@ -988,23 +903,11 @@ async def test_batch_api_via_extract_facts_from_contents(
         # Mock batch API support
         mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
         mock_llm_config._provider_impl.submit_batch = AsyncMock(
-            return_value={"batch_id": "batch_123", "status": "validating", "request_counts": {}}
+            return_value=BatchSubmission(batch_id="batch_123", status="validating")
         )
-        mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-            return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
-        )
+        mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch"))
         mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
-            return_value=[
-                {
-                    "custom_id": "chunk_0",
-                    "response": {
-                        "body": {
-                            "choices": [{"message": {"content": json.dumps({"facts": []})}}],
-                            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-                        }
-                    },
-                }
-            ]
+            return_value=[BatchResult(custom_id="chunk_0", content=json.dumps({"facts": []}), usage=_usage(10, 5))]
         )
 
         # Call main extract_facts_from_contents (should route to batch API)
@@ -1045,36 +948,18 @@ async def test_batch_api_sanitizes_model_authored_text(mock_llm_config, hindsigh
     batch_id = "batch_surrogate"
     mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
     mock_llm_config._provider_impl.submit_batch = AsyncMock(
-        return_value={
-            "batch_id": batch_id,
-            "status": "validating",
-            "request_counts": {"total": 1, "completed": 0, "failed": 0},
-        }
+        return_value=BatchSubmission(batch_id=batch_id, status="validating")
     )
-    mock_llm_config._provider_impl.get_batch_status = AsyncMock(
-        return_value={"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
-    )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch"))
     mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
         return_value=[
-            {
-                "custom_id": "chunk_0",
-                "response": {
-                    "body": {
-                        "choices": [
-                            {
-                                "message": {
-                                    "content": (
-                                        '{"facts": [{"what": "Alex laughed \ud83d", "when": "N/A", '
-                                        '"where": "N/A", "who": "Alex", "why": "N/A", "fact_type": "world", '
-                                        '"fact_kind": "conversation", "entities": ["Al\ud83dex"]}]}'
-                                    )
-                                }
-                            }
-                        ],
-                        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-                    }
-                },
-            }
+            BatchResult(
+                custom_id="chunk_0",
+                content='{"facts": [{"what": "Alex laughed \ud83d", "when": "N/A", '
+                '"where": "N/A", "who": "Alex", "why": "N/A", "fact_type": "world", '
+                '"fact_kind": "conversation", "entities": ["Al\ud83dex"]}]}',
+                usage=_usage(10, 5),
+            )
         ]
     )
 

@@ -5,7 +5,13 @@ from types import SimpleNamespace
 import pytest
 
 from hindsight_api.config import _get_raw_config
-from hindsight_api.engine.response_models import TokenUsage
+from hindsight_api.engine.response_models import (
+    BatchRequestCounts,
+    BatchResult,
+    BatchStatus,
+    BatchSubmission,
+    TokenUsage,
+)
 from hindsight_api.engine.retain import fact_extraction
 from hindsight_api.engine.retain.fact_extraction import CausalRelation, ExtractionPrompt, Fact, FactExtractionResponse
 from hindsight_api.engine.retain.types import RetainContent
@@ -122,22 +128,16 @@ async def test_batch_causal_targets_use_each_chunk_start(monkeypatch):
             return True
 
         async def submit_batch(self, _requests):
-            return {"batch_id": "test"}
+            return BatchSubmission(batch_id="test", status="validating")
 
-        async def get_batch_status(self, _batch_id):
-            return {"status": "completed", "request_counts": {"completed": 3, "total": 3}}
+        async def get_batch_status(self, batch_id):
+            return BatchStatus(
+                batch_id=batch_id, status="completed", request_counts=BatchRequestCounts(total=3, completed=3)
+            )
 
         async def retrieve_batch_results(self, _batch_id):
             return [
-                {
-                    "custom_id": f"chunk_{index}",
-                    "response": {
-                        "body": {
-                            "choices": [{"message": {"content": json.dumps({"facts": facts})}}],
-                            "usage": {},
-                        }
-                    },
-                }
+                BatchResult(custom_id=f"chunk_{index}", content=json.dumps({"facts": facts}))
                 for index, facts in enumerate(fact_groups)
             ]
 

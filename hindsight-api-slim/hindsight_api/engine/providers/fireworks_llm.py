@@ -39,7 +39,8 @@ import aiohttp
 from yarl import URL
 
 from ..aiohttp_session import LoopLocalSession, UpstreamHTTPError, per_phase_timeout
-from .openai_compatible_llm import OpenAICompatibleLLM
+from ..response_models import BatchRequest, BatchRequestCounts, BatchResult, BatchStatus, BatchSubmission
+from .openai_compatible_llm import OpenAICompatibleLLM, batch_result_from_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -118,16 +119,7 @@ class FireworksLLM(OpenAICompatibleLLM):
     async def supports_batch_api(self) -> bool:
         return True
 
-    async def submit_batch(
-        self,
-        requests: list[dict[str, Any]],
-        endpoint: str = "/v1/chat/completions",
-        completion_window: str = "24h",
-    ) -> dict[str, Any]:
-        # endpoint/completion_window are part of the LLMInterface batch contract
-        # (used by the OpenAI path) but have no analogue in Fireworks' job API:
-        # the request shape is fixed (chat) and the job timeout is server-side.
-        # Kept for signature compatibility with the shared retain driver.
+    async def submit_batch(self, requests: list[BatchRequest]) -> BatchSubmission:
         self._require_account_id()
         logger.info(f"Submitting Fireworks batch with {len(requests)} requests")
 
@@ -172,38 +164,16 @@ class FireworksLLM(OpenAICompatibleLLM):
 
         logger.info(f"Fireworks batch job submitted: {job_id}, state={job.get('state')}")
 
-        return {
-            "batch_id": job_id,
-            "status": self._normalize_state(job.get("state", "")),
-            "input_dataset_id": input_dataset_id,
-            "output_dataset_id": output_dataset_id,
-            "created_at": job.get("createTime"),
-            "request_count": len(requests),
-        }
+        return BatchSubmission(batch_id=job_id, status=self._normalize_state(job.get("state", "")))
 
-    async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
+    async def get_batch_status(self, batch_id: str) -> BatchStatus:
         self._require_account_id()
         job = json.loads(await self._request("GET", self._job_url(batch_id), headers=self._auth_headers()))
 
         status = self._normalize_state(job.get("state", ""))
         progress = job.get("jobProgress") or {}
-        result: dict[str, Any] = {
-            "batch_id": batch_id,
-            "status": status,
-            "created_at": job.get("createTime"),
-            "request_counts": {
-                "total": _to_int(progress.get("totalInputRequests")),
-                "completed": _to_int(progress.get("successfullyProcessedRequests")),
-                "failed": _to_int(progress.get("failedRequests")),
-            },
-        }
-
-        output_dataset_id = job.get("outputDatasetId")
-        if output_dataset_id:
-            result["output_dataset_id"] = output_dataset_id
         # Fireworks reports terminal failure detail in the `status` {code,message}.
-        if job.get("status"):
-            result["errors"] = job["status"]
+        error = str(job["status"]) if job.get("status") else None
 
         # PENDING-forever guard: the shared retain poll loop has no max-wait, so
         # if a (likely non-batch-eligible) job never reaches a terminal state we
@@ -212,17 +182,26 @@ class FireworksLLM(OpenAICompatibleLLM):
         if status not in _TERMINAL_STATUSES:
             elapsed = self._elapsed_seconds(job.get("createTime"))
             if elapsed is not None and elapsed > self._max_wait_seconds:
-                result["status"] = "expired"
-                result["errors"] = (
+                status = "expired"
+                error = (
                     f"Fireworks batch {batch_id} exceeded max wait of {self._max_wait_seconds}s "
                     f"in state {job.get('state')!r}. The model may not be batch-eligible "
                     f"(such jobs stay PENDING indefinitely)."
                 )
-                logger.error(result["errors"])
+                logger.error(error)
 
-        return result
+        return BatchStatus(
+            batch_id=batch_id,
+            status=status,
+            request_counts=BatchRequestCounts(
+                total=_to_int(progress.get("totalInputRequests")),
+                completed=_to_int(progress.get("successfullyProcessedRequests")),
+                failed=_to_int(progress.get("failedRequests")),
+            ),
+            error=error,
+        )
 
-    async def retrieve_batch_results(self, batch_id: str) -> list[dict[str, Any]]:
+    async def retrieve_batch_results(self, batch_id: str) -> list[BatchResult]:
         self._require_account_id()
         job = json.loads(await self._request("GET", self._job_url(batch_id), headers=self._auth_headers()))
 
@@ -249,7 +228,7 @@ class FireworksLLM(OpenAICompatibleLLM):
         # The output dataset contains a results file plus a separate error file.
         # Download every file and normalize each line; error-file lines carry an
         # `error` so partial failures surface per custom_id instead of vanishing.
-        results: list[dict[str, Any]] = []
+        results: list[BatchResult] = []
         for url in signed_urls.values():
             # Signed URLs are pre-authenticated — do not attach the bearer token.
             file_text = await self._request("GET", url)
@@ -267,16 +246,12 @@ class FireworksLLM(OpenAICompatibleLLM):
     # ----- pure translation/normalization helpers (unit-tested) ----------
 
     @staticmethod
-    def _translate_requests(requests: list[dict[str, Any]]) -> str:
+    def _translate_requests(requests: list[BatchRequest]) -> str:
         """OpenAI batch request -> Fireworks input JSONL.
 
-        Fireworks lines are ``{"custom_id", "body"}`` — the OpenAI ``method`` and
-        ``url`` keys are dropped; ``body`` is kept verbatim.
+        Fireworks lines are ``{"custom_id", "body"}``; ``body`` is kept verbatim.
         """
-        lines = [
-            json.dumps({"custom_id": req.get("custom_id"), "body": req.get("body")}, ensure_ascii=False)
-            for req in requests
-        ]
+        lines = [json.dumps({"custom_id": req.custom_id, "body": req.body}, ensure_ascii=False) for req in requests]
         return "\n".join(lines)
 
     @staticmethod
@@ -301,16 +276,12 @@ class FireworksLLM(OpenAICompatibleLLM):
         return "in_progress"
 
     @staticmethod
-    def _normalize_output_line(line: dict[str, Any]) -> dict[str, Any]:
-        """Fireworks output JSONL line -> OpenAI-batch-output shape.
-
-        Target: ``{"custom_id", "response": {"body": <chat-completion>}, "error"}``
-        so the consumer's ``result["response"]["body"]["choices"][0]...`` works.
-        """
-        custom_id = line.get("custom_id")
+    def _normalize_output_line(line: dict[str, Any]) -> BatchResult:
+        """Fireworks output JSONL line (results or error file) -> BatchResult."""
+        custom_id = str(line.get("custom_id"))
         error = line.get("error")
         if error:
-            return {"custom_id": custom_id, "response": None, "error": error}
+            return batch_result_from_chat_completion(custom_id, None, error)
 
         response = line.get("response")
         if response is None:
@@ -321,7 +292,7 @@ class FireworksLLM(OpenAICompatibleLLM):
             body = response["body"]
         else:
             body = response
-        return {"custom_id": custom_id, "response": {"body": body}, "error": None}
+        return batch_result_from_chat_completion(custom_id, body)
 
     # ----- low-level HTTP + URL helpers ----------------------------------
 
