@@ -146,6 +146,69 @@ hindsight-admin repair-bank --bank acme-prod
 
 ---
 
+### reembed
+
+Switch to a different embedding model: re-embed every stored memory and mental model with it, in place, while your servers keep running. PostgreSQL only.
+
+You need it for **any** model change, even one with the same dimension. Without it, old and new vectors end up mixed and recall degrades. A server also refuses to start on a model of a different dimension than the stored vectors.
+
+```bash
+hindsight-admin reembed --schema <name> | --all-schemas [OPTIONS]
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--schema`, `-s` | Schema to re-embed. Mutually exclusive with `--all-schemas`. | — |
+| `--all-schemas` | The base schema plus every tenant schema, one after the other. | — |
+| `--batch-size` | Rows embedded and written per transaction. | `256` |
+| `--concurrency` | Batches sent to the embedding model at the same time. Raise it for a remote model; Postgres still sees a single connection. | `4` |
+| `--sleep` | Seconds to pause after each batch, to go easy on Postgres. | `0` |
+| `--finish` | Last step: lift the write guard once every server runs the new model. | — |
+
+#### Procedure
+
+1. **Configure the new model where you run the command.** Set the new `HINDSIGHT_API_EMBEDDINGS_*` variables in the environment of `hindsight-admin`, plus the usual `HINDSIGHT_API_DATABASE_URL`. Leave the servers alone: they keep running on the old model.
+
+2. **Re-embed.**
+
+   ```bash
+   hindsight-admin reembed --all-schemas
+   ```
+
+   While it runs, recall and retain keep working. Recall is slower, because the old vector indexes are dropped for the duration. When it ends, each schema reports `swapped`.
+
+3. **Restart every API server and worker with the new model.** From the moment a schema is swapped until a server restarts:
+   - writes that store a vector are refused on servers still on the old model. HTTP answers `503` with `Retry-After`; background tasks wait and retry on their own, without using up their retries.
+   - recall on those servers answers `503` (different dimension) or returns poor results (same dimension).
+
+   So restart soon after the command ends. A server restarted on the new model works normally right away.
+
+4. **Lift the guard**, once no server runs the old model:
+
+   ```bash
+   hindsight-admin reembed --all-schemas --finish
+   ```
+
+#### What it does to the database
+
+Per schema, on the `memory_units` and `mental_models` tables:
+
+1. Adds a second vector column for the new model. This only changes the catalog: the table is not copied.
+2. Drops the old vector indexes, so the bulk update doesn't pay for maintaining them.
+3. Re-embeds every row into the new column in small batches, each its own transaction. A row a server changes meanwhile is picked up again by a later pass.
+4. Builds the vector indexes on the new column (`CREATE INDEX CONCURRENTLY`).
+5. Takes a short write lock (reads continue), embeds the last few rows, and swaps the columns. A guard then refuses vector writes from servers still on the old model; `--finish` removes it.
+
+Each row is rewritten once. To lower the load on a busy database, use a smaller `--batch-size` or a `--sleep`. To finish sooner with a remote embedding model, raise `--concurrency`.
+
+#### If it stops halfway
+
+Run the same command again: it continues where it stopped. A schema that is already swapped is reported `already swapped` and left alone. Running it with a different model than the interrupted run starts that schema's fill over.
+
+A deployment where a custom memories store owns the memories must re-embed inside that store; the command refuses to run there.
+
+---
+
 ### rename-bank
 
 :::tip Consider an alias instead
