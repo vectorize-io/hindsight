@@ -9,7 +9,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from hindsight_api.admin.reembed import embedding_text, finish_schema, reembed_schema
+from hindsight_api.admin.reembed import fact_embedding_text, finish_schema, reembed_schema
 from hindsight_api.engine.embeddings import EMBEDDING_MODEL_SETTING, Embeddings, embedding_model_id
 from hindsight_api.migrations import run_migrations
 
@@ -92,18 +92,24 @@ async def _seed(conn, s: str) -> dict[str, str]:
             VALUES ('b1', 'The sky is blue', 'world', $1::vector, now()) RETURNING id""",
         old,
     )
+    # Another bank with a mental model of the same id (ids are unique per bank only), written in the
+    # same statement so both rows share an xmin: matching on id alone would cross banks.
+    await conn.execute(f"INSERT INTO {s}.banks (bank_id) VALUES ('b2')")
     await conn.execute(
         f"""INSERT INTO {s}.mental_models (id, bank_id, subtype, name, source_query, content, embedding)
-            VALUES ('mm1', 'b1', 'pinned', 'Friends', 'who?', 'Bob and Alice', $1::vector)""",
+            VALUES ('mm1', 'b1', 'pinned', 'Friends', 'who?', 'Bob and Alice', $1::vector),
+                   ('mm1', 'b2', 'pinned', 'Weather', 'sky?', 'It rains', $1::vector)""",
         old,
     )
     return {"fact": fact, "obs": obs, "other": other}
 
 
-async def _stored(conn, s: str, table: str, row_id) -> list[float]:
+async def _stored(conn, s: str, table: str, row_id, bank_id: str = "b1") -> list[float]:
     # Raw SQL on purpose: no engine method returns stored vectors, and the vector itself is what
     # proves which text the re-embed embedded.
-    text = await conn.fetchval(f"SELECT embedding::text FROM {s}.{table} WHERE id = $1", row_id)
+    text = await conn.fetchval(
+        f"SELECT embedding::text FROM {s}.{table} WHERE id = $1 AND bank_id = $2", row_id, bank_id
+    )
     return [float(x) for x in text.strip("[]").split(",")]
 
 
@@ -129,16 +135,13 @@ async def test_reembed_rebuilds_every_vector_and_guards_old_model_writes(pg0_db_
                 AND attname = 'embedding'"""
         )
         assert dim == DIM
-        expected_fact = embedding_text(
-            "memory_units",
-            {
-                "fact_type": "world",
-                "text": "Bob met Alice",
-                "entities": ["Bob", "Alice"],
-                "occurred_start": datetime(2024, 6, 3, tzinfo=UTC),
-                "occurred_end": None,
-                "mentioned_at": None,
-            },
+        expected_fact = fact_embedding_text(
+            fact_type="world",
+            text="Bob met Alice",
+            entities=["Bob", "Alice"],
+            occurred_start=datetime(2024, 6, 3, tzinfo=UTC),
+            occurred_end=None,
+            mentioned_at=None,
         )
         assert expected_fact == "Bob met Alice (happened in June 2024) [Alice, Bob]"
         assert await _stored(conn, schema, "memory_units", ids["fact"]) == pytest.approx(vector(expected_fact))
@@ -147,6 +150,7 @@ async def test_reembed_rebuilds_every_vector_and_guards_old_model_writes(pg0_db_
         )
         assert await _stored(conn, schema, "memory_units", ids["other"]) == pytest.approx(vector("The sky is grey"))
         assert await _stored(conn, schema, "mental_models", "mm1") == pytest.approx(vector("Friends Bob and Alice"))
+        assert await _stored(conn, schema, "mental_models", "mm1", "b2") == pytest.approx(vector("Weather It rains"))
 
         # The vector indexes exist again, on the new column.
         indexes = await conn.fetch(

@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import asyncpg
@@ -55,6 +56,10 @@ TABLES = ("memory_units", "mental_models")
 NEXT = "embedding_next"
 # Columns whose change makes a row's freshly computed vector stale while the fill runs.
 _SOURCE_COLUMNS = {"memory_units": ("text",), "mental_models": ("name", "content")}
+# Each table's primary key, which the fill pages through and writes by. A mental model's id is only
+# unique within its bank, so paging or matching on `id` alone could skip a row or write one bank's
+# vector into another bank's model of the same id.
+_KEYS = {"memory_units": ("id",), "mental_models": ("bank_id", "id")}
 _TRIGGER = "hindsight_reembed"
 _SWAP_LOCK_ATTEMPTS = 20
 
@@ -93,15 +98,16 @@ async def _column_dimension(conn: asyncpg.Connection, schema: str, table: str, c
     )
 
 
-async def _id_type(conn: asyncpg.Connection, schema: str, table: str) -> str:
+async def _column_type(conn: asyncpg.Connection, schema: str, table: str, column: str) -> str:
     return await conn.fetchval(
         """
         SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a
         JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = $1 AND c.relname = $2 AND a.attname = 'id'
+        WHERE n.nspname = $1 AND c.relname = $2 AND a.attname = $3
         """,
         schema,
         table,
+        column,
     )
 
 
@@ -181,49 +187,91 @@ def _todo_predicate() -> str:
     return f"{NEXT} IS NULL AND embedding IS NOT NULL"
 
 
-async def _texts(conn: asyncpg.Connection, schema: str, table: str, after: Any, limit: int) -> list[asyncpg.Record]:
-    """The next batch of rows still to embed, with what their embedded text is built from."""
-    cursor = "" if after is None else "AND x.id > $2"
-    args: list[Any] = [limit] if after is None else [limit, after]
+@dataclass
+class _Todo:
+    """A row still to embed."""
+
+    key: list[Any]  # the table's _KEYS values
+    version: str  # the row's xmin when read
+    text: str  # what gets embedded
+
+
+def fact_embedding_text(
+    *,
+    fact_type: str,
+    text: str,
+    entities: list[str],
+    occurred_start: datetime | None,
+    occurred_end: datetime | None,
+    mentioned_at: datetime | None,
+) -> str:
+    """The text the write paths embed for a memory unit.
+
+    Facts: their text plus dates and entity names, as retain/edit/import build it. Observations:
+    their text alone, as consolidation embeds it.
+    """
+    if fact_type == "observation":
+        return text
+    fact = ExtractedFact(
+        fact_text=text,
+        fact_type=fact_type,
+        entities=entities,
+        occurred_start=occurred_start,
+        occurred_end=occurred_end,
+        mentioned_at=mentioned_at,
+    )
+    return embedding_processing.augment_texts_with_dates([fact], embedding_processing.format_readable_date)[0]
+
+
+def mental_model_embedding_text(name: str | None, content: str | None) -> str:
+    """The text the write paths embed for a mental model."""
+    return f"{name or ''} {content or ''}"
+
+
+async def _texts(conn: asyncpg.Connection, schema: str, table: str, after: list[Any] | None, limit: int) -> list[_Todo]:
+    """The next batch of rows still to embed, keyset-paged on the table's primary key."""
+    keys = _KEYS[table]
+    key_cols = ", ".join(f"x.{k}" for k in keys)
+    cursor = ""
+    if after is not None:
+        cursor = f"AND ({key_cols}) > ({', '.join(f'${i + 2}' for i in range(len(keys)))})"
+    args: list[Any] = [limit, *(after or [])]
+    where = f"WHERE {_todo_predicate()} {cursor} ORDER BY {key_cols} LIMIT $1"
     if table == "mental_models":
-        return await conn.fetch(
-            f"SELECT x.id, x.xmin::text AS version, x.name, x.content FROM {_table(schema, table)} x "
-            f"WHERE x.{NEXT} IS NULL AND x.embedding IS NOT NULL {cursor} ORDER BY x.id LIMIT $1",
+        rows = await conn.fetch(
+            f"SELECT {key_cols}, x.xmin::text AS version, x.name, x.content FROM {_table(schema, table)} x {where}",
             *args,
         )
-    return await conn.fetch(
+        return [
+            _Todo([r[k] for k in keys], r["version"], mental_model_embedding_text(r["name"], r["content"]))
+            for r in rows
+        ]
+    rows = await conn.fetch(
         f"""
-        SELECT x.id, x.xmin::text AS version, x.fact_type, x.text, x.occurred_start, x.occurred_end, x.mentioned_at,
+        SELECT {key_cols}, x.xmin::text AS version, x.fact_type, x.text,
+               x.occurred_start, x.occurred_end, x.mentioned_at,
                ARRAY(SELECT e.canonical_name FROM {_table(schema, "unit_entities")} ue
                      JOIN {_table(schema, "entities")} e ON e.id = ue.entity_id
                      WHERE ue.unit_id = x.id) AS entities
-        FROM {_table(schema, table)} x
-        WHERE x.{NEXT} IS NULL AND x.embedding IS NOT NULL {cursor}
-        ORDER BY x.id LIMIT $1
+        FROM {_table(schema, table)} x {where}
         """,
         *args,
     )
-
-
-def embedding_text(table: str, row: Any) -> str:
-    """The text the write paths embed for ``row``.
-
-    Facts: their text plus dates and entity names, as retain/edit/import build it. Observations:
-    their text alone, as consolidation embeds it. Mental models: ``"{name} {content}"``.
-    """
-    if table == "mental_models":
-        return f"{row['name'] or ''} {row['content'] or ''}"
-    if row["fact_type"] == "observation":
-        return row["text"]
-    fact = ExtractedFact(
-        fact_text=row["text"],
-        fact_type=row["fact_type"],
-        entities=list(row["entities"] or []),
-        occurred_start=row["occurred_start"],
-        occurred_end=row["occurred_end"],
-        mentioned_at=row["mentioned_at"],
-    )
-    return embedding_processing.augment_texts_with_dates([fact], embedding_processing.format_readable_date)[0]
+    return [
+        _Todo(
+            [r[k] for k in keys],
+            r["version"],
+            fact_embedding_text(
+                fact_type=r["fact_type"],
+                text=r["text"],
+                entities=list(r["entities"]),
+                occurred_start=r["occurred_start"],
+                occurred_end=r["occurred_end"],
+                mentioned_at=r["mentioned_at"],
+            ),
+        )
+        for r in rows
+    ]
 
 
 async def _fill_pass(
@@ -243,24 +291,31 @@ async def _fill_pass(
     ``conn``, one at a time, so Postgres sees the same single connection however many batches are
     in flight; ``db`` serialises them because an asyncpg connection runs one query at a time.
     """
-    id_type = await _id_type(conn, schema, table)
+    keys = _KEYS[table]
+    key_types = [await _column_type(conn, schema, table, k) for k in keys]
+    n = len(keys)
+    # unnest(keys..., versions, vectors) AS v(k0, k1, ..., version, e), matched on every key column.
+    unnest_args = ", ".join(f"${i + 1}::{t}[]" for i, t in enumerate(key_types))
+    match = " AND ".join(f"x.{k} = v.k{i}" for i, k in enumerate(keys))
+    update = (
+        f"UPDATE {_table(schema, table)} x SET {NEXT} = v.e::vector "
+        f"FROM unnest({unnest_args}, ${n + 1}::text[], ${n + 2}::text[]) "
+        f"AS v({', '.join(f'k{i}' for i in range(n))}, version, e) "
+        f"WHERE {match} AND x.xmin::text = v.version"
+    )
     db = asyncio.Lock()
     slots = asyncio.Semaphore(concurrency)
 
-    async def embed_and_write(rows: list[asyncpg.Record]) -> None:
+    async def embed_and_write(rows: list[_Todo]) -> None:
         try:
-            vectors = await embedding_processing.generate_embeddings_batch(
-                embeddings, [embedding_text(table, r) for r in rows]
-            )
+            vectors = await embedding_processing.generate_embeddings_batch(embeddings, [r.text for r in rows])
             # Only rows still at the version that was read: a row a server rewrote in between keeps
             # a NULL `embedding_next`, and a later pass embeds its new text.
             async with db:
                 await conn.execute(
-                    f"UPDATE {_table(schema, table)} x SET {NEXT} = v.e::vector "
-                    f"FROM unnest($1::{id_type}[], $2::text[], $3::text[]) AS v(id, version, e) "
-                    "WHERE x.id = v.id AND x.xmin::text = v.version",
-                    [r["id"] for r in rows],
-                    [r["version"] for r in rows],
+                    update,
+                    *([r.key[i] for r in rows] for i in range(n)),
+                    [r.version for r in rows],
                     ["[" + ",".join(str(float(x)) for x in v) + "]" for v in vectors],
                 )
             if sleep_s:
@@ -281,7 +336,7 @@ async def _fill_pass(
                 break
             group.create_task(embed_and_write(rows))
             done += len(rows)
-            after = rows[-1]["id"]
+            after = rows[-1].key
     return done
 
 
@@ -379,7 +434,7 @@ async def reembed_schema(
             conn,
             schema,
             f"{_TRIGGER}_todo_{table}",
-            f"{_table(schema, table)} (id) WHERE {_todo_predicate()}",
+            f"{_table(schema, table)} ({', '.join(_KEYS[table])}) WHERE {_todo_predicate()}",
         )
 
     done = 0

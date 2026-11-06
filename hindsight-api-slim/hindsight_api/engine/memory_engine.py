@@ -781,6 +781,7 @@ from .retain.attachment_content import (
     short_attachment_id,
     validate_and_canonicalize_content,
 )
+from .retain.embedding_processing import format_readable_date
 from .retain.embedding_utils import EmbeddingsUnavailableError
 from .retain.fact_storage import _normalize_scopes
 from .retain.fold import FoldMemberRef
@@ -6864,26 +6865,8 @@ class MemoryEngine(MemoryEngineInterface):
         if hasattr(self._task_backend, "wait_for_pending_tasks"):
             await self._task_backend.wait_for_pending_tasks()
 
-    def _format_readable_date(self, dt: datetime) -> str:
-        """
-        Format a datetime into a readable string for temporal matching.
-
-        Examples:
-            - June 2024
-            - January 15, 2024
-            - December 2023
-
-        This helps queries like "camping in June" match facts that happened in June.
-
-        Args:
-            dt: datetime object to format
-
-        Returns:
-            Readable date string
-        """
-        from .retain.embedding_processing import format_readable_date
-
-        return format_readable_date(dt)
+    # "Month Year" (e.g. "June 2024"), shared with every other path that embeds a fact's text.
+    _format_readable_date = staticmethod(format_readable_date)
 
     def retain(
         self,
