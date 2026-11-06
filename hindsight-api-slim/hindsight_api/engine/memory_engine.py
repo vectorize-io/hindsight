@@ -19182,9 +19182,10 @@ class MemoryEngine(MemoryEngineInterface):
         Raises:
             MentalModelRefreshError: The refresh could not produce a document that is
                 safe to store — it came back empty, its delta operations never reached
-                the document, structured-output extraction failed, or reflect itself
-                failed before there was a candidate at all (a retrieval tool raised, or
-                the agent produced no answer). In every case the previous content and
+                the document, structured-output extraction failed, an operation
+                validator rejected the document (not retried: ``retryable`` is False),
+                or reflect itself failed before there was a candidate at all (a
+                retrieval tool raised, or the agent produced no answer). In every case the previous content and
                 the watermark are left untouched, so a retry reads the same window
                 again, and the reason is recorded on the operation and in the model's
                 history.
