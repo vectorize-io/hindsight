@@ -2770,18 +2770,15 @@ async def _process_memory_batch(
     if perf:
         perf.record_timing("recall", time.perf_counter() - t0)
 
-    # Union all observations (deduped by id)
-    seen_ids: set[str] = set()
-    union_observations: list["MemoryFact"] = []
+    # Keep the first observation for each id, in recall order.
+    observations_by_id: dict[str, "MemoryFact"] = {}
     union_source_facts: dict[str, "MemoryFact"] = {}
     for recall_result in per_fact_recalls:
         for obs in recall_result.results:
-            obs_id = str(obs.id)
-            if obs_id not in seen_ids:
-                seen_ids.add(obs_id)
-                union_observations.append(obs)
+            observations_by_id.setdefault(str(obs.id), obs)
         if recall_result.source_facts:
             union_source_facts.update(recall_result.source_facts)
+    union_observations = list(observations_by_id.values())
 
     # 2b. Compute remaining observation slots for this scope (if limit configured).
     # The cap is resolved per-scope: an observation_scope_limits rule may override
@@ -2881,7 +2878,6 @@ async def _process_memory_batch(
     # one place. They are still applied first inside the transaction, so an observation
     # slot freed by a delete is available to a create in the same response.
     prepared_deletes: list[_PreparedDelete] = []
-    pool_ids = {str(obs.id) for obs in union_observations}
     # A response can both UPDATE and DELETE one observation (seen when a fact supersedes it:
     # the model rewrites it to the new state and also deletes "the old one"). Deletes apply
     # first, so the update then found no row and was skipped while its source facts were
@@ -2896,13 +2892,15 @@ async def _process_memory_batch(
             )
             continue
         # Security: the observation must be present in the unioned recall
-        if delete.observation_id not in pool_ids:
+        if delete.observation_id not in observations_by_id:
             logger.debug(
                 f"Batch consolidation: rejected delete — observation {delete.observation_id} not in unioned recall"
             )
             continue
         # A merge target must be one the model was shown, like any other target it names.
-        target = delete.merged_into if delete.merged_into in pool_ids - {delete.observation_id} else None
+        target = delete.merged_into
+        if target == delete.observation_id or target not in observations_by_id:
+            target = None
         prepared_deletes.append(
             _PreparedDelete(observation_id=delete.observation_id, is_merge=bool(delete.merged_into), merged_into=target)
         )
@@ -2942,7 +2940,7 @@ async def _process_memory_batch(
         # recalled for one of the cited facts, but the model reads the whole pool: attaching a
         # fact to an observation a sibling fact surfaced is legitimate, and rejecting it dropped
         # the fact's evidence silently (it is stamped consolidated all the same).
-        model = next((m for m in union_observations if str(m.id) == update.observation_id), None)
+        model = observations_by_id.get(update.observation_id)
         if model is None:
             logger.warning(
                 f"Batch consolidation: rejected update — observation {update.observation_id} not in the recall pool"
