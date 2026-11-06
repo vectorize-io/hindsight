@@ -170,36 +170,47 @@ async def observation_scope_counts(
     forced tag scope) keeps only the observations it admits.
     """
     groups = build_tag_groups_where_clause(tag_groups, 2)
-    scopes_select = f"""
-        SELECT COALESCE(ARRAY(SELECT unnest(tags) ORDER BY 1), '{{}}'::text[]) AS scope
-        FROM {fq_table("memory_units")}
-        WHERE bank_id = $1 AND fact_type = 'observation' {groups.sql}
-    """
-
-    total_row = await conn.fetchrow(
-        f"""
-        SELECT COUNT(*) AS total
-        FROM (SELECT DISTINCT scope FROM ({scopes_select}) s) d
-        """,
-        bank_id,
-        *groups.params,
-    )
-    total = int(total_row["total"]) if total_row else 0
-
     limit_idx = groups.next_param_offset
+    # A scope is the observation's tags, sorted. Sorting per observation is the
+    # expensive part, and many observations share the exact same tag list, so
+    # count identical lists first (a cheap hash aggregate) and sort only the
+    # distinct ones, then merge lists that differ only in order. The page and
+    # the total both read that one materialized result. Previously two queries
+    # each sorted every observation's tags: 287 ms -> 33 ms at 100k
+    # observations over 53 tag sets, 3.2 s -> 0.1 s at 1M (#6328).
     rows = await conn.fetch(
         f"""
-        SELECT scope, COUNT(*) AS count
-        FROM ({scopes_select}) s
-        GROUP BY scope
-        ORDER BY count DESC, scope
-        LIMIT ${limit_idx} OFFSET ${limit_idx + 1}
+        WITH raw_counts AS (
+            SELECT tags, COUNT(*) AS count
+            FROM {fq_table("memory_units")}
+            WHERE bank_id = $1 AND fact_type = 'observation' {groups.sql}
+            GROUP BY tags
+        ),
+        scopes AS MATERIALIZED (
+            SELECT COALESCE(ARRAY(SELECT unnest(tags) ORDER BY 1), '{{}}'::text[]) AS scope,
+                   SUM(count)::bigint AS count
+            FROM raw_counts
+            GROUP BY 1
+        ),
+        page AS (
+            SELECT scope, count FROM scopes
+            ORDER BY count DESC, scope
+            LIMIT ${limit_idx} OFFSET ${limit_idx + 1}
+        )
+        SELECT tally.total, page.scope, page.count
+        FROM (SELECT COUNT(*) AS total FROM scopes) tally
+        LEFT JOIN page ON TRUE
+        ORDER BY page.count DESC, page.scope
         """,
         bank_id,
         *groups.params,
         limit,
         offset,
     )
+    # The LEFT JOIN keeps one row carrying the total when the page is empty
+    # (offset past the end); its scope is NULL, while a real untagged scope is '{}'.
+    total = int(rows[0]["total"])
+    rows = [r for r in rows if r["scope"] is not None]
     return {
         "scopes": [{"tags": list(r["scope"]), "count": int(r["count"])} for r in rows],
         "total": total,
