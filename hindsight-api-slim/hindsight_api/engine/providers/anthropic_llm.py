@@ -24,7 +24,14 @@ from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usag
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.remote_retry import jittered_backoff
-from hindsight_api.engine.response_models import TokenUsage
+from hindsight_api.engine.response_models import (
+    BatchRequest,
+    BatchRequestCounts,
+    BatchResult,
+    BatchStatus,
+    BatchSubmission,
+    TokenUsage,
+)
 from hindsight_api.engine.structured_output import _SUBSCHEMA_NAME_MAPS, provider_json_schema, strict_json_schema
 from hindsight_api.metrics import get_metrics_collector
 from hindsight_api.provider_auth import requires_api_key
@@ -649,52 +656,25 @@ class AnthropicLLM(LLMInterface):
 
         return params
 
-    def _translate_batch_message(self, message: Any) -> dict[str, Any]:
-        """Render an Anthropic Message as the OpenAI response body the engine parses.
-
-        The engine reads ``choices[0].message.content`` (json.loads'ing it when
-        a schema was requested) and sums ``usage`` under the OpenAI key names.
-        """
-        content = "".join(block.text for block in message.content if block.type == "text")
-
+    @staticmethod
+    def _translate_batch_message(custom_id: str, message: Any) -> BatchResult:
+        """An Anthropic Message from a succeeded batch entry as a BatchResult."""
         usage = _usage_from_anthropic_response(message)
-        input_tokens = usage.input_tokens
-        output_tokens = usage.output_tokens
-        cached_tokens = usage.cached_tokens
+        return BatchResult(
+            custom_id=custom_id,
+            content="".join(block.text for block in message.content if block.type == "text"),
+            usage=TokenUsage(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                total_tokens=usage.input_tokens + usage.output_tokens,
+                cached_tokens=usage.cached_tokens,
+            ),
+        )
 
-        return {
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": content},
-                    "finish_reason": getattr(message, "stop_reason", None),
-                }
-            ],
-            "usage": {
-                "prompt_tokens": input_tokens,
-                "completion_tokens": output_tokens,
-                "total_tokens": input_tokens + output_tokens,
-                "prompt_tokens_details": {"cached_tokens": cached_tokens},
-            },
-        }
-
-    async def submit_batch(
-        self,
-        requests: list[dict[str, Any]],
-        endpoint: str = "/v1/chat/completions",
-        completion_window: str = "24h",
-    ) -> dict[str, Any]:
-        """Submit a batch of requests to the Message Batches API.
-
-        Accepts the engine's OpenAI-JSONL-shaped entries. ``endpoint`` and
-        ``completion_window`` belong to that shared shape and have no Anthropic
-        equivalent (batches always resolve within 24 hours); both are ignored.
-        """
+    async def submit_batch(self, requests: list[BatchRequest]) -> BatchSubmission:
+        """Submit a batch of requests to the Message Batches API."""
         batch_requests = [
-            {
-                "custom_id": req["custom_id"],
-                "params": self._translate_batch_body(req.get("body") or {}),
-            }
-            for req in requests
+            {"custom_id": req.custom_id, "params": self._translate_batch_body(req.body)} for req in requests
         ]
 
         logger.info(f"Submitting Anthropic message batch with {len(batch_requests)} requests")
@@ -703,14 +683,9 @@ class AnthropicLLM(LLMInterface):
         batch = await self._client.messages.batches.create(requests=cast("list", batch_requests))
         logger.info(f"Anthropic batch submitted: {batch.id}, status={batch.processing_status}")
 
-        return {
-            "batch_id": batch.id,
-            "status": self._map_batch_status(batch.processing_status),
-            "created_at": batch.created_at,
-            "request_count": len(batch_requests),
-        }
+        return BatchSubmission(batch_id=batch.id, status=self._map_batch_status(batch.processing_status))
 
-    async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
+    async def get_batch_status(self, batch_id: str) -> BatchStatus:
         """Get batch status in the shape the engine's poll loop expects."""
         batch = await self._client.messages.batches.retrieve(batch_id)
 
@@ -722,52 +697,31 @@ class AnthropicLLM(LLMInterface):
         expired = getattr(counts, "expired", 0) or 0
         resolved = succeeded + errored + canceled + expired
 
-        result: dict[str, Any] = {
-            "batch_id": batch.id,
-            "status": self._map_batch_status(batch.processing_status),
-            "created_at": batch.created_at,
-            "request_counts": {
-                "total": processing + resolved,
-                "completed": resolved,
-                "failed": errored,
-            },
-        }
+        return BatchStatus(
+            batch_id=batch.id,
+            status=self._map_batch_status(batch.processing_status),
+            request_counts=BatchRequestCounts(total=processing + resolved, completed=resolved, failed=errored),
+        )
 
-        ended_at = getattr(batch, "ended_at", None)
-        if ended_at:
-            result["completed_at"] = ended_at
-
-        return result
-
-    async def retrieve_batch_results(self, batch_id: str) -> list[dict[str, Any]]:
-        """Retrieve completed batch results, translated to the OpenAI shape.
-
-        Succeeded entries become ``{"custom_id", "response": {"body": ...}}``;
-        errored/canceled/expired entries become ``{"custom_id", "error": ...}``
-        so the engine's per-result error handling applies unchanged.
-        """
+    async def retrieve_batch_results(self, batch_id: str) -> list[BatchResult]:
+        """Retrieve completed batch results; errored/canceled/expired entries carry ``error``."""
         batch = await self._client.messages.batches.retrieve(batch_id)
         if batch.processing_status != "ended":
             raise ValueError(f"Batch {batch_id} is not completed yet (status: {batch.processing_status})")
 
         decoder = await self._client.messages.batches.results(batch_id)
-        results: list[dict[str, Any]] = []
+        results: list[BatchResult] = []
         async for entry in decoder:
             outcome = entry.result
             if outcome.type == "succeeded":
-                results.append(
-                    {
-                        "custom_id": entry.custom_id,
-                        "response": {"body": self._translate_batch_message(outcome.message)},
-                    }
-                )
+                results.append(self._translate_batch_message(entry.custom_id, outcome.message))
             else:
                 error = getattr(outcome, "error", None)
                 if error is not None:
                     detail = f"{getattr(error, 'type', 'error')}: {getattr(error, 'message', error)}"
                 else:
                     detail = f"batch request {outcome.type}"
-                results.append({"custom_id": entry.custom_id, "error": detail})
+                results.append(BatchResult(custom_id=entry.custom_id, error=detail))
 
         logger.info(f"Retrieved {len(results)} results for Anthropic batch {batch_id}")
         return results

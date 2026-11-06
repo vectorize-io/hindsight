@@ -17,6 +17,13 @@ import pytest
 
 from hindsight_api.config import LLM_STRATEGY_FAILOVER, HindsightConfig, LLMStrategyConfig
 from hindsight_api.engine.multi_llm import MultiLLMProvider
+from hindsight_api.engine.response_models import (
+    BatchRequest,
+    BatchRequestCounts,
+    BatchResult,
+    BatchStatus,
+    BatchSubmission,
+)
 from hindsight_api.engine.retain.fact_extraction import RetainContent, extract_facts_from_contents_batch_api
 
 
@@ -43,23 +50,20 @@ class _FakeBatchImpl:
     async def supports_batch_api(self) -> bool:
         return self._supports_batch
 
-    async def submit_batch(self, requests: list[dict[str, Any]]) -> dict[str, Any]:
+    async def submit_batch(self, requests: list[BatchRequest]) -> BatchSubmission:
         self.calls.append("submit")
-        self.submitted_body = requests[0]["body"]
-        return {"batch_id": "batch_123"}
+        self.submitted_body = requests[0].body
+        return BatchSubmission(batch_id="batch_123", status="validating")
 
-    async def get_batch_status(self, batch_id: str) -> dict[str, Any]:
+    async def get_batch_status(self, batch_id: str) -> BatchStatus:
         self.calls.append("status")
-        return {"status": "completed", "request_counts": {"total": 1, "completed": 1, "failed": 0}}
+        return BatchStatus(
+            batch_id=batch_id, status="completed", request_counts=BatchRequestCounts(total=1, completed=1)
+        )
 
-    async def retrieve_batch_results(self, batch_id: str) -> list[dict[str, Any]]:
+    async def retrieve_batch_results(self, batch_id: str) -> list[BatchResult]:
         self.calls.append("retrieve")
-        return [
-            {
-                "custom_id": "chunk_0",
-                "response": {"body": {"choices": [{"message": {"content": json.dumps({"facts": []})}}], "usage": {}}},
-            }
-        ]
+        return [BatchResult(custom_id="chunk_0", content=json.dumps({"facts": []}))]
 
 
 class _BatchMember:

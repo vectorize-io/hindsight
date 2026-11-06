@@ -205,6 +205,64 @@ class LLMCallResult(BaseModel):
     )
 
 
+class BatchRequest(BaseModel):
+    """One request in a batch: what ``LLMInterface.submit_batch`` is handed.
+
+    ``body`` is an OpenAI chat-completions request body (``model``, ``messages``,
+    optionally ``response_format``, ``max_completion_tokens``...). It is the one wire
+    format every batch provider already speaks or translates from, so it stays a
+    dict rather than a model of its own.
+    """
+
+    custom_id: str = Field(description="Opaque id; the matching BatchResult carries it back.")
+    body: dict[str, Any] = Field(description="OpenAI chat-completions request body.")
+
+
+class BatchSubmission(BaseModel):
+    """What ``LLMInterface.submit_batch`` returns: the handle to poll."""
+
+    batch_id: str = Field(description="Provider batch id, passed back to get_batch_status/retrieve_batch_results.")
+    status: str = Field(description="Status at submit time, in the BatchStatus.status vocabulary.")
+
+
+class BatchRequestCounts(BaseModel):
+    """How many requests of a batch exist, finished and failed."""
+
+    total: int = 0
+    completed: int = 0
+    failed: int = 0
+
+
+BATCH_TERMINAL_FAILURE_STATUSES = frozenset({"failed", "expired", "cancelled"})
+
+
+class BatchStatus(BaseModel):
+    """What ``LLMInterface.get_batch_status`` returns.
+
+    ``status`` is ``"completed"`` once results can be retrieved; ``"failed"``,
+    ``"expired"`` or ``"cancelled"`` end the batch as a failure. Any other value
+    (``"validating"``, ``"in_progress"``...) means "still running, poll again".
+    Providers map their own vocabulary onto these, lowercase.
+    """
+
+    batch_id: str
+    status: str
+    request_counts: BatchRequestCounts = Field(default_factory=BatchRequestCounts)
+    error: str | None = Field(default=None, description="Why the batch failed, when the provider says.")
+
+
+class BatchResult(BaseModel):
+    """The outcome of one request in a completed batch."""
+
+    custom_id: str = Field(description="The BatchRequest.custom_id this answers.")
+    content: str | None = Field(
+        default=None,
+        description="The text the model returned (JSON when the request asked for a response_format).",
+    )
+    usage: TokenUsage = Field(default_factory=TokenUsage, description="Tokens this request consumed.")
+    error: str | None = Field(default=None, description="Why this request failed; content is then None.")
+
+
 class ExtractedFact(BaseModel):
     """A single candidate fact produced by dry-run extraction (no resolution/links/persistence).
 

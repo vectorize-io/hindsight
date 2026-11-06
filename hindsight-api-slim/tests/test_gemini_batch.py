@@ -4,11 +4,9 @@ Google's Gemini Batch API gives a flat 50% input+output discount with a 24h SLA
 (https://ai.google.dev/gemini-api/docs/batch-api). ``GeminiLLM`` extends
 ``LLMInterface`` directly (not the OpenAI-compatible base), so it overrides the
 four batch members and translates Gemini's file-upload -> ``batches.create`` ->
-``batches.get`` -> download flow back onto the OpenAI-batch interface contract
-that the retain orchestrator + ``fact_extraction`` consumer depend on.
-
-The interface contract that MUST be preserved (see fact_extraction.py)::
-    result["response"]["body"]["choices"][0]["message"]["content"]
+``batches.get`` -> download flow back onto the ``LLMInterface`` batch contract
+(``BatchRequest`` in; ``BatchSubmission``/``BatchStatus``/``BatchResult`` out) that
+the retain orchestrator + ``fact_extraction`` consumer depend on.
 
 The pure translation/normalization helpers are unit-tested directly; the async
 submit/status/retrieve flow is tested against a fake genai client. A live key is
@@ -24,6 +22,7 @@ import pytest
 pytest.importorskip("google.genai")
 
 from hindsight_api.engine.providers.gemini_llm import GeminiLLM
+from hindsight_api.engine.response_models import BatchRequest, BatchRequestCounts, TokenUsage
 
 
 def _make_gemini(model: str = "gemini-2.5-flash") -> GeminiLLM:
@@ -33,12 +32,10 @@ def _make_gemini(model: str = "gemini-2.5-flash") -> GeminiLLM:
         return GeminiLLM(provider="gemini", api_key="test-key", base_url="", model=model)
 
 
-def _openai_request(custom_id: str, *, strict: bool = True) -> dict:
-    return {
-        "custom_id": custom_id,
-        "method": "POST",
-        "url": "/v1/chat/completions",
-        "body": {
+def _openai_request(custom_id: str, *, strict: bool = True) -> BatchRequest:
+    return BatchRequest(
+        custom_id=custom_id,
+        body={
             "model": "gemini-2.5-flash",
             "messages": [
                 {"role": "system", "content": "Extract facts."},
@@ -55,7 +52,7 @@ def _openai_request(custom_id: str, *, strict: bool = True) -> dict:
                 },
             },
         },
-    }
+    )
 
 
 # --------------------------------------------------------------------------
@@ -93,7 +90,7 @@ def test_translate_requests_builds_keyed_jsonl():
 
 
 def test_body_translation_maps_roles_and_generation_config():
-    req = GeminiLLM._openai_body_to_gemini_request(_openai_request("c")["body"])
+    req = GeminiLLM._openai_body_to_gemini_request(_openai_request("c").body)
 
     # system -> systemInstruction; user -> contents(role=user)
     assert req["contents"] == [{"role": "user", "parts": [{"text": "Paris is the capital of France."}]}]
@@ -115,7 +112,7 @@ def test_body_translation_grammar_enforces_schema_without_strict():
     # (the interactive path already does). Otherwise batch requests at default
     # config (HINDSIGHT_API_LLM_STRICT_SCHEMA=False) only get a textual schema hint
     # and intermittently emit malformed JSON, dropping every fact in the chunk.
-    req = GeminiLLM._openai_body_to_gemini_request(_openai_request("c", strict=False)["body"])
+    req = GeminiLLM._openai_body_to_gemini_request(_openai_request("c", strict=False).body)
     gc = req["generationConfig"]
     assert gc["responseMimeType"] == "application/json"
     assert gc["responseJsonSchema"] == {"type": "object", "properties": {"facts": {"type": "array"}}}
@@ -129,7 +126,7 @@ def test_assistant_role_maps_to_model():
 
 
 # --------------------------------------------------------------------------
-# Pure normalization: Gemini output line -> OpenAI-batch-output shape
+# Pure normalization: Gemini output line -> BatchResult
 # --------------------------------------------------------------------------
 
 
@@ -139,10 +136,9 @@ def test_normalize_output_line_success_preserves_contract():
         "response": {"candidates": [{"content": {"parts": [{"text": '{"facts": []}'}]}}]},
     }
     out = GeminiLLM._normalize_output_line(line)
-    assert out["custom_id"] == "chunk_0"
-    assert out["error"] is None
-    # The exact path fact_extraction.py reads:
-    assert out["response"]["body"]["choices"][0]["message"]["content"] == '{"facts": []}'
+    assert out.custom_id == "chunk_0"
+    assert out.error is None
+    assert out.content == '{"facts": []}'
 
 
 def test_normalize_output_line_concatenates_multiple_text_parts():
@@ -151,7 +147,7 @@ def test_normalize_output_line_concatenates_multiple_text_parts():
         "response": {"candidates": [{"content": {"parts": [{"text": "a"}, {"text": "b"}]}}]},
     }
     out = GeminiLLM._normalize_output_line(line)
-    assert out["response"]["body"]["choices"][0]["message"]["content"] == "ab"
+    assert out.content == "ab"
 
 
 def test_normalize_output_line_includes_translated_usage():
@@ -169,29 +165,26 @@ def test_normalize_output_line_includes_translated_usage():
         },
     }
     out = GeminiLLM._normalize_output_line(line)
-    # OpenAI-shaped usage block the batch consumer accumulates (was missing -> usage=0),
-    # cached and thinking counts included (#5487).
-    assert out["response"]["body"]["usage"] == {
-        "prompt_tokens": 120,
-        "completion_tokens": 30,
-        "total_tokens": 170,
-        "prompt_tokens_details": {"cached_tokens": 80},
-        "completion_tokens_details": {"reasoning_tokens": 20},
-    }
+    # Usage the batch consumer accumulates (was missing -> usage=0), cached and
+    # thinking counts included (#5487). Output and total are visible-only; thoughts
+    # are counted apart, as on a live call.
+    assert out.usage == TokenUsage(
+        input_tokens=120, output_tokens=30, total_tokens=150, cached_tokens=80, thoughts_tokens=20
+    )
 
 
-def test_normalize_output_line_omits_usage_when_absent():
+def test_normalize_output_line_zero_usage_when_absent():
     line = {"key": "chunk_0", "response": {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}}
     out = GeminiLLM._normalize_output_line(line)
-    assert "usage" not in out["response"]["body"]
+    assert out.usage == TokenUsage()
 
 
 def test_normalize_output_line_error_surfaces_per_key():
     line = {"key": "chunk_1", "error": {"code": 400, "message": "bad request"}}
     out = GeminiLLM._normalize_output_line(line)
-    assert out["custom_id"] == "chunk_1"
-    assert out["response"] is None
-    assert out["error"] == {"code": 400, "message": "bad request"}
+    assert out.custom_id == "chunk_1"
+    assert out.content is None
+    assert out.error is not None and "bad request" in out.error
 
 
 def test_extract_text_from_empty_response_is_empty_string():
@@ -254,9 +247,8 @@ async def test_submit_batch_uploads_and_creates_job():
 
     meta = await llm.submit_batch([_openai_request("chunk_0"), _openai_request("chunk_1")])
 
-    assert meta["batch_id"] == "batches/abc"
-    assert meta["status"] == "in_progress"  # JOB_STATE_PENDING
-    assert meta["request_count"] == 2
+    assert meta.batch_id == "batches/abc"
+    assert meta.status == "in_progress"  # JOB_STATE_PENDING
 
     # Uploaded JSONL had one line per request, and the job used the model + file.
     upload_kwargs = llm._client.aio.files.upload.call_args.kwargs
@@ -270,7 +262,7 @@ async def test_submit_batch_uploads_and_creates_job():
 
 
 @pytest.mark.asyncio
-async def test_get_batch_status_maps_counts_and_output_file():
+async def test_get_batch_status_maps_counts():
     batch = SimpleNamespace(
         name="batches/abc",
         state="JOB_STATE_SUCCEEDED",
@@ -282,9 +274,9 @@ async def test_get_batch_status_maps_counts_and_output_file():
     llm._client = _fake_client(get_batch=batch)
 
     status = await llm.get_batch_status("batches/abc")
-    assert status["status"] == "completed"
-    assert status["request_counts"] == {"total": 4, "completed": 3, "failed": 1}
-    assert status["output_file_id"] == "files/output-999"
+    assert status.status == "completed"
+    assert status.request_counts == BatchRequestCounts(total=4, completed=3, failed=1)
+    assert status.error is None
 
 
 @pytest.mark.asyncio
@@ -305,9 +297,9 @@ async def test_retrieve_batch_results_downloads_and_normalizes():
     llm._client = _fake_client(get_batch=batch, download_text=download_text)
 
     results = await llm.retrieve_batch_results("batches/abc")
-    by_id = {r["custom_id"]: r for r in results}
-    assert by_id["chunk_0"]["response"]["body"]["choices"][0]["message"]["content"] == '{"facts": []}'
-    assert by_id["chunk_1"]["error"] == {"code": 500, "message": "boom"}
+    by_id = {r.custom_id: r for r in results}
+    assert by_id["chunk_0"].content == '{"facts": []}'
+    assert by_id["chunk_1"].error is not None and "boom" in by_id["chunk_1"].error
 
     llm._client.aio.files.download.assert_awaited_once()
     assert llm._client.aio.files.download.call_args.kwargs["file"] == "files/output-999"

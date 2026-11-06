@@ -143,6 +143,34 @@ Things to know:
 
 ---
 
+### Custom LLM provider
+
+Your own class as the LLM, for a backend no built-in provider speaks (or speaks almost right). Name it by import path wherever a provider goes:
+
+```bash
+HINDSIGHT_API_LLM_PROVIDER=mypackage.llm:MyLLM          # every operation
+HINDSIGHT_API_RETAIN_LLM_PROVIDER=mypackage.llm:MyLLM   # or just one
+```
+
+Any value with a `:` is read as `package.module:ClassName`; it works in the global and per-operation settings, in a failover chain, and as the provider an `LLMRequestExtension` picks (which is how to choose one per bank). The class must subclass `LLMInterface` (`hindsight_api.engine.llm_interface`) and is constructed with keyword arguments: `provider`, `api_key`, `base_url`, `model`, `reasoning_effort` and `timeout` (stored by `LLMInterface.__init__`), plus `extra_body` and `default_headers`. A path that does not import, or a class that is not an `LLMInterface`, stops the server at startup.
+
+Implement:
+
+- **`call(...) -> LLMCallResult`**: one completion. With a `response_format` (a Pydantic model), return the parsed model as `content`, unless `skip_validation` is set. Tool calls also go through `call`, as a response schema, so there is nothing else to implement for reflect.
+- **`verify_connection()`**: the startup check. Raise to refuse to start.
+- **`cleanup()`**: close your clients.
+- **Batch (optional)**: return `True` from `supports_batch_api()` and implement `submit_batch(requests: list[BatchRequest]) -> BatchSubmission`, `get_batch_status(batch_id) -> BatchStatus` and `retrieve_batch_results(batch_id) -> list[BatchResult]` (models in `hindsight_api.engine.response_models`). Each `BatchRequest.body` is an OpenAI chat-completions body. With `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true`, retain then goes through your batch API.
+
+To change one detail of a built-in provider, subclass it instead. An OpenAI-compatible batch host that needs a `name` on batch creation and rejects `response_format` is an `OpenAICompatibleLLM` subclass that overrides `supports_batch_api`, `verify_connection` and `submit_batch`.
+
+No API key is required for a custom provider; check for one in `verify_connection` if yours needs it. `tests/test_custom_llm_provider.py` in the repository holds a complete, tested example (`EchoProvider`). Install the package the same way as any extension (see [Deploying Custom Extensions](#deploying-custom-extensions)).
+
+:::caution
+`LLMInterface` is an internal interface made public. It may change between minor versions; pin your Hindsight version and check the changelog when upgrading.
+:::
+
+---
+
 ## Writing Custom Extensions
 
 ### Extension Basics
