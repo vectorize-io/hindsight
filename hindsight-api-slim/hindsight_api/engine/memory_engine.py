@@ -21216,7 +21216,8 @@ class MemoryEngine(MemoryEngineInterface):
                 by_parent: dict[str | None, list] = {}
                 for r in all_rows:
                     by_parent.setdefault(r["parent_id"], []).append(r)
-                if not any(r["id"] == node_id for r in all_rows):
+                root = next((r for r in all_rows if r["id"] == node_id), None)
+                if root is None:
                     return False
                 # BFS the subtree rooted at node_id, collecting page mental models.
                 # `visited` bounds the walk: a tree corrupted before the bank lock
@@ -21224,18 +21225,17 @@ class MemoryEngine(MemoryEngineInterface):
                 # the FK does not forbid, and an unguarded walk would spin forever
                 # holding a connection and an open transaction. Visiting each node
                 # once still deletes every reachable node.
-                stack = [node_id]
+                # The stack holds rows, not ids, so no node is looked up twice.
+                stack = [root]
                 visited: set[str] = set()
                 mm_ids: list[str] = []
                 while stack:
-                    current = stack.pop()
-                    if current in visited:
+                    node_row = stack.pop()
+                    if node_row["id"] in visited:
                         continue
-                    visited.add(current)
-                    for child in by_parent.get(current, []):
-                        stack.append(child["id"])
-                    node_row = next((r for r in all_rows if r["id"] == current), None)
-                    if node_row and node_row["mental_model_id"]:
+                    visited.add(node_row["id"])
+                    stack.extend(by_parent.get(node_row["id"], []))
+                    if node_row["mental_model_id"]:
                         mm_ids.append(node_row["mental_model_id"])
                 if tag_scope:
                     # A scoped caller deletes only what it can see. A folder that also holds
