@@ -415,7 +415,11 @@ async def _run_tool(
 
     The two shapes are deliberately preserved, not unified: the bank-id variants
     declare ``-> str`` and callers ``json.loads`` them, so returning a dict there
-    would be a breaking change.
+    would be a breaking change. Those variants are registered with
+    ``output_schema=None``: for a ``-> str`` tool FastMCP otherwise derives a
+    wrap-result schema and also sends ``structuredContent: {"result": "<the same
+    JSON, escaped>"}``, so clients that show both got every result twice (#6279).
+    ``test_no_tool_wraps_its_json_text_in_structured_content`` guards it.
 
     Args:
         bank_id: Explicit bank from the caller, or None to use the session bank.
@@ -1238,7 +1242,7 @@ def _register_recall(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig)
 
     if config.include_bank_id_param:
 
-        @mcp.tool(description=description, annotations=_tool_annotations("recall"))
+        @mcp.tool(description=description, annotations=_tool_annotations("recall"), output_schema=None)
         async def recall(
             query: str,
             max_tokens: int = 4096,
@@ -1513,7 +1517,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("reflect"))
+        @mcp.tool(annotations=_tool_annotations("reflect"), output_schema=None)
         async def reflect(
             query: str,
             context: str | None = None,
@@ -1705,7 +1709,7 @@ def _register_reflect(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig
 def _register_list_banks(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the list_banks tool."""
 
-    @mcp.tool(annotations=_tool_annotations("list_banks"))
+    @mcp.tool(annotations=_tool_annotations("list_banks"), output_schema=None)
     async def list_banks(query: str | None = None, limit: _Limit = 100, offset: _Offset = 0) -> str:
         """
         List available memory banks, most recently written first.
@@ -1741,7 +1745,7 @@ def _register_list_banks(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
 def _register_create_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the create_bank tool."""
 
-    @mcp.tool(annotations=_tool_annotations("create_bank"))
+    @mcp.tool(annotations=_tool_annotations("create_bank"), output_schema=None)
     async def create_bank(bank_id: str, name: str | None = None, mission: str | None = None) -> str:
         """
         Create a new memory bank or get an existing one.
@@ -1827,7 +1831,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("list_mental_models"))
+        @mcp.tool(annotations=_tool_annotations("list_mental_models"), output_schema=None)
         async def list_mental_models(
             tags: list[str] | None = None,
             limit: _Limit1000 = 100,
@@ -1908,7 +1912,7 @@ def _register_get_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("get_mental_model"))
+        @mcp.tool(annotations=_tool_annotations("get_mental_model"), output_schema=None)
         async def get_mental_model(
             mental_model_id: str,
             detail: str = "full",
@@ -2015,7 +2019,7 @@ def _register_create_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("create_mental_model"))
+        @mcp.tool(annotations=_tool_annotations("create_mental_model"), output_schema=None)
         async def create_mental_model(
             name: str,
             source_query: str,
@@ -2191,7 +2195,7 @@ def _register_update_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("update_mental_model"))
+        @mcp.tool(annotations=_tool_annotations("update_mental_model"), output_schema=None)
         async def update_mental_model(
             mental_model_id: str,
             name: str | None = None,
@@ -2309,7 +2313,7 @@ def _register_delete_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MC
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("delete_mental_model"))
+        @mcp.tool(annotations=_tool_annotations("delete_mental_model"), output_schema=None)
         async def delete_mental_model(
             mental_model_id: str,
             bank_id: str | None = None,
@@ -2373,7 +2377,7 @@ def _register_refresh_mental_model(mcp: FastMCP, memory: MemoryEngine, config: M
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("refresh_mental_model"))
+        @mcp.tool(annotations=_tool_annotations("refresh_mental_model"), output_schema=None)
         async def refresh_mental_model(
             mental_model_id: str,
             bank_id: str | None = None,
@@ -2445,7 +2449,7 @@ def _register_clear_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("clear_mental_model"))
+        @mcp.tool(annotations=_tool_annotations("clear_mental_model"), output_schema=None)
         async def clear_mental_model(
             mental_model_id: str,
             bank_id: str | None = None,
@@ -2730,7 +2734,7 @@ def _register_get_knowledge_base_tree(mcp: FastMCP, memory: MemoryEngine, config
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("get_knowledge_base_tree"))
+        @mcp.tool(annotations=_tool_annotations("get_knowledge_base_tree"), output_schema=None)
         async def get_knowledge_base_tree(
             bank_id: str | None = None,
         ) -> str:
@@ -2792,7 +2796,7 @@ def _register_search_knowledge_base(mcp: FastMCP, memory: MemoryEngine, config: 
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("search_knowledge_base"))
+        @mcp.tool(annotations=_tool_annotations("search_knowledge_base"), output_schema=None)
         async def search_knowledge_base(
             query: str,
             limit: int = 10,
@@ -2853,7 +2857,7 @@ def _register_get_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("get_knowledge_page"))
+        @mcp.tool(annotations=_tool_annotations("get_knowledge_page"), output_schema=None)
         async def get_knowledge_page(
             page_id: str,
             bank_id: str | None = None,
@@ -2912,7 +2916,7 @@ def _register_create_knowledge_folder(mcp: FastMCP, memory: MemoryEngine, config
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("create_knowledge_folder"))
+        @mcp.tool(annotations=_tool_annotations("create_knowledge_folder"), output_schema=None)
         async def create_knowledge_folder(
             name: str,
             parent_id: str | None = None,
@@ -2991,7 +2995,7 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("create_knowledge_page"))
+        @mcp.tool(annotations=_tool_annotations("create_knowledge_page"), output_schema=None)
         async def create_knowledge_page(
             name: str,
             source_query: str,
@@ -3122,7 +3126,7 @@ def _register_update_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("update_knowledge_node"))
+        @mcp.tool(annotations=_tool_annotations("update_knowledge_node"), output_schema=None)
         async def update_knowledge_node(
             node_id: str,
             name: str | None = None,
@@ -3241,7 +3245,7 @@ def _register_delete_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("delete_knowledge_node"))
+        @mcp.tool(annotations=_tool_annotations("delete_knowledge_node"), output_schema=None)
         async def delete_knowledge_node(
             node_id: str,
             bank_id: str | None = None,
@@ -3311,7 +3315,7 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("list_directives"))
+        @mcp.tool(annotations=_tool_annotations("list_directives"), output_schema=None)
         async def list_directives(
             tags: list[str] | None = None,
             active_only: bool = True,
@@ -3391,7 +3395,7 @@ def _register_create_directive(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("create_directive"))
+        @mcp.tool(annotations=_tool_annotations("create_directive"), output_schema=None)
         async def create_directive(
             name: str,
             content: str,
@@ -3467,7 +3471,7 @@ def _register_delete_directive(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("delete_directive"))
+        @mcp.tool(annotations=_tool_annotations("delete_directive"), output_schema=None)
         async def delete_directive(
             directive_id: str,
             bank_id: str | None = None,
@@ -3545,7 +3549,7 @@ def _register_list_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("list_memories"))
+        @mcp.tool(annotations=_tool_annotations("list_memories"), output_schema=None)
         async def list_memories(
             type: str | None = None,
             q: str | None = None,
@@ -3631,7 +3635,7 @@ def _register_get_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCon
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("get_memory"))
+        @mcp.tool(annotations=_tool_annotations("get_memory"), output_schema=None)
         async def get_memory(
             memory_id: str,
             bank_id: str | None = None,
@@ -3730,7 +3734,7 @@ def _register_update_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
 
     if config.include_bank_id_param:
 
-        @mcp.tool(description=_EDIT_DOC, annotations=_tool_annotations("update_memory"))
+        @mcp.tool(description=_EDIT_DOC, annotations=_tool_annotations("update_memory"), output_schema=None)
         async def update_memory(
             memory_id: str,
             text: str | None = None,
@@ -3835,7 +3839,7 @@ def _register_invalidate_memory(mcp: FastMCP, memory: MemoryEngine, config: MCPT
 
     if config.include_bank_id_param:
 
-        @mcp.tool(description=_INVALIDATE_DOC, annotations=_tool_annotations("invalidate_memory"))
+        @mcp.tool(description=_INVALIDATE_DOC, annotations=_tool_annotations("invalidate_memory"), output_schema=None)
         async def invalidate_memory(
             memory_id: str,
             reason: str | None = None,
@@ -3902,7 +3906,7 @@ def _register_list_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("list_documents"))
+        @mcp.tool(annotations=_tool_annotations("list_documents"), output_schema=None)
         async def list_documents(
             q: str | None = None,
             limit: _Limit = 100,
@@ -3978,7 +3982,7 @@ def _register_get_document(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsC
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("get_document"))
+        @mcp.tool(annotations=_tool_annotations("get_document"), output_schema=None)
         async def get_document(
             document_id: str,
             bank_id: str | None = None,
@@ -4036,7 +4040,7 @@ def _register_delete_document(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("delete_document"))
+        @mcp.tool(annotations=_tool_annotations("delete_document"), output_schema=None)
         async def delete_document(
             document_id: str,
             bank_id: str | None = None,
@@ -4107,7 +4111,7 @@ def _register_list_operations(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("list_operations"))
+        @mcp.tool(annotations=_tool_annotations("list_operations"), output_schema=None)
         async def list_operations(
             status: str | None = None,
             type: str | None = None,
@@ -4183,7 +4187,7 @@ def _register_get_operation(mcp: FastMCP, memory: MemoryEngine, config: MCPTools
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("get_operation"))
+        @mcp.tool(annotations=_tool_annotations("get_operation"), output_schema=None)
         async def get_operation(
             operation_id: str,
             bank_id: str | None = None,
@@ -4241,7 +4245,7 @@ def _register_cancel_operation(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("cancel_operation"))
+        @mcp.tool(annotations=_tool_annotations("cancel_operation"), output_schema=None)
         async def cancel_operation(
             operation_id: str,
             bank_id: str | None = None,
@@ -4302,7 +4306,7 @@ def _register_list_tags(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConf
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("list_tags"))
+        @mcp.tool(annotations=_tool_annotations("list_tags"), output_schema=None)
         async def list_tags(
             q: str | None = None,
             limit: _Limit = 100,
@@ -4371,7 +4375,7 @@ def _register_get_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfi
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("get_bank"))
+        @mcp.tool(annotations=_tool_annotations("get_bank"), output_schema=None)
         async def get_bank(
             bank_id: str | None = None,
         ) -> str:
@@ -4412,7 +4416,7 @@ def _register_get_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfi
 def _register_get_bank_stats(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
     """Register the get_bank_stats tool (multi-bank only)."""
 
-    @mcp.tool(annotations=_tool_annotations("get_bank_stats"))
+    @mcp.tool(annotations=_tool_annotations("get_bank_stats"), output_schema=None)
     async def get_bank_stats(
         bank_id: str | None = None,
     ) -> str:
@@ -4493,7 +4497,7 @@ def _register_update_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("update_bank"))
+        @mcp.tool(annotations=_tool_annotations("update_bank"), output_schema=None)
         async def update_bank(
             name: str | None = None,
             mission: str | None = None,
@@ -4602,7 +4606,7 @@ def _register_delete_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsCo
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("delete_bank"))
+        @mcp.tool(annotations=_tool_annotations("delete_bank"), output_schema=None)
         async def delete_bank(
             bank_id: str | None = None,
         ) -> str:
@@ -4658,7 +4662,7 @@ def _register_clear_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("clear_memories"))
+        @mcp.tool(annotations=_tool_annotations("clear_memories"), output_schema=None)
         async def clear_memories(
             type: str | None = None,
             bank_id: str | None = None,
