@@ -14,10 +14,28 @@ Hindsight runs on **Linux**, **macOS**, and **Windows**:
 |----------|--------|------------------|--------------------|-------|
 | **Linux** (x86_64, ARM64) | ✅ | ✅ | ✅ | Fully supported, recommended for production |
 | **macOS** (Apple Silicon / arm64) | ✅ | ✅ | ✅ | Fully supported |
-| **macOS** (Intel / x86_64) | ✅ | ⚠️ slim only | ✅ | Use `hindsight-all-slim` / `hindsight-api-slim`. The full bundle's local ML models (PyTorch, MLX) publish no Intel-Mac wheels, so `pip install hindsight-all` silently backtracks to a months-old release. Pair the slim bundle with a hosted embeddings/reranker provider or the in-process ONNX backend (`hindsight-api-slim[local-onnx]`). |
+| **macOS** (Intel / x86_64) | ✅ | ⚠️ slim only | ✅ | Use `hindsight-all-slim` / `hindsight-api-slim`. The full bundle's local ML models (PyTorch, MLX) publish no Intel-Mac wheels, so `pip install hindsight-all` silently backtracks to a months-old release. Pair the slim bundle with a hosted embeddings/reranker provider or the in-process ONNX backend — see [Intel Macs](#intel-macs). |
 | **Windows** (x86_64) | ✅ | ✅ | ✅ | Fully supported — see [Windows setup](#windows) for external PostgreSQL option |
 
 All platforms support the embedded database (pg0) for development. On Windows, you can also use an external PostgreSQL installation — see the [Windows](#windows) section for a step-by-step guide.
+
+### Intel Macs
+
+PyTorch publishes no Intel-Mac (x86_64) builds after 2.2.2, and Hindsight needs a newer one, so the full `hindsight-api` / `hindsight-all` packages — and `hindsight-embed`'s default `uvx hindsight-api` daemon — cannot install there. Use the slim package with the in-process ONNX models instead. They need no PyTorch and still run the embedder and reranker on your machine.
+
+ONNX Runtime's last Intel-Mac build (1.23.2) supports Python 3.10–3.13, so **use Python 3.13 or older**. On Python 3.14 only hosted providers (OpenAI, Cohere, TEI, …) work.
+
+```bash
+python3.13 -m venv ~/.hindsight/venv
+~/.hindsight/venv/bin/pip install "hindsight-api-slim[local-onnx,embedded-db]" flashrank hindsight-embed
+
+export HINDSIGHT_API_EMBEDDINGS_PROVIDER=onnx       # downloads intfloat/multilingual-e5-small on first start
+export HINDSIGHT_API_RERANKER_PROVIDER=flashrank     # ONNX cross-encoder, no PyTorch
+
+~/.hindsight/venv/bin/hindsight-api                  # or: ~/.hindsight/venv/bin/hindsight-embed ...
+```
+
+With both providers set to non-`local` values, `hindsight-embed` starts the `hindsight-api` installed next to it instead of falling back to `uvx hindsight-api`.
 
 ---
 
