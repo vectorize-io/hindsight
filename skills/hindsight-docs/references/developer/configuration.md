@@ -1655,6 +1655,7 @@ The bank settings are also listed with their operation under [Observations](#obs
 |----------|-------------|---------|
 | `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE` | Also drop recall candidates judged no help, instead of only ordering them (see below). Per bank (`recall_decision_model_prune`). | `false` |
 | `HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP` | Also drop recall candidates repeating a better-ranked one (see below). Per bank (`recall_decision_model_dedup`). | `false` |
+| `HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK` | When the decision model fails or refuses a recall's ranking after its retries, rank that recall with the configured `HINDSIGHT_API_RERANKER_*` reranker (failover chain included) instead of failing it. Off, the recall fails, so you see the outage instead of quietly worse results. Server-wide. | `false` |
 | `HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES` | The most new memories a delta knowledge-page refresh asks the decision model about; past it, the refresh runs reflect. See [Reflect](#reflect). | `200` |
 
 - **Rate limits.** `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` caps requests in flight for
