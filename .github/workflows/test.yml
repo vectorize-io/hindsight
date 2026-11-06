@@ -1642,6 +1642,23 @@ jobs:
     - name: Run standalone start script tests
       run: bash docker/standalone/test-start-all.sh
 
+  test-setup-hooks-script:
+    needs: [detect-changes]
+    if: >-
+      (github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.core == 'true' ||
+      needs.detect-changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Run setup-hooks script tests
+      run: ./scripts/test-setup-hooks.sh
+
   build-docker-images:
     needs: [detect-changes]
     if: >-
@@ -5856,6 +5873,7 @@ jobs:
       - test-rust-cli
       - lint-helm-chart
       - test-standalone-start-script
+      - test-setup-hooks-script
       - build-docker-images
       - test-api
       - test-api-oracle
