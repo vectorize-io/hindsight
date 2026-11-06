@@ -37,7 +37,7 @@ async def _assert_cites_real_ids(produce: Callable[[], Awaitable[str]], real_ids
     cites nothing is resampled instead of failing. Every sample is still checked:
     no alias leaks and no id outside the bank, ever.
     """
-    texts = []
+    texts: list[str] = []
     for _ in range(_ATTEMPTS):
         text = await produce()
         texts.append(text)

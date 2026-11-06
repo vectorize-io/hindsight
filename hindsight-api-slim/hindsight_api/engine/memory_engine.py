@@ -11519,7 +11519,7 @@ class MemoryEngine(MemoryEngineInterface):
             await self._llm_recorder.flush()
         backend = await self._get_backend()
         invalidated_obs = 0
-        unit_ids: list = []
+        unit_ids: list[str] = []
         deleted = False
         orphaned_files: list[str] = []
         result: dict[str, int] = {}
