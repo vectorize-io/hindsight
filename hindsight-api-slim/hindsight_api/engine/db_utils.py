@@ -40,6 +40,9 @@ _RETRYABLE_EXCEPTION_NAMES = frozenset(
         "ConnectionDoesNotExistError",
         "TooManyConnectionsError",
         "DeadlockDetectedError",
+        # A lock_timeout ran out (55P03). Only DDL that must not sit in a lock queue sets one —
+        # a bank create's CREATE INDEX — and like a deadlock it clears on a retry.
+        "LockNotAvailableError",
     }
 )
 

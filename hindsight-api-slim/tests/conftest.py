@@ -77,7 +77,10 @@ async def _teardown_memory_engine(mem: MemoryEngine) -> None:
     unconditionally; it's a no-op when close() already did it.
     """
     try:
-        if mem._pool and not mem._pool._closing:
+        # getattr: only asyncpg's pool has `_closing`. On Oracle the attribute read raised,
+        # the except below swallowed it, and every test leaked its pool's sessions until
+        # the Oracle listener refused new connections (ORA-12516, #5786).
+        if mem._pool and not getattr(mem._pool, "_closing", False):
             await mem.close()
     except Exception:
         pass

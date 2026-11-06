@@ -16,6 +16,7 @@ import time
 from dataclasses import fields
 from unittest.mock import patch
 
+import aiohttp
 import pytest
 
 from hindsight_api.config import HindsightConfig
@@ -76,6 +77,20 @@ class TestRemoteRerankerRetries:
     @pytest.mark.parametrize("status", [500, 502, 503, 504, 408])
     async def test_transient_service_responses_are_retried(self, status):
         reranker = _FlakyReranker(failures=1, status=status)
+        assert await reranker.predict(PAIRS) == [1.0, 1.0]
+        assert reranker.calls == 2
+
+    async def test_dropped_connection_is_retried(self):
+        """A socket the peer closed mid-request (#6298) is a blip, not a failed rerank."""
+
+        class _DroppedOnce(_FlakyReranker):
+            async def _predict(self, pairs: list[tuple[str, str]]) -> list[float]:
+                self.calls += 1
+                if self.calls == 1:
+                    raise aiohttp.ClientOSError(None, "Can not write request body for http://127.0.0.1:1/rerank")
+                return [1.0] * len(pairs)
+
+        reranker = _DroppedOnce(failures=0)
         assert await reranker.predict(PAIRS) == [1.0, 1.0]
         assert reranker.calls == 2
 

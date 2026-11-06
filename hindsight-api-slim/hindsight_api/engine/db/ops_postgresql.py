@@ -21,6 +21,11 @@ from .ops import (
 )
 from .result import ResultRow
 
+# How long a bank create's plain CREATE INDEX may wait for its ShareLock on memory_units
+# before giving up and retrying (see create_bank_vector_indexes). A module constant so a
+# test can shorten it.
+BANK_INDEX_LOCK_TIMEOUT = "5s"
+
 
 def pg_search_vector_expr(
     config,
@@ -1326,8 +1331,17 @@ class PostgreSQLOps(DataAccessOps):
         # — but it still takes a ShareLock on the shared memory_units table and
         # so can deadlock with a concurrent writer. The caller retries the whole
         # transaction for that reason; the body is idempotent.
+        #
+        # A ShareLock request that has to WAIT is worse than one that is held:
+        # every later INSERT/UPDATE/DELETE on memory_units — every bank, every
+        # process — queues behind it. Behind another bank's CONCURRENTLY index
+        # build/drop (itself waiting out old transactions) that stalled the whole
+        # database past the 60s command timeout (#5805). lock_timeout bounds the
+        # wait; the LockNotAvailableError it raises is retried like a deadlock.
         escaped = bank_id.replace("'", "''")
         async with self._index_ddl_lock(table):
+            previous_lock_timeout = await conn.fetchval("SHOW lock_timeout")
+            await conn.execute(f"SET LOCAL lock_timeout = '{BANK_INDEX_LOCK_TIMEOUT}'")
             for ft, suffix in fact_types.items():
                 uid = str(internal_id).replace("-", "")[:16]
                 idx = f"idx_mu_emb_{suffix}_{uid}"
@@ -1336,6 +1350,10 @@ class PostgreSQLOps(DataAccessOps):
                     f"ON {table} {index_clause} "
                     f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
                 )
+            # The caller's transaction goes on (a mental-model write, an import): give it back
+            # its own lock_timeout. Not in a finally — after a failed CREATE the transaction is
+            # aborted and the restore itself would raise over the real error.
+            await conn.fetchval("SELECT set_config('lock_timeout', $1, true)", previous_lock_timeout)
 
     async def drop_bank_vector_indexes(
         self,

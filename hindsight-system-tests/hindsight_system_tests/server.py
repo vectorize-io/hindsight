@@ -70,6 +70,11 @@ def start_stub_server(stubs: Stubs) -> StubServer:
         port=port,
         log_level="warning",
         access_log=False,
+        # uvicorn closes an idle connection after 5s, but the server's aiohttp pool keeps
+        # it for 15s and may write a request onto it just as the stub closes it
+        # ("Can not write request body", #6298). With retries off (see stub_environment)
+        # that race fails the operation, so the stub outlives the client's pool instead.
+        timeout_keep_alive=60,
     )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True, name="provider-stub")

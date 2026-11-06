@@ -1754,6 +1754,14 @@ jobs:
         HINDSIGHT_API_EMBEDDINGS_PROVIDER: cohere
         HINDSIGHT_API_RERANKER_PROVIDER: cohere
         HINDSIGHT_API_COHERE_API_KEY: ${{ secrets.COHERE_API_KEY }}
+        # Cohere's edge sometimes 502s with "try again in 30 seconds"; the default 15s
+        # retry budget gives up before that (#6186). 0.5+1+2+4+8+16s of backoff covers it.
+        HINDSIGHT_API_EMBEDDINGS_MAX_RETRIES: "6"
+        HINDSIGHT_API_EMBEDDINGS_MAX_BACKOFF: "16"
+        HINDSIGHT_API_EMBEDDINGS_RETRY_BUDGET: "60"
+        HINDSIGHT_API_RERANKER_MAX_RETRIES: "6"
+        HINDSIGHT_API_RERANKER_MAX_BACKOFF: "16"
+        HINDSIGHT_API_RERANKER_RETRY_BUDGET: "60"
       run: ./docker/test-image.sh "hindsight-${{ matrix.name }}:test" "${{ matrix.target }}"
 
   test-api:
