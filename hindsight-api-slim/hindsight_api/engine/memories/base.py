@@ -2340,6 +2340,11 @@ class MemoriesExtension(Extension, ABC):
         """
         raise NotImplementedError
 
+    async def has_pending_consolidation(self, *, conn, fq_table, bank_id: str) -> bool:
+        """Whether the bank has any facts that can still be consolidated."""
+        freshness = await self.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return bool(freshness.get("pending"))
+
     async def document_memory_counts(self, *, conn, fq_table, bank_id: str, document_ids: list[str]) -> dict[str, int]:
         """Live memory count per document id, for the documents named. Absent = 0."""
         raise NotImplementedError

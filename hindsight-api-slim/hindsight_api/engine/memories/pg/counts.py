@@ -59,6 +59,29 @@ async def consolidation_freshness(*, conn, fq_table: Callable[[str], str], bank_
     }
 
 
+async def has_pending_consolidation(*, conn, fq_table: Callable[[str], str], bank_id: str) -> bool:
+    """Whether the bank has one fact consolidation will still pick up.
+
+    Same predicate as ``consolidation_freshness``'s ``pending``, but stops at the
+    first match on ``idx_memory_units_unconsolidated`` instead of counting the bank.
+    Reads newest first: consolidation works oldest first, so permanently failed facts
+    collect at the old end and would otherwise be stepped over one by one.
+    """
+    found = await conn.fetchval(
+        f"""
+        SELECT 1 FROM {fq_table("memory_units")}
+        WHERE bank_id = $1
+          AND consolidated_at IS NULL
+          AND consolidation_failed_at IS NULL
+          AND fact_type IN ('experience', 'world')
+        ORDER BY created_at DESC
+        LIMIT 1
+        """,
+        bank_id,
+    )
+    return found is not None
+
+
 async def link_counts(*, conn, fq_table: Callable[[str], str], bank_id: str) -> dict[str, int]:
     """``{link_type: count}`` of live links in a bank.
 
@@ -222,6 +245,7 @@ async def observation_scope_counts(
 __all__ = [
     "consolidation_freshness",
     "document_memory_counts",
+    "has_pending_consolidation",
     "link_counts",
     "memories_timeseries",
     "observation_scope_counts",
