@@ -11,6 +11,7 @@ worker's computation is shared with every other worker. These tests verify:
   failing the endpoint.
 """
 
+import asyncio
 import uuid
 
 import pytest
@@ -158,3 +159,37 @@ class TestDistributedBankStatsCache:
             assert stats["node_counts"].get("experience") == 1
         finally:
             await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_stats_read_before_a_delete_are_not_cached_for_the_recreated_bank(
+    memory: MemoryEngine, request_context: RequestContext
+):
+    """A stats load that started before the bank was deleted and recreated must not be stored."""
+    if memory._database_backend_type != "postgresql":
+        pytest.skip("distributed cache is PostgreSQL-only")
+    bank_id = f"test-dist-stats-race-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    cache = DistributedBankStatsCache(backend=memory._backend, ttl_seconds=_PINNED_TTL_SECONDS)
+    schema = get_current_schema()
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_old_load() -> dict:
+        started.set()
+        await release.wait()
+        return {"bank": "old"}
+
+    async def new_load() -> dict:
+        return {"bank": "new"}
+
+    try:
+        old = asyncio.create_task(cache.get_or_load(schema, bank_id, slow_old_load))
+        await started.wait()
+        await memory.delete_bank(bank_id, request_context=request_context)
+        await _ensure_bank(memory, bank_id, request_context)
+        release.set()
+        assert await old == {"bank": "old"}  # the caller that asked still gets its answer
+
+        assert await cache.get_or_load(schema, bank_id, new_load) == {"bank": "new"}
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
