@@ -1220,9 +1220,11 @@ class PostgresMemories(MemoriesExtension):
             pool=backend, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id, include_text=include_text
         )
 
-    async def load_existing_chunks(self, *, conn, fq_table, bank_id: str, document_id: str) -> list[ExistingChunk]:
+    async def load_existing_chunks(
+        self, *, conn, fq_table, bank_id: str, document_id: str, chunk_indices: list[int] | None = None
+    ) -> list[ExistingChunk]:
         return await pg_retain.load_existing_chunks(
-            conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id, chunk_indices=chunk_indices
         )
 
     async def current_document_hash(self, *, backend, fq_table, bank_id: str, document_id: str) -> str | None:

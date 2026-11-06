@@ -816,31 +816,45 @@ def _remap_phase1_results(
 
 def _drop_committed_chunks(
     dropped: set[int],
-    chunk_meta: list,
-    extracted: list,
+    chunk_meta: list[ChunkMetadata],
+    extracted: list[ExtractedFact],
     processed: list[ProcessedFact],
     phase1: Phase1Result,
+    entity_resolver,
 ) -> Phase1Result:
     """Remove the chunks in ``dropped`` and their facts from a batch, in place.
 
     Phase 1 ran before the write lock and keys its result by fact position (placeholder unit
-    id ``str(i)``), so the kept facts are renumbered and the result is rebuilt to match.
+    id ``str(i)``), and causal relations point at facts by position too, so the kept facts are
+    renumbered and both are rebuilt to match. The mention counts phase 1 queued for the dropped
+    facts are un-queued, or the entities they name would be counted twice.
     """
     keep = [i for i, fact in enumerate(extracted) if fact.chunk_index not in dropped]
+    retained_index_by_original: list[int | None] = [None] * len(extracted)
+    for new, old in enumerate(keep):
+        retained_index_by_original[old] = new
     new_pos = {str(old): str(new) for new, old in enumerate(keep)}
+
     ents = phase1.entities
     pairs = [
-        (entity, (new_pos[unit_id], local_idx, fact_date))
+        (entity, (new_pos.get(unit_id), local_idx, fact_date))
         for entity, (unit_id, local_idx, fact_date) in zip(ents.resolved_entities, ents.entity_to_unit, strict=True)
-        if unit_id in new_pos
     ]
+    entity_resolver.forget_pending_mentions([str(entity.entity_id) for entity, (unit, _, _) in pairs if unit is None])
+    pairs = [pair for pair in pairs if pair[1][0] is not None]
+
+    relations = _remap_causal_relations([fact.causal_relations for fact in extracted], retained_index_by_original)
     chunk_meta[:] = [cm for cm in chunk_meta if cm.chunk_index not in dropped]
     extracted[:] = [extracted[i] for i in keep]
     processed[:] = [processed[i] for i in keep]
+    for extracted_fact, processed_fact, causal_relations in zip(extracted, processed, relations, strict=True):
+        extracted_fact.causal_relations = causal_relations
+        processed_fact.causal_relations = causal_relations
+
     return Phase1Result(
         entities=EntityResolutionResult(
             resolved_entities=[entity for entity, _ in pairs],
-            entity_to_unit=[pair for _, pair in pairs],
+            entity_to_unit=[link for _, link in pairs],
             unit_to_entity_ids={new_pos[k]: v for k, v in ents.unit_to_entity_ids.items() if k in new_pos},
         ),
         semantic_ann_links=[(new_pos[lnk[0]], *lnk[1:]) for lnk in phase1.semantic_ann_links if lnk[0] in new_pos],
@@ -3541,15 +3555,18 @@ async def _streaming_retain_batch(
                     # while the first is still writing) passes the hash check above, so the two
                     # interleave. A chunk commits in the same transaction as its facts, so a chunk
                     # already stored with our text already has its facts: drop it from this batch.
-                    # Whichever run reaches a chunk first writes it, so the document still ends
-                    # complete if either run finishes (#6337).
+                    # Whichever run reaches a chunk first writes it, so the document ends complete
+                    # once the run that last cleared it finishes (#6337). Only this Postgres write
+                    # needs it: a store-owned bank writes a retain in one atomic call.
                     if batch_chunk_meta and not document_cleared:
-                        # ponytail: reads every chunk row of the document per batch; a lookup by
-                        # this batch's chunk ids if very large documents make it show up.
                         committed = {
                             c.chunk_index: c.content_hash
                             for c in await _ext_provider.load_existing_chunks(
-                                conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=effective_doc_id
+                                conn=conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                document_id=effective_doc_id,
+                                chunk_indices=[cm.chunk_index for cm in batch_chunk_meta],
                             )
                         }
                         dropped = {
@@ -3559,7 +3576,7 @@ async def _streaming_retain_batch(
                         }
                         if dropped:
                             phase1 = _drop_committed_chunks(
-                                dropped, batch_chunk_meta, batch_extracted, batch_processed, phase1
+                                dropped, batch_chunk_meta, batch_extracted, batch_processed, phase1, entity_resolver
                             )
                             log_buffer.append(
                                 f"[streaming] {len(dropped)} chunks already stored by a concurrent retain "
@@ -4371,7 +4388,13 @@ async def _try_delta_retain(
                 stored_hashes = {
                     c.chunk_index: c.content_hash
                     for c in await _delta_store.load_existing_chunks(
-                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=effective_doc_id
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        document_id=effective_doc_id,
+                        chunk_indices=[
+                            delta_chunk_map.get(cm.chunk_index, cm.chunk_index) for cm in new_chunk_metadata
+                        ],
                     )
                 }
                 already_stored = {
@@ -4382,7 +4405,7 @@ async def _try_delta_retain(
                 }
                 if already_stored:
                     phase1 = _drop_committed_chunks(
-                        already_stored, new_chunk_metadata, extracted_facts, processed_facts, phase1
+                        already_stored, new_chunk_metadata, extracted_facts, processed_facts, phase1, entity_resolver
                     )
                     log_buffer.append(
                         f"  {len(already_stored)} chunks already stored by a concurrent retain "

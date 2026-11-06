@@ -525,7 +525,7 @@ async def test_concurrent_same_content_retains_out_of_order_store_each_chunk_onc
 
     bank_id = f"test_concurrent_same_ooo_{_ts()}_{seed}"
     document_id = "same-content-doc"
-    memory_no_llm._config_resolver._global_config.retain_chunk_batch_size = 2
+    monkeypatch.setattr(memory_no_llm._config_resolver._global_config, "retain_chunk_batch_size", 2)
     content = "\n\n".join(f"Section {i}: " + f"Person_{i} works at Company_{i}. " * 120 for i in range(12))
     expected_chunks = chunk_text(content, max_chars=3000)
 
@@ -550,121 +550,98 @@ async def test_concurrent_same_content_retains_out_of_order_store_each_chunk_onc
 
 @pytest.mark.asyncio
 @pytest.mark.memory_backend_incompatible
-@pytest.mark.parametrize("batch_tokens", [None, 1000])
-async def test_same_content_retain_started_after_first_commit_stores_each_chunk_once(
-    memory_no_llm, request_context, monkeypatch, batch_tokens
+@pytest.mark.parametrize(
+    ("path", "batch_tokens"),
+    [("delta", 10_000_000), ("recovery", 1000)],
+)
+async def test_same_content_retain_overtaken_between_load_and_write_stores_each_chunk_once(
+    memory_no_llm, request_context, monkeypatch, path: str, batch_tokens: int
 ):
-    """The second retain starts once the first has committed a batch (delta / recovery paths)."""
-    import random
+    """B reads the half-written document, then A writes the rest before B does.
+
+    A commits its first batch and pauses. B starts, reads the document (B's delta load, or the
+    recovery probe of a sliced retain) and pauses in extraction. A then finishes, and only then
+    does B write: every chunk B planned is already stored, with the same text and hash, so the
+    hash check passes and only the chunk guard stops B writing their facts again.
+    """
+    import contextvars
     from collections import Counter
 
     from hindsight_api.engine.retain import orchestrator
     from hindsight_api.engine.retain.fact_extraction import chunk_text
 
-    rng = random.Random(7)
-    real = orchestrator._extract_and_embed
+    who: contextvars.ContextVar[str] = contextvars.ContextVar("who")
+    a_calls = 0
+    a_gate, b_reached, b_gate = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    real_extract = orchestrator._extract_and_embed
 
-    async def jittered(*args, **kwargs):
-        await asyncio.sleep(0.05 + rng.random() * 0.1)
-        return await real(*args, **kwargs)
+    async def paused_extract(*args, **kwargs):
+        nonlocal a_calls
+        if who.get() == "A":
+            a_calls += 1
+            if a_calls > 2:  # the first batch (two chunks) goes through; the rest waits
+                await a_gate.wait()
+        else:
+            b_reached.set()
+            await b_gate.wait()
+        return await real_extract(*args, **kwargs)
 
-    monkeypatch.setattr(orchestrator, "_extract_and_embed", jittered)
+    delta_results = []
+    real_delta = orchestrator._try_delta_retain
+
+    async def recorded_delta(*args, **kwargs):
+        result = await real_delta(*args, **kwargs)
+        if who.get() == "B":
+            delta_results.append(result)
+        return result
+
+    monkeypatch.setattr(orchestrator, "_extract_and_embed", paused_extract)
+    monkeypatch.setattr(orchestrator, "_try_delta_retain", recorded_delta)
     cfg = memory_no_llm._config_resolver._global_config
-    cfg.retain_chunk_batch_size = 2
-    if batch_tokens is not None:
-        monkeypatch.setattr(cfg, "retain_batch_tokens", batch_tokens)
+    monkeypatch.setattr(cfg, "retain_chunk_batch_size", 2)
+    # One batch for the whole document takes the delta path; a small budget splits it into slices,
+    # which resume through the streaming recovery probe instead.
+    monkeypatch.setattr(cfg, "retain_batch_tokens", batch_tokens)
 
-    bank_id = f"test_same_staggered_{_ts()}_{batch_tokens}"
+    bank_id = f"test_same_overtaken_{_ts()}_{path}"
     document_id = "same-content-doc"
     content = "\n\n".join(f"Section {i}: " + f"Person_{i} works at Company_{i}. " * 120 for i in range(12))
     expected_chunks = chunk_text(content, max_chars=3000)
 
-    async def retain():
+    async def retain(name: str):
+        who.set(name)
         await memory_no_llm.retain_async(
             bank_id=bank_id, content=content, document_id=document_id, request_context=request_context
         )
 
+    async def stored_units() -> list[str]:
+        listing = await memory_no_llm.list_memory_units(
+            bank_id, document_id=document_id, limit=1000, request_context=request_context
+        )
+        return [r["text"] for r in listing["items"]]
+
     try:
-        first = asyncio.create_task(retain())
-        for _ in range(400):
-            await asyncio.sleep(0.02)
+        first = asyncio.create_task(retain("A"))
+        # A cannot get past its first batch, so this ends as soon as that batch commits.
+        while True:
             try:
-                listing = await memory_no_llm.list_memory_units(
-                    bank_id, document_id=document_id, limit=1000, request_context=request_context
-                )
+                if await stored_units():
+                    break
             except Exception:
-                continue  # bank not created yet
-            if listing["items"]:
-                break
-        assert not first.done()
-        await asyncio.gather(first, retain())
-        listing = await memory_no_llm.list_memory_units(
-            bank_id, document_id=document_id, limit=1000, request_context=request_context
-        )
-        unit_texts = [r["text"] for r in listing["items"]]
-        assert not {t[:80]: n for t, n in Counter(unit_texts).items() if n > 1}
-        assert len(unit_texts) == len(expected_chunks)
-    finally:
-        await memory_no_llm.delete_bank(bank_id, request_context=request_context)
+                pass  # the bank is not created yet
+            assert not first.done()
+            await asyncio.sleep(0.01)
 
+        second = asyncio.create_task(retain("B"))
+        await asyncio.wait_for(b_reached.wait(), timeout=60)
+        a_gate.set()
+        await first
+        b_gate.set()
+        await second
 
-@pytest.mark.asyncio
-@pytest.mark.memory_backend_incompatible
-@pytest.mark.parametrize("seed", range(4))
-async def test_concurrent_same_content_delta_retains_store_each_chunk_once(
-    memory_no_llm, request_context, monkeypatch, seed
-):
-    """Two retains replacing a stored document with the same new content take the delta path at once."""
-    import random
-    from collections import Counter
-
-    from hindsight_api.engine.retain import orchestrator
-    from hindsight_api.engine.retain.fact_extraction import chunk_text
-
-    bank_id = f"test_concurrent_same_delta_{_ts()}_{seed}"
-    document_id = "same-content-doc"
-    old = "\n\n".join(f"Section {i}: " + f"Person_{i} works at Company_{i}. " * 120 for i in range(8))
-    new = "\n\n".join(
-        f"Section {i}: " + (f"Person_{i} lives in City_{i}. " if i % 2 else f"Person_{i} works at Company_{i}. ") * 120
-        for i in range(8)
-    )
-    expected_chunks = chunk_text(new, max_chars=3000)
-
-    try:
-        await memory_no_llm.retain_async(
-            bank_id=bank_id, content=old, document_id=document_id, request_context=request_context
-        )
-
-        rng = random.Random(seed)
-        real = orchestrator._extract_and_embed
-        delta_writes = 0
-        real_delta = orchestrator._try_delta_retain
-
-        async def jittered(*args, **kwargs):
-            await asyncio.sleep(rng.random() * 0.05)
-            return await real(*args, **kwargs)
-
-        async def counted(*args, **kwargs):
-            nonlocal delta_writes
-            delta_writes += 1
-            return await real_delta(*args, **kwargs)
-
-        monkeypatch.setattr(orchestrator, "_extract_and_embed", jittered)
-        monkeypatch.setattr(orchestrator, "_try_delta_retain", counted)
-
-        await asyncio.gather(
-            *[
-                memory_no_llm.retain_async(
-                    bank_id=bank_id, content=new, document_id=document_id, request_context=request_context
-                )
-                for _ in range(2)
-            ]
-        )
-        assert delta_writes >= 2
-        listing = await memory_no_llm.list_memory_units(
-            bank_id, document_id=document_id, limit=1000, request_context=request_context
-        )
-        unit_texts = [r["text"] for r in listing["items"]]
+        if path == "delta":
+            assert delta_results and delta_results[0] is not None, "B did not write through the delta path"
+        unit_texts = await stored_units()
         assert not {t[:80]: n for t, n in Counter(unit_texts).items() if n > 1}
         assert len(unit_texts) == len(expected_chunks)
     finally:

@@ -1097,6 +1097,8 @@ class EntityResolverHandle(Protocol):
 
     def discard_pending_stats(self) -> None: ...
 
+    def forget_pending_mentions(self, entity_ids: list[str]) -> None: ...
+
     async def flush_pending_stats(self, conn: Any | None = None) -> None: ...
 
     async def reassert_entities_batch(self, bank_id: str, resolved_entities: list[Any], conn) -> None: ...
@@ -3616,10 +3618,17 @@ class MemoriesExtension(Extension, ABC):
         record = await self.get_document_record(bank_id=bank_id, document_id=document_id, include_text=include_text)
         return document_chunk_state(record, bank_id=bank_id, document_id=document_id, include_text=include_text)
 
-    async def load_existing_chunks(self, *, conn, fq_table, bank_id: str, document_id: str) -> list[ExistingChunk]:
-        """The document's chunks (id, index, content hash), in chunk order."""
+    async def load_existing_chunks(
+        self, *, conn, fq_table, bank_id: str, document_id: str, chunk_indices: list[int] | None = None
+    ) -> list[ExistingChunk]:
+        """The document's chunks (id, index, content hash), in chunk order; ``chunk_indices`` limits
+        the result to those positions."""
         record = await self.get_document_record(bank_id=bank_id, document_id=document_id)
-        return document_chunk_state(record, bank_id=bank_id, document_id=document_id, include_text=False).chunks
+        chunks = document_chunk_state(record, bank_id=bank_id, document_id=document_id, include_text=False).chunks
+        if chunk_indices is None:
+            return chunks
+        wanted = set(chunk_indices)
+        return [c for c in chunks if c.chunk_index in wanted]
 
     async def current_document_hash(self, *, backend, fq_table, bank_id: str, document_id: str) -> str | None:
         """The document's content_hash now, for the delta's pre-extraction recheck. ``backend`` is

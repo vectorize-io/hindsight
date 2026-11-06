@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections import Counter
 
 import pytest
 
@@ -50,8 +49,11 @@ async def test_two_identical_retains_at_once_store_each_fact_once(client, llm, b
 
     chunks = await client.documents.list_document_chunks(bank_id, DOCUMENT_ID)
     memories = await client.memory.list_memories(bank_id, limit=500)
-    facts = [item.text for item in memories.items if item.text.startswith("Saw Marker")]
 
     assert chunks.total > 2, "the document fit in one batch, so the race was never set up"
-    assert not {text: n for text, n in Counter(facts).items() if n > 1}, "a fact was stored twice"
-    assert len(facts) == chunks.total, "a chunk's fact is missing: the document ended incomplete"
+    # Exactly one fact per chunk, naming that chunk's first marker: a fact stored twice and a
+    # chunk with no fact both break the equality.
+    expected = sorted(f"Marker{_MARKER.findall(chunk.chunk_text)[0]}" for chunk in chunks.items)
+    stored = sorted(f"Marker{marker}" for item in memories.items for marker in _MARKER.findall(item.text)[:1])
+    assert stored == expected
+    assert len(memories.items) == chunks.total
