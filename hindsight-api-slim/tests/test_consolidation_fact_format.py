@@ -146,6 +146,34 @@ def test_an_earlier_state_in_another_language_gets_no_words_of_ours() -> None:
     assert [u.text for u in actions.updates] == ["用户最喜欢的框架是Svelte。 (2026-10-10 09:00: 用户最喜欢Vue)"]
 
 
+def test_earlier_states_keep_only_the_newest_three_without_duplicates() -> None:
+    """#6264: a topic that keeps coming up must not pile up notes the model then loops over."""
+    pool = {
+        "o-build": "The nightly build takes 41 minutes."
+        " (2025-03-11 18:02: Nightly builds run for roughly 40 minutes.)"
+        " (2025-03-11 09:15: The nightly build finished in 39 minutes.)"
+        " (2025-03-10 17:40: The nightly build takes around 40 minutes to complete.)"
+    }
+    answer = _answer(
+        {"fact_id": "f1", "kind": "lasting", "existing": [_change("o-build", "changes")]},
+        {"fact_id": "f2", "kind": "lasting", "existing": [_change("o-build", "changes")]},
+    )
+    states = {
+        "f1": "2025-03-11 18:02: Nightly builds run for roughly 40 minutes.",  # already there
+        "f2": "2025-03-12 09:10: The nightly build took about 40 minutes.",
+    }
+    actions = answer.to_actions(pool, states, lambda f, o: True, lambda f, o: True)
+    assert [(u.text, u.source_fact_ids) for u in actions.updates] == [
+        (
+            "The nightly build takes 41 minutes."
+            " (2025-03-12 09:10: The nightly build took about 40 minutes.)"
+            " (2025-03-11 18:02: Nightly builds run for roughly 40 minutes.)"
+            " (2025-03-11 09:15: The nightly build finished in 39 minutes.)",
+            ["f1", "f2"],
+        )
+    ]
+
+
 def test_a_change_before_an_earlier_state_note_is_kept() -> None:
     """An undated fact sorts first and is never "stated after": its change comes before a note."""
     actions = _actions(

@@ -20,6 +20,7 @@ import copy
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from collections import defaultdict
@@ -1052,10 +1053,9 @@ class _FactBatchResponse(BaseModel):
                     text = base
                 elif later:
                     history = True
-                    # Facts come oldest first: each older fact's note goes ahead of the ones before it.
-                    notes.setdefault(oid, []).insert(0, f"({earlier_states[f.fact_id]})")
+                    notes.setdefault(oid, []).append(f"({earlier_states[f.fact_id]})")
                     head = heads.setdefault(oid, base)
-                    text = " ".join([_end_sentence(head), *notes[oid]])
+                    text = _with_earlier_states(head, notes[oid])
                 elif not change.text.strip():
                     text = base
                 else:
@@ -1475,6 +1475,21 @@ def _end_sentence(text: str) -> str:
     """``text`` ending in a full stop, so a note added after it reads apart from it."""
     text = text.strip()
     return text if text[-1:] in ".!?)。！？）" else f"{text}."
+
+
+#: Earlier-state notes an observation keeps. Unbounded, a topic that keeps coming up piles up
+#: near-identical notes, and small models copying them loop until the output cap (#6264).
+_MAX_EARLIER_STATES = 3
+_EARLIER_STATE_START = re.compile(r"\s+(?=\(\d{4}-\d{2}-\d{2} \d{2}:\d{2}: )")
+
+
+def _with_earlier_states(text: str, new_notes: list[str]) -> str:
+    """``text`` with ``new_notes`` added to the notes it already has: newest first, duplicates and
+    all but the newest :data:`_MAX_EARLIER_STATES` dropped. Each note starts with its date, so a
+    plain sort orders them; the dropped facts stay cited by the observation."""
+    head, *old = _EARLIER_STATE_START.split(text.strip())
+    kept = sorted({*old, *new_notes}, reverse=True)[:_MAX_EARLIER_STATES]
+    return " ".join([_end_sentence(head), *kept])
 
 
 def _build_fact_response_model(fact_ids: list[str]) -> type[_FactBatchResponse]:
