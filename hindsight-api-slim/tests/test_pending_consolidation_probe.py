@@ -6,6 +6,8 @@ from hindsight_api.engine.memories.pg.counts import consolidation_freshness, has
 
 
 async def test_pending_probe_ignores_failed_and_nonconsolidatable_facts(pg0_db_url):
+    # Direct SQL on a temp table on purpose: the probe is a store-level query with no
+    # engine read API, and the check is that it agrees row-for-row with the full count.
     conn = await asyncpg.connect(pg0_db_url)
     try:
         await conn.execute("""
