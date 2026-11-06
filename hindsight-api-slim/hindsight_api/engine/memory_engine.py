@@ -187,6 +187,9 @@ _nested_operation_authorized: contextvars.ContextVar[bool] = contextvars.Context
 # applied (its untagged directives and models refused).
 _tag_scopes_suspended: contextvars.ContextVar[bool] = contextvars.ContextVar("tag_scopes_suspended", default=False)
 
+# How long a retain waits when it stopped because the embeddings backend is down (#5999).
+_EMBEDDINGS_DOWN_DEFER_SECONDS = 60
+
 # Reciprocal Rank Fusion constant for knowledge-page search, and the factor that
 # maps a single arm's raw RRF term (1/(K+rank), max 1/61 at rank 1) onto 0..1.
 # Every arm of search_knowledge_pages scales by this so the `score` it returns is
@@ -772,6 +775,7 @@ from .retain.attachment_content import (
     short_attachment_id,
     validate_and_canonicalize_content,
 )
+from .retain.embedding_utils import EmbeddingsUnavailableError
 from .retain.fact_storage import _normalize_scopes
 from .retain.fold import FoldMemberRef
 from .retain.types import RetainBatchResult, RetainContentDict, merge_processed_content_tokens
@@ -5171,6 +5175,14 @@ class MemoryEngine(MemoryEngineInterface):
             except ProviderRateLimitResetError as e:
                 logger.warning(f"Task deferred until provider quota resets at {e.retry_at}: {e}")
                 raise DeferOperation(exec_date=e.retry_at, reason=str(e)) from e
+            except EmbeddingsUnavailableError as e:
+                # Not a failure: the retain stopped before spending LLM tokens because the
+                # embeddings backend is down. Wait it out without burning the retry budget,
+                # so an outage neither fails the backlog nor re-pays extraction (#5999).
+                logger.warning(f"Task {task_type} deferred, embeddings backend unavailable: {e}")
+                raise DeferOperation(
+                    exec_date=datetime.now(UTC) + timedelta(seconds=_EMBEDDINGS_DOWN_DEFER_SECONDS), reason=str(e)
+                ) from e
             except RetryTaskAt:
                 # Task-owned retry: let the poller handle scheduling
                 raise

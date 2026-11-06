@@ -505,6 +505,7 @@ from ..stored_dates import is_placeholder_date
 from . import (
     chunk_storage,
     embedding_processing,
+    embedding_utils,
     entity_processing,
     fact_extraction,
     fact_storage,
@@ -1575,6 +1576,9 @@ async def retain_batch(
     # foreign keys, but a store that owns its storage can take that pass's writes; check per
     # document write if that window shows up.
     await assert_job_bank_alive_on_pool(pool, bank_id)
+    # Before extraction: an embeddings outage found after the LLM pass wastes the whole
+    # extraction bill, on every retry (issue #5999). Free unless the last embedding call failed.
+    await embedding_utils.ensure_embeddings_reachable(embeddings_model)
 
     start_time = time.time()  # noqa: TID251
     # start_time stays a wall-clock stamp: the stale-request check below compares it with the document's

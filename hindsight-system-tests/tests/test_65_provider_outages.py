@@ -183,7 +183,7 @@ async def _deferred_operation(client, bank: str):
         if deferred:
             return deferred[0]
         await asyncio.sleep(1)
-    raise AssertionError("the retain was never deferred to the provider's quota reset")
+    raise AssertionError("the retain was never deferred")
 
 
 async def test_a_retain_deferred_to_a_quota_reset_runs_now_on_retry(client, llm, chunked_bank, settled):
@@ -204,3 +204,40 @@ async def test_a_retain_deferred_to_a_quota_reset_runs_now_on_retry(client, llm,
 
     await settled(chunked_bank)
     await _assert_the_revision_landed(client, chunked_bank)
+
+
+async def test_a_retain_during_a_known_embeddings_outage_waits_without_paying_for_extraction(
+    client, llm, stubs, bank_id, settled
+):
+    """Retain extracts with the model before it embeds, so an embeddings outage used to be
+    found only after the extraction was paid for — on every attempt, for as long as the
+    backend stayed down (#5999). Once one retain has seen the backend fail, the next one
+    checks it first: it waits for the backend without asking the model anything and
+    without being marked failed, then goes through whole once the backend is back.
+    """
+    llm.on_step("consolidate").returns(consolidation())
+    llm.on_step("extract_facts", contains="Berlin").returns(
+        extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
+    )
+    stubs.embeddings.fail_with_status = 503
+
+    # The first retain cannot know yet: it pays for its extraction and fails.
+    with pytest.raises(ServiceException):
+        await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
+
+    # The next one waits. Its extraction is deliberately not scripted: had the model been
+    # asked, the unscripted call would fail this story.
+    await client.aretain(bank_id=bank_id, content="Alice plays cello.", document_id="cello", retain_async=True)
+    deferred = await _deferred_operation(client, bank_id)
+    failed = await client.operations.list_operations(bank_id, status="failed", limit=100)
+    assert failed.operations == [], "a retain stopped by the outage was marked failed"
+    assert await _fact_texts(client, bank_id) == []
+
+    stubs.embeddings.fail_with_status = None
+    llm.on_step("extract_facts", contains="cello").returns(
+        extracted(fact("Alice plays cello", who="Alice", entities=["Alice", "cello"]))
+    )
+    await client.operations.retry_operation(bank_id, deferred.id)
+
+    await settled(bank_id)
+    assert await _fact_texts(client, bank_id) == [CELLO]
