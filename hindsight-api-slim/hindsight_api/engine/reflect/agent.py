@@ -871,6 +871,11 @@ async def _run_reflect_agent_inner(
                 temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
                 max_completion_tokens=completion_cap,
                 response_format=response_format,
+                # Strict (grammar-enforced) for a structured reply: with the schema only in the prompt,
+                # Gemma answered about 1 in 10 abstain answers with a copy of the schema around the
+                # reply ({"description", "properties": {...}}): 100 of 1,046 in a day on the live
+                # watcher, each one a failed call, a fallback, or a lost note (2026-11-06).
+                strict_schema=True if response_format is not None else None,
             )
         finally:
             reset_queue_wait_sink(queue_token)

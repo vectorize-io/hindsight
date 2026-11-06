@@ -28,16 +28,18 @@ class _ScriptedProvider:
         self.last_messages: list[dict] = []
         self.answer = answer
         self.answer_prompts: list[str] = []
+        self.answer_strict: list[bool | None] = []
 
     async def call_with_tools(self, *, tool_choice, messages, **_):
         self.tool_choices.append(tool_choice.function_name or tool_choice.mode.value)
         self.last_messages = list(messages)
         return self._reply(tool_choice=tool_choice)
 
-    async def call(self, *, messages, **_):
+    async def call(self, *, messages, strict_schema=None, **_):
         prompt = messages[-1]["content"]
         if "## Memories" in prompt:  # the abstain answer, written from what was picked (structured)
             self.answer_prompts.append(prompt)
+            self.answer_strict.append(strict_schema)
             reply = (
                 {"applies": False, "answer": ""} if self.answer == "NONE" else {"applies": True, "answer": self.answer}
             )
@@ -131,6 +133,8 @@ async def test_the_answer_reads_only_what_the_decision_model_picked():
     assert result.used_observation_ids == ["obs-rule"], "the note cites the memory it came from"
     (prompt,) = provider.answer_prompts
     assert "K=1024" in prompt and "GitHub Actions" not in prompt, "an unpicked memory never reaches the answer"
+    # Grammar-enforced: with the schema only in the prompt, Gemma wrapped 1 in 10 answers in the schema.
+    assert provider.answer_strict == [True]
     assert provider.tool_choices == [], "one short call, not the agent's closing turn"
     assert [c.scope for c in result.llm_trace] == ["round_query", "decision_pick", "abstain_answer"]
     (pick_call,) = [c for c in result.llm_trace if c.scope == "decision_pick"]
