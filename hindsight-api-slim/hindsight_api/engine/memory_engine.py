@@ -17101,7 +17101,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "pending_consolidation": consolidation_row["pending"] if consolidation_row else 0,
                 "failed_consolidation": consolidation_row["failed"] if consolidation_row else 0,
                 "total_observations": node_counts.get("observation", 0),
-                "paused_mental_models": int(paused_mental_models or 0),
+                "paused_mental_models": int(paused_mental_models),
             }
 
     async def get_bank_freshness(
