@@ -84,7 +84,9 @@ Write the rule, for agents in later sessions:
   sentences: name the file or component, what a change there must or must not do, and why. Not the
   task the agent did ("Merge X into Y"), but the rule it leaves ("X is a tab inside Y: add new ones
   there, never as separate panels"). Use the exact names, values and paths from the agent's reason.
-  Never include a password, key or token.
+  A value the agent picked only for its own run (a free port, a temp folder, a branch name) is not
+  the project's: write the condition and what to do ("when the default test port 5556 is taken, set
+  HINDSIGHT_TEST_PG_PORT to a free port"), not that value. Never include a password, key or token.
 
 Set create to false when an existing rule above already says this, or when the verdict above says to.
 When this rule replaces existing rules above (they say an older value or the opposite), list their
@@ -95,6 +97,10 @@ names in replaces: they are removed.
 # that wording: the e2e rule written as the task ("Merge the Files, Knowledge, and Settings floating
 # panels into a single System panel") scored 0.15 for "add a floating Logs panel to shell.tsx", and
 # the same rule as an instruction for later changes scored 0.94 (2026-11-05).
+
+# A value one run chose is not a rule: from "I ran with 5617; the default port was taken by another
+# session" the writer wrote "you must set HINDSIGHT_TEST_PG_PORT to 5617", and the next session was
+# told so though nothing in the repo names 5617 (the agent: the setting is real, the value is not).
 
 # For a rejected note the writer is not shown the note: told only "never write what the note claims",
 # the writer still inverted the agent's reason into the note (offline: "you asked to merge them into

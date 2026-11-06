@@ -66,3 +66,21 @@ async def test_a_reason_that_settles_nothing_writes_no_rule():
         criteria="The response shows create=False, meaning no rule is written. Empty name and content are expected.",
         context="The agent dismissed a note because the work already did what it said.",
     )
+
+
+async def test_a_value_the_agent_chose_for_its_run_is_not_the_rule():
+    draft = await _draft(
+        note="Local database tests should use `HINDSIGHT_TEST_PG_PORT=5617`.",
+        verdict="used",
+        reason="I ran the tests with `HINDSIGHT_TEST_PG_PORT=5617`. The default port was taken by another "
+        "session, and that is why the first runs failed.",
+        goal="Fix the flaky queue test and run the suite",
+    )
+    await assert_meets_criteria(
+        response=f"create={draft.create}\nname: {draft.name}\ncontent: {draft.content}",
+        criteria=(
+            "The rule says to set HINDSIGHT_TEST_PG_PORT to a free port when the default one is taken. It does "
+            "not require the specific port 5617: that was only the free port one run happened to pick."
+        ),
+        context="An agent picked port 5617 for its own test run because the default port was busy.",
+    )
