@@ -760,6 +760,7 @@ ENV_DECISION_MODEL_MAX_REQUEST_TOKENS = "HINDSIGHT_API_DECISION_MODEL_MAX_REQUES
 ENV_DECISION_MODEL_TOKENIZER = "HINDSIGHT_API_DECISION_MODEL_TOKENIZER"
 ENV_RECALL_DECISION_MODEL_PRUNE = "HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE"
 ENV_RECALL_DECISION_MODEL_DEDUP = "HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP"
+ENV_RECALL_DECISION_MODEL_FALLBACK = "HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
@@ -1644,6 +1645,9 @@ MIN_DECISION_MODEL_MAX_REQUEST_TOKENS = 1_000
 DEFAULT_RECALL_DECISION_MODEL_PRUNE = False
 # Off by default: it costs one more decision-model request per recall.
 DEFAULT_RECALL_DECISION_MODEL_DEDUP = False
+# Off by default: a recall ranked by the cross-encoder instead is a quieter, worse answer, so a
+# failing decision model fails the recall unless the operator chose the fallback.
+DEFAULT_RECALL_DECISION_MODEL_FALLBACK = False
 
 
 def _decision_model_env(operation: str, setting: str) -> str:
@@ -4081,6 +4085,9 @@ class HindsightConfig:
     # candidates it judges no help (prune), and the ones repeating a better-ranked one (dedup).
     recall_decision_model_prune: bool = DEFAULT_RECALL_DECISION_MODEL_PRUNE
     recall_decision_model_dedup: bool = DEFAULT_RECALL_DECISION_MODEL_DEDUP
+    # Server-wide (one reranker serves every bank): when the decision model fails a recall's
+    # ranking, rank it with the configured HINDSIGHT_API_RERANKER_* chain instead.
+    recall_decision_model_fallback: bool = DEFAULT_RECALL_DECISION_MODEL_FALLBACK
     reflect_decision_model_provider: str | None = None
     reflect_decision_model_api_key: str | None = None
     reflect_decision_model_model: str | None = None
@@ -5279,6 +5286,9 @@ class HindsightConfig:
             ),
             recall_decision_model_dedup=_parse_boolean_env(
                 ENV_RECALL_DECISION_MODEL_DEDUP, DEFAULT_RECALL_DECISION_MODEL_DEDUP
+            ),
+            recall_decision_model_fallback=_parse_boolean_env(
+                ENV_RECALL_DECISION_MODEL_FALLBACK, DEFAULT_RECALL_DECISION_MODEL_FALLBACK
             ),
             # Server
             host=os.getenv(ENV_HOST) or None,
