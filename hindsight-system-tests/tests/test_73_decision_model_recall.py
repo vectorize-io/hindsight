@@ -178,3 +178,34 @@ async def test_the_bank_sets_dedup_for_requests_that_omit_it(decision_model_clie
 
     assert _texts(omitted) == [TEA, SENCHA, UNRELATED]
     assert _texts(off) == [TEA, TEA_AGAIN, SENCHA, UNRELATED]
+
+
+async def test_a_failing_decision_model_fails_the_recall_by_default(decision_model_client, bank, stubs):
+    """Without HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK, a ranking the decision model cannot
+    give is an error the client sees, not a quietly worse answer (#6242)."""
+    stubs.rerank.fail_with_status = 400
+
+    with pytest.raises(ApiException) as exc:
+        await decision_model_client.arecall(bank_id=bank, query="Where did Alice move to?")
+    assert exc.value.status >= 500
+
+
+async def test_with_the_fallback_the_reranker_ranks_it(decision_model_fallback_client, bank, stubs):
+    """With the fallback on, the same recall is ranked by the configured reranker and treated
+    as any reranker's ranking: relevance order rather than the scripted verdicts, with the
+    reranker's score published."""
+    stubs.rerank.fail_with_status = 400
+    stubs.rerank.verdicts = {CELLO: 0.9, STALE: 0.7, CURRENT: 0.5, BERLIN: 0.3}
+
+    response = await decision_model_fallback_client.arecall(bank_id=bank, query="Where did Alice move to?")
+
+    texts = _texts(response)
+    assert texts[:2] == [BERLIN, CELLO]
+    # The two deadlines score the same with the reranker; recency alone orders them.
+    assert set(texts[2:]) == {STALE, CURRENT}
+    scores = [result.scores for result in response.results]
+    assert [score.reranker for score in scores] == pytest.approx(
+        [0.5374011537017761, 0.29814239699997197, 0.1673320053068151, 0.1673320053068151], abs=1e-9
+    )
+    # The boosts a reranker's scores get are applied: the final score is not the reranker's.
+    assert scores[0].final == pytest.approx(0.5911412641214727, abs=1e-6)

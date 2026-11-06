@@ -497,6 +497,10 @@ class RerankStub:
     #: The candidates of every ranking question, as the decision model read them.
     ranked: list[str]
 
+    #: Answer every decision-model request with this provider error instead, for the
+    #: stories about a recall whose decision model fails. The /rerank endpoint ignores it.
+    fail_with_status: int | None = None
+
     def __init__(self) -> None:
         self.verdicts = {}
         self.states = []
@@ -592,6 +596,7 @@ class Stubs:
         self.rerank.verdicts = {}
         self.rerank.states = []
         self.rerank.repeats = set()
+        self.rerank.fail_with_status = None
         self.triage.reset()
         self.rejected_requests.clear()
         self.webhooks.clear()
