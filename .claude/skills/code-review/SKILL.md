@@ -130,6 +130,11 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 - The pre-existing usage in `hindsight_api/migrations.py` is grandfathered, not a precedent — it is tracked for removal. Don't copy it.
 - Design the concurrency out instead of locking around it: give each process its own object to write (e.g. per-schema DDL rather than a shared `public.` object), make the operation idempotent, or use a real row/table constraint (`INSERT ... ON CONFLICT`, `SELECT ... FOR UPDATE` in a fixed order). See #2690 for a migration that reached for `pg_advisory_xact_lock` and had to be reverted.
 
+### Text in SQL: SQL_ASCII databases are supported
+- Some users run Postgres with a `SQL_ASCII` database. There, string functions count **bytes**, not characters. `LEFT`, `RIGHT`, `SUBSTRING`/`substr`, `lpad`/`rpad` and `overlay` can cut a multibyte character (CJK, emoji, accents) in half, and the query fails with `invalid byte sequence for encoding "UTF8"` (#5986). `length()`/`char_length()` silently return byte counts.
+- **Never cut or measure user text in SQL.** Select the column and slice it in Python, where `str[:n]` is by character. `convert_from(convert_to(...))` does not help: on `SQL_ASCII` it still cuts by byte.
+- Exception: `LEFT(query, 200)` on `pg_stat_activity` in `worker/poller.py` is debug-only logging inside a `try/except`.
+
 ### Concurrency: asyncio vs threading primitives
 
 A Hindsight process runs threads (executors, `asyncio.to_thread`) and, across tests
@@ -453,6 +458,14 @@ Grep the diff for `advisory` (`git diff main...HEAD | grep -in advisory`). Any n
 `pg_advisory_unlock` call is a **must fix** — see Database Locking above. Point the
 author at the alternatives (per-process objects, idempotent DDL, row-level
 constraints) rather than just asking them to drop the lock.
+
+### 11h. Check SQL does not cut or measure text
+
+Grep the diff for SQL string functions on user text
+(`git diff main...HEAD | grep -inE "\b(left|right|substring|substr|lpad|rpad|overlay|char_length|length)\s*\("`).
+Any new one applied to user content (page bodies, memory text, names, queries) is a
+**must fix** — see "Text in SQL" above. Ask for the full column to be selected and
+cut in Python instead.
 
 ### 11e. Check for BaseHTTPMiddleware
 

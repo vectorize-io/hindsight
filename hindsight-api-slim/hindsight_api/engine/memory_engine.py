@@ -237,6 +237,10 @@ def _is_unwritten_body(content: str | None) -> bool:
     return not content or content.strip() in ("", _LEGACY_PENDING_PLACEHOLDER)
 
 
+#: Characters of page body a knowledge-page search hit shows.
+KNOWLEDGE_SNIPPET_CHARS = 280
+
+
 def _knowledge_snippet(content: str | None) -> str:
     """The snippet a search result shows, including when the page has no body.
 
@@ -260,7 +264,9 @@ def _knowledge_snippet(content: str | None) -> str:
     The wording itself lives with the other read-time page rendering, so searching for
     a page and reading it tell the reader the same thing in the same words.
     """
-    return (content or "").strip() or EMPTY_PAGE_NOTICE
+    # Cut in Python, not SQL: on a SQL_ASCII database Postgres' LEFT() counts bytes and
+    # splits a multibyte character, which fails the whole query (#5986).
+    return (content or "")[:KNOWLEDGE_SNIPPET_CHARS].strip() or EMPTY_PAGE_NOTICE
 
 
 # ``mental_model_history`` holds two kinds of row in one JSONB blob: the version
@@ -20727,7 +20733,7 @@ class MemoryEngine(MemoryEngineInterface):
                 rows = await conn.fetch(
                     f"""
                     SELECT kp.id, kp.name, kp.mental_model_id,
-                           LEFT(mm.content, 280) AS snippet, mm.source_query, mm.last_refreshed_at AS updated_at
+                           mm.content, mm.source_query, mm.last_refreshed_at AS updated_at
                     FROM {join}
                     WHERE kp.bank_id = $1 AND kp.kind = 'page' AND kp.mental_model_id = ANY($2::text[])
                           {store_tags.sql}
@@ -20745,7 +20751,7 @@ class MemoryEngine(MemoryEngineInterface):
                     "name": r["name"],
                     "mental_model_id": r["mental_model_id"],
                     "source_query": r["source_query"],
-                    "snippet": _knowledge_snippet(r["snippet"]),
+                    "snippet": _knowledge_snippet(r["content"]),
                     # Same normalized single-arm RRF curve as the SQL paths below, so a
                     # store-owned bank's scores mean what a Postgres-ranked bank's do.
                     "score": _KNOWLEDGE_RRF_NORM / (_KNOWLEDGE_RRF_K + 1 + order[r["mental_model_id"]]),
@@ -20789,7 +20795,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # Vector-only: no BM25 arm to fuse with, so rank straight off the ANN scan.
                 sql = f"""
                     SELECT kp.id, kp.name, kp.mental_model_id,
-                           LEFT(mm.content, 280) AS snippet, mm.source_query, mm.last_refreshed_at AS updated_at,
+                           mm.content, mm.source_query, mm.last_refreshed_at AS updated_at,
                            {_KNOWLEDGE_RRF_NORM} / ({_KNOWLEDGE_RRF_K} + ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector)) AS score
                     FROM {join}
                     WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
@@ -20858,7 +20864,7 @@ class MemoryEngine(MemoryEngineInterface):
                             FROM vec FULL OUTER JOIN bm ON vec.page_id = bm.page_id
                         )
                         SELECT kp.id, kp.name, kp.mental_model_id,
-                               LEFT(mm.content, 280) AS snippet, mm.source_query, mm.last_refreshed_at AS updated_at, f.score
+                               mm.content, mm.source_query, mm.last_refreshed_at AS updated_at, f.score
                         FROM fused f
                         JOIN {kp} kp ON kp.id = f.page_id AND kp.bank_id = $2
                         LEFT JOIN {mm} mm ON mm.id = kp.mental_model_id AND mm.bank_id = kp.bank_id
@@ -20883,7 +20889,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # rank does, so the same normalized RRF curve is applied here too.
                     sql = f"""
                         SELECT kp.id, kp.name, kp.mental_model_id,
-                               LEFT(mm.content, 280) AS snippet, mm.source_query, mm.last_refreshed_at AS updated_at,
+                               mm.content, mm.source_query, mm.last_refreshed_at AS updated_at,
                                {_KNOWLEDGE_RRF_NORM} / ({_KNOWLEDGE_RRF_K} + ROW_NUMBER() OVER (ORDER BY {bm25.order_by})) AS score
                         FROM {join}
                         WHERE kp.bank_id = $1 AND kp.kind = 'page'
@@ -20900,7 +20906,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "name": r["name"],
                 "mental_model_id": r["mental_model_id"],
                 "source_query": r["source_query"],
-                "snippet": _knowledge_snippet(r["snippet"]),
+                "snippet": _knowledge_snippet(r["content"]),
                 "score": float(r["score"]) if r["score"] is not None else 0.0,
                 "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
             }

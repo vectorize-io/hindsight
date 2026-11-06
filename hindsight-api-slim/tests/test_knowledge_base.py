@@ -2091,3 +2091,12 @@ class TestTagFilter:
             f"/v1/default/banks/{_enc(bank_id)}/knowledge-base/search", params={"q": "orders billing net-30"}
         )
         assert {r["id"] for r in resp.json()["results"]} == {ids.billing}
+
+
+def test_knowledge_snippet_cuts_by_character_not_byte():
+    # #5986: SQL LEFT() on a SQL_ASCII database counts bytes and splits a CJK character,
+    # failing the whole search. The snippet is now cut in Python, by character.
+    body = "a" * 279 + "作业作业"
+    snippet = memory_engine_module._knowledge_snippet(body)
+    assert snippet == "a" * 279 + "作"
+    assert len(snippet) == memory_engine_module.KNOWLEDGE_SNIPPET_CHARS
