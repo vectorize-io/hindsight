@@ -9,6 +9,8 @@ page as markdown.
 """
 
 import json
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -185,7 +187,7 @@ class TestTheCall:
         assert all(set(m) == {"role", "content"} for m in sent)
 
 
-def _type_lists(node):
+def _type_lists(node: Any) -> Iterator[list[str]]:
     if isinstance(node, dict):
         if isinstance(node.get("type"), list):
             yield node["type"]
@@ -197,7 +199,7 @@ def _type_lists(node):
 
 
 @pytest.mark.parametrize("answer_as_document", [False, True])
-def test_no_reflect_tool_sends_a_type_list(answer_as_document):
+def test_no_reflect_tool_sends_a_type_list(answer_as_document: bool) -> None:
     """MiniMax answers ``"type": ["integer", "null"]`` with HTTP 400 (#6321); Anthropic refuses
     ``["array", "null"]`` beside ``items`` (#6305). An optional argument is an ``anyOf`` instead."""
     tools = get_reflect_tools(answer_as_document=answer_as_document, answer_ready=True)
