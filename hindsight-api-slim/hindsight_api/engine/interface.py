@@ -268,27 +268,6 @@ class MemoryEngineInterface(ABC):
         ...
 
     @abstractmethod
-    async def merge_bank_mission(
-        self,
-        bank_id: str,
-        new_info: str,
-        *,
-        request_context: "RequestContext",
-    ) -> dict[str, Any]:
-        """
-        Merge new mission information into bank profile.
-
-        Args:
-            bank_id: The memory bank ID.
-            new_info: New mission information to merge.
-            request_context: Request context for authentication.
-
-        Returns:
-            Updated mission info.
-        """
-        ...
-
-    @abstractmethod
     async def set_bank_mission(
         self,
         bank_id: str,

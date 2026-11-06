@@ -722,7 +722,6 @@ async def test_bank_wide_reads_and_writes_are_refused_to_a_scoped_caller(memory,
         "llm requests": lambda: memory.list_llm_requests(scoped_bank, request_context=dan),
         "llm request stats": lambda: memory.llm_request_stats(scoped_bank, request_context=dan),
         "set mission": lambda: memory.set_bank_mission(scoped_bank, "x", request_context=dan),
-        "merge mission": lambda: memory.merge_bank_mission(scoped_bank, "x", request_context=dan),
         "run consolidation": lambda: memory.run_consolidation(scoped_bank, request_context=dan),
     }
     not_refused = {}
