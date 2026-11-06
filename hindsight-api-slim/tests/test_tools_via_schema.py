@@ -9,12 +9,15 @@ page as markdown.
 """
 
 import json
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice, OutputTooLongError
 from hindsight_api.engine.llm_wrapper import LLMProvider
+from hindsight_api.engine.providers.tools_via_schema import _arguments_schema
 from hindsight_api.engine.reflect.agent import run_reflect_agent
 from hindsight_api.engine.reflect.prompts import build_system_prompt_for_tools
 from hindsight_api.engine.reflect.tools_schema import get_reflect_tools
@@ -101,7 +104,9 @@ class TestTheCall:
         options = sent["response_format"].model_json_schema()["properties"]["call"]["anyOf"]
         assert [o["properties"]["name"]["enum"] for o in options] == [["recall"], ["answer_ready"]]
         # Strict subset: an argument the tool left optional is nullable, and a null is dropped.
-        assert options[0]["properties"]["arguments"]["properties"]["reason"]["type"] == ["string", "null"]
+        assert options[0]["properties"]["arguments"]["properties"]["reason"] == {
+            "anyOf": [{"type": "string"}, {"type": "null"}]
+        }
         assert "ONE of the declared functions" in sent["messages"][-1]["content"]
         assert [(c.name, c.arguments) for c in result.tool_calls] == [("recall", {"query": "editors"})]
 
@@ -180,6 +185,28 @@ class TestTheCall:
         }
         assert sent[3] == {"role": "user", "content": 'Result of `recall`:\n{"memories": []}'}
         assert all(set(m) == {"role", "content"} for m in sent)
+
+
+def _type_lists(node: Any) -> Iterator[list[str]]:
+    if isinstance(node, dict):
+        if isinstance(node.get("type"), list):
+            yield node["type"]
+        for value in node.values():
+            yield from _type_lists(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _type_lists(value)
+
+
+@pytest.mark.parametrize("answer_as_document", [False, True])
+def test_no_reflect_tool_sends_a_type_list(answer_as_document: bool) -> None:
+    """MiniMax answers ``"type": ["integer", "null"]`` with HTTP 400 (#6321); Anthropic refuses
+    ``["array", "null"]`` beside ``items`` (#6305). An optional argument is an ``anyOf`` instead."""
+    tools = get_reflect_tools(answer_as_document=answer_as_document, answer_ready=True)
+    schemas = [_arguments_schema(t) for t in tools]
+    assert [t for s in schemas for t in _type_lists(s)] == []
+    recall = next(s for t, s in zip(tools, schemas) if t["function"]["name"] == "recall")
+    assert recall["properties"]["max_tokens"]["anyOf"][-1] == {"type": "null"}
 
 
 class TestTheMarkdownDocument:

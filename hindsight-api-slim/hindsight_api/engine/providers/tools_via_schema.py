@@ -36,6 +36,10 @@ def _closed(schema: dict[str, Any]) -> dict[str, Any]:
     """The strict subset every schema-enforcing API accepts: each object closed, each property
     required, a property the tool left optional made nullable (and dropped from the reply).
 
+    Nullable is written ``anyOf: [<prop>, {"type": "null"}]``, not ``"type": [<type>, "null"]``:
+    MiniMax answers a type list with HTTP 400 (#6321) and Anthropic refuses one beside
+    ``items`` (#6305). Every other structured call already sends the ``anyOf`` form.
+
     No string bounds are added: under xgrammar a bounded string admits no escape sequence,
     so a markdown page could not hold a single line break.
     """
@@ -47,7 +51,7 @@ def _closed(schema: dict[str, Any]) -> dict[str, Any]:
                 required = set(node.get("required") or [])
                 for name, prop in node["properties"].items():
                     if name not in required and isinstance(prop, dict) and isinstance(prop.get("type"), str):
-                        prop["type"] = [prop["type"], "null"]
+                        node["properties"][name] = {"anyOf": [prop, {"type": "null"}]}
                 node["required"] = list(node["properties"])
                 node["additionalProperties"] = False
             for value in node.values():
