@@ -665,7 +665,13 @@ from .bank_life import (
 )
 from .bank_templates import apply_default_bank_template_resources, load_default_bank_template_manifest
 from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel, TypeSafeCrossEncoder, recall_log_id
-from .embeddings import Embeddings, create_embeddings_from_env
+from .embeddings import (
+    EMBEDDING_MODEL_SETTING,
+    Embeddings,
+    create_embeddings_from_env,
+    embedding_model_id,
+    is_embedding_model_mismatch,
+)
 from .interface import BankConfigState, BankTemplateImportWrite, MemoryEngineInterface
 from .memories import sql_memories
 from .memories.base import watermark_may_postdate as _may_need_refresh
@@ -5200,6 +5206,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # and lose the "not a failure" semantics entirely.
                 raise
             except Exception as e:
+                if is_embedding_model_mismatch(e):
+                    # This server is on the embedding model a re-embed just replaced: not a
+                    # failure of the task, and it clears once a server on the new model runs it.
+                    logger.warning(f"Task deferred: {task_type} needs a server on the new embedding model ({e})")
+                    raise DeferOperation(exec_date=datetime.now(UTC) + timedelta(seconds=60), reason=str(e)) from e
                 # exc_info, not a bare print_exc(): the traceback is the only pointer
                 # to the offending call site, and under production log volume the
                 # stderr copy is unattributed and rotates away first (issue #3218).
@@ -6482,6 +6493,9 @@ class MemoryEngine(MemoryEngineInterface):
             if max_parallel_gather is not None:
                 settings.append(("max_parallel_workers_per_gather", str(max_parallel_gather)))
 
+            # Names this server's embedding model; only a re-embed's write guard reads it.
+            settings.append((EMBEDDING_MODEL_SETTING, embedding_model_id(self.embeddings)))
+
             await _apply_session_settings(conn, settings)
 
         # Optional on the engine -- pg0 fills it in above when configured -- but the backend
@@ -6867,14 +6881,9 @@ class MemoryEngine(MemoryEngineInterface):
         Returns:
             Readable date string
         """
-        # Format as "Month Year" for most cases
-        # Could be extended to include day for very specific dates if needed
-        month_name = dt.strftime("%B")  # Full month name (e.g., "June")
-        year = dt.strftime("%Y")  # Year (e.g., "2024")
+        from .retain.embedding_processing import format_readable_date
 
-        # For now, use "Month Year" format
-        # Could check if day is significant (not 1st or 15th) and include it
-        return f"{month_name} {year}"
+        return format_readable_date(dt)
 
     def retain(
         self,

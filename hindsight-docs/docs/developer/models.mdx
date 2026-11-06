@@ -1102,7 +1102,7 @@ Turns text into vectors for semantic search. The default, `BAAI/bge-small-en-v1.
 <ModelProviderSearch only="embeddings" />
 
 :::warning Choose before you store memories
-Hindsight reads the embedding dimension at startup and sizes the database for it. Once memories are stored, changing to a model with other dimensions loses them; switching models with the same dimensions needs every bank re-embedded.
+Hindsight reads the embedding dimension at startup and sizes the database for it. Once memories are stored, a server will not start on a model with other dimensions. To switch models, re-embed everything in place with [`hindsight-admin reembed`](./admin-cli.md#reembed); do it for a switch with the same dimensions too, or old and new vectors end up mixed.
 :::
 
 ### Hindsight Inference {#embeddings-hindsight}
@@ -1134,7 +1134,7 @@ export HINDSIGHT_API_EMBEDDINGS_PROVIDER=local
 export HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL=hindsight-ai/hs-embed-1
 ```
 
-`hs-embed-1` has 112M parameters (MIT), returns 384 dimensions, works in eight languages, reads inputs up to 8,192 tokens and needs no query or document prefix. It downloads from Hugging Face on first start. Vectors from two models don't mix, so memories already stored need re-embedding after you switch.
+`hs-embed-1` has 112M parameters (MIT), returns 384 dimensions, works in eight languages, reads inputs up to 8,192 tokens and needs no query or document prefix. It downloads from Hugging Face on first start. Vectors from two models don't mix, so memories already stored need re-embedding after you switch: see [`hindsight-admin reembed`](./admin-cli.md#reembed).
 
 Any other Sentence Transformers model works the same way:
 
