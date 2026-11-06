@@ -8,7 +8,8 @@ each time. One install spent its whole balance overnight while idle (#4532).
 
 The contract: once a refresh fails, the automatic triggers leave that model
 alone. A refresh someone asks for still runs, and when it succeeds the automatic
-ones resume.
+ones resume. The bank stats count the paused models, so an operator who never
+opens the page can alert on it (#6077).
 
 Except when the failure was the provider being out for a while — a rate limit, a
 5xx. Pausing on those froze every page in a bank for days after a subscription's
@@ -33,6 +34,10 @@ async def _refreshes(client, bank_id: str, status: str | None = None) -> int:
         bank_id, type="refresh_mental_model", status=status, limit=100
     )
     return operations.total
+
+
+async def _paused(client, bank_id: str) -> int:
+    return (await client.banks.get_agent_stats(bank_id)).paused_mental_models
 
 
 async def _retain(client, llm, bank_id: str, text: str) -> None:
@@ -67,6 +72,7 @@ async def test_a_failed_refresh_is_not_retried_by_every_consolidation(client, ll
     assert await _refreshes(client, bank_id, status="failed") == 1
     history = await client.mental_models.get_mental_model_history(bank_id, model)
     assert history[0]["kind"] == "refresh_failed"
+    assert await _paused(client, bank_id) == 1
 
     # Two more consolidations. Before the fix each one queued the same doomed refresh.
     await _retain(client, llm, bank_id, "Alice started a new job")
@@ -79,6 +85,7 @@ async def test_a_failed_refresh_is_not_retried_by_every_consolidation(client, ll
     await client.mental_models.refresh_mental_model(bank_id, model)
     await wait_until_settled(client, bank_id, allow_failed=True)
     assert (await client.mental_models.get_mental_model(bank_id, model, detail="full")).content.strip() == ANSWER
+    assert await _paused(client, bank_id) == 0
 
     await _retain(client, llm, bank_id, "Alice visited Paris")
     assert await _refreshes(client, bank_id) == baseline + 3
@@ -109,6 +116,8 @@ async def test_a_refresh_failed_by_a_rate_limit_runs_again_on_the_next_consolida
     assert await _refreshes(client, bank_id, status="failed") == 1
     history = await client.mental_models.get_mental_model_history(bank_id, model)
     assert history[0]["kind"] == "refresh_failed"
+    # A rate limit is not a pause, so nothing is counted as paused.
+    assert await _paused(client, bank_id) == 0
 
     # The limit has lifted. The next consolidation refreshes the model on its own.
     llm.reset()
