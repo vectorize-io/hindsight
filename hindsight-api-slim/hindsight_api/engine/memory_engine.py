@@ -11779,7 +11779,7 @@ class MemoryEngine(MemoryEngineInterface):
                 retag and no re-consolidation.
             add_tags / remove_tags: A partial change instead of ``tags`` (#6339): the new set is
                 the current tags minus ``remove_tags``, plus ``add_tags``. Resolved against the
-                tags read inside the update's transaction, so concurrent partial changes do not
+                tags read (and, on stores that support it, row-locked) inside the update's transaction, so concurrent partial changes do not
                 drop each other's tags. Not combined with ``tags``.
             observation_scopes: New observation scoping for every memory of the document
                 (optional), with the values retain accepts. Overrides the rename a retag

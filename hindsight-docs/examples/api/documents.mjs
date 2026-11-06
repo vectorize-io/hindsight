@@ -145,12 +145,24 @@ await sdk.updateDocument({
 
 // [docs:document-update-tags-partial]
 // Add one tag and remove another; every other tag stays
-await sdk.updateDocument({
+const { error: partialError } = await sdk.updateDocument({
     client: apiClient,
     path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' },
     body: { add_tags: ['team-c'], remove_tags: ['team-a'] }
 });
+
+if (partialError) {
+    throw new Error(`Failed to update tags: ${JSON.stringify(partialError)}`);
+}
 // [/docs:document-update-tags-partial]
+
+const { data: partialDoc } = await sdk.getDocument({
+    client: apiClient,
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' }
+});
+if (JSON.stringify(partialDoc.tags) !== JSON.stringify(['team-c'])) {
+    throw new Error(`Expected ["team-c"] after the partial update, got ${JSON.stringify(partialDoc.tags)}`);
+}
 
 
 // [docs:document-delete]

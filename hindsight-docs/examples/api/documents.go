@@ -105,10 +105,18 @@ func main() {
 
 	// [docs:document-update-tags-partial]
 	// Add one tag and remove another; every other tag stays
-	client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
+	_, _, err = client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
 		UpdateDocumentRequest(hindsight.UpdateDocumentRequest{AddTags: []string{"team-c"}, RemoveTags: []string{"team-a"}}).
 		Execute()
+	if err != nil {
+		log.Fatalf("Failed to update tags: %v", err)
+	}
 	// [/docs:document-update-tags-partial]
+
+	partial, _, err := client.DocumentsAPI.GetDocument(ctx, "my-bank", "meeting-2024-03-15").Execute()
+	if err != nil || len(partial.GetTags()) != 1 || partial.GetTags()[0] != "team-c" {
+		log.Fatalf("Expected [team-c] after the partial update, got %v (err %v)", partial.GetTags(), err)
+	}
 
 	// [docs:document-delete]
 	client.DocumentsAPI.DeleteDocument(ctx, "my-bank", "meeting-2024-03-15").Execute()

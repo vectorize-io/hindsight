@@ -329,6 +329,10 @@ client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
 ### Python
 
 ```python
+from hindsight_client_api import ApiClient, Configuration
+from hindsight_client_api.api import DocumentsApi
+from hindsight_client_api.models import UpdateDocumentRequest
+
 async def update_some_tags_example():
     config = Configuration(host="http://localhost:8888")
     api = DocumentsApi(ApiClient(config))
@@ -347,11 +351,15 @@ asyncio.run(update_some_tags_example())
 
 ```javascript
 // Add one tag and remove another; every other tag stays
-await sdk.updateDocument({
+const { error: partialError } = await sdk.updateDocument({
     client: apiClient,
     path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' },
     body: { add_tags: ['team-c'], remove_tags: ['team-a'] }
 });
+
+if (partialError) {
+    throw new Error(`Failed to update tags: ${JSON.stringify(partialError)}`);
+}
 ```
 
 ### CLI
@@ -365,9 +373,12 @@ hindsight document update "$BANK_ID" notes-2024-03-15 --add-tags team-c --remove
 
 ```go
 // Add one tag and remove another; every other tag stays
-client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
+_, _, err = client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
 	UpdateDocumentRequest(hindsight.UpdateDocumentRequest{AddTags: []string{"team-c"}, RemoveTags: []string{"team-a"}}).
 	Execute()
+if err != nil {
+	log.Fatalf("Failed to update tags: %v", err)
+}
 ```
 
 > **ℹ️ Observations are re-consolidated**
