@@ -330,18 +330,32 @@ fn parse_observation_scopes(raw: &str) -> Result<serde_json::Value> {
     }
 }
 
+/// How a document update changes its tags: a full replacement (`tags`), or tags added and
+/// removed while the rest stay.
+pub struct TagChange {
+    pub tags: Option<Vec<String>>,
+    pub add_tags: Option<Vec<String>>,
+    pub remove_tags: Option<Vec<String>>,
+}
+
 /// Update a document's tags or observation scopes
 pub fn update(
     client: &ApiClient,
     bank_id: &str,
     document_id: &str,
-    tags: Option<Vec<String>>,
+    tags: TagChange,
     observation_scopes: Option<String>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
-    if tags.is_none() && observation_scopes.is_none() {
-        anyhow::bail!("At least one of --tags or --observation-scopes must be provided");
+    if tags.tags.is_none()
+        && tags.add_tags.is_none()
+        && tags.remove_tags.is_none()
+        && observation_scopes.is_none()
+    {
+        anyhow::bail!(
+            "At least one of --tags, --add-tags, --remove-tags or --observation-scopes must be provided"
+        );
     }
     let observation_scopes = observation_scopes
         .as_deref()

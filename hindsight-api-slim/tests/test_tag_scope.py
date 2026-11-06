@@ -551,6 +551,14 @@ async def test_every_other_surface_respects_both_scopes(memory, scoped_bank):
     with pytest.raises(OperationValidationError) as e:
         await memory.update_document("dan-notes", scoped_bank, add_tags=["kind:rule"], request_context=dan)
     assert e.value.status_code == 403
+    # Removing the last writable tag would leave the document untagged — readable by everyone,
+    # which a full `tags=[]` is refused for too.
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_document("dan-notes", scoped_bank, remove_tags=["user:dan"], request_context=dan)
+    assert e.value.status_code == 403
+    # Adding and then removing a writable tag is allowed.
+    assert await memory.update_document("dan-notes", scoped_bank, add_tags=["topic:x"], request_context=dan)
+    assert await memory.update_document("dan-notes", scoped_bank, remove_tags=["topic:x"], request_context=dan)
     with pytest.raises(OperationValidationError) as e:
         await memory.reprocess_document(scoped_bank, "kate-sync", request_context=dan)
     assert e.value.status_code == 404

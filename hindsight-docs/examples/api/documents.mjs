@@ -143,6 +143,16 @@ await sdk.updateDocument({
 // [/docs:document-update-tags]
 
 
+// [docs:document-update-tags-partial]
+// Add one tag and remove another; every other tag stays
+await sdk.updateDocument({
+    client: apiClient,
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' },
+    body: { add_tags: ['team-c'], remove_tags: ['team-a'] }
+});
+// [/docs:document-update-tags-partial]
+
+
 // [docs:document-delete]
 // Delete document and all its memories
 const { data: deleteResult } = await sdk.deleteDocument({

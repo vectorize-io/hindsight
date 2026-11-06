@@ -731,8 +731,6 @@ export class ControlPlaneClient {
       entities?: Array<{ text: string; type?: string }>;
       resolve_entities?: boolean;
       tags?: string[];
-      add_tags?: string[];
-      remove_tags?: string[];
       observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
       strategy?: string;
     }>;
@@ -1151,6 +1149,8 @@ export class ControlPlaneClient {
     bankId: string,
     update: {
       tags?: string[];
+      add_tags?: string[];
+      remove_tags?: string[];
       observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
     }
   ) {

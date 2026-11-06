@@ -103,6 +103,13 @@ func main() {
 		log.Fatalf("Expected no tags after clearing, got %v (err %v)", cleared.GetTags(), err)
 	}
 
+	// [docs:document-update-tags-partial]
+	// Add one tag and remove another; every other tag stays
+	client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
+		UpdateDocumentRequest(hindsight.UpdateDocumentRequest{AddTags: []string{"team-c"}, RemoveTags: []string{"team-a"}}).
+		Execute()
+	// [/docs:document-update-tags-partial]
+
 	// [docs:document-delete]
 	client.DocumentsAPI.DeleteDocument(ctx, "my-bank", "meeting-2024-03-15").Execute()
 	// [/docs:document-delete]

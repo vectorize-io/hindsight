@@ -1642,7 +1642,7 @@ impl ApiClient {
         &self,
         bank_id: &str,
         document_id: &str,
-        tags: Option<Vec<String>>,
+        tags: crate::commands::document::TagChange,
         observation_scopes: Option<serde_json::Value>,
         _verbose: bool,
     ) -> Result<types::UpdateDocumentResponse> {
@@ -1650,7 +1650,9 @@ impl ApiClient {
             // Through serde so the CLI does not depend on the generated union's variant names.
             let request: types::UpdateDocumentRequest =
                 serde_json::from_value(serde_json::json!({
-                    "tags": tags,
+                    "tags": tags.tags,
+                    "add_tags": tags.add_tags,
+                    "remove_tags": tags.remove_tags,
                     "observation_scopes": observation_scopes,
                 }))?;
             let response = self

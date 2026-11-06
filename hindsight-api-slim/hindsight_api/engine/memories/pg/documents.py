@@ -347,11 +347,15 @@ async def delete_document_rows(
 
 
 async def current_document_tags(
-    *, conn, fq_table: Callable[[str], str], bank_id: str, document_id: str
+    *, conn, fq_table: Callable[[str], str], bank_id: str, document_id: str, for_update: bool = False
 ) -> DocumentTags:
-    """The tags the `documents` row carries; ``found=False`` when there is no row."""
+    """The tags the `documents` row carries; ``found=False`` when there is no row.
+
+    ``for_update`` row-locks the document until the caller's transaction ends.
+    """
+    _lock = " FOR UPDATE" if for_update else ""
     _doc_row = await conn.fetchrow(
-        f"SELECT tags FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+        f"SELECT tags FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2{_lock}",
         document_id,
         bank_id,
     )

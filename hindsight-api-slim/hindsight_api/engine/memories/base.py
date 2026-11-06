@@ -3088,8 +3088,14 @@ class MemoriesExtension(Extension, ABC):
         await self.delete_document_record(bank_id=bank_id, document_id=document_id)
         return DeletedDocument(deleted=_record is not None, file_storage_key=file_storage_key)
 
-    async def current_document_tags(self, *, conn, fq_table, bank_id: str, document_id: str) -> DocumentTags:
+    async def current_document_tags(
+        self, *, conn, fq_table, bank_id: str, document_id: str, for_update: bool = False
+    ) -> DocumentTags:
         """The tags a document carries now, read before a retag overwrites them.
+
+        ``for_update`` asks the store to hold the document until ``conn``'s transaction ends, so
+        a partial tag change (add/remove) computed from this read is not lost to a concurrent
+        one. The default record-based read cannot lock and ignores it.
 
         Default: the store's record. A record that does not carry a "tags" key at all is
         unreadable for this purpose, not empty — collapsing it to [] would read a PATCH of []

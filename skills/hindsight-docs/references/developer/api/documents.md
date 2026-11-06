@@ -235,9 +235,9 @@ fmt.Printf("Memory units: %d\n", doc.GetMemoryUnitCount())
 
 ## Update Document
 
-Update mutable fields on an existing document without re-processing the content. Currently supports updating `tags`.
+Update mutable fields on an existing document without re-processing the content: its tags, and how its memories are scoped for observations.
 
-The `tags` array **replaces** the document's tags — it is not merged into them. Send the complete set you want the document to end up with: any tag you leave out is dropped, and an empty array clears them all. To remove a single tag, read the document's current tags, drop the one you want gone, and send the rest. Omitting the field entirely is not an update at all and is rejected with a `422`.
+The `tags` array **replaces** the document's tags — it is not merged into them. Send the complete set you want the document to end up with: any tag you leave out is dropped, and an empty array clears them all. To change only some tags, use `add_tags` / `remove_tags` (below). A request with none of these fields is rejected with a `422`.
 
 ### Python
 
@@ -319,6 +319,54 @@ fmt.Printf("Updated: %v\n", updateResult.GetSuccess())
 // a nil slice is left out of the request, and the server rejects an update with no tags.
 client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
 	UpdateDocumentRequest(hindsight.UpdateDocumentRequest{Tags: []string{}}).
+	Execute()
+```
+
+### Add or remove single tags
+
+`add_tags` and `remove_tags` change only the tags they name and keep the rest, so you don't need to read the current set first. Removals apply first, so a tag in both lists stays. They can't be combined with `tags` (`422`). Tags a memory carries from an [entity label](memory-banks.md#entity-labels) group with `tag: true` stay on that memory either way.
+
+### Python
+
+```python
+async def update_some_tags_example():
+    config = Configuration(host="http://localhost:8888")
+    api = DocumentsApi(ApiClient(config))
+
+    # Add one tag and remove another; every other tag stays
+    await api.update_document(
+        bank_id="my-bank",
+        document_id="meeting-2024-03-15",
+        update_document_request=UpdateDocumentRequest(add_tags=["team-c"], remove_tags=["team-a"]),
+    )
+
+asyncio.run(update_some_tags_example())
+```
+
+### Node.js
+
+```javascript
+// Add one tag and remove another; every other tag stays
+await sdk.updateDocument({
+    client: apiClient,
+    path: { bank_id: 'my-bank', document_id: 'meeting-2024-03-15-section-1' },
+    body: { add_tags: ['team-c'], remove_tags: ['team-a'] }
+});
+```
+
+### CLI
+
+```bash
+# Add one tag and remove another; every other tag stays
+hindsight document update "$BANK_ID" notes-2024-03-15 --add-tags team-c --remove-tags team-a
+```
+
+### Go
+
+```go
+// Add one tag and remove another; every other tag stays
+client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
+	UpdateDocumentRequest(hindsight.UpdateDocumentRequest{AddTags: []string{"team-c"}, RemoveTags: []string{"team-a"}}).
 	Execute()
 ```
 

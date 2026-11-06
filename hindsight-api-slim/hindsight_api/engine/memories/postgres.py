@@ -957,9 +957,11 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, ops=ops, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id, unit_ids=unit_ids
         )
 
-    async def current_document_tags(self, *, conn, fq_table, bank_id: str, document_id: str) -> DocumentTags:
+    async def current_document_tags(
+        self, *, conn, fq_table, bank_id: str, document_id: str, for_update: bool = False
+    ) -> DocumentTags:
         return await documents.current_document_tags(
-            conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id
+            conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id, for_update=for_update
         )
 
     async def existing_documents_tags(

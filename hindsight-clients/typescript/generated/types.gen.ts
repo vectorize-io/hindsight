@@ -7024,7 +7024,7 @@ export type UpdateDocumentRequest = {
   /**
    * Remove Tags
    *
-   * Tags to remove from the document, keeping the rest (applied before `add_tags`). Cannot be combined with `tags`.
+   * Tags to remove from the document, keeping the rest (applied before `add_tags`). Cannot be combined with `tags`. Tags a memory carries from an entity label group with `tag: true` stay on that memory.
    */
   remove_tags?: Array<string> | null;
   /**

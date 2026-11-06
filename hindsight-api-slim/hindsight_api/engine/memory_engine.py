@@ -11798,11 +11798,10 @@ class MemoryEngine(MemoryEngineInterface):
         partial = add_tags is not None or remove_tags is not None
         if partial and tags is not None:
             raise OperationValidationError("Send either tags or add_tags/remove_tags, not both", status_code=422)
-        # A partial change only writes the tags it adds: the rest are the document's own, which
-        # the document check below already requires writable.
-        await self._require_writable(
-            bank_id, request_context, document_id=document_id, new_tags=add_tags if partial else tags
-        )
+        # A partial change's resulting set is only known once the current tags are read, so it is
+        # checked against the write scope inside the transaction below.
+        await self._require_writable(bank_id, request_context, document_id=document_id, new_tags=tags)
+        write_scope = await self._write_tag_scope(bank_id, request_context) if partial else None
         if observation_scopes is not None:
             self._refuse_unwritable_scopes(observation_scopes, await self._write_tag_scope(bank_id, request_context))
         backend = await self._get_backend()
@@ -11827,8 +11826,10 @@ class MemoryEngine(MemoryEngineInterface):
                     # Compare as SETS — consolidation scopes a memory by its tag set, never
                     # by the order the array arrived in, so a reordered array changes
                     # nothing that consolidation can observe.
+                    # A partial change locks the row: it is computed from this read, so a concurrent
+                    # one must wait for it rather than overwrite it with a set missing its tags.
                     _current = await _store.current_document_tags(
-                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, for_update=partial
                     )
                     current_tags = _current.tags
                     if partial and _current.found:
@@ -11839,6 +11840,9 @@ class MemoryEngine(MemoryEngineInterface):
                         removed = set(remove_tags or [])
                         kept = [t for t in current_tags if t not in removed]
                         tags = kept + [t for t in dict.fromkeys(add_tags or []) if t not in kept]
+                        # The whole resulting set, like a full `tags` write: removing the last
+                        # writable tag would otherwise hand the document to every reader.
+                        self._refuse_unwritable(tags, write_scope, f"document '{document_id}'")
 
                     # `None` means "could not read the current tags" (document not found, or
                     # a store record that does not carry them) — never claim unchanged on a

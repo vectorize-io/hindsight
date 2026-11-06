@@ -164,6 +164,22 @@ asyncio.run(update_document_example())
 # [/docs:document-update-tags]
 
 
+# [docs:document-update-tags-partial]
+async def update_some_tags_example():
+    config = Configuration(host="http://localhost:8888")
+    api = DocumentsApi(ApiClient(config))
+
+    # Add one tag and remove another; every other tag stays
+    await api.update_document(
+        bank_id="my-bank",
+        document_id="meeting-2024-03-15",
+        update_document_request=UpdateDocumentRequest(add_tags=["team-c"], remove_tags=["team-a"]),
+    )
+
+asyncio.run(update_some_tags_example())
+# [/docs:document-update-tags-partial]
+
+
 # [docs:document-delete]
 from hindsight_client_api import ApiClient, Configuration
 from hindsight_client_api.api import DocumentsApi

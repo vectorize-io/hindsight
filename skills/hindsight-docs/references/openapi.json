@@ -19942,7 +19942,7 @@
               }
             ],
             "title": "Remove Tags",
-            "description": "Tags to remove from the document, keeping the rest (applied before `add_tags`). Cannot be combined with `tags`."
+            "description": "Tags to remove from the document, keeping the rest (applied before `add_tags`). Cannot be combined with `tags`. Tags a memory carries from an entity label group with `tag: true` stay on that memory."
           },
           "observation_scopes": {
             "anyOf": [

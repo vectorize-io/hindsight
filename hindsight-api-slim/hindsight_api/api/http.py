@@ -2849,7 +2849,8 @@ class UpdateDocumentRequest(BaseModel):
     remove_tags: list[str] | None = Field(
         default=None,
         description="Tags to remove from the document, keeping the rest (applied before `add_tags`). "
-        "Cannot be combined with `tags`.",
+        "Cannot be combined with `tags`. Tags a memory carries from an entity label group with "
+        "`tag: true` stay on that memory.",
     )
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = Field(
         default=None,
