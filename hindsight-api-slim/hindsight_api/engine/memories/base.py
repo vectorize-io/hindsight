@@ -3095,6 +3095,23 @@ class MemoriesExtension(Extension, ABC):
             tags=list(_record["tags"] or []) if _record is not None and "tags" in _record else None,
         )
 
+    async def existing_documents_tags(
+        self, *, conn, fq_table, bank_id: str, document_ids: list[str]
+    ) -> dict[str, list[str] | None]:
+        """document id -> its tags, for the ids that exist; ``None`` when the record exists but
+        carries no tags (same meaning as :meth:`current_document_tags`). Read to check a retain
+        batch's writes into existing documents, so an id left out is a new document.
+
+        Default: :meth:`current_document_tags` per id. Postgres reads all the rows at once."""
+        out: dict[str, list[str] | None] = {}
+        for document_id in document_ids:
+            current = await self.current_document_tags(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+            )
+            if current.found:
+                out[document_id] = current.tags
+        return out
+
     async def documents_tags(self, *, conn, fq_table, bank_id: str, document_ids: list[str]) -> dict[str, list[str]]:
         """document id -> the tags it carries, for the ids that exist. Read to decide whether a
         tag-scoped reader may see a document's source text (#5030), so an id left out is hidden.

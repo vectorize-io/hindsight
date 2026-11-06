@@ -3837,13 +3837,14 @@ class MemoryEngine(MemoryEngineInterface):
             return
         store = get_memories()
         async with acquire_with_retry(await self._get_backend()) as conn:
+            existing = await store.existing_documents_tags(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=document_ids
+            )
             for document_id in document_ids:
-                current = await store.current_document_tags(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
-                )
-                if current.found and (
-                    not tags_satisfy_groups(current.tags, tag_scope) or not tags_writable(current.tags, write_scope)
-                ):
+                if document_id not in existing:
+                    continue
+                tags = existing[document_id]
+                if not tags_satisfy_groups(tags, tag_scope) or not tags_writable(tags, write_scope):
                     raise OperationValidationError(f"Cannot write to document '{document_id}'", status_code=403)
 
     @staticmethod

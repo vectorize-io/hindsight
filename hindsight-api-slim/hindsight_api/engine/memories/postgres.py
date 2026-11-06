@@ -959,6 +959,12 @@ class PostgresMemories(MemoriesExtension):
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_id=document_id
         )
 
+    async def existing_documents_tags(
+        self, *, conn, fq_table, bank_id: str, document_ids: list[str]
+    ) -> dict[str, list[str] | None]:
+        # A `documents` row always has tags (NULL reads as []), so found-without-tags never occurs.
+        return dict(await self.documents_tags(conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=document_ids))
+
     async def documents_tags(self, *, conn, fq_table, bank_id: str, document_ids: list[str]) -> dict[str, list[str]]:
         return await documents.documents_tags(
             conn=conn, fq_table=fq_store_table, bank_id=bank_id, document_ids=document_ids
