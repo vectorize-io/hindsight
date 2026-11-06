@@ -9,14 +9,15 @@ BaseException'), which happened when last_error was only set in the
 BadRequestError handler and not for non-dict JSON responses.
 """
 
-from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
-from hindsight_api.engine.retain.fact_extraction import ExtractionPrompt
 import dataclasses
 import json
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
+from hindsight_api.engine.retain.fact_extraction import ExtractionPrompt
 
 
 def test_output_retry_split_preserves_conversation_array_boundaries():
@@ -291,6 +292,8 @@ async def test_missing_facts_key_retries_with_correction():
     assert llm_config.call.call_count == 2
     retry_messages = llm_config.call.call_args_list[1].kwargs["messages"]
     assert retry_messages[-1] == {"role": "user", "content": _ENVELOPE_CORRECTION}
+    # The refused reply is replayed before the correction, so the model sees what it got wrong.
+    assert retry_messages[-2] == {"role": "assistant", "content": json.dumps(wrapped)}
 
 
 @pytest.mark.asyncio

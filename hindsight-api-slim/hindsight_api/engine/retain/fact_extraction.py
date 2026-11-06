@@ -27,6 +27,7 @@ from ..llm_wrapper import (
     AnyLLMProvider,
     OutputTooLongError,
     parse_llm_json,
+    reask_messages,
     sanitize_llm_output,
     sanitize_value,
 )
@@ -2132,6 +2133,7 @@ async def _extract_facts_from_chunk(
     # using the wrong key names (#5280). None on the first attempt, so the happy
     # path pays nothing.
     repair_hint: str | None = None
+    refused_reply: Any = None
     expected_fact_keys = _expected_fact_keys(response_schema)
     for attempt in range(outer_attempts):
         try:
@@ -2149,9 +2151,9 @@ async def _extract_facts_from_chunk(
                 {"role": "user", "content": user_content},
             ]
             if repair_hint is not None:
-                # A separate turn rather than an edit to user_content, which may be a
+                # Separate turns rather than an edit to user_content, which may be a
                 # multi-part attachment payload.
-                messages.append({"role": "user", "content": repair_hint})
+                messages = reask_messages(messages, refused_reply, repair_hint)
 
             call_kwargs: dict[str, Any] = dict(
                 messages=messages,
@@ -2190,6 +2192,7 @@ async def _extract_facts_from_chunk(
                     # Without this the retry resends the identical prompt to a model
                     # that just ignored the envelope, and it tends to do so again.
                     repair_hint = _ENVELOPE_CORRECTION
+                    refused_reply = extraction_response_json
                     continue
                 else:
                     # The schema is {"facts": [...]}. Raise instead of returning [] so
@@ -2436,6 +2439,7 @@ async def _extract_facts_from_chunk(
                 # whose output shape is stable re-sends the same keys every attempt and
                 # the loop cannot converge — four identical discards, then a 500 (#5280).
                 repair_hint = _shape_repair_message(drifted_keys, expected_fact_keys)
+                refused_reply = extraction_response_json
                 if repair_hint is not None:
                     logger.warning(f"Re-asking with the required fact keys; model used: {sorted(drifted_keys)}")
                 continue

@@ -452,6 +452,29 @@ def parse_llm_json(raw: str) -> Any:
         return sanitize_value(repaired)
 
 
+def reask_messages(messages: list[dict[str, Any]], reply: Any, correction: str) -> list[dict[str, Any]]:
+    """The request again, plus the refused reply and what was wrong with it: one re-ask.
+
+    Every structured call that re-asks after a bad reply (retain, consolidation, the
+    mental-model delta) goes through here. At a fixed low temperature an identical prompt
+    returns the identical bad reply (#3421), so the re-ask must change the input: it quotes
+    the reply and the errors. It appends and never rewrites, so the original request stays a
+    byte-identical prefix and the provider's prompt cache still covers it.
+
+    The reply goes back as text. A provider parses the body when the call set a
+    ``response_format`` (a dict under ``skip_validation``, a model otherwise), and a strict
+    request validator refuses anything but a string as ``content`` with a 422 (#4965).
+    Serialized, not stringified, so the model reads back the JSON it wrote.
+    """
+    if isinstance(reply, BaseModel):
+        text = reply.model_dump_json()
+    elif isinstance(reply, dict | list):
+        text = json.dumps(reply, ensure_ascii=False, default=str)
+    else:
+        text = "" if reply is None else str(reply)
+    return [*messages, {"role": "assistant", "content": text}, {"role": "user", "content": correction}]
+
+
 def _validate_ollama_num_ctx(value: Any) -> int | None:
     """Validate a native Ollama context-window override."""
     if value is None:
