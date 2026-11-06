@@ -36,6 +36,11 @@ import asyncpg
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ...config import get_config
+from ...extensions.operation_validator import (
+    ConsolidationActionsContext,
+    ReviewedConsolidationAction,
+    resolve_reviews,
+)
 from ...metrics import get_metrics_collector
 from ...operation_runs import timed_operation
 from ...worker.stage import set_stage
@@ -72,6 +77,7 @@ from .triage import TriageResult, fact_sentence, triage_facts, triage_model
 if TYPE_CHECKING:
     # The engine's connection abstraction, which is what every caller passes; the annotations
     # below named asyncpg's concrete type, which predates it.
+    from ...extensions.operation_validator import OperationValidatorExtension
     from ...models import RequestContext
     from ..db.base import DatabaseConnection
     from ..memories.base import StoredMemory
@@ -3078,6 +3084,13 @@ async def _process_memory_batch(
         [_bounded(_adjudicate_create(p)) for p in checked_creates]
     )
 
+    # --- Review: the extension may drop an action or replace its tags ---------
+    # After every slow step (so it sees the final decision, folds included) and before the
+    # transaction (so a slow extension holds no locks).
+    if (validator := memory_engine._validator_with_hook("filter_consolidation_actions")) is not None:
+        reviewed = await _review_actions(validator, bank_id, request_context, prepared_updates, prepared_creates)
+        prepared_updates, prepared_creates = reviewed.updates, reviewed.creates
+
     # --- Apply: one transaction for everything this LLM response decided ------
     deleted_count = 0
     # A failed LLM call yields no actions, and its memories must NOT be stamped: the caller
@@ -3250,6 +3263,63 @@ async def _process_memory_batch(
             results.append({"action": "skipped", "reason": "no_durable_knowledge"})
 
     return results, deleted_count, llm_result.failed
+
+
+@dataclass
+class _ReviewedActions:
+    updates: list[_PreparedUpdate]
+    creates: list[_PreparedCreate]
+
+
+async def _review_actions(
+    validator: "OperationValidatorExtension",
+    bank_id: str,
+    request_context: "RequestContext",
+    updates: list[_PreparedUpdate],
+    creates: list[_PreparedCreate],
+) -> _ReviewedActions:
+    """Run ``filter_consolidation_actions`` over a batch's prepared updates and creates."""
+
+    def _merge_into(dedup: _DedupOutcome | None) -> str | None:
+        return dedup.best_id if dedup is not None and dedup.should_merge else None
+
+    actions = [
+        ReviewedConsolidationAction(
+            kind="update",
+            text=u.update.text,
+            tags=list(u.source_fact_tags or []),
+            source_memory_ids=[str(i) for i in u.source_memory_ids],
+            observation_id=u.update.observation_id,
+            merge_into=_merge_into(u.dedup),
+        )
+        for u in updates
+    ] + [
+        ReviewedConsolidationAction(
+            kind="create",
+            text=c.text,
+            tags=list(c.source_fact_tags or []),
+            source_memory_ids=[str(i) for i in c.source_memory_ids],
+            merge_into=_merge_into(c.dedup),
+        )
+        for c in creates
+    ]
+    if not actions:
+        return _ReviewedActions(updates=updates, creates=creates)
+    ctx = ConsolidationActionsContext(bank_id=bank_id, request_context=request_context, actions=actions)
+    reviews = resolve_reviews(
+        await validator.filter_consolidation_actions(ctx), len(actions), "filter_consolidation_actions"
+    )
+    kept: list[_PreparedUpdate | _PreparedCreate] = []
+    for prepared, review in zip([*updates, *creates], reviews, strict=True):
+        if not review.keep:
+            continue
+        if review.tags is not None:
+            prepared.source_fact_tags = list(review.tags)
+        kept.append(prepared)
+    return _ReviewedActions(
+        updates=[p for p in kept if isinstance(p, _PreparedUpdate)],
+        creates=[p for p in kept if isinstance(p, _PreparedCreate)],
+    )
 
 
 def _min_date(dates: "Any") -> "datetime | None":
