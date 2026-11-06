@@ -146,6 +146,18 @@ async def generate_embeddings_batch(
     # out of the individual backends so every provider (and every call path — retain,
     # recall queries, consolidation, import) gets identical, model-agnostic truncation.
     max_input_tokens = get_config().embeddings_max_input_tokens
+
+    # A split deployment (separate query and document embedders) hands back the side that
+    # serves this input type, with that side's own cap, so the cap, prefix budget,
+    # tokenizer and trace below all describe the model that will actually embed the text.
+    # getattr rather than the Protocol: test fakes and the coalescer are duck-typed and
+    # serve one side only, so they have neither method.
+    side_cap = getattr(embeddings_backend, "max_input_tokens_for", None)
+    if callable(side_cap):
+        max_input_tokens = side_cap(input_type)
+    for_input_type = getattr(embeddings_backend, "for_input_type", None)
+    if callable(for_input_type):
+        embeddings_backend = for_input_type(input_type)
     if max_input_tokens is not None and texts:
         texts = _truncate_inputs(texts, max_input_tokens, embeddings_backend, input_type)
 

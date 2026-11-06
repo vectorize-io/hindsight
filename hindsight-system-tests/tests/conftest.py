@@ -92,6 +92,32 @@ def typesafe_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> It
     server.stop()
 
 
+#: The query-side model of ``split_embeddings_server``. The stub's embeddings are
+#: model-agnostic, so both sides land in one vector space, as a real pairing must.
+QUERY_EMBEDDINGS_MODEL = "stub-embeddings-query"
+
+
+@pytest.fixture(scope="session")
+def split_embeddings_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server whose recall queries embed with their own model (#6078, Constella).
+
+    Only the query side is specialized: it inherits the main embeddings config and
+    overrides the model, so every other setting is the default server's. HTTP only, like
+    ``decision_model_server``: the servers share one database.
+    """
+    log_path: Path = tmp_path_factory.mktemp("split-embeddings-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={
+            "HINDSIGHT_API_QUERY_EMBEDDINGS_OPENAI_MODEL": QUERY_EMBEDDINGS_MODEL,
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
 @pytest.fixture(scope="session")
 def decision_model_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """A server with a decision model set up, pointed at the stub: recall ranks with it.
@@ -492,6 +518,13 @@ async def failover_client(failover_server) -> AsyncIterator[Hindsight]:
 @pytest.fixture
 async def typesafe_client(typesafe_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=typesafe_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def split_embeddings_client(split_embeddings_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=split_embeddings_server.url)
     yield client
     await client.aclose()
 
