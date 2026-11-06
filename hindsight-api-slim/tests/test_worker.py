@@ -2451,11 +2451,11 @@ class TestTaskReleaseOnStop:
 
         poller.begin_shutdown()
         assert poller.is_shutdown, "the signal must stop intake at once"
-        await asyncio.sleep(1.0)  # the HTTP drain, already longer than the budget below
+        await asyncio.sleep(2.0)  # the HTTP drain, already as long as the budget below
 
         t0 = time.monotonic()
-        await poller.shutdown_graceful(timeout=1.0)
-        assert time.monotonic() - t0 < 0.9, "the drain must not restart its clock at teardown"
+        await poller.shutdown_graceful(timeout=2.0)
+        assert time.monotonic() - t0 < 1.5, "the drain must not restart its clock at teardown"
 
         row = await pool.fetchrow("SELECT status, worker_id FROM async_operations WHERE operation_id = $1", op_id)
         assert row["status"] == "pending"
@@ -6077,23 +6077,16 @@ def test_sigterm_stops_poller_intake_then_runs_previous_handler():
 
     from hindsight_api.api.http import _stop_claiming_on_sigterm
 
-    class _Poller:
-        stopped = False
-
-        def begin_shutdown(self) -> float:
-            self.stopped = True
-            return 0.0
-
-    previous_calls: list[int] = []
-    original = signal.signal(signal.SIGTERM, lambda signum, frame: previous_calls.append(signum))
+    server_calls: list[int] = []
+    original = signal.signal(signal.SIGTERM, lambda signum, frame: server_calls.append(signum))
     loop = asyncio.new_event_loop()
     try:
-        poller = _Poller()
-        _stop_claiming_on_sigterm(poller, loop)  # type: ignore[arg-type]
+        poller = MagicMock()
+        _stop_claiming_on_sigterm(poller, loop)
         signal.raise_signal(signal.SIGTERM)
         loop.run_until_complete(asyncio.sleep(0))
-        assert poller.stopped, "SIGTERM must stop the poller claiming"
-        assert previous_calls == [signal.SIGTERM], "uvicorn's handler must still run"
+        poller.begin_shutdown.assert_called_once_with()
+        assert server_calls == [signal.SIGTERM], "uvicorn's handler must still run"
     finally:
         signal.signal(signal.SIGTERM, original)
         loop.close()

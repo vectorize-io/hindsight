@@ -4291,16 +4291,14 @@ def _stop_claiming_on_sigterm(poller: "WorkerPoller", loop: asyncio.AbstractEven
     """
     if threading.current_thread() is not threading.main_thread():
         return  # signal handlers can only be set from the main thread (e.g. not under a test client)
-    previous = signal.getsignal(signal.SIGTERM)
+    server_handler = signal.getsignal(signal.SIGTERM)
+    if not callable(server_handler):
+        return  # no server handling SIGTERM: the default kills the process, there is no drain to start early
 
     def _on_sigterm(signum: int, frame: FrameType | None) -> None:
         # call_soon_threadsafe is the signal-safe way into the loop.
         loop.call_soon_threadsafe(poller.begin_shutdown)
-        if callable(previous):
-            previous(signum, frame)
-        elif previous == signal.SIG_DFL:
-            signal.signal(signal.SIGTERM, signal.SIG_DFL)
-            signal.raise_signal(signal.SIGTERM)
+        server_handler(signum, frame)
 
     signal.signal(signal.SIGTERM, _on_sigterm)
 

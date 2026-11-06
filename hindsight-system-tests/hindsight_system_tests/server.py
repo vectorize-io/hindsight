@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import signal
 import socket
 import subprocess
 import threading
@@ -95,12 +96,30 @@ class HindsightServer:
     _process: subprocess.Popen
 
     def stop(self) -> None:
+        self.terminate_like_a_platform(grace=30)
+
+    def _kill(self) -> None:
+        # The whole group: `_process` is `uv run`, and SIGKILL is not forwarded, so
+        # killing it alone would leave the server itself running as an orphan.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self._process.pid, signal.SIGKILL)
+        self._process.wait(timeout=10)
+
+    def terminate_like_a_platform(self, grace: float) -> bool:
+        """SIGTERM, then SIGKILL once ``grace`` seconds pass — what a rollout does.
+
+        True if the process exited on its own within the grace period. Kubernetes and
+        Docker give no more than this: whatever shutdown has not finished by then dies.
+        """
+        # SIGTERM to `uv run` alone: it forwards it to the server, and a second
+        # SIGTERM sent to the group would reach the server twice and force-exit it.
         self._process.terminate()
         try:
-            self._process.wait(timeout=30)
+            self._process.wait(timeout=grace)
+            return True
         except subprocess.TimeoutExpired:
-            self._process.kill()
-            self._process.wait(timeout=10)
+            self._kill()
+            return False
 
     def logs(self) -> str:
         with contextlib.suppress(OSError):
@@ -258,6 +277,8 @@ def _start(command: list[str], *, env: dict[str, str], url: str, log_path: Path)
         env=env,
         stdout=log_file,
         stderr=subprocess.STDOUT,
+        # Its own process group, so a kill reaches the server and not only `uv run`.
+        start_new_session=True,
     )
 
     server = HindsightServer(url=url, log_path=log_path, _process=process)
