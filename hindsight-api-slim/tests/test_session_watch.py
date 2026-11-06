@@ -118,9 +118,13 @@ def test_the_same_situation_is_judged_once_and_notes_stop_at_the_limit_of_a_requ
         assert W.accept_note(s, edit, rule, [f"m{i}"])
     other = W.Moment(trigger="plan", text="something else entirely", recent=[], diff="")
     assert W.skip_reason(s, other) == "note limit reached"
+    # Nor is a later step of that request queued as a check at all: it would only be skipped.
+    W.read_step(s, W.Step(kind="say", text="I will now also rewrite the retry loop to back off for longer"))
+    assert s.pending is None
     # The limit is per request: a new request from the user opens it again.
     W.read_step(s, W.Step(kind="ask", text="now fix the login page"))
     assert W.skip_reason(s, other) is None
+    assert s.pending is not None and s.pending.trigger == "task"
 
 
 def test_a_memory_is_said_once_but_a_heads_up_does_not_use_it_up():

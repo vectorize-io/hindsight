@@ -403,7 +403,16 @@ def read_step(state: WatchState, step: Step, seq: int = 0) -> None:
     # A new request is never pushed out: read in one pass with the agent's first "I'll check..." (a
     # plan, heavier), it used to be replaced, and the heads-up for the request was never given.
     keep = state.pending is not None and state.pending.trigger == "task" and trigger != "task"
-    if trigger and not keep and (state.pending is None or PRIORITY[trigger] >= PRIORITY[state.pending.trigger]):
+    # A request that has had its notes makes no moment until the next request (which resets the count):
+    # each one was still queued as a check and skipped as "note limit reached", 153 checks an hour in
+    # one long memlake session (beta, 2026-11-06).
+    spent = state.request_notes >= MAX_NOTES and trigger != "task"
+    if (
+        trigger
+        and not keep
+        and not spent
+        and (state.pending is None or PRIORITY[trigger] >= PRIORITY[state.pending.trigger])
+    ):
         state.pending = Pending(trigger=trigger, text=text, seq=seq)
 
 
