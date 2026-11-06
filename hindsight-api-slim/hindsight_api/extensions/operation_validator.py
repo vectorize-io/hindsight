@@ -441,7 +441,6 @@ class BankWriteOperation(StrEnum):
     DELETE_OPERATION = "delete_operation"
     DELETE_WEBHOOK = "delete_webhook"
     IMPORT_DOCUMENTS = "import_documents"
-    MERGE_BANK_MISSION = "merge_bank_mission"
     MOVE_KNOWLEDGE_NODE = "move_knowledge_node"
     RENAME_KNOWLEDGE_NODE = "rename_knowledge_node"
     REPROCESS_DOCUMENT = "reprocess_document"
@@ -1191,7 +1190,7 @@ class OperationValidatorExtension(Extension, ABC):
 
         Override to implement custom validation logic for bank writes
         (delete_bank, update_bank, update_bank_disposition, set_bank_mission,
-        merge_bank_mission, clear_observations, clear_observations_for_memory,
+        clear_observations, clear_observations_for_memory,
         and the knowledge-base writes — create_knowledge_folder /
         create_knowledge_page / update_knowledge_page / rename_knowledge_node /
         move_knowledge_node / delete_knowledge_node).
