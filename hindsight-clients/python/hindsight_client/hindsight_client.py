@@ -3187,7 +3187,7 @@ class Hindsight:
             consolidation_max_memories_per_round: Memories consolidated per round.
             mental_model_min_refresh_interval_seconds: Debounce between mental-model refreshes.
             reflect_default_options: Default reflect options for this bank, applied whenever a
-                reflect request (or a mental model's trigger) leaves the option unset:
+                reflect request leaves the option unset (mental-model refreshes use their trigger):
                 reflect_search_observations_max_tokens,
                 reflect_search_observations_include_entities and
                 reflect_search_mental_models_max_tokens.

@@ -188,8 +188,9 @@ class BankTemplateConfig(BaseModel):
         description=(
             "Default reflect options for this bank "
             '(e.g. {"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}). '
-            "Applied to every reflect in the bank -- API, MCP and mental-model refresh -- whenever "
-            "the request (or the model's trigger) leaves the option unset."
+            "Applied to every reflect request in the bank (API and MCP) that leaves the option unset. "
+            "Mental-model refreshes do not read it: they take these options from their own trigger, "
+            "defaulted per bank by knowledge_page_default_trigger."
         ),
     )
     mental_model_min_refresh_interval_seconds: int | None = Field(
