@@ -33,6 +33,12 @@ T = TypeVar("T")
 # problem that retrying cannot fix.
 _TRANSIENT_STATUS_CODES = frozenset({408, 409, 425, 429})
 
+# Our own exception types that declare a failure permanent: a content-policy
+# refusal or a rejected credential repeats on every replay, whatever transport
+# error it was raised from. Matched by name, like the set below, because
+# llm_interface sits above this module in the import graph.
+_PERMANENT_EXCEPTION_NAMES = frozenset({"ProviderAuthError", "ProviderContentPolicyError"})
+
 # Exception class names treated as transient when the exception carries no HTTP
 # status code. Matching by name keeps this module free of a hard litellm/openai
 # import (litellm is imported lazily, and only by the providers that need it).
@@ -130,16 +136,36 @@ def status_code_of(exc: BaseException) -> int | None:
 
 def is_transient_remote_error(exc: BaseException) -> bool:
     """
-    Return True when ``exc`` is worth retrying.
+    Return True when ``exc``, or the error it was raised from, is worth retrying.
 
     A status code, when present, is authoritative: 5xx and the transient 4xx set
     are retryable, every other 4xx (401/403 auth, 400/422 validation, 404) is
     permanent and must fail fast. Without a status code we fall back to
     transport-level exception types and known SDK exception names.
+
+    Each layer that wraps an error with ``raise ... from`` is followed down to the
+    one that carries the verdict: a reranker 429 two wrappers under a reflect tool
+    failure is still a 429 (#6140). The outermost link that has a verdict wins, so
+    a wrapper with its own status code, or one that already declared the failure
+    permanent (a content refusal, a rejected key), is never overruled by what it wraps.
     """
-    status = status_code_of(exc)
-    if status is not None:
-        return status >= 500 or status in _TRANSIENT_STATUS_CODES
+    seen: set[int] = set()
+    link: BaseException | None = exc
+    while link is not None and id(link) not in seen:
+        seen.add(id(link))
+        if any(cls.__name__ in _PERMANENT_EXCEPTION_NAMES for cls in type(link).__mro__):
+            return False
+        status = status_code_of(link)
+        if status is not None:
+            return status >= 500 or status in _TRANSIENT_STATUS_CODES
+        if _is_transient_transport_error(link):
+            return True
+        link = link.__cause__
+    return False
+
+
+def _is_transient_transport_error(exc: BaseException) -> bool:
+    """A transport-level failure or known SDK error name, for errors without a status code."""
     if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
         return True
     if isinstance(exc, (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError)):

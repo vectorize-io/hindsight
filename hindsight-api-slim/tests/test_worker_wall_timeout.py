@@ -415,3 +415,66 @@ class TestWallTimeoutNotification:
 
         poller._mark_failed.assert_awaited_once()
         notified.assert_awaited_once()
+
+
+class TestPermitWaitIsNotCharged:
+    """#6140: a burst of refreshes shared a per-operation LLM cap of 2, and the ones
+    waiting for a slot ran out the clock and were cancelled, although each finished
+    in a fraction of the limit when run alone. Queued time is not the task's work."""
+
+    @staticmethod
+    def _queued_llm_call(release_after: float | None, then_work: float):
+        """A task whose one LLM call queues behind a held permit, then runs ``then_work``s.
+
+        ``release_after`` None leaves the permit held forever: a wedge, not a queue.
+        """
+        import asyncio
+        from contextlib import AsyncExitStack
+
+        from hindsight_api._cross_loop import CrossLoopSemaphore
+        from hindsight_api.engine import llm_wrapper
+
+        held = CrossLoopSemaphore(1)
+
+        async def task(_task_dict):
+            await held.acquire()  # another operation holds the only permit
+            if release_after is not None:
+                asyncio.get_running_loop().call_later(release_after, held.release)
+            with (
+                patch.object(llm_wrapper, "_global_llm_semaphore", held),
+                patch.object(llm_wrapper, "_per_op_llm_semaphores", {}),
+            ):
+                async with AsyncExitStack() as stack:
+                    await llm_wrapper._acquire_permits(stack, "refresh_mental_model")
+                    await asyncio.sleep(then_work)
+
+        return task
+
+    @pytest.mark.asyncio
+    async def test_a_refresh_queued_past_its_limit_still_finishes(self):
+        task = self._queued_llm_call(release_after=1.5, then_work=0.3)
+        with patch.dict("os.environ", {"HINDSIGHT_API_REFLECT_WALL_TIMEOUT": "1"}):
+            clear_config_cache()
+            poller, _ = await _run(task, task_type="refresh_mental_model", with_holder=True)
+
+        poller._mark_failed.assert_not_awaited()
+        poller._mark_completed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_permit_that_never_frees_is_still_a_wedge(self):
+        task = self._queued_llm_call(release_after=None, then_work=0)
+        with patch.dict("os.environ", {"HINDSIGHT_API_REFLECT_WALL_TIMEOUT": "1"}):
+            clear_config_cache()
+            poller, _ = await _run(task, task_type="refresh_mental_model", with_holder=True)
+
+        poller._mark_failed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_retain_ceiling_still_counts_the_queue(self):
+        """Retain's ceiling stays absolute, queue included (#3002)."""
+        task = self._queued_llm_call(release_after=1.5, then_work=0.3)
+        with patch.dict("os.environ", {"HINDSIGHT_API_RETAIN_WALL_TIMEOUT": "1"}):
+            clear_config_cache()
+            poller, _ = await _run(task, task_type="batch_retain", with_holder=True)
+
+        poller._mark_failed.assert_awaited_once()
