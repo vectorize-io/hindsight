@@ -16354,7 +16354,8 @@ class MemoryEngine(MemoryEngineInterface):
             try:
                 # A knowledge-page refresh queues its LLM calls behind every other
                 # refresh under the per-operation cap; that queue is not this reflect's
-                # work, and counting it timed out healthy refreshes (#6140).
+                # work, and counting it timed out healthy refreshes (#6140). asyncio.timeout
+                # replaced asyncio.wait_for here because the deadline has to move while queued.
                 async with asyncio.timeout(wall_timeout) as limit:
                     with excluding_permit_wait(limit, wall_timeout) if is_refresh else nullcontext():
                         agent_result = await run_reflect_agent(
