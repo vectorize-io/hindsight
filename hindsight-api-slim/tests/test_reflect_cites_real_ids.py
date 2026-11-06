@@ -12,6 +12,7 @@ cite none. Its provenance is kept in ``based_on``, not in the text.
 
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 
 import pytest
 
@@ -26,12 +27,28 @@ _QUERY = (
 )
 
 
-def _assert_cites_real_ids(text: str, real_ids: set[str]) -> None:
-    leftover = _ALIAS_RE.findall(_UUID_RE.sub("", text))
-    assert not leftover, f"aliases leaked into the output: {leftover}\n{text}"
-    cited = set(_UUID_RE.findall(text))
-    assert cited, f"the output cites no ids at all:\n{text}"
-    assert cited <= real_ids, f"ids that are not in the bank: {cited - real_ids}\n{text}"
+_ATTEMPTS = 3
+
+
+async def _assert_cites_real_ids(produce: Callable[[], Awaitable[str]], real_ids: set[str]) -> None:
+    """Every output must cite only real ids; at least one of a few samples must cite some.
+
+    Whether one sample cites anything is the model's call (#6331), so an answer that
+    cites nothing is resampled instead of failing. Every sample is still checked:
+    no alias leaks and no id outside the bank, ever.
+    """
+    texts: list[str] = []
+    for _ in range(_ATTEMPTS):
+        text = await produce()
+        texts.append(text)
+        leftover = _ALIAS_RE.findall(_UUID_RE.sub("", text))
+        assert not leftover, f"aliases leaked into the output: {leftover}\n{text}"
+        cited = set(_UUID_RE.findall(text))
+        assert cited <= real_ids, f"ids that are not in the bank: {cited - real_ids}\n{text}"
+        if cited:
+            return
+    joined = "\n---\n".join(texts)
+    raise AssertionError(f"none of {_ATTEMPTS} outputs cites any id:\n{joined}")
 
 
 async def test_answer_and_mental_model_cite_real_ids(memory_real_llm: MemoryEngine, request_context):
@@ -52,8 +69,11 @@ async def test_answer_and_mental_model_cite_real_ids(memory_real_llm: MemoryEngi
         units = await memory.list_memory_units(bank_id, limit=500, request_context=request_context)
         real_ids = {str(u["id"]) for u in units["items"]}
 
-        result = await memory.reflect_async(bank_id=bank_id, query=_QUERY, request_context=request_context)
-        _assert_cites_real_ids(result.text, real_ids)
+        async def answer() -> str:
+            result = await memory.reflect_async(bank_id=bank_id, query=_QUERY, request_context=request_context)
+            return result.text
+
+        await _assert_cites_real_ids(answer, real_ids)
 
         # A mental model is the same reflect, stored: its content outlives the run.
         model = await memory.create_mental_model(
@@ -63,11 +83,15 @@ async def test_answer_and_mental_model_cite_real_ids(memory_real_llm: MemoryEngi
             content="pending",
             request_context=request_context,
         )
-        refreshed = await memory.refresh_mental_model(
-            bank_id=bank_id, mental_model_id=model["id"], request_context=request_context
-        )
-        assert refreshed is not None
-        _assert_cites_real_ids(refreshed["content"], real_ids)
+
+        async def page() -> str:
+            refreshed = await memory.refresh_mental_model(
+                bank_id=bank_id, mental_model_id=model["id"], request_context=request_context
+            )
+            assert refreshed is not None
+            return refreshed["content"]
+
+        await _assert_cites_real_ids(page, real_ids)
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 

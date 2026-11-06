@@ -96,12 +96,15 @@ async def delete_race(pg0_db_url):
         await setup.close()
 
 
-async def wait_for_lock(race: DeleteRace) -> None:
-    # Observe a real wait rather than relying on a scheduler-dependent sleep.
+async def wait_for_lock(race: DeleteRace, query_contains: str = "") -> None:
+    # Observe a real wait rather than relying on a scheduler-dependent sleep. With
+    # query_contains, wait until that statement is the one blocked: under load an earlier
+    # statement can wait briefly on a lock first (#6355).
     async with asyncio.timeout(10):
-        while (
-            await race.setup.fetchval("SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1", race.second_pid)
-            != "Lock"
+        while not await race.setup.fetchval(
+            "SELECT wait_event_type = 'Lock' AND position($2 in query) > 0 FROM pg_stat_activity WHERE pid=$1",
+            race.second_pid,
+            query_contains,
         ):
             await asyncio.sleep(0.01)
 
@@ -185,9 +188,8 @@ async def test_document_mutation_and_relink_preserve_queue(
     try:
         await asyncio.wait_for(claimed.wait(), 10)
         tasks.append(asyncio.create_task(mutate()))
-        await wait_for_lock(race)
-        query = await race.setup.fetchval("SELECT query FROM pg_stat_activity WHERE pid=$1", race.second_pid)
-        assert "INSERT INTO public.graph_maintenance_queue" in query
+        # The mutation must block on the queue insert behind the claimed batch.
+        await wait_for_lock(race, "INSERT INTO public.graph_maintenance_queue")
         if cancel_relink:
             # Cancellation rolls back the real claim transaction before the
             # mutation can finish. It must not consume the queued repair.
@@ -472,3 +474,24 @@ async def test_bank_cleanup_and_document_delete_use_same_lock_order(
     else:
         assert results[0]["bank_deleted"] is True
         assert results[1] == {"document_deleted": 0, "memory_units_deleted": 0}
+
+
+async def test_document_delete_redoes_its_transaction_after_losing_a_deadlock(delete_race, request_context):
+    # Oracle cannot lock a delete's shared rows in one fixed order, so it can lose an
+    # ORA-00060 to a concurrent retain (#6283); the rolled-back delete must be redone.
+    race = delete_race
+    engine = race.engines[0]
+    original = engine._delete_stale_observations_for_memories
+    calls = 0
+
+    async def deadlock_once(conn, bank_id, fact_ids):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise asyncpg.exceptions.DeadlockDetectedError("injected deadlock")
+        return await original(conn, bank_id, fact_ids)
+
+    engine._delete_stale_observations_for_memories = deadlock_once
+    result = await engine.delete_document("a", race.banks[0], request_context=request_context)
+    assert result == {"document_deleted": 1, "memory_units_deleted": 1}
+    assert await engine.get_document("a", race.banks[0], request_context=request_context) is None

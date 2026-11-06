@@ -176,7 +176,9 @@ def test_retain_warns_once_when_operation_id_dropped_on_sync():
     with pytest.warns(UserWarning, match="operation_id is ignored for synchronous retain") as records:
         client.retain("bank", "content", operation_id=OPERATION_ID)
 
-    assert len(records) == 1
+    # records holds every warning raised in the block (e.g. an unrelated ResourceWarning), so
+    # count only the matching ones.
+    assert len([r for r in records if "operation_id is ignored" in str(r.message)]) == 1
 
 
 async def test_aretain_batch_warns_when_operation_id_dropped_on_sync():

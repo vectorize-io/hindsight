@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Agent, getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_MAX_PARALLEL_RETAINS,
@@ -697,17 +698,15 @@ describe("HindsightClient.reflect failures", () => {
     );
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const { port } = server.address() as AddressInfo;
-    void globalThis.Headers; // loads Node's undici, which installs the global dispatcher
-    const key = Symbol.for("undici.globalDispatcher.1");
-    const g = globalThis as Record<symbol, unknown>;
-    const original = g[key] as object;
-    const Agent = original.constructor as new (opts: object) => object;
-    g[key] = new Agent({ headersTimeout: 100 });
+    const original = getGlobalDispatcher();
+    const shortHeadersTimeout = new Agent({ headersTimeout: 100 });
+    setGlobalDispatcher(shortHeadersTimeout);
     try {
       const client = new HindsightClient({ apiUrl: `http://127.0.0.1:${port}`, bank: "b" });
       expect(await client.reflect("why?", { timeoutMs: 10_000 })).toBe("late answer");
     } finally {
-      g[key] = original;
+      setGlobalDispatcher(original);
+      await shortHeadersTimeout.close();
       server.close();
     }
   });

@@ -11565,97 +11565,113 @@ class MemoryEngine(MemoryEngineInterface):
             await self._llm_recorder.flush()
         backend = await self._get_backend()
         invalidated_obs = 0
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                # Observation invalidation can update sources in another document.
-                # Serialize bank-scoped deletes before taking any document/unit locks,
-                # so two cascades cannot each hold a source the other's sweep needs.
-                # NO KEY UPDATE stays compatible with FK checks on bank children;
-                # Oracle translates it to its equivalent FOR UPDATE.
-                await conn.fetchrow(
-                    f"SELECT bank_id FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
-                    bank_id,
-                )
-                # Get memory unit IDs before deletion (for observation cleanup).
-                from .memories import get_memories
+        unit_ids: list[str] = []
+        deleted = False
+        orphaned_files: list[str] = []
+        result: dict[str, int] = {}
 
-                _store = get_memories()
-                # The document before its memories, as retain and consolidation take it (#5433):
-                # the sweep below locks the memories, and the delete then needs this row.
-                await _store.lock_document_row(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
-                _doc_units = await _store.document_source_units(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
-                )
-                unit_ids = _doc_units.unit_ids
-                units_count = _doc_units.units_count
-
-                # Sweep BEFORE the cascade too, so the shared observations and co-sources are
-                # locked in the sweep's id order ahead of this document's own rows — as a
-                # re-ingest, which sweeps first, takes them (#4251). The sweep after the cascade
-                # stays for observations consolidation commits in between.
-                if unit_ids:
-                    invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
-
-                # Capture relink victims and entity prune candidates BEFORE the
-                # cascade — once the source rows are gone, the joins finding
-                # them return nothing.
-                if unit_ids:
-                    from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
-
-                    await enqueue_relink_victims(conn, bank_id, unit_ids)
-                    await enqueue_entity_prune_candidates(conn, bank_id, unit_ids)
-
-                # Delete the document and its memories: the store drops the links in lock order
-                # before the cascade reaches them (#4251), and reads the key of the uploaded
-                # original a file retain kept before the document that names it goes.
-                _deleted_doc = await _store.delete_document_rows(
-                    conn=conn,
-                    ops=self._backend.ops,
-                    fq_table=fq_table,
-                    bank_id=bank_id,
-                    document_id=document_id,
-                    unit_ids=unit_ids,
-                )
-                deleted = _deleted_doc.deleted
-                file_storage_key = _deleted_doc.file_storage_key
-
-                # Its retain runs, and every run that created or consumed one of its memories,
-                # consolidation included.
-                if deleted and delete_traces:
-                    from .llm_trace import llm_requests_locked_in_id_order  # noqa: PLC0415
-
-                    _llm_table = fq_table("llm_requests")
-                    _traced = llm_requests_locked_in_id_order(
-                        _llm_table,
-                        "bank_id = $1 AND (metadata->>'document_id' = $2"
-                        " OR metadata->'memory_ids' ?| $3::text[]"
-                        " OR metadata->'source_memory_ids' ?| $3::text[])",
-                    )
-                    await conn.execute(
-                        f"{_traced} DELETE FROM {_llm_table} t USING target WHERE t.id = target.id",
+        # Retried as a whole transaction: Oracle cannot lock the shared links and
+        # observations in one fixed order (see delete_unit_links in ops_oracle), so a
+        # delete racing a retain or consolidation on the same bank can lose an
+        # ORA-00060 deadlock (#6283). The transaction rolled back, so a redo is safe.
+        async def _delete() -> None:
+            nonlocal invalidated_obs, unit_ids, deleted, orphaned_files, result
+            invalidated_obs = 0
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    # Observation invalidation can update sources in another document.
+                    # Serialize bank-scoped deletes before taking any document/unit locks,
+                    # so two cascades cannot each hold a source the other's sweep needs.
+                    # NO KEY UPDATE stays compatible with FK checks on bank children;
+                    # Oracle translates it to its equivalent FOR UPDATE.
+                    await conn.fetchrow(
+                        f"SELECT bank_id FROM {fq_table('banks')} WHERE bank_id = $1 FOR NO KEY UPDATE",
                         bank_id,
-                        document_id,
-                        [str(u) for u in unit_ids],
                     )
+                    # Get memory unit IDs before deletion (for observation cleanup).
+                    from .memories import get_memories
 
-                # Invalidate observations referencing these (now-deleted) memories
-                if unit_ids:
-                    invalidated_obs += await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
+                    _store = get_memories()
+                    # The document before its memories, as retain and consolidation take it (#5433):
+                    # the sweep below locks the memories, and the delete then needs this row.
+                    await _store.lock_document_row(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+                    )
+                    _doc_units = await _store.document_source_units(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+                    )
+                    unit_ids = _doc_units.unit_ids
+                    units_count = _doc_units.units_count
 
-                # Rows here, files after the commit below.
-                orphaned_files: list[str] = []
-                if deleted:
-                    # The document's own attachments, on either backend: the rows
-                    # name their document, so nothing here depends on the document
-                    # itself being a SQL row.
-                    orphaned_files = await self._drop_orphaned_attachments(conn, bank_id, document_id)
-                if deleted and file_storage_key:
-                    orphaned_files.append(file_storage_key)
+                    # Sweep BEFORE the cascade too, so the shared observations and co-sources are
+                    # locked in the sweep's id order ahead of this document's own rows — as a
+                    # re-ingest, which sweeps first, takes them (#4251). The sweep after the cascade
+                    # stays for observations consolidation commits in between.
+                    if unit_ids:
+                        invalidated_obs = await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
 
-                result = {
-                    "document_deleted": 1 if deleted else 0,
-                    "memory_units_deleted": units_count if deleted else 0,
-                }
+                    # Capture relink victims and entity prune candidates BEFORE the
+                    # cascade — once the source rows are gone, the joins finding
+                    # them return nothing.
+                    if unit_ids:
+                        from .graph_maintenance import enqueue_entity_prune_candidates, enqueue_relink_victims
+
+                        await enqueue_relink_victims(conn, bank_id, unit_ids)
+                        await enqueue_entity_prune_candidates(conn, bank_id, unit_ids)
+
+                    # Delete the document and its memories: the store drops the links in lock order
+                    # before the cascade reaches them (#4251), and reads the key of the uploaded
+                    # original a file retain kept before the document that names it goes.
+                    _deleted_doc = await _store.delete_document_rows(
+                        conn=conn,
+                        ops=self._backend.ops,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        document_id=document_id,
+                        unit_ids=unit_ids,
+                    )
+                    deleted = _deleted_doc.deleted
+                    file_storage_key = _deleted_doc.file_storage_key
+
+                    # Its retain runs, and every run that created or consumed one of its memories,
+                    # consolidation included.
+                    if deleted and delete_traces:
+                        from .llm_trace import llm_requests_locked_in_id_order  # noqa: PLC0415
+
+                        _llm_table = fq_table("llm_requests")
+                        _traced = llm_requests_locked_in_id_order(
+                            _llm_table,
+                            "bank_id = $1 AND (metadata->>'document_id' = $2"
+                            " OR metadata->'memory_ids' ?| $3::text[]"
+                            " OR metadata->'source_memory_ids' ?| $3::text[])",
+                        )
+                        await conn.execute(
+                            f"{_traced} DELETE FROM {_llm_table} t USING target WHERE t.id = target.id",
+                            bank_id,
+                            document_id,
+                            [str(u) for u in unit_ids],
+                        )
+
+                    # Invalidate observations referencing these (now-deleted) memories
+                    if unit_ids:
+                        invalidated_obs += await self._delete_stale_observations_for_memories(conn, bank_id, unit_ids)
+
+                    # Rows here, files after the commit below.
+                    orphaned_files = []
+                    if deleted:
+                        # The document's own attachments, on either backend: the rows
+                        # name their document, so nothing here depends on the document
+                        # itself being a SQL row.
+                        orphaned_files = await self._drop_orphaned_attachments(conn, bank_id, document_id)
+                    if deleted and file_storage_key:
+                        orphaned_files.append(file_storage_key)
+
+                    result = {
+                        "document_deleted": 1 if deleted else 0,
+                        "memory_units_deleted": units_count if deleted else 0,
+                    }
+
+        await retry_with_backoff(_delete)
 
         await self._delete_files_quietly(orphaned_files)
 
