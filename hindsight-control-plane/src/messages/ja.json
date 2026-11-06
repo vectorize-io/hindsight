@@ -1891,6 +1891,7 @@
     "failureReasonDeltaOpsAllSkipped": "すべてのデルタ操作が拒否されました",
     "failureReasonDeltaNotApplied": "デルタが適用されませんでした",
     "failureReasonStructuredOutput": "構造化出力の抽出に失敗しました",
+    "failureReasonCandidateRejected": "オペレーションバリデーターにより拒否されました",
     "failureAttempts": "· {count} 回試行",
     "tabErrors": "エラー",
     "noErrors": "失敗した更新はありません。",

@@ -44,6 +44,9 @@ class ValidationResult:
     allowed: bool
     reason: str | None = None
     status_code: int = 403  # Default to Forbidden
+    # Only read by validate_mental_model_candidate: True asks the refresh for a new
+    # draft, with ``reason`` in its prompt, instead of failing for good.
+    retry: bool = False
     # Optional enrichment fields — returned by validator, used by engine if present.
     # None means "no modification" (engine uses original values).
     contents: list[dict] | None = None  # Enriched retain contents (e.g., injected tags/strategy)
@@ -79,9 +82,12 @@ class ValidationResult:
         )
 
     @classmethod
-    def reject(cls, reason: str, status_code: int = 403) -> "ValidationResult":
-        """Create a rejected validation result with a reason and HTTP status code."""
-        return cls(allowed=False, reason=reason, status_code=status_code)
+    def reject(cls, reason: str, status_code: int = 403, *, retry: bool = False) -> "ValidationResult":
+        """Create a rejected validation result with a reason and HTTP status code.
+
+        ``retry`` only matters for ``validate_mental_model_candidate``: see there.
+        """
+        return cls(allowed=False, reason=reason, status_code=status_code, retry=retry)
 
 
 # =============================================================================
@@ -575,6 +581,31 @@ class MentalModelRefreshContext:
     bank_id: str
     mental_model_id: str | None  # None for create (not yet assigned)
     request_context: "RequestContext"
+
+
+@dataclass
+class MentalModelCandidateContext:
+    """The document a refresh is about to publish, before it replaces the stored one.
+
+    ``candidate_content`` is the final markdown exactly as it would be stored —
+    after delta operations were applied and the document was rendered.
+    """
+
+    bank_id: str
+    mental_model_id: str
+    request_context: "RequestContext"
+    name: str
+    source_query: str
+    max_tokens: int
+    refresh_mode: "RefreshMode"
+    current_content: str
+    candidate_content: str
+    candidate_structured: "StructuredDocument | None"
+    # 0 for the refresh's first draft; n for the n-th redraft asked for with
+    # ``reject(reason, retry=True)``.
+    attempt: int = 0
+    # The reasons earlier drafts of this same refresh were rejected, oldest first.
+    previous_rejections: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1074,6 +1105,30 @@ class OperationValidatorExtension(Extension, ABC):
 
         Returns:
             ValidationResult indicating whether the operation is allowed.
+        """
+        return ValidationResult.accept()
+
+    async def validate_mental_model_candidate(self, ctx: MentalModelCandidateContext) -> ValidationResult:
+        """
+        Check the document a refresh produced before it replaces the stored one.
+
+        Runs on every non-empty candidate (full and delta refreshes), not on the
+        dry run. Accepting stores the candidate unchanged. Rejecting keeps the
+        stored document, its structured document and its watermark; the refusal
+        is recorded on the operation and in the model's history
+        (``failure_reason == "candidate_rejected"``), and automatic refreshes
+        pause until an explicit one succeeds.
+
+        A rejection is final by default: the operation fails and the worker does
+        not retry it, since the same input would make the same kind of document.
+        Return ``ValidationResult.reject(reason, retry=True)`` to get another
+        draft instead: the refresh writes a new full document straight away,
+        with ``reason`` added to the prompt, and calls this hook again with
+        ``ctx.attempt`` one higher and the reasons so far in
+        ``ctx.previous_rejections``. After 3 redrafts a rejection is final
+        whatever ``retry`` says.
+
+        If this hook raises, the candidate is not stored either.
         """
         return ValidationResult.accept()
 

@@ -179,6 +179,7 @@ function RefreshErrorTimeline({
     delta_ops_all_skipped: t("failureReasonDeltaOpsAllSkipped"),
     delta_not_applied: t("failureReasonDeltaNotApplied"),
     structured_output_failed: t("failureReasonStructuredOutput"),
+    candidate_rejected: t("failureReasonCandidateRejected"),
     unexpected_error: t("failureReasonUnexpected"),
   };
 

@@ -377,6 +377,34 @@ edit, invalidate, or revert) has its own pair of hooks, in addition to the
   re-embeds the memory and re-consolidates the bank, so this is the figure to
   meter if curation should cost the same as ingesting that text.
 
+#### Checking a mental model's new document
+
+`validate_mental_model_candidate(ctx: MentalModelCandidateContext)` runs when a
+refresh (full or delta) has produced its new document, just before it replaces
+the stored one. `ctx.candidate_content` is the exact markdown that would be
+stored; `ctx.current_content`, `ctx.max_tokens`, `ctx.refresh_mode` and
+`ctx.candidate_structured` let you compare it with the page readers have now.
+Use it to hold a page to rules the model can't be trusted to follow, such as a
+hard length limit or "no repeated sections".
+
+- **Accept** and the document is stored as is.
+- **Reject** and the stored document, its structured view and its watermark all
+  stay as they were. The operation fails with outcome
+  `refresh_failed_candidate_rejected` and failure reason `candidate_rejected`,
+  the rejection reason is in the model's history, and automatic refreshes pause
+  until an explicit refresh succeeds.
+- By default a rejection is final: the worker does not run the refresh again,
+  because the same input tends to make the same kind of document.
+- To get another draft instead, return
+  `ValidationResult.reject(reason, retry=True)`. The refresh writes a new, full
+  document straight away, with `reason` added to the prompt so the model knows
+  what to fix, then calls the hook again. `ctx.attempt` says which draft this is
+  (0 for the first) and `ctx.previous_rejections` lists the reasons given so
+  far. After 3 redrafts a rejection is final, whatever `retry` says.
+
+If the hook raises, the document is not stored either. The dry run does not
+call this hook.
+
 #### Transfer-archive import hooks
 
 Importing a transfer archive (a document import, or a whole-bank restore) brings

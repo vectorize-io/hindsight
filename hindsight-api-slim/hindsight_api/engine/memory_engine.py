@@ -79,6 +79,7 @@ from ..extensions.operation_validator import (
     MemoryCurationAction,
     MemoryUpdateContext,
     MemoryUpdateResult,
+    MentalModelCandidateContext,
     MentalModelGetContext,
     MentalModelGetResult,
     MentalModelRefreshContext,
@@ -588,17 +589,26 @@ class MentalModelRefreshError(Exception):
     The previous content (if any) is preserved in the DB and the reflect_response
     audit trail is persisted before this is raised, so the failure is recoverable
     and auditable. Callers (worker queue, integration tests) should treat this
-    as a retryable condition.
+    as a retryable condition — unless ``retryable`` is False: an operation
+    validator rejected the document and did not ask for another run (#5970).
 
     Carries the outcome and reason as typed values, not only inside the message:
     the worker records them on the operation so a failed refresh says why it
     failed without anyone parsing prose (#3274).
     """
 
-    def __init__(self, message: str, *, outcome: "RefreshOperationOutcome", reason: "RefreshFailureReason") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        outcome: "RefreshOperationOutcome",
+        reason: "RefreshFailureReason",
+        retryable: bool = True,
+    ) -> None:
         super().__init__(message)
         self.outcome: RefreshOperationOutcome = outcome
         self.reason: RefreshFailureReason = reason
+        self.retryable = retryable
 
 
 def validate_sql_schema(sql: str) -> None:
@@ -1748,7 +1758,15 @@ def _is_non_retryable_task_error(e: Exception) -> bool:
         # tasks that let the provider's own error through (consolidation, refresh).
         or isinstance(e, ProviderAuthError)
         or status_code_of(e) in (401, 403)
+        # An operation validator rejected the refresh's document and did not ask
+        # for another run (#5970).
+        or (isinstance(e, MentalModelRefreshError) and not e.retryable)
     )
+
+
+#: How many extra drafts a refresh writes when an operation validator rejects its
+#: document and asks for another (#5970). Bounds a validator that never accepts.
+_MAX_CANDIDATE_REDRAFTS = 3
 
 
 #: Budget a mental-model refresh runs at when its trigger names none. Not LOW: a
@@ -18258,6 +18276,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         operation_label: str = "refresh_mental_model",
         mode: RefreshMode | None = None,
+        rejection_feedback: str | None = None,
         request_context: "RequestContext",
     ) -> _MentalModelRefreshRun | None:
         """Run one refresh pass over a mental model and report what it produced.
@@ -18274,6 +18293,11 @@ class MemoryEngine(MemoryEngineInterface):
 
         ``mode`` overrides ``trigger.mode`` for this one run (a "full refresh now", a
         ``full_refresh_cron`` tick) without touching the stored trigger.
+
+        ``rejection_feedback`` lists why an operation validator rejected this
+        refresh's earlier drafts; the reflect pass is told to fix them. Only a refresh's own
+        redraft passes it — it describes a draft, not the model, so it does not
+        break the dry run's promise above.
 
         Returns None when the mental model row disappeared mid-flight.
         """
@@ -18450,6 +18474,11 @@ class MemoryEngine(MemoryEngineInterface):
         from .reflect.prompts import build_mental_model_refresh_context
 
         reflect_kwargs["context"] = build_mental_model_refresh_context(mm_name, delta=created_after is not None)
+        if rejection_feedback:
+            reflect_kwargs["context"] += (
+                "\n\nEarlier drafts of this page were rejected by the page's publication rules:\n"
+                f"{rejection_feedback}\nWrite a new version that fixes all of this."
+            )
 
         window = MentalModelRefreshWindow(
             created_after=created_after,
@@ -19172,9 +19201,10 @@ class MemoryEngine(MemoryEngineInterface):
         Raises:
             MentalModelRefreshError: The refresh could not produce a document that is
                 safe to store — it came back empty, its delta operations never reached
-                the document, structured-output extraction failed, or reflect itself
-                failed before there was a candidate at all (a retrieval tool raised, or
-                the agent produced no answer). In every case the previous content and
+                the document, structured-output extraction failed, an operation
+                validator rejected the document (not retried: ``retryable`` is False),
+                or reflect itself failed before there was a candidate at all (a
+                retrieval tool raised, or the agent produced no answer). In every case the previous content and
                 the watermark are left untouched, so a retry reads the same window
                 again, and the reason is recorded on the operation and in the model's
                 history.
@@ -19195,37 +19225,79 @@ class MemoryEngine(MemoryEngineInterface):
         # refresh, not just its reflect pass, so the page write that follows (and its embedding)
         # groups under the same run; the reflect pass joins it (see operation_trace_context).
         with create_operation_span("mental_model_refresh", bank_id), operation_run(bank_id, "refresh_mental_model"):
-            try:
-                run = await self._execute_mental_model_refresh(
-                    bank_id, mental_model, mode=mode, request_context=request_context
+            # An operation validator can reject the finished document (#5970) and ask
+            # for another draft. Redrafts happen here, in the same run, rather than
+            # through the worker's retry: only here can the rejection reason reach
+            # the next prompt, and without it the model writes the same page again.
+            rejections: list[str] = []
+            rejected: ValidationResult | None = None
+            while True:
+                try:
+                    run = await self._execute_mental_model_refresh(
+                        bank_id,
+                        mental_model,
+                        # A redraft is always full: a delta run only edits the rejected
+                        # document, and the delta gate can skip the reflect pass that
+                        # carries the feedback altogether.
+                        mode="full" if rejections else mode,
+                        # Every reason so far, not just the last: a redraft that fixes
+                        # one rule can break the one before it.
+                        rejection_feedback="\n".join(f"- {r}" for r in rejections) or None,
+                        request_context=request_context,
+                    )
+                except (ReflectToolExecutionError, ReflectNoAnswerError) as exc:
+                    # Reflect failed before there was a run: a retrieval tool raised
+                    # (#2894) or the agent produced no answer (#2959). Nothing was
+                    # written — content, structured document and watermark all stand —
+                    # but the failure must still be recorded, or the model looks like it
+                    # was simply never refreshed. Re-raised as a MentalModelRefreshError
+                    # so it reaches the operation's typed ``details`` through the same
+                    # ``_write_refresh_failure_metadata`` hook every other refusal uses.
+                    failure_reason: RefreshFailureReason = (
+                        "retrieval_failed" if isinstance(exc, ReflectToolExecutionError) else "no_answer"
+                    )
+                    detail = f"{type(exc).__name__}: {exc}"
+                    await self._record_mental_model_refresh_failure(
+                        bank_id,
+                        mental_model_id,
+                        outcome="refresh_failed_error",
+                        failure_reason=failure_reason,
+                        error_message=detail,
+                    )
+                    raise MentalModelRefreshError(
+                        f"Refresh failed for mental_model_id={mental_model_id}: {detail} "
+                        f"Previous content preserved in DB; recorded in the model's history for audit.",
+                        outcome="refresh_failed_error",
+                        reason=failure_reason,
+                    ) from exc
+                if run is None:
+                    return None
+                # Only a document that would be written is checked: every other
+                # outcome is preserved or refused below whatever a validator says.
+                if self._operation_validator is None or run.outcome not in ("content_written", "content_unchanged"):
+                    break
+                verdict = await self._operation_validator.validate_mental_model_candidate(
+                    MentalModelCandidateContext(
+                        bank_id=bank_id,
+                        mental_model_id=mental_model_id,
+                        request_context=request_context,
+                        name=mental_model.get("name") or "",
+                        source_query=run.source_query,
+                        max_tokens=mental_model.get("max_tokens") or 0,
+                        refresh_mode=run.effective_mode,
+                        current_content=run.current_content,
+                        candidate_content=run.final_content,
+                        candidate_structured=run.final_structured,
+                        attempt=len(rejections),
+                        previous_rejections=list(rejections),
+                    )
                 )
-            except (ReflectToolExecutionError, ReflectNoAnswerError) as exc:
-                # Reflect failed before there was a run: a retrieval tool raised
-                # (#2894) or the agent produced no answer (#2959). Nothing was
-                # written — content, structured document and watermark all stand —
-                # but the failure must still be recorded, or the model looks like it
-                # was simply never refreshed. Re-raised as a MentalModelRefreshError
-                # so it reaches the operation's typed ``details`` through the same
-                # ``_write_refresh_failure_metadata`` hook every other refusal uses.
-                failure_reason: RefreshFailureReason = (
-                    "retrieval_failed" if isinstance(exc, ReflectToolExecutionError) else "no_answer"
-                )
-                detail = f"{type(exc).__name__}: {exc}"
-                await self._record_mental_model_refresh_failure(
-                    bank_id,
-                    mental_model_id,
-                    outcome="refresh_failed_error",
-                    failure_reason=failure_reason,
-                    error_message=detail,
-                )
-                raise MentalModelRefreshError(
-                    f"Refresh failed for mental_model_id={mental_model_id}: {detail} "
-                    f"Previous content preserved in DB; recorded in the model's history for audit.",
-                    outcome="refresh_failed_error",
-                    reason=failure_reason,
-                ) from exc
-            if run is None:
-                return None
+                if verdict.allowed:
+                    break
+                if not verdict.retry or len(rejections) >= _MAX_CANDIDATE_REDRAFTS:
+                    rejected = verdict
+                    break
+                rejections.append(verdict.reason or "no reason given")
 
             reflect_response_payload = run.reflect_response
             # What this run did with the document. Recorded unconditionally (the
@@ -19284,7 +19356,7 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
             async def _preserve_and_fail(
-                *, reason: RefreshFailureReason, outcome: RefreshOperationOutcome, detail: str
+                *, reason: RefreshFailureReason, outcome: RefreshOperationOutcome, detail: str, retryable: bool = True
             ) -> NoReturn:
                 """Fail the refresh without touching the document.
 
@@ -19325,6 +19397,7 @@ class MemoryEngine(MemoryEngineInterface):
                     f"Previous content preserved in DB; reflect_response.refresh_skipped == '{reason}' for audit.",
                     outcome=outcome,
                     reason=reason,
+                    retryable=retryable,
                 )
 
             if run.outcome == "refresh_failed_empty_candidate":
@@ -19345,6 +19418,21 @@ class MemoryEngine(MemoryEngineInterface):
                         "memories newer than the last refresh, so writing it would drop the rest of the document. "
                         "If this keeps happening, set the model's refresh mode to full."
                     ),
+                )
+
+            # Last check before readers get the document: the validator's verdict from
+            # the loop above. It runs before the structured-output call so a rejected
+            # document costs no extra LLM call. Final: the worker does not retry it,
+            # the redrafts the validator asked for already happened.
+            if rejected is not None:
+                await _preserve_and_fail(
+                    reason="candidate_rejected",
+                    outcome="refresh_failed_candidate_rejected",
+                    detail=(
+                        f"the operation validator rejected the new document after {len(rejections) + 1} "
+                        f"draft(s): {rejected.reason or 'no reason given'}."
+                    ),
+                    retryable=False,
                 )
 
             # Parse the final stored content into structured_output when a schema is

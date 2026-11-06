@@ -1891,6 +1891,7 @@
     "failureReasonDeltaOpsAllSkipped": "모든 델타 작업이 거부됨",
     "failureReasonDeltaNotApplied": "델타가 적용되지 않음",
     "failureReasonStructuredOutput": "구조화된 출력 추출 실패",
+    "failureReasonCandidateRejected": "작업 검증기가 거부함",
     "failureAttempts": "· {count}회 시도",
     "tabErrors": "오류",
     "noErrors": "실패한 새로 고침이 없습니다.",

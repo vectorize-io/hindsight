@@ -7,7 +7,6 @@ refresh_mental_model operation must let a monitoring layer distinguish
 ``result_metadata`` alone, without a follow-up content fetch.
 """
 
-from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 import asyncio
 import uuid
 from dataclasses import dataclass, field
@@ -25,6 +24,8 @@ from hindsight_api.engine.memory_engine import MemoryEngine
 # refresh_mental_model then misses, and the failure is recorded as
 # ``unexpected_error``. Importing here binds before any test can purge.
 from hindsight_api.engine.reflect import ReflectNoAnswerError, ReflectToolExecutionError
+from hindsight_api.engine.response_models import LLMCallResult, ReflectResult, TokenUsage
+from hindsight_api.extensions import MentalModelCandidateContext, OperationValidatorExtension, ValidationResult
 from hindsight_api.worker.exceptions import RetryTaskAt
 from tests.conftest import stub_refresh_has_sources
 
@@ -305,7 +306,11 @@ def test_operation_outcome_is_a_superset_of_executor_outcome():
     assert executor <= operation, f"executor outcomes missing from the operation vocabulary: {executor - operation}"
     # The persist path is the only source of the extra values; if that changes,
     # the comment on RefreshOperationOutcome needs to change with it.
-    assert operation - executor == {"refresh_failed_structured_output", "refresh_failed_error"}
+    assert operation - executor == {
+        "refresh_failed_structured_output",
+        "refresh_failed_candidate_rejected",
+        "refresh_failed_error",
+    }
 
 
 def test_unknown_outcome_reports_no_details_instead_of_raising():
@@ -405,6 +410,36 @@ class _OutcomeCase:
     # (#2894) and no-answer (#2959) paths, which the refresh re-raises as a typed
     # MentalModelRefreshError so they reach the operation like every other refusal.
     reflect_raises: str | None = None
+    # An operation validator's verdicts on the refresh's drafts, in order; the last
+    # one repeats (#5970).
+    candidate_verdicts: list[ValidationResult] | None = None
+    # How many drafts the validator is shown.
+    expect_drafts: int = 1
+    # Whether the worker runs a failed refresh again. Every failure is retried
+    # except a validator rejection, whose redrafts already happened in the run.
+    expect_retry: bool = True
+
+
+class _CandidateValidator(OperationValidatorExtension):
+    """Accepts every operation, and gives scripted verdicts on refresh drafts (the last repeats)."""
+
+    def __init__(self, verdicts: list[ValidationResult]):
+        super().__init__({})
+        self.verdicts = verdicts
+        self.seen: list[MentalModelCandidateContext] = []
+
+    async def validate_retain(self, ctx):
+        return ValidationResult.accept()
+
+    async def validate_recall(self, ctx):
+        return ValidationResult.accept()
+
+    async def validate_reflect(self, ctx):
+        return ValidationResult.accept()
+
+    async def validate_mental_model_candidate(self, ctx):
+        self.seen.append(ctx)
+        return self.verdicts[min(len(self.seen), len(self.verdicts)) - 1]
 
 
 _OUTCOME_CASES = [
@@ -508,6 +543,46 @@ _OUTCOME_CASES = [
         why="the persist path refuses a document the executor already accepted — the one outcome a dry run cannot reach",
     ),
     _OutcomeCase(
+        id="validator_rejects_document",
+        mode="full",
+        reflect_text="# Team\n\nAlice leads; Bob joined.\n",
+        candidate_verdicts=[ValidationResult.reject("section too long")],
+        expect_outcome="refresh_failed_candidate_rejected",
+        expect_failure_reason="candidate_rejected",
+        expect_retry=False,
+        why="a publication rule rejected the page: keep the old one, and do not regenerate it unasked",
+    ),
+    _OutcomeCase(
+        id="validator_never_accepts_a_redraft",
+        mode="full",
+        reflect_text="# Team\n\nAlice leads; Bob joined.\n",
+        candidate_verdicts=[ValidationResult.reject("section too long", retry=True)],
+        expect_outcome="refresh_failed_candidate_rejected",
+        expect_failure_reason="candidate_rejected",
+        expect_drafts=4,
+        expect_retry=False,
+        why="redrafts are capped at 3, so a validator that never accepts cannot loop forever",
+    ),
+    _OutcomeCase(
+        id="validator_accepts_a_redraft",
+        mode="delta",
+        reflect_text="# Team\n\nAlice leads; Bob joined.\n",
+        delta_returns=[_VALID_OP],
+        candidate_verdicts=[ValidationResult.reject("section too long", retry=True), ValidationResult.accept()],
+        expect_outcome="content_written",
+        expect_drafts=2,
+        # The stored page is the full redraft, so the first draft's delta ops are not counted.
+        why="a rejected delta draft is redrafted in full, and the redraft is stored once it passes",
+    ),
+    _OutcomeCase(
+        id="validator_accepts_document",
+        mode="full",
+        reflect_text="# Team\n\nAlice leads; Bob joined.\n",
+        candidate_verdicts=[ValidationResult.accept()],
+        expect_outcome="content_written",
+        why="an accepted document is stored exactly like one with no validator",
+    ),
+    _OutcomeCase(
         id="reflect_retrieval_failed",
         mode="full",
         reflect_text="",
@@ -595,6 +670,10 @@ async def test_refresh_outcome_matrix(case: _OutcomeCase, memory: MemoryEngine, 
             return StructuredOutputResult(error="RuntimeError: simulated extraction failure")
 
         monkeypatch.setattr(reflect_agent, "_generate_structured_output", extraction_yields_nothing)
+    validator = None
+    if case.candidate_verdicts is not None:
+        validator = _CandidateValidator(case.candidate_verdicts)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
 
     stored_before = (
         await memory.get_mental_model(bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context)
@@ -603,7 +682,7 @@ async def test_refresh_outcome_matrix(case: _OutcomeCase, memory: MemoryEngine, 
     submit = memory.submit_async_refresh_mental_model(
         bank_id=bank_id, mental_model_id=mm["id"], request_context=request_context
     )
-    if case.expect_outcome.startswith("refresh_failed"):
+    if case.expect_outcome.startswith("refresh_failed") and case.expect_retry:
         # A failed refresh is retryable, so the task layer re-raises it as
         # RetryTaskAt. The metadata is written before that, on the attempt that
         # failed — which is the whole point of recording it there.
@@ -614,6 +693,20 @@ async def test_refresh_outcome_matrix(case: _OutcomeCase, memory: MemoryEngine, 
         await asyncio.sleep(0.1)
 
     views = await _refresh_operation_views(memory, bank_id, request_context)
+    if not case.expect_retry:
+        assert views.status["status"] == "failed", f"{case.id}: {case.why}"
+    if validator is not None:
+        # The validator judged each draft the refresh was about to store, told
+        # which draft it was and why the earlier ones failed.
+        assert len(validator.seen) == case.expect_drafts, case.id
+        for i, seen in enumerate(validator.seen):
+            if seen.refresh_mode == "full":  # a delta draft is the baseline plus its ops
+                assert "Alice leads" in seen.candidate_content, case.id
+            assert seen.current_content == _BASELINE.strip(), case.id
+            assert seen.attempt == i, case.id
+            assert seen.previous_rejections == ["section too long"] * i, case.id
+            # A redraft rewrites the page in full; only the first draft follows the trigger.
+            assert seen.refresh_mode == (case.mode if i == 0 else "full"), case.id
     details = views.status_model.details
     assert details is not None, f"{case.id}: no details recorded ({case.why})"
     assert details.outcome == case.expect_outcome, f"{case.id}: {case.why}"
@@ -632,6 +725,48 @@ async def test_refresh_outcome_matrix(case: _OutcomeCase, memory: MemoryEngine, 
     else:
         assert stored_after == stored_before, f"{case.id}: reported no write but the document changed"
 
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_redraft_is_told_why_the_earlier_drafts_were_rejected(
+    memory: MemoryEngine, request_context, monkeypatch
+):
+    """Without the reason in the prompt a redraft is the same page again (#5970)."""
+    bank_id = f"test-redraft-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id, request_context=request_context)
+    mm = await memory.create_mental_model(
+        bank_id=bank_id,
+        name="Team Info",
+        source_query="Tell me about the team",
+        content=_BASELINE,
+        trigger={"mode": "full"},
+        request_context=request_context,
+    )
+    contexts: list[str] = []
+
+    async def recording_reflect(**kwargs):
+        contexts.append(kwargs["context"])
+        return ReflectResult.model_validate({"text": f"# Team\n\nDraft {len(contexts)}.\n", "based_on": {}})
+
+    monkeypatch.setattr(memory, "reflect_async", recording_reflect)
+    stub_refresh_has_sources(monkeypatch, memory)
+    validator = _CandidateValidator(
+        [
+            ValidationResult.reject("section 'Team' is over 50 words", retry=True),
+            ValidationResult.reject("section 'Team' repeats a sentence", retry=True),
+            ValidationResult.accept(),
+        ]
+    )
+    monkeypatch.setattr(memory, "_operation_validator", validator)
+
+    refreshed = await memory.refresh_mental_model(bank_id, mm["id"], request_context=request_context)
+
+    assert refreshed is not None and "Draft 3." in refreshed["content"]
+    assert len(contexts) == 3
+    assert "rejected" not in contexts[0]
+    assert "over 50 words" in contexts[1] and "repeats a sentence" not in contexts[1]
+    assert "over 50 words" in contexts[2] and "repeats a sentence" in contexts[2]
     await memory.delete_bank(bank_id, request_context=request_context)
 
 

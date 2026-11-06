@@ -327,6 +327,7 @@ export type RefreshFailureReason =
   | "delta_ops_all_skipped"
   | "delta_not_applied"
   | "structured_output_failed"
+  | "candidate_rejected"
   | "retrieval_failed"
   | "no_answer"
   | "unexpected_error";
