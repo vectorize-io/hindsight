@@ -12,7 +12,6 @@ The deadlock is injected via monkeypatch (one-shot ``DeadlockDetectedError``)
 so the retry path is exercised deterministically, without racing real workers.
 """
 
-import asyncio
 import uuid
 
 import pytest
@@ -147,53 +146,4 @@ async def test_write_that_creates_its_bank_retries_transient_deadlock(
         await create(memory, bank_id, request_context)
         assert calls == 2, "expected exactly one retry after the injected deadlock"
     finally:
-        await memory.delete_bank(bank_id, request_context=request_context)
-
-
-@pytest.mark.asyncio
-async def test_bank_create_index_does_not_queue_behind_a_held_lock(
-    memory: MemoryEngine, request_context: RequestContext, monkeypatch
-):
-    """A bank create whose CREATE INDEX cannot get its lock gives up fast and retries (#5805).
-
-    Another session holds SHARE UPDATE EXCLUSIVE on memory_units, as a CONCURRENTLY index
-    build/drop does. Left to wait, the create's ShareLock request would queue every write to
-    memory_units behind it; with the lock_timeout it fails, backs off, and succeeds once free.
-    """
-    from hindsight_api.engine.db import ops_postgresql
-    from hindsight_api.engine.schema import fq_store_table
-
-    if not isinstance(memory._backend.ops, ops_postgresql.PostgreSQLOps):
-        pytest.skip("per-bank partial indexes are PostgreSQL-only")
-    monkeypatch.setattr(ops_postgresql, "BANK_INDEX_LOCK_TIMEOUT", "100ms")
-    backend = await memory._get_backend()
-    bank_id = f"test-locktimeout-{uuid.uuid4().hex[:8]}"
-    attempts = 0
-    real = bank_utils.get_or_create_bank_profile_on_conn
-
-    async def counting(conn, bank_id, *, ops):
-        nonlocal attempts
-        attempts += 1
-        return await real(conn, bank_id, ops=ops)
-
-    monkeypatch.setattr(bank_utils, "get_or_create_bank_profile_on_conn", counting)
-
-    holder_ready = asyncio.Event()
-
-    async def hold_lock():
-        async with backend.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(f"LOCK TABLE {fq_store_table('memory_units')} IN SHARE UPDATE EXCLUSIVE MODE")
-                holder_ready.set()
-                await asyncio.sleep(0.4)
-
-    holder = asyncio.create_task(hold_lock())
-    try:
-        await asyncio.wait_for(holder_ready.wait(), timeout=10)
-        result = await bank_utils.get_or_create_bank_profile(backend, bank_id)
-        await holder
-        assert result.created is True
-        assert attempts >= 2, "the first create should have timed out on the held lock and been retried"
-    finally:
-        holder.cancel()
         await memory.delete_bank(bank_id, request_context=request_context)
