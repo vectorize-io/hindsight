@@ -1192,7 +1192,8 @@ async def import_bank(
     The **target bank must not already exist**: import restores a complete bank
     (config + facts + mental models + …) and is not a merge. If a bank with the
     target id is present, this raises — delete it first or pass ``target_bank_id``
-    for a fresh id. A migration restores *exact* state, so unlike the document
+    for a fresh id. Two restores racing into the same fresh id do not merge either: the
+    one whose bank row loses raises and writes nothing. A migration restores *exact* state, so unlike the document
     import it fires no retain webhooks and triggers no consolidation/graph
     maintenance: observations and mental models are restored as exported.
 

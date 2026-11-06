@@ -6,7 +6,9 @@ went on to write a second copy of every fact into the first one's bank (#6335).
 """
 
 import asyncio
+import io
 import uuid
+import zipfile
 
 import pytest
 
@@ -71,6 +73,31 @@ async def test_a_second_restore_into_the_same_fresh_bank_is_refused(memory, requ
         with pytest.raises(ValueError, match="created by another restore"):
             await second
         assert await _facts(memory, dst, request_context) == source_facts
+    finally:
+        await memory.delete_bank(src, request_context=request_context)
+        await memory.delete_bank(dst, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_an_archive_whose_config_has_no_bank_row_is_refused(memory, request_context):
+    """With the config component asked for but no bank row in the archive, the restore says so
+    and writes nothing, instead of failing on a foreign key further down."""
+    src = f"race-src-{uuid.uuid4().hex[:8]}"
+    dst = f"race-dst-{uuid.uuid4().hex[:8]}"
+    try:
+        await memory.retain_async(
+            bank_id=src, content="Alice joined Acme in 2024.", document_id="doc", request_context=request_context
+        )
+        async with acquire_with_retry(await memory._get_backend()) as conn:
+            archive = await export_bank(conn, src)
+        stripped = io.BytesIO()
+        with zipfile.ZipFile(io.BytesIO(archive)) as zin, zipfile.ZipFile(stripped, "w") as zout:
+            for name in zin.namelist():
+                zout.writestr(name, b"[]" if name == "banks.json" else zin.read(name))
+
+        with pytest.raises(ValueError, match="no bank row"):
+            await memory.import_bank_async(stripped.getvalue(), request_context, target_bank_id=dst)
+        assert await memory.get_bank_profile(dst, request_context=request_context) is None
     finally:
         await memory.delete_bank(src, request_context=request_context)
         await memory.delete_bank(dst, request_context=request_context)
