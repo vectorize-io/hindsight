@@ -43,6 +43,7 @@ from .._vector_index import (
 )
 from ..cancellation import OperationCancelledError
 from ..config import (
+    DEFAULT_DATABASE_SCHEMA,
     DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS,
     DEFAULT_RECALL_CHUNKS_MAX_TOKENS,
     DEFAULT_RECALL_INCLUDE_CHUNKS,
@@ -95,7 +96,7 @@ from ..extensions.operation_validator import (
     TagScopeContext,
     ValidationResult,
 )
-from ..extensions.tenant import AuthenticationError, TenantExtension
+from ..extensions.tenant import AuthenticationError, Tenant, TenantExtension
 from ..extensions.validator_instrumentation import instrument_operation_validator
 from ..metrics import get_metrics_collector
 from ..schema_context import _current_bank_id, _current_schema, get_current_schema
@@ -6146,6 +6147,53 @@ class MemoryEngine(MemoryEngineInterface):
             # Re-raise to rollback the transaction
             raise
 
+    async def _run_pg_migrations(self, db_url: str, schemas: list[str]) -> None:
+        """Migrate PG schemas (up to migration_concurrency at once, each in its own
+        process) plus the per-schema extension/dimension sync. Run off the event loop
+        so the process pool's blocking joins don't stall it."""
+        from ..migrations import run_migrations_for_schemas
+        from .memories import get_memories
+
+        config = get_config()
+        await asyncio.to_thread(
+            run_migrations_for_schemas,
+            db_url,
+            schemas,
+            concurrency=config.migration_concurrency,
+            migration_database_url=config.migration_database_url,
+            embedding_dimension=self.embeddings.dimension,
+            vector_extension=config.vector_extension,
+            text_search_extension=config.text_search_extension,
+            pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
+            ensure_extensions=self._backend.supports_bm25,
+            store_owned_memories=get_memories().store_owned,
+        )
+
+    async def _migrate_base_schema(self, db_url: str, tenants: list[Tenant]) -> None:
+        """Migrate the base schema when the tenant extension does not list it (#5400).
+
+        The cross-tenant maintenance routines (consolidation reconcile, cron mental
+        models, retention) live in the base schema (``fq_routine``) and are created
+        only by a migration run targeting it. A multi-tenant extension usually lists
+        only its tenant schemas, so without this they never exist. ``hindsight-admin
+        run-db-migration`` already migrates base + tenants; this matches it.
+
+        Never fatal: deployments that run fine today (base already migrated by the
+        CLI, or a role without CREATE on the base schema) must keep booting.
+        """
+        base = get_config().database_schema or DEFAULT_DATABASE_SCHEMA
+        if any(tenant.schema == base for tenant in tenants):
+            return
+        try:
+            await self._run_pg_migrations(db_url, [base])
+            logger.info(f"Base schema '{base}' migrated (holds the cross-tenant maintenance routines)")
+        except Exception as e:
+            logger.warning(
+                f"Could not migrate base schema '{base}': {e}. Consolidation reconcile, "
+                f"cron mental-model refresh and retention sweeps will not run until it is "
+                f"migrated (hindsight-admin run-db-migration --schema {base})."
+            )
+
     async def initialize(self):
         """Initialize the connection pool, models, and background workers.
 
@@ -6324,28 +6372,7 @@ class MemoryEngine(MemoryEngineInterface):
             if tenants:
                 logger.info(f"Running migrations on {len(tenants)} schema(s)...")
                 if self._database_backend_type == "postgresql":
-                    # PG: fan out across schemas (up to migration_concurrency, each
-                    # in its own process) and fold the PG-specific post-migration
-                    # extension/dimension sync into the same per-schema unit. Run
-                    # off the event loop so the process pool's blocking joins don't
-                    # stall it.
-                    from ..migrations import run_migrations_for_schemas
-                    from .memories import get_memories
-
-                    schemas = [tenant.schema for tenant in tenants if tenant.schema]
-                    await asyncio.to_thread(
-                        run_migrations_for_schemas,
-                        self.db_url,
-                        schemas,
-                        concurrency=config.migration_concurrency,
-                        migration_database_url=config.migration_database_url,
-                        embedding_dimension=self.embeddings.dimension,
-                        vector_extension=config.vector_extension,
-                        text_search_extension=config.text_search_extension,
-                        pg_search_tokenizer=config.text_search_extension_pg_search_tokenizer,
-                        ensure_extensions=self._backend.supports_bm25,
-                        store_owned_memories=get_memories().store_owned,
-                    )
+                    await self._run_pg_migrations(self.db_url, [tenant.schema for tenant in tenants if tenant.schema])
                 else:
                     # Oracle and other backends: Alembic's non-thread-safe globals
                     # and the absence of per-schema extension steps make parallelism
@@ -6358,6 +6385,11 @@ class MemoryEngine(MemoryEngineInterface):
                                 self.db_url, schema=self._backend.normalize_schema(tenant.schema)
                             )
                 logger.info("Schema migrations completed")
+            # PG only: the maintenance routines it installs are PG functions, and the
+            # maintenance loop skips Oracle entirely. Runs even when list_tenants() is
+            # empty (Supabase lists nothing until the first request).
+            if self._database_backend_type == "postgresql":
+                await self._migrate_base_schema(self.db_url, tenants)
 
         logger.info(f"Connecting to database at {mask_network_location(self.db_url)}")
 
