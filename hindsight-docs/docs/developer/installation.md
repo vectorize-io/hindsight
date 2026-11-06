@@ -21,13 +21,13 @@ All platforms support the embedded database (pg0) for development. On Windows, y
 
 ### Intel Macs
 
-PyTorch publishes no Intel-Mac (x86_64) builds after 2.2.2, and Hindsight needs a newer one, so the full `hindsight-api` / `hindsight-all` packages — and `hindsight-embed`'s default `uvx hindsight-api` daemon — cannot install there. Use the slim package with the in-process ONNX models instead. They need no PyTorch and run the same embedder and reranker locally.
+PyTorch publishes no Intel-Mac (x86_64) builds after 2.2.2, and Hindsight needs a newer one, so the full `hindsight-api` / `hindsight-all` packages — and `hindsight-embed`'s default `uvx hindsight-api` daemon — cannot install there. Use the slim package with the in-process ONNX models instead. They need no PyTorch and still run the embedder and reranker on your machine.
 
 ONNX Runtime's last Intel-Mac build (1.23.2) supports Python 3.10–3.13, so **use Python 3.13 or older**. On Python 3.14 only hosted providers (OpenAI, Cohere, TEI, …) work.
 
 ```bash
 python3.13 -m venv ~/.hindsight/venv
-~/.hindsight/venv/bin/pip install "hindsight-api-slim[local-onnx,embedded-db]" hindsight-embed
+~/.hindsight/venv/bin/pip install "hindsight-api-slim[local-onnx,embedded-db]" flashrank hindsight-embed
 
 export HINDSIGHT_API_EMBEDDINGS_PROVIDER=onnx       # downloads intfloat/multilingual-e5-small on first start
 export HINDSIGHT_API_RERANKER_PROVIDER=flashrank     # ONNX cross-encoder, no PyTorch
