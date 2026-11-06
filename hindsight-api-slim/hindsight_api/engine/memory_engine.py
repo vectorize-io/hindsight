@@ -24099,7 +24099,6 @@ class MemoryEngine(MemoryEngineInterface):
         set, for the same reason migrations prefer it — a transaction-pooled URL
         cannot hold a session across the statement.
         """
-        import asyncpg
 
         from ..pg0 import resolve_database_url
         from .vector_index_health import CoverageTrigger, reconcile_bank_vector_indexes
@@ -24146,7 +24145,9 @@ class MemoryEngine(MemoryEngineInterface):
             api_key_id=task_dict.get("_api_key_id"),
         )
         schema = get_current_schema()
-        conn = await asyncpg.connect(await resolve_database_url(url))
+        from .db.postgresql import connect_direct
+
+        conn = await connect_direct(await resolve_database_url(url))
         try:
             result = await reconcile_bank_vector_indexes(conn, schema, bank_id, index_clause)
         finally:

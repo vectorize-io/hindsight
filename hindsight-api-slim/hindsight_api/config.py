@@ -157,6 +157,7 @@ ENV_READ_DATABASE_URL = "HINDSIGHT_API_READ_DATABASE_URL"
 ENV_READ_DB_POOL_MIN_SIZE = "HINDSIGHT_API_READ_DB_POOL_MIN_SIZE"
 ENV_READ_DB_POOL_MAX_SIZE = "HINDSIGHT_API_READ_DB_POOL_MAX_SIZE"
 ENV_MIGRATION_DATABASE_URL = "HINDSIGHT_API_MIGRATION_DATABASE_URL"
+ENV_DATABASE_CONNECT_HOOK = "HINDSIGHT_API_DATABASE_CONNECT_HOOK"
 ENV_DATABASE_SCHEMA = "HINDSIGHT_API_DATABASE_SCHEMA"
 ENV_LLM_PROVIDER = "HINDSIGHT_API_LLM_PROVIDER"
 ENV_LLM_API_KEY = "HINDSIGHT_API_LLM_API_KEY"
@@ -3297,6 +3298,11 @@ class HindsightConfig:
     read_db_pool_min_size: int
     read_db_pool_max_size: int
     migration_database_url: str | None
+    # ``module.path:function`` naming an async callable with asyncpg.connect's
+    # signature. Every new physical connection goes through it, so rotated or
+    # short-lived credentials (RDS IAM, Secrets Manager rotation) are picked up
+    # without a restart (#6163).
+    database_connect_hook: str | None
     database_schema: str
     vector_extension: str  # "pgvector", "vchord", "pgvectorscale", or "scann"
     ann_iterative_scan: bool
@@ -4619,6 +4625,7 @@ class HindsightConfig:
             read_db_pool_min_size=int(os.getenv(ENV_READ_DB_POOL_MIN_SIZE, str(DEFAULT_DB_POOL_MIN_SIZE))),
             read_db_pool_max_size=int(os.getenv(ENV_READ_DB_POOL_MAX_SIZE, str(DEFAULT_DB_POOL_MAX_SIZE))),
             migration_database_url=os.getenv(ENV_MIGRATION_DATABASE_URL) or None,
+            database_connect_hook=os.getenv(ENV_DATABASE_CONNECT_HOOK) or None,
             database_schema=os.getenv(ENV_DATABASE_SCHEMA, DEFAULT_DATABASE_SCHEMA),
             vector_extension=os.getenv(ENV_VECTOR_EXTENSION, DEFAULT_VECTOR_EXTENSION).lower(),
             ann_iterative_scan=_parse_boolean_env(ENV_ANN_ITERATIVE_SCAN, DEFAULT_ANN_ITERATIVE_SCAN),
