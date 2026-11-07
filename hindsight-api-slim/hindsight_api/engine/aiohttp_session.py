@@ -26,6 +26,8 @@ from typing import Generic, TypeVar
 
 import aiohttp
 
+from hindsight_api import __version__
+
 T = TypeVar("T")
 
 # Read from the environment rather than urllib's getproxies(), which on macOS and
@@ -35,6 +37,10 @@ T = TypeVar("T")
 # ALL_PROXY is deliberately absent: aiohttp's proxies_from_env() drops it, so acting
 # on it would pay trust_env's per-request cost for a proxy it will never use.
 _PROXY_ENV_VARS = ("http_proxy", "https_proxy")
+
+
+#: What every session sends unless its caller sets its own, so a server can tell Hindsight's calls apart.
+HINDSIGHT_USER_AGENT = f"hindsight/{__version__}"
 
 
 def proxy_env_is_set() -> bool:
@@ -157,6 +163,8 @@ class LoopLocalSession:
     (``aiohttp/client.py``), two scheduling hops on the embedding/rerank/LLM hot
     paths. Pass ``trust_env=False`` where the destination must be exactly the one
     already validated (webhook delivery).
+
+    Requests carry ``User-Agent: hindsight/<version>`` unless ``headers`` sets one.
     """
 
     def __init__(
@@ -168,7 +176,10 @@ class LoopLocalSession:
         trust_env: bool | None = None,
     ) -> None:
         self._timeout = timeout
-        self._headers = dict(headers) if headers else None
+        self._headers = dict(headers) if headers else {}
+        # Identify as Hindsight rather than aiohttp's default; a caller's own User-Agent wins.
+        if not any(name.lower() == "user-agent" for name in self._headers):
+            self._headers["User-Agent"] = HINDSIGHT_USER_AGENT
         self._connector_factory = connector_factory
         self._trust_env = trust_env
         self._sessions: LoopLocal[aiohttp.ClientSession] = LoopLocal(
