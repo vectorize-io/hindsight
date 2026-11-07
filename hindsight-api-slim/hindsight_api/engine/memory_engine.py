@@ -11779,8 +11779,9 @@ class MemoryEngine(MemoryEngineInterface):
                 retag and no re-consolidation.
             add_tags / remove_tags: A partial change instead of ``tags`` (#6339): the new set is
                 the current tags minus ``remove_tags``, plus ``add_tags``. Resolved against the
-                tags read (and, on stores that support it, row-locked) inside the update's transaction, so concurrent partial changes do not
-                drop each other's tags. Not combined with ``tags``.
+                tags read inside the update's transaction, row-locked on stores that support it,
+                so concurrent partial changes do not drop each other's tags. Not combined with
+                ``tags``.
             observation_scopes: New observation scoping for every memory of the document
                 (optional), with the values retain accepts. Overrides the rename a retag
                 would otherwise carry into an explicit scope list.
@@ -11801,9 +11802,11 @@ class MemoryEngine(MemoryEngineInterface):
         # A partial change's resulting set is only known once the current tags are read, so it is
         # checked against the write scope inside the transaction below.
         await self._require_writable(bank_id, request_context, document_id=document_id, new_tags=tags)
-        write_scope = await self._write_tag_scope(bank_id, request_context) if partial else None
+        write_scope = (
+            await self._write_tag_scope(bank_id, request_context) if partial or observation_scopes is not None else None
+        )
         if observation_scopes is not None:
-            self._refuse_unwritable_scopes(observation_scopes, await self._write_tag_scope(bank_id, request_context))
+            self._refuse_unwritable_scopes(observation_scopes, write_scope)
         backend = await self._get_backend()
         invalidated_obs = 0
         requeued_units = 0

@@ -237,7 +237,7 @@ fmt.Printf("Memory units: %d\n", doc.GetMemoryUnitCount())
 
 Update mutable fields on an existing document without re-processing the content: its tags, and how its memories are scoped for observations.
 
-The `tags` array **replaces** the document's tags — it is not merged into them. Send the complete set you want the document to end up with: any tag you leave out is dropped, and an empty array clears them all. To change only some tags, use `add_tags` / `remove_tags` (below). A request with none of these fields is rejected with a `422`.
+The `tags` array **replaces** the document's tags — it is not merged into them. Send the complete set you want the document to end up with: any tag you leave out is dropped, and an empty array clears them all. To change only some tags, use `add_tags` / `remove_tags` (below). A request with none of `tags`, `add_tags`, `remove_tags` or `observation_scopes` is rejected with a `422`.
 
 ### Python
 
