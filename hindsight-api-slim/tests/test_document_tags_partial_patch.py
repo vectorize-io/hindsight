@@ -10,7 +10,10 @@ import uuid
 import pytest
 
 from hindsight_api import RequestContext
+from hindsight_api.engine.memories import get_memories
+from hindsight_api.engine.memories.base import DocumentTags
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.extensions import OperationValidationError
 
 
 async def _retain(memory: MemoryEngine, bank_id: str, tags: list[str], ctx: RequestContext) -> None:
@@ -97,5 +100,30 @@ async def test_concurrent_partial_changes_keep_each_others_tags(memory: MemoryEn
         doc = await memory.get_document("doc", bank_id, request_context=request_context)
         assert doc is not None
         assert set(doc["tags"]) == {"base", *added}
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_partial_change_is_refused_when_the_store_cannot_read_the_tags(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch
+):
+    """A store whose document record carries no tags cannot resolve a partial change: refuse it
+    rather than treat the unknown set as empty and wipe the document's tags."""
+    bank_id = f"test_patch_tags_unreadable_{uuid.uuid4().hex[:8]}"
+    try:
+        await _retain(memory, bank_id, ["base"], request_context)
+
+        async def tagless(**_kwargs) -> DocumentTags:
+            return DocumentTags(found=True, tags=None)
+
+        with monkeypatch.context() as patched:
+            patched.setattr(get_memories(), "current_document_tags", tagless)
+            with pytest.raises(OperationValidationError) as e:
+                await memory.update_document("doc", bank_id, add_tags=["x"], request_context=request_context)
+        assert e.value.status_code == 400
+
+        doc = await memory.get_document("doc", bank_id, request_context=request_context)
+        assert doc is not None and doc["tags"] == ["base"]
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)

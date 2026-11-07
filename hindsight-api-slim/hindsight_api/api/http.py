@@ -7500,7 +7500,8 @@ def _register_routes(app: FastAPI):
         "dropped. An empty array (`[]`) therefore clears every tag.\n\n"
         "**Partial tag change** (`add_tags`, `remove_tags`): adds or removes only the listed tags and "
         'keeps the rest, e.g. `{"add_tags": ["team-c"], "remove_tags": ["team-a"]}`. '
-        "Removals apply first. Cannot be combined with `tags` (422).\n\n"
+        "Removals apply first. Cannot be combined with `tags` (422). A request with none of `tags`, "
+        "`add_tags`, `remove_tags` or `observation_scopes` is rejected (422).\n\n"
         "The new tags are propagated to all associated memory units.\n\n"
         "**Observation scopes** (`observation_scopes`): Replaces how the document's memories are "
         "scoped during consolidation, with the same values retain accepts. Use it to move a bank "
