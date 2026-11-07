@@ -324,7 +324,7 @@ client.DocumentsAPI.UpdateDocument(ctx, "my-bank", "meeting-2024-03-15").
 
 ### Add or remove single tags
 
-`add_tags` and `remove_tags` change only the tags they name and keep the rest, so you don't need to read the current set first. Removals apply first, so a tag in both lists stays. They can't be combined with `tags` (`422`). Tags a memory carries from an [entity label](memory-banks.md#entity-labels) group with `tag: true` stay on that memory either way.
+`add_tags` and `remove_tags` change only the tags they name and keep the rest, so you don't need to read the current set first. Removals apply first, so a tag in both lists ends up on the document. They can't be combined with `tags` (`422`). Tags a memory carries from an [entity label](memory-banks.md#entity-labels) group with `tag: true` stay on that memory either way.
 
 ### Python
 
