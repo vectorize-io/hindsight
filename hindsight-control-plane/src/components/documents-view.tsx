@@ -1180,8 +1180,11 @@ export function DocumentsView() {
       if (change.add_tags.length || change.remove_tags.length) {
         await client.updateDocument(selectedDocument.id, currentBank, change);
       }
-      // Read the result back: a tag added elsewhere meanwhile is kept, so it may differ from newTags.
-      const doc: any = await client.getDocument(selectedDocument.id, currentBank);
+      // Read the result back: a tag added elsewhere meanwhile is kept, so it may differ from
+      // newTags. The save already succeeded, so a failed read-back falls back to newTags.
+      const doc: any = await client
+        .getDocument(selectedDocument.id, currentBank)
+        .catch(() => ({ ...selectedDocument, tags: newTags }));
       setSelectedDocument(doc);
       // Update tags in the documents list too
       setDocuments((prev) =>

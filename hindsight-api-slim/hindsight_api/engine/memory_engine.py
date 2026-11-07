@@ -11803,7 +11803,9 @@ class MemoryEngine(MemoryEngineInterface):
         # checked against the write scope inside the transaction below.
         await self._require_writable(bank_id, request_context, document_id=document_id, new_tags=tags)
         write_scope = (
-            await self._write_tag_scope(bank_id, request_context) if partial or observation_scopes is not None else None
+            await self._write_tag_scope(bank_id, request_context)
+            if tags is not None or partial or observation_scopes is not None
+            else None
         )
         if observation_scopes is not None:
             self._refuse_unwritable_scopes(observation_scopes, write_scope)
@@ -11848,14 +11850,15 @@ class MemoryEngine(MemoryEngineInterface):
                         conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, for_update=True
                     )
                     current_tags = _current.tags
+                    if (tags is not None or partial) and _current.found:
+                        # Re-checked under the lock: a tag the caller may not write could have
+                        # arrived since `_require_writable`, and a tag write must not drop it.
+                        self._refuse_unwritable(current_tags, write_scope, f"document '{document_id}'")
                     if partial and _current.found:
                         if current_tags is None:
                             raise OperationValidationError(
                                 "This bank's memory store does not support add_tags/remove_tags", status_code=400
                             )
-                        # Re-checked under the lock: a tag the caller may not write could have
-                        # arrived since `_require_writable`, and must not be removable by naming it.
-                        self._refuse_unwritable(current_tags, write_scope, f"document '{document_id}'")
                         removed = set(remove_tags or [])
                         kept = [t for t in current_tags if t not in removed]
                         tags = kept + [t for t in dict.fromkeys(add_tags or []) if t not in kept]
