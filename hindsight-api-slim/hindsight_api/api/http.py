@@ -7511,8 +7511,7 @@ def _register_routes(app: FastAPI):
         "to: its observations are deleted and it is queued again, along with co-source memories from "
         "other documents that shared those observations. A change that resolves to the same scopes "
         "(a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the "
-        "current values) keeps every observation and queues nothing.\n\n"
-        "At least one field must be provided.",
+        "current values) keeps every observation and queues nothing.",
         operation_id="update_document",
         tags=["Documents"],
     )

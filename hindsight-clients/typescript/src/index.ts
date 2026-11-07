@@ -81,6 +81,7 @@ import type {
   MentalModelResponse,
   MentalModelTriggerInput,
   MentalModelDryRunRefreshResult,
+  UpdateDocumentRequest,
   UpdateDocumentResponse,
   VersionResponse,
 } from "../generated/types.gen";
@@ -1846,7 +1847,7 @@ export class HindsightClient {
       tags?: string[];
       addTags?: string[];
       removeTags?: string[];
-      observationScopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
+      observationScopes?: UpdateDocumentRequest["observation_scopes"];
       signal?: AbortSignal;
     }
   ): Promise<UpdateDocumentResponse> {
