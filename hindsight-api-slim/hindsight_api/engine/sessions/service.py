@@ -1032,6 +1032,12 @@ class SessionService:
                         >= W.MAX_RUNNING_CHECKS
                     ):
                         settle = row["db_now"] + timedelta(seconds=W.BUSY_RETRY_S)
+                    if settle is None and state.pending is not None and W.host_busy():
+                        # A loaded host waits it out instead of dropping the moment: skipped as "host
+                        # busy", 227 of 331 checks in one hour were lost (beta, 2026-11-06). The wait
+                        # holds the session's latest moment, so a newer one replaces this one.
+                        # ponytail: no cap on how long a moment waits; add one if waited heads-ups go stale.
+                        settle = row["db_now"] + timedelta(seconds=W.BUSY_HOST_RETRY_S)
                     if state.pending is not None and settle is not None and self._engine._task_backend.can_defer:
                         # Not yet: back in the queue until the session settles. A deferral is not a
                         # failed attempt, and appends meanwhile fold into this same operation.

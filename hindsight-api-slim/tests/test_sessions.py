@@ -664,6 +664,38 @@ async def test_a_check_waits_for_the_session_to_settle_on_a_queue(memory, reques
     assert len(calls) == 1
 
 
+async def test_a_check_waits_out_a_busy_host_instead_of_being_dropped(memory, request_context, monkeypatch):
+    """Skipped as "host busy", most of an hour's checks were lost on a loaded laptop (beta)."""
+    from hindsight_api.engine.sessions import watch
+    from hindsight_api.worker.exceptions import DeferOperation
+
+    calls: list[dict] = []
+    monkeypatch.setattr(memory, "reflect_async", _reflect_stub([("", [])], calls))
+
+    async def queue_check(bank_id, session_id, rc):
+        pass
+
+    monkeypatch.setattr(memory.sessions, "_queue_check", queue_check)
+    monkeypatch.setenv("HINDSIGHT_API_SESSION_CHECK_QUIET_MS", "0")
+    from hindsight_api.config import clear_config_cache
+
+    clear_config_cache()
+    bank = _bank()
+    ask = {"id": "1", "role": "user", "text": "Fix the rounding bug in money.py"}
+    await memory.sessions.append(bank, "s1", _req(ask, live=True), request_context=request_context)
+    monkeypatch.setattr(memory._task_backend, "can_defer", True)
+    monkeypatch.setattr(watch, "host_busy", lambda: True)
+    with pytest.raises(DeferOperation) as deferred:
+        await memory.sessions.run_check({"bank_id": bank, "session_id": "s1"})
+    assert "settle" in deferred.value.reason and calls == []
+    # Once the load drops, the same moment is checked: nothing was skipped.
+    monkeypatch.setattr(watch, "host_busy", lambda: False)
+    await memory.sessions.run_check({"bank_id": bank, "session_id": "s1"})
+    assert len(calls) == 1
+    log = (await memory.sessions.events(bank, "s1", request_context=request_context)).items
+    assert not [e for e in log if e.kind == "check" and e.payload.get("reason") == "host busy"]
+
+
 async def test_delete_removes_the_session_and_its_log(memory, request_context, api_client):
     bank = _bank()
     await memory.sessions.append(

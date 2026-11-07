@@ -67,6 +67,8 @@ COMMAND_CHECK_EVERY_S = 60
 # place); an edit or a new request is never held back.
 MAX_RUNNING_CHECKS = 3
 BUSY_RETRY_S = 10
+# How long a check waits on a loaded host (host_busy) before it looks again.
+BUSY_HOST_RETRY_S = 30
 # Words in a heads-up's "Before you change <X>" that name no code of their own.
 _GENERIC_TARGET_WORDS = frozenset(
     "code handling change changes rule rules workflow workflows documentation installation deployment "
