@@ -84,3 +84,22 @@ async def test_a_value_the_agent_chose_for_its_run_is_not_the_rule():
         ),
         context="An agent picked port 5617 for its own test run because the default port was busy.",
     )
+
+
+async def test_a_known_flaky_test_is_never_a_rule_to_ignore_its_failures():
+    draft = await _draft(
+        note="test_document_mutation_and_relink_preserve_queue is flaky: under load it treats a blocked "
+        "command as the queue insert.",
+        verdict="used",
+        reason="it said this test is flaky because, under load, it can watch the wrong blocked database "
+        "command and wrongly treat it as the queue insert.",
+        goal="Ship the PR",
+    )
+    await assert_meets_criteria(
+        response=f"create={draft.create}\nname: {draft.name}\ncontent: {draft.content}",
+        criteria=(
+            "The rule says the test is flaky under load and why. It does NOT tell agents to skip, ignore or not "
+            "investigate the test's failures; it may say how to tell a flake from a real regression (rerun it)."
+        ),
+        context="A rule that switched the test off would hide a real regression in it from every later session.",
+    )
