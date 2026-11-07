@@ -219,6 +219,9 @@ hindsight document get my-cli-bank "$DOCUMENT_ID"
 # Replace a document's tags
 hindsight document update my-cli-bank "$DOCUMENT_ID" --tags project-x,meetings
 
+# Add or remove single tags, keeping the rest
+hindsight document update my-cli-bank "$DOCUMENT_ID" --add-tags team-c --remove-tags meetings
+
 # Delete document and its memories
 hindsight document delete my-cli-bank "$DOCUMENT_ID"
 # [/docs:cli-documents]

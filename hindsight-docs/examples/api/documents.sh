@@ -56,6 +56,17 @@ hindsight document update "$BANK_ID" notes-2024-03-15 --tags ""
 TAGS=$(curl -sf "${HINDSIGHT_URL}/v1/default/banks/${BANK_ID}/documents/notes-2024-03-15" | jq -c '.tags')
 [ "$TAGS" = "[]" ] || { echo "expected no tags, got $TAGS"; exit 1; }
 
+# Start from two tags so the partial update below has one to remove and one to keep.
+hindsight document update "$BANK_ID" notes-2024-03-15 --tags team-a,team-b
+
+# [docs:document-update-tags-partial]
+# Add one tag and remove another; every other tag stays
+hindsight document update "$BANK_ID" notes-2024-03-15 --add-tags team-c --remove-tags team-a
+# [/docs:document-update-tags-partial]
+
+TAGS=$(curl -sf "${HINDSIGHT_URL}/v1/default/banks/${BANK_ID}/documents/notes-2024-03-15" | jq -c '.tags')
+[ "$TAGS" = '["team-b","team-c"]' ] || { echo "expected [\"team-b\",\"team-c\"], got $TAGS"; exit 1; }
+
 # [docs:document-list]
 # List all documents
 hindsight document list "$BANK_ID"

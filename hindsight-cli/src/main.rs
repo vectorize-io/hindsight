@@ -809,8 +809,16 @@ enum DocumentCommands {
 
         /// New tag list (comma-separated); `--tags ""` removes every tag. Triggers observation
         /// invalidation + re-consolidation.
-        #[arg(long, value_delimiter = ',')]
+        #[arg(long, value_delimiter = ',', conflicts_with_all = ["add_tags", "remove_tags"])]
         tags: Option<Vec<String>>,
+
+        /// Tags to add, keeping the others (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        add_tags: Option<Vec<String>>,
+
+        /// Tags to remove, keeping the others (comma-separated; applied before --add-tags)
+        #[arg(long, value_delimiter = ',')]
+        remove_tags: Option<Vec<String>>,
 
         /// New observation scopes: per_tag, combined, all_combinations, shared, or a JSON list
         /// of tag lists (e.g. '[["user:alice"]]'). Memories whose scopes move are re-consolidated.
@@ -1917,16 +1925,24 @@ fn run() -> Result<()> {
                 bank_id,
                 document_id,
                 tags,
+                add_tags,
+                remove_tags,
                 observation_scopes,
             } => {
                 // `--tags ""` parses as one empty tag; drop blanks so it clears the set
                 // instead of storing "".
-                let tags = tags.map(|t| t.into_iter().filter(|tag| !tag.is_empty()).collect());
+                let non_blank = |t: Option<Vec<String>>| {
+                    t.map(|t| t.into_iter().filter(|tag| !tag.is_empty()).collect())
+                };
                 commands::document::update(
                     &client,
                     &bank_id,
                     &document_id,
-                    tags,
+                    api::TagChange {
+                        tags: non_blank(tags),
+                        add_tags: non_blank(add_tags),
+                        remove_tags: non_blank(remove_tags),
+                    },
                     observation_scopes,
                     verbose,
                     output_format,

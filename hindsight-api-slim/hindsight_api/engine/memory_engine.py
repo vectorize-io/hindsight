@@ -11741,6 +11741,8 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         *,
         tags: list[str] | None = None,
+        add_tags: list[str] | None = None,
+        remove_tags: list[str] | None = None,
         observation_scopes: list[list[str]] | str | None = None,
         request_context: "RequestContext",
     ) -> bool:
@@ -11775,6 +11777,11 @@ class MemoryEngine(MemoryEngineInterface):
             tags: New tags to apply to the document and all its memory units (optional).
                 Compared as a set against the document's current tags; equal means no
                 retag and no re-consolidation.
+            add_tags / remove_tags: A partial change instead of ``tags`` (#6339): the new set is
+                the current tags minus ``remove_tags``, plus ``add_tags``. Resolved against the
+                tags read inside the update's transaction, row-locked on stores that support it,
+                so concurrent partial changes do not drop each other's tags. Not combined with
+                ``tags``.
             observation_scopes: New observation scoping for every memory of the document
                 (optional), with the values retain accepts. Overrides the rename a retag
                 would otherwise carry into an explicit scope list.
@@ -11789,9 +11796,27 @@ class MemoryEngine(MemoryEngineInterface):
                 bank_id=bank_id, operation=BankWriteOperation.UPDATE_DOCUMENT, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        partial = add_tags is not None or remove_tags is not None
+        if partial and tags is not None:
+            raise OperationValidationError("Send either tags or add_tags/remove_tags, not both", status_code=422)
+        # A partial change's resulting set is only known once the current tags are read, so it is
+        # checked against the write scope inside the transaction below.
         await self._require_writable(bank_id, request_context, document_id=document_id, new_tags=tags)
+        write_scope = await self._write_tag_scope(bank_id, request_context)
         if observation_scopes is not None:
-            self._refuse_unwritable_scopes(observation_scopes, await self._write_tag_scope(bank_id, request_context))
+            self._refuse_unwritable_scopes(observation_scopes, write_scope)
+        # A retag replaces the DOCUMENT's tags on every unit, but the column also holds the
+        # projection of the `entity_labels` groups flagged `tag: true` — derived per memory from
+        # that memory's own entities at extraction, not from the document. This PATCH re-processes
+        # nothing, so it has no business rewriting them: each unit keeps the ones it carries
+        # (issue #4068). Resolved before the row lock below: on a cache miss it takes a second
+        # pool connection, which must not be awaited while holding the lock.
+        from .retain.entity_labels import label_tag_keys, split_label_tags
+
+        _label_keys: set[str] = set()
+        if tags is not None or partial:
+            _retag_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+            _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
         backend = await self._get_backend()
         invalidated_obs = 0
         requeued_units = 0
@@ -11799,7 +11824,6 @@ class MemoryEngine(MemoryEngineInterface):
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
                     from .memories import get_memories
-                    from .retain.entity_labels import label_tag_keys, split_label_tags
 
                     _store = get_memories()
 
@@ -11814,10 +11838,29 @@ class MemoryEngine(MemoryEngineInterface):
                     # Compare as SETS — consolidation scopes a memory by its tag set, never
                     # by the order the array arrived in, so a reordered array changes
                     # nothing that consolidation can observe.
+                    # Lock the row for the whole update: a partial change is computed from this read,
+                    # and a full one decides from it whether the memories need retagging — either,
+                    # read stale under a concurrent update, loses tags or leaves the memories' tags
+                    # out of step with the document's. The UPDATE below locks this row anyway.
                     _current = await _store.current_document_tags(
-                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, for_update=True
                     )
                     current_tags = _current.tags
+                    if partial and _current.found and current_tags is None:
+                        raise OperationValidationError(
+                            "This bank's memory store does not support add_tags/remove_tags", status_code=400
+                        )
+                    if (tags is not None or partial) and _current.found:
+                        # Re-checked under the lock: a tag the caller may not write could have
+                        # arrived since `_require_writable`, and a tag write must not drop it.
+                        self._refuse_unwritable(current_tags, write_scope, f"document '{document_id}'")
+                    if partial and _current.found and current_tags is not None:
+                        removed = set(remove_tags or [])
+                        kept = [t for t in current_tags if t not in removed]
+                        tags = kept + [t for t in dict.fromkeys(add_tags or []) if t not in kept]
+                        # The whole resulting set, like a full `tags` write: removing the last
+                        # writable tag would otherwise hand the document to every reader.
+                        self._refuse_unwritable(tags, write_scope, f"document '{document_id}'")
 
                     # `None` means "could not read the current tags" (document not found, or
                     # a store record that does not carry them) — never claim unchanged on a
@@ -11827,16 +11870,6 @@ class MemoryEngine(MemoryEngineInterface):
                         if (tags is not None and (current_tags is None or set(current_tags) != set(tags)))
                         else None
                     )
-
-                    # A retag replaces the DOCUMENT's tags on every unit, but the column also
-                    # holds the projection of the `entity_labels` groups flagged `tag: true` —
-                    # derived per memory from that memory's own entities at extraction, not
-                    # from the document. This PATCH re-processes nothing, so it has no business
-                    # rewriting them: each unit keeps the ones it carries (issue #4068).
-                    _label_keys: set[str] = set()
-                    if retag is not None:
-                        _retag_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-                        _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
 
                     def _retagged(existing: list[str] | None) -> list[str]:
                         if retag is None:

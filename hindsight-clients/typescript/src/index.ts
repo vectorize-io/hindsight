@@ -81,6 +81,7 @@ import type {
   MentalModelResponse,
   MentalModelTriggerInput,
   MentalModelDryRunRefreshResult,
+  UpdateDocumentRequest,
   UpdateDocumentResponse,
   VersionResponse,
 } from "../generated/types.gen";
@@ -1836,17 +1837,29 @@ export class HindsightClient {
   }
 
   /**
-   * Update a document's mutable fields.
+   * Update a document's mutable fields. `tags` replaces the whole set; `addTags` /
+   * `removeTags` change only the tags they name (removals first) and can't be combined with it.
    */
   async updateDocument(
     bankId: string,
     documentId: string,
-    options: { tags?: string[]; signal?: AbortSignal }
+    options: {
+      tags?: string[];
+      addTags?: string[];
+      removeTags?: string[];
+      observationScopes?: UpdateDocumentRequest["observation_scopes"];
+      signal?: AbortSignal;
+    }
   ): Promise<UpdateDocumentResponse> {
     const response = await sdk.updateDocument({
       client: this.client,
       path: { bank_id: bankId, document_id: documentId },
-      body: { tags: options.tags },
+      body: {
+        tags: options.tags,
+        add_tags: options.addTags,
+        remove_tags: options.removeTags,
+        observation_scopes: options.observationScopes,
+      },
       signal: options.signal,
     });
 

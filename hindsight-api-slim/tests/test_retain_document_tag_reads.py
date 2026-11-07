@@ -44,7 +44,7 @@ async def test_default_keeps_a_record_without_tags_as_existing():
     restricted writer), not be dropped like `documents_tags` drops it."""
 
     class Store:
-        async def current_document_tags(self, *, conn, fq_table, bank_id, document_id):
+        async def current_document_tags(self, *, conn, fq_table, bank_id, document_id, for_update=False):
             return {"tagless": DocumentTags(found=True, tags=None)}.get(
                 document_id, DocumentTags(found=False, tags=None)
             )

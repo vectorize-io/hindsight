@@ -2839,7 +2839,18 @@ class UpdateDocumentRequest(BaseModel):
         default=None,
         description="The complete new set of tags for the document and its memory units — this "
         "REPLACES the existing tags rather than adding to them, so omitting a tag drops it and "
-        "`[]` clears them all. Triggers observation invalidation and re-consolidation.",
+        "`[]` clears them all. Triggers observation invalidation and re-consolidation. "
+        "To change only some tags, use `add_tags` / `remove_tags` instead.",
+    )
+    add_tags: list[str] | None = Field(
+        default=None,
+        description="Tags to add to the document, keeping the ones it has. Cannot be combined with `tags`.",
+    )
+    remove_tags: list[str] | None = Field(
+        default=None,
+        description="Tags to remove from the document, keeping the rest (applied before `add_tags`). "
+        "Cannot be combined with `tags`. Tags a memory carries from an entity label group with "
+        "`tag: true` stay on that memory.",
     )
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = Field(
         default=None,
@@ -7486,8 +7497,11 @@ def _register_routes(app: FastAPI):
         description="Update mutable fields on a document without re-processing its content.\n\n"
         "**Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — "
         "send the complete set you want the document to end up with, and any tag you leave out is "
-        "dropped. An empty array (`[]`) therefore clears every tag; only omitting the field "
-        "entirely is rejected (422).\n\n"
+        "dropped. An empty array (`[]`) therefore clears every tag.\n\n"
+        "**Partial tag change** (`add_tags`, `remove_tags`): adds or removes only the listed tags and "
+        'keeps the rest, e.g. `{"add_tags": ["team-c"], "remove_tags": ["team-a"]}`. '
+        "Removals apply first. Cannot be combined with `tags` (422). A request with none of `tags`, "
+        "`add_tags`, `remove_tags` or `observation_scopes` is rejected (422).\n\n"
         "The new tags are propagated to all associated memory units.\n\n"
         "**Observation scopes** (`observation_scopes`): Replaces how the document's memories are "
         "scoped during consolidation, with the same values retain accepts. Use it to move a bank "
@@ -7497,8 +7511,7 @@ def _register_routes(app: FastAPI):
         "to: its observations are deleted and it is queued again, along with co-source memories from "
         "other documents that shared those observations. A change that resolves to the same scopes "
         "(a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the "
-        "current values) keeps every observation and queues nothing.\n\n"
-        "At least one field must be provided.",
+        "current values) keeps every observation and queues nothing.",
         operation_id="update_document",
         tags=["Documents"],
     )
@@ -7515,17 +7528,20 @@ def _register_routes(app: FastAPI):
         Args:
             bank_id: Memory Bank ID (from path)
             document_id: Document ID (from path)
-            body: Fields to update (tags, observation_scopes)
+            body: Fields to update (tags, add_tags, remove_tags, observation_scopes)
         """
-        if body.tags is None and body.observation_scopes is None:
+        if body.tags is None and body.add_tags is None and body.remove_tags is None and body.observation_scopes is None:
             raise HTTPException(
-                status_code=422, detail="At least one field (tags, observation_scopes) must be provided"
+                status_code=422,
+                detail="At least one field (tags, add_tags, remove_tags, observation_scopes) must be provided",
             )
         try:
             result = await app.state.memory.update_document(
                 document_id,
                 bank_id,
                 tags=body.tags,
+                add_tags=body.add_tags,
+                remove_tags=body.remove_tags,
                 observation_scopes=body.observation_scopes,
                 request_context=request_context,
             )

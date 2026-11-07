@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from hindsight_api.engine.memories import MemoryPatch, get_memories
+from hindsight_api.engine.memories.base import DocumentTags
 from hindsight_api.engine.memory_engine import _resolve_refresh_tag_filtering, _scope_mental_model_trigger
 from hindsight_api.engine.reflect.tools import tool_expand, tool_read_mental_models
 from hindsight_api.engine.schema import fq_store_table_explicit, fq_table
@@ -547,6 +548,18 @@ async def test_every_other_surface_respects_both_scopes(memory, scoped_bank):
     with pytest.raises(OperationValidationError) as e:
         await memory.update_document("dan-notes", scoped_bank, tags=["user:dan", "kind:rule"], request_context=dan)
     assert e.value.status_code == 403
+    # ... and so must the tags a partial change adds (#6339).
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_document("dan-notes", scoped_bank, add_tags=["kind:rule"], request_context=dan)
+    assert e.value.status_code == 403
+    # Removing the last writable tag would leave the document untagged — readable by everyone,
+    # which a full `tags=[]` is refused for too.
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_document("dan-notes", scoped_bank, remove_tags=["user:dan"], request_context=dan)
+    assert e.value.status_code == 403
+    # Adding and then removing a writable tag is allowed.
+    assert await memory.update_document("dan-notes", scoped_bank, add_tags=["topic:x"], request_context=dan)
+    assert await memory.update_document("dan-notes", scoped_bank, remove_tags=["topic:x"], request_context=dan)
     with pytest.raises(OperationValidationError) as e:
         await memory.reprocess_document(scoped_bank, "kate-sync", request_context=dan)
     assert e.value.status_code == 404
@@ -804,6 +817,33 @@ async def test_document_history_is_its_own_read_operation(memory, scoped_bank):
     assert e.value.status_code == 403
     assert BankReadOperation.GET_DOCUMENT_HISTORY in seen
     assert await memory.get_document("dan-notes", scoped_bank, request_context=admin) is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [{"tags": ["user:dan"]}, {"remove_tags": ["kind:rule"]}],
+    ids=["full", "partial"],
+)
+async def test_a_tag_arriving_before_the_lock_is_not_dropped(memory, scoped_bank, monkeypatch, change):
+    """The write check before the transaction reads the tags unlocked; a tag the caller may not
+    write can land before the row lock. The locked read is checked too, so a tag write can't drop
+    it (#6339). Simulated by having only the locked read see the extra tag."""
+    memory._operation_validator.writes = {"dan": ["user:dan"]}
+    dan = RequestContext(api_key="dan")
+    store = get_memories()
+    unlocked = store.current_document_tags
+
+    async def arrived(**kwargs):
+        current = await unlocked(**kwargs)
+        if kwargs.get("for_update"):
+            return DocumentTags(found=current.found, tags=[*(current.tags or []), "kind:rule"])
+        return current
+
+    monkeypatch.setattr(store, "current_document_tags", arrived)
+    with pytest.raises(OperationValidationError) as e:
+        await memory.update_document("dan-notes", scoped_bank, request_context=dan, **change)
+    assert e.value.status_code == 403 and "kind:rule" in e.value.reason
 
 
 @pytest.mark.asyncio

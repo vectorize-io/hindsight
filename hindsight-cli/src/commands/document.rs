@@ -1,4 +1,4 @@
-use crate::api::ApiClient;
+use crate::api::{ApiClient, TagChange};
 use crate::output::{self, OutputFormat};
 use crate::ui;
 use anyhow::Result;
@@ -335,13 +335,19 @@ pub fn update(
     client: &ApiClient,
     bank_id: &str,
     document_id: &str,
-    tags: Option<Vec<String>>,
+    tag_change: TagChange,
     observation_scopes: Option<String>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
-    if tags.is_none() && observation_scopes.is_none() {
-        anyhow::bail!("At least one of --tags or --observation-scopes must be provided");
+    if tag_change.tags.is_none()
+        && tag_change.add_tags.is_none()
+        && tag_change.remove_tags.is_none()
+        && observation_scopes.is_none()
+    {
+        anyhow::bail!(
+            "At least one of --tags, --add-tags, --remove-tags or --observation-scopes must be provided"
+        );
     }
     let observation_scopes = observation_scopes
         .as_deref()
@@ -354,7 +360,13 @@ pub fn update(
         None
     };
 
-    let response = client.update_document(bank_id, document_id, tags, observation_scopes, verbose);
+    let response = client.update_document(
+        bank_id,
+        document_id,
+        tag_change,
+        observation_scopes,
+        verbose,
+    );
 
     if let Some(mut sp) = spinner {
         sp.finish();

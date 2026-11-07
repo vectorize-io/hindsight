@@ -1082,15 +1082,15 @@ UpdateDocument Update document
 
 Update mutable fields on a document without re-processing its content.
 
-**Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag; only omitting the field entirely is rejected (422).
+**Tags** (`tags`): The array REPLACES the document's tags, it is not merged into them — send the complete set you want the document to end up with, and any tag you leave out is dropped. An empty array (`[]`) therefore clears every tag.
+
+**Partial tag change** (`add_tags`, `remove_tags`): adds or removes only the listed tags and keeps the rest, e.g. `{"add_tags": ["team-c"], "remove_tags": ["team-a"]}`. Removals apply first. Cannot be combined with `tags` (422). A request with none of `tags`, `add_tags`, `remove_tags` or `observation_scopes` is rejected (422).
 
 The new tags are propagated to all associated memory units.
 
 **Observation scopes** (`observation_scopes`): Replaces how the document's memories are scoped during consolidation, with the same values retain accepts. Use it to move a bank whose documents were retained under per-session tags to `shared` without re-extracting anything. It is also what a later reprocess of the document retains with.
 
 A memory is re-consolidated only when the change moves the observation scopes it resolves to: its observations are deleted and it is queued again, along with co-source memories from other documents that shared those observations. A change that resolves to the same scopes (a tag change under `shared`, `combined` over one tag vs `[[that tag]]`, re-sending the current values) keeps every observation and queues nothing.
-
-At least one field must be provided.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId

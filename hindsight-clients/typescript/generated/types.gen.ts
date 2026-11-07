@@ -7012,9 +7012,21 @@ export type UpdateDocumentRequest = {
   /**
    * Tags
    *
-   * The complete new set of tags for the document and its memory units — this REPLACES the existing tags rather than adding to them, so omitting a tag drops it and `[]` clears them all. Triggers observation invalidation and re-consolidation.
+   * The complete new set of tags for the document and its memory units — this REPLACES the existing tags rather than adding to them, so omitting a tag drops it and `[]` clears them all. Triggers observation invalidation and re-consolidation. To change only some tags, use `add_tags` / `remove_tags` instead.
    */
   tags?: Array<string> | null;
+  /**
+   * Add Tags
+   *
+   * Tags to add to the document, keeping the ones it has. Cannot be combined with `tags`.
+   */
+  add_tags?: Array<string> | null;
+  /**
+   * Remove Tags
+   *
+   * Tags to remove from the document, keeping the rest (applied before `add_tags`). Cannot be combined with `tags`. Tags a memory carries from an entity label group with `tag: true` stay on that memory.
+   */
+  remove_tags?: Array<string> | null;
   /**
    * UpdateDocumentObservationScopes
    *

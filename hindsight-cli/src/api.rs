@@ -158,6 +158,14 @@ impl KnowledgeTagFilter {
     }
 }
 
+/// How a document update changes its tags: a full replacement (`tags`), or tags added and
+/// removed while the rest stay.
+pub struct TagChange {
+    pub tags: Option<Vec<String>>,
+    pub add_tags: Option<Vec<String>>,
+    pub remove_tags: Option<Vec<String>>,
+}
+
 #[derive(Clone)]
 pub struct ApiClient {
     client: AsyncClient,
@@ -1642,7 +1650,7 @@ impl ApiClient {
         &self,
         bank_id: &str,
         document_id: &str,
-        tags: Option<Vec<String>>,
+        tag_change: TagChange,
         observation_scopes: Option<serde_json::Value>,
         _verbose: bool,
     ) -> Result<types::UpdateDocumentResponse> {
@@ -1650,7 +1658,9 @@ impl ApiClient {
             // Through serde so the CLI does not depend on the generated union's variant names.
             let request: types::UpdateDocumentRequest =
                 serde_json::from_value(serde_json::json!({
-                    "tags": tags,
+                    "tags": tag_change.tags,
+                    "add_tags": tag_change.add_tags,
+                    "remove_tags": tag_change.remove_tags,
                     "observation_scopes": observation_scopes,
                 }))?;
             let response = self

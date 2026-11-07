@@ -164,6 +164,47 @@ asyncio.run(update_document_example())
 # [/docs:document-update-tags]
 
 
+async def _set_tags(tags: list[str]) -> None:
+    api = DocumentsApi(ApiClient(Configuration(host="http://localhost:8888")))
+    await api.update_document(
+        bank_id="my-bank", document_id="meeting-2024-03-15", update_document_request=UpdateDocumentRequest(tags=tags)
+    )
+
+
+async def _current_tags() -> list[str] | None:
+    api = DocumentsApi(ApiClient(Configuration(host="http://localhost:8888")))
+    doc = await api.get_document(bank_id="my-bank", document_id="meeting-2024-03-15")
+    return doc.tags
+
+
+# Start from two tags so the partial update below has one to remove and one to keep.
+asyncio.run(_set_tags(["team-a", "team-b"]))
+
+# [docs:document-update-tags-partial]
+from hindsight_client_api import ApiClient, Configuration
+from hindsight_client_api.api import DocumentsApi
+from hindsight_client_api.models import UpdateDocumentRequest
+
+
+async def update_some_tags_example():
+    config = Configuration(host="http://localhost:8888")
+    api = DocumentsApi(ApiClient(config))
+
+    # Add one tag and remove another; every other tag stays
+    await api.update_document(
+        bank_id="my-bank",
+        document_id="meeting-2024-03-15",
+        update_document_request=UpdateDocumentRequest(add_tags=["team-c"], remove_tags=["team-a"]),
+    )
+
+
+asyncio.run(update_some_tags_example())
+# [/docs:document-update-tags-partial]
+
+_partial_tags = asyncio.run(_current_tags())
+assert _partial_tags == ["team-b", "team-c"], f"expected ['team-b', 'team-c'], got {_partial_tags}"
+
+
 # [docs:document-delete]
 from hindsight_client_api import ApiClient, Configuration
 from hindsight_client_api.api import DocumentsApi

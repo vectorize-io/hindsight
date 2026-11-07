@@ -92,6 +92,7 @@ import { InlineAttachmentText, countMatches } from "@/components/ui/inline-attac
 import { documentHarness, resolveHarnessLogo } from "@/lib/harness-logo";
 import { pendingUploadsFromOperations, type PendingUpload } from "@/lib/pending-uploads";
 import { editedRetainItem } from "@/lib/edited-retain-item";
+import { tagChange } from "@/lib/tag-change";
 
 const ITEMS_PER_PAGE = 50;
 
@@ -1175,11 +1176,19 @@ export function DocumentsView() {
 
     setSavingTags(true);
     try {
-      await client.updateDocument(selectedDocument.id, currentBank, { tags: newTags });
-      setSelectedDocument({ ...selectedDocument, tags: newTags });
+      const change = tagChange(selectedDocument.tags ?? [], newTags);
+      if (change.add_tags.length || change.remove_tags.length) {
+        await client.updateDocument(selectedDocument.id, currentBank, change);
+      }
+      // Read the result back: a tag added elsewhere meanwhile is kept, so it may differ from
+      // newTags. The save already succeeded, so a failed read-back falls back to newTags.
+      const doc: any = await client
+        .getDocument(selectedDocument.id, currentBank)
+        .catch(() => ({ ...selectedDocument, tags: newTags }));
+      setSelectedDocument(doc);
       // Update tags in the documents list too
       setDocuments((prev) =>
-        prev.map((d) => (d.id === selectedDocument.id ? { ...d, tags: newTags } : d))
+        prev.map((d) => (d.id === selectedDocument.id ? { ...d, tags: doc.tags } : d))
       );
       setEditingTags(false);
       setTagInput("");

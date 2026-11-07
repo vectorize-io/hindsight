@@ -100,9 +100,9 @@ Retrieve a document's original text and metadata. This is useful for expanding d
 
 ## Update Document
 
-Update mutable fields on an existing document without re-processing the content. Currently supports updating `tags`.
+Update mutable fields on an existing document without re-processing the content: its tags, and how its memories are scoped for observations.
 
-The `tags` array **replaces** the document's tags — it is not merged into them. Send the complete set you want the document to end up with: any tag you leave out is dropped, and an empty array clears them all. To remove a single tag, read the document's current tags, drop the one you want gone, and send the rest. Omitting the field entirely is not an update at all and is rejected with a `422`.
+The `tags` array **replaces** the document's tags — it is not merged into them. Send the complete set you want the document to end up with: any tag you leave out is dropped, and an empty array clears them all. To change only some tags, use `add_tags` / `remove_tags` (below). A request with none of `tags`, `add_tags`, `remove_tags` or `observation_scopes` is rejected with a `422`.
 
 <Tabs>
 <TabItem value="python" label="Python">
@@ -116,6 +116,25 @@ The `tags` array **replaces** the document's tags — it is not merged into them
 </TabItem>
 <TabItem value="go" label="Go">
 <CodeSnippet code={documentsGo} section="document-update-tags" language="go" />
+</TabItem>
+</Tabs>
+
+### Add or remove single tags
+
+`add_tags` and `remove_tags` change only the tags they name and keep the rest, so you don't need to read the current set first. Removals apply first, so a tag in both lists ends up on the document. They can't be combined with `tags` (`422`). Tags a memory carries from an [entity label](/developer/api/memory-banks#entity-labels) group with `tag: true` stay on that memory either way.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={documentsPy} section="document-update-tags-partial" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={documentsMjs} section="document-update-tags-partial" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={documentsSh} section="document-update-tags-partial" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={documentsGo} section="document-update-tags-partial" language="go" />
 </TabItem>
 </Tabs>
 

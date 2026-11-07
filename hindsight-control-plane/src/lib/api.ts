@@ -1149,6 +1149,8 @@ export class ControlPlaneClient {
     bankId: string,
     update: {
       tags?: string[];
+      add_tags?: string[];
+      remove_tags?: string[];
       observation_scopes?: "per_tag" | "combined" | "all_combinations" | "shared" | string[][];
     }
   ) {

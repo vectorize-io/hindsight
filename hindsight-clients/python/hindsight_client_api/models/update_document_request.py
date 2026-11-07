@@ -28,8 +28,10 @@ class UpdateDocumentRequest(BaseModel):
     Request model for updating a document's mutable fields.
     """ # noqa: E501
     tags: Optional[List[StrictStr]] = None
+    add_tags: Optional[List[StrictStr]] = None
+    remove_tags: Optional[List[StrictStr]] = None
     observation_scopes: Optional[UpdateDocumentObservationScopes] = None
-    __properties: ClassVar[List[str]] = ["tags", "observation_scopes"]
+    __properties: ClassVar[List[str]] = ["tags", "add_tags", "remove_tags", "observation_scopes"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -78,6 +80,16 @@ class UpdateDocumentRequest(BaseModel):
         if self.tags is None and "tags" in self.model_fields_set:
             _dict['tags'] = None
 
+        # set to None if add_tags (nullable) is None
+        # and model_fields_set contains the field
+        if self.add_tags is None and "add_tags" in self.model_fields_set:
+            _dict['add_tags'] = None
+
+        # set to None if remove_tags (nullable) is None
+        # and model_fields_set contains the field
+        if self.remove_tags is None and "remove_tags" in self.model_fields_set:
+            _dict['remove_tags'] = None
+
         # set to None if observation_scopes (nullable) is None
         # and model_fields_set contains the field
         if self.observation_scopes is None and "observation_scopes" in self.model_fields_set:
@@ -96,6 +108,8 @@ class UpdateDocumentRequest(BaseModel):
 
         _obj = cls.model_validate({
             "tags": obj.get("tags"),
+            "add_tags": obj.get("add_tags"),
+            "remove_tags": obj.get("remove_tags"),
             "observation_scopes": UpdateDocumentObservationScopes.from_dict(obj["observation_scopes"]) if obj.get("observation_scopes") is not None else None
         })
         return _obj
