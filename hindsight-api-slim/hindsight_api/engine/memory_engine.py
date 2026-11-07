@@ -4187,7 +4187,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         counter = ByteStreamCounter(stream)
 
-        storage_key = f"banks/{bank_id}/exports/{uuid.uuid4()}/transfer.zip"
+        storage_key = f"{bank_storage_prefix(bank_id)}exports/{uuid.uuid4()}/transfer.zip"
         await self._file_storage.store_stream(
             key=storage_key,
             stream=counter,
@@ -8416,7 +8416,7 @@ class MemoryEngine(MemoryEngineInterface):
         if scope.data and self._operation_validator:
             await self._validate_import(target, archive, request_context)
 
-        storage_key = f"banks/{bank_id}/imports/{uuid.uuid4()}/transfer.zip"
+        storage_key = f"{bank_storage_prefix(bank_id)}imports/{uuid.uuid4()}/transfer.zip"
         await self._stash_archive(archive, storage_key, bank_id)
 
         task_payload: dict[str, Any] = {
