@@ -118,7 +118,6 @@ async def test_renaming_a_tag_moves_the_explicit_scopes_with_it(client, bank_id,
     on the document must carry the rename into that list, or re-consolidation
     rebuilds the observations under the old tag, where recall by the new one
     can no longer reach them (#4609)."""
-    renamed = RENAMED
     await _retain(
         client,
         bank_id,
@@ -132,8 +131,8 @@ async def test_renaming_a_tag_moves_the_explicit_scopes_with_it(client, bank_id,
     await settled(bank_id)
 
     document = await client.documents.get_document(bank_id, "lesson")
-    assert sorted(document.tags) == sorted([renamed, TEACHER])
-    assert await _observation_tags(client, bank_id) == [[renamed], sorted([renamed, TEACHER])]
+    assert sorted(document.tags) == sorted([RENAMED, TEACHER])
+    assert await _observation_tags(client, bank_id) == [[RENAMED], sorted([RENAMED, TEACHER])]
 
 
 async def test_existing_documents_can_move_to_the_shared_scope(client, bank_id, settled):
