@@ -51,18 +51,28 @@ async def document_updated_at(
 
 
 async def load_existing_chunks(
-    *, conn, fq_table: Callable[[str], str], bank_id: str, document_id: str
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    document_id: str,
+    chunk_indices: list[int] | None = None,
 ) -> list[ExistingChunk]:
-    """The document's chunk ids, indexes and content hashes, in chunk order."""
+    """The document's chunk ids, indexes and content hashes, in chunk order.
+
+    ``chunk_indices`` limits the read to those positions.
+    """
+    only_indices = "" if chunk_indices is None else "AND chunk_index = ANY($3::integer[])"
     rows = await conn.fetch(
         f"""
         SELECT chunk_id, chunk_index, content_hash
         FROM {fq_table("chunks")}
-        WHERE document_id = $1 AND bank_id = $2
+        WHERE document_id = $1 AND bank_id = $2 {only_indices}
         ORDER BY chunk_index
         """,
         document_id,
         bank_id,
+        *([] if chunk_indices is None else [chunk_indices]),
     )
     return [
         ExistingChunk(

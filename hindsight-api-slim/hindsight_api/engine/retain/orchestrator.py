@@ -48,6 +48,7 @@ from ..schema import fq_table
 if TYPE_CHECKING:
     from ...extensions.operation_validator import OperationValidatorExtension
     from ...models import RequestContext
+    from ..memories.base import EntityResolverHandle
     from .attachment_store import RetainAttachmentLoader
 
 
@@ -812,6 +813,53 @@ def _remap_phase1_results(
     ]
 
     return remapped_entity_to_unit, remapped_unit_to_entity_ids, remapped_semantic
+
+
+def _drop_committed_chunks(
+    dropped: set[int],
+    chunk_meta: list[ChunkMetadata],
+    extracted: list[ExtractedFact],
+    processed: list[ProcessedFact],
+    phase1: Phase1Result,
+    entity_resolver: "EntityResolverHandle",
+) -> Phase1Result:
+    """Remove the chunks in ``dropped`` and their facts from a batch, in place.
+
+    Phase 1 ran before the write lock and keys its result by fact position (placeholder unit
+    id ``str(i)``), and causal relations point at facts by position too, so the kept facts are
+    renumbered and both are rebuilt to match. The mention counts phase 1 queued for the dropped
+    facts are un-queued, or the entities they name would be counted twice.
+    """
+    keep = [i for i, fact in enumerate(extracted) if fact.chunk_index not in dropped]
+    retained_index_by_original: list[int | None] = [None] * len(extracted)
+    for new, old in enumerate(keep):
+        retained_index_by_original[old] = new
+    new_pos = {str(old): str(new) for new, old in enumerate(keep)}
+
+    ents = phase1.entities
+    pairs = [
+        (entity, (new_pos.get(unit_id), local_idx, fact_date))
+        for entity, (unit_id, local_idx, fact_date) in zip(ents.resolved_entities, ents.entity_to_unit, strict=True)
+    ]
+    entity_resolver.forget_pending_mentions([str(entity.entity_id) for entity, (unit, _, _) in pairs if unit is None])
+    pairs = [pair for pair in pairs if pair[1][0] is not None]
+
+    relations = _remap_causal_relations([fact.causal_relations for fact in extracted], retained_index_by_original)
+    chunk_meta[:] = [cm for cm in chunk_meta if cm.chunk_index not in dropped]
+    extracted[:] = [extracted[i] for i in keep]
+    processed[:] = [processed[i] for i in keep]
+    for extracted_fact, processed_fact, causal_relations in zip(extracted, processed, relations, strict=True):
+        extracted_fact.causal_relations = causal_relations
+        processed_fact.causal_relations = causal_relations
+
+    return Phase1Result(
+        entities=EntityResolutionResult(
+            resolved_entities=[entity for entity, _ in pairs],
+            entity_to_unit=[link for _, link in pairs],
+            unit_to_entity_ids={new_pos[k]: v for k, v in ents.unit_to_entity_ids.items() if k in new_pos},
+        ),
+        semantic_ann_links=[(new_pos[lnk[0]], *lnk[1:]) for lnk in phase1.semantic_ann_links if lnk[0] in new_pos],
+    )
 
 
 def _attachment_filenames_for(contents: "list[RetainContent]") -> dict[str, str]:
@@ -3436,6 +3484,8 @@ async def _streaming_retain_batch(
                         document_id=effective_doc_id,
                     )
 
+                    # True once this transaction has cleared the document: then nothing is committed yet.
+                    document_cleared = False
                     if not doc_tracking_done[0]:
                         # Append compare-and-swap, under the row lock and before any write: an
                         # append that lost its read-modify-write race must abort here rather than
@@ -3472,6 +3522,7 @@ async def _streaming_retain_batch(
                                 attachment_filenames=_attachment_filenames_for(contents),
                             )
                             log_buffer.append(f"[streaming] Document {effective_doc_id} tracked (full content)")
+                            document_cleared = True
                         doc_tracking_done[0] = True
                         # Memory: combined_content is no longer needed after
                         # this first-batch tracking call. Release it so the
@@ -3499,6 +3550,39 @@ async def _streaming_retain_batch(
                             # Signal the consumer to stop processing further batches
                             pipeline_aborted[0] = True
                             return
+
+                    # --- Same content, written by another run: store each chunk once ---
+                    # A second retain of this exact content (a client retry, a task run again
+                    # while the first is still writing) passes the hash check above, so the two
+                    # interleave. A chunk commits in the same transaction as its facts, so a chunk
+                    # already stored with our text already has its facts: drop it from this batch.
+                    # Whichever run reaches a chunk first writes it, so the document ends complete
+                    # once the run that last cleared it finishes (#6337). Only this Postgres write
+                    # needs it: a store-owned bank writes a retain in one atomic call.
+                    if batch_chunk_meta and not document_cleared:
+                        committed = {
+                            c.chunk_index: c.content_hash
+                            for c in await _ext_provider.load_existing_chunks(
+                                conn=conn,
+                                fq_table=fq_table,
+                                bank_id=bank_id,
+                                document_id=effective_doc_id,
+                                chunk_indices=[cm.chunk_index for cm in batch_chunk_meta],
+                            )
+                        }
+                        dropped = {
+                            cm.chunk_index
+                            for cm in batch_chunk_meta
+                            if committed.get(cm.chunk_index) == chunk_storage.compute_chunk_hash(cm.chunk_text)
+                        }
+                        if dropped:
+                            phase1 = _drop_committed_chunks(
+                                dropped, batch_chunk_meta, batch_extracted, batch_processed, phase1, entity_resolver
+                            )
+                            log_buffer.append(
+                                f"[streaming] {len(dropped)} chunks already stored by a concurrent retain "
+                                f"of the same content — skipped with their facts"
+                            )
 
                     # Store chunks with correct global indices
                     step_start = time.perf_counter()
@@ -4299,6 +4383,37 @@ async def _try_delta_retain(
                     # an append) verifies the base this content was built on.
                     return False
 
+                # Same content, written by another run since the load above: the hash check
+                # passes, so drop the chunks already stored with our text, and their facts —
+                # the same guard the streaming batches apply (#6337).
+                stored_hashes = {
+                    c.chunk_index: c.content_hash
+                    for c in await _delta_store.load_existing_chunks(
+                        conn=conn,
+                        fq_table=fq_table,
+                        bank_id=bank_id,
+                        document_id=effective_doc_id,
+                        chunk_indices=[
+                            delta_chunk_map.get(cm.chunk_index, cm.chunk_index) for cm in new_chunk_metadata
+                        ],
+                    )
+                }
+                already_stored = {
+                    cm.chunk_index
+                    for cm in new_chunk_metadata
+                    if stored_hashes.get(delta_chunk_map.get(cm.chunk_index, cm.chunk_index))
+                    == chunk_storage.compute_chunk_hash(cm.chunk_text)
+                }
+                if already_stored:
+                    phase1 = _drop_committed_chunks(
+                        already_stored, new_chunk_metadata, extracted_facts, processed_facts, phase1, entity_resolver
+                    )
+                    log_buffer.append(
+                        f"  {len(already_stored)} chunks already stored by a concurrent retain "
+                        f"of the same content — skipped with their facts"
+                    )
+                kept_indices = {delta_chunk_map.get(i, i) for i in already_stored}
+
                 # Update document metadata (no delete)
                 step_start = time.perf_counter()
                 # When this sub-batch is one slice of an oversized item
@@ -4340,7 +4455,7 @@ async def _try_delta_retain(
                 chunks_to_delete = [
                     existing_by_index[idx].chunk_id
                     for idx in changed_indices + removed_indices
-                    if idx in existing_by_index
+                    if idx in existing_by_index and idx not in kept_indices
                 ]
                 invalidated_obs = await chunk_storage.delete_chunks_by_ids(
                     conn, chunks_to_delete, bank_id, ops=pool.ops

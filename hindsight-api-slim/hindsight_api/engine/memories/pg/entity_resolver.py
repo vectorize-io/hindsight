@@ -11,7 +11,7 @@ import json
 import logging
 import math
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -521,6 +521,26 @@ class EntityResolver:
         key = self._task_key()
         self._pending_stats.pop(key, None)
         self._pending_cooccurrences.pop(key, None)
+
+    def forget_pending_mentions(self, entity_ids: list[str]) -> None:
+        """Un-queue one mention-count increment per id in ``entity_ids``, for the current task.
+
+        For mentions resolved and then dropped before writing (their facts were already stored by
+        a concurrent retain of the same content), so the mentions are not counted twice. Which of
+        an entity's stats goes only matters for its date, and the dropped facts carry the same
+        dates as the copies already stored.
+        """
+        pending = self._pending_stats.get(self._task_key())
+        if not pending:
+            return
+        left = Counter(entity_ids)
+        kept: list[_EntityStat] = []
+        for stat in pending:
+            if left[stat.entity_id] > 0:
+                left[stat.entity_id] -= 1
+            else:
+                kept.append(stat)
+        pending[:] = kept
 
     async def flush_pending_stats(self, conn: Any | None = None) -> None:
         """
