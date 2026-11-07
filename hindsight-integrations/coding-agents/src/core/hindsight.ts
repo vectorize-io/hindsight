@@ -355,7 +355,7 @@ const GLOBAL_DISPATCHER = Symbol.for("undici.globalDispatcher.1");
  * UND_ERR_HEADERS_TIMEOUT before the server could answer (#5504). Composing over the CURRENT
  * global dispatcher, instead of building a new undici `Agent`, needs no `undici` dependency (the
  * bundled one is not importable) and keeps any proxy dispatcher the host installed. Hosts whose
- * fetch is not undici's (Bun, DSH's own) have no such dispatcher and ignore the option.
+ * fetch is not undici's have no such dispatcher and ignore the option.
  */
 function signalOnlyDispatcher(): unknown {
   // Node loads undici — which installs the global dispatcher — lazily. Touching the `Headers`
@@ -456,8 +456,17 @@ export class HindsightClient {
   private async fetchWithAuth(url: string, init: RequestInit): Promise<Response> {
     // Only a request with its own deadline drops undici's timeouts; the drain poll has none.
     const dispatcher = init.signal ? signalOnlyDispatcher() : undefined;
+    // Bun has its own 300s socket-idle timeout below fetch. A request with an AbortSignal already
+    // has the caller's deadline, so disable that lower timeout just as the dispatcher does for
+    // undici. `timeout` is a Bun RequestInit extension; other runtimes ignore the extra field.
+    const bunTimeout = init.signal && "Bun" in globalThis ? { timeout: false as const } : {};
     const send = () =>
-      fetch(url, { ...init, headers: this.headers(), ...(dispatcher ? { dispatcher } : {}) });
+      fetch(url, {
+        ...init,
+        headers: this.headers(),
+        ...bunTimeout,
+        ...(dispatcher ? { dispatcher } : {}),
+      } as RequestInit);
     const r = await send();
     if (r.status !== 401 || !this.refreshToken()) return r;
     return send();

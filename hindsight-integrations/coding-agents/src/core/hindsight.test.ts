@@ -643,6 +643,20 @@ describe("every client-building entrypoint forwards observationScopes", () => {
 });
 
 describe("HindsightClient.reflect failures", () => {
+  it("disables Bun's socket idle timeout when the request has its own deadline (#6431)", async () => {
+    vi.stubGlobal("Bun", {});
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { text: "answer" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+
+    await expect(client.reflect("why?", { timeoutMs: 900_000 })).resolves.toBe("answer");
+
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ timeout: false });
+    expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("keeps the server's error body, not just the status", async () => {
     vi.stubGlobal(
       "fetch",
