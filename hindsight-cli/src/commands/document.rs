@@ -1,4 +1,4 @@
-use crate::api::ApiClient;
+use crate::api::{ApiClient, TagChange};
 use crate::output::{self, OutputFormat};
 use crate::ui;
 use anyhow::Result;
@@ -330,27 +330,19 @@ fn parse_observation_scopes(raw: &str) -> Result<serde_json::Value> {
     }
 }
 
-/// How a document update changes its tags: a full replacement (`tags`), or tags added and
-/// removed while the rest stay.
-pub struct TagChange {
-    pub tags: Option<Vec<String>>,
-    pub add_tags: Option<Vec<String>>,
-    pub remove_tags: Option<Vec<String>>,
-}
-
 /// Update a document's tags or observation scopes
 pub fn update(
     client: &ApiClient,
     bank_id: &str,
     document_id: &str,
-    tags: TagChange,
+    tag_change: TagChange,
     observation_scopes: Option<String>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
-    if tags.tags.is_none()
-        && tags.add_tags.is_none()
-        && tags.remove_tags.is_none()
+    if tag_change.tags.is_none()
+        && tag_change.add_tags.is_none()
+        && tag_change.remove_tags.is_none()
         && observation_scopes.is_none()
     {
         anyhow::bail!(
@@ -368,7 +360,13 @@ pub fn update(
         None
     };
 
-    let response = client.update_document(bank_id, document_id, tags, observation_scopes, verbose);
+    let response = client.update_document(
+        bank_id,
+        document_id,
+        tag_change,
+        observation_scopes,
+        verbose,
+    );
 
     if let Some(mut sp) = spinner {
         sp.finish();

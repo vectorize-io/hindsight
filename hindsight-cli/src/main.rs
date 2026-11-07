@@ -1938,7 +1938,7 @@ fn run() -> Result<()> {
                     &client,
                     &bank_id,
                     &document_id,
-                    commands::document::TagChange {
+                    api::TagChange {
                         tags: non_blank(tags),
                         add_tags: non_blank(add_tags),
                         remove_tags: non_blank(remove_tags),
