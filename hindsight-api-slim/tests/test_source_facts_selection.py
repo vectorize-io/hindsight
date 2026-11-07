@@ -15,6 +15,16 @@ def _count_words(text: str) -> int:
     return len(text.split())
 
 
+def _recording_counter(counted: list[str]) -> Callable[[str], int]:
+    """A word counter that also records every text it was asked to count."""
+
+    def count(text: str) -> int:
+        counted.append(text)
+        return _count_words(text)
+
+    return count
+
+
 def _select(
     *,
     by_obs: dict[str, list[str]],
@@ -155,7 +165,7 @@ class TestTokenCounting:
             by_obs={"obs-1": ["shared"], "obs-2": ["shared", "extra"]},
             texts={"shared": "two words", "extra": "one"},
             max_tokens_per_observation=2,
-            count_tokens=lambda text: counted.append(text) or _count_words(text),
+            count_tokens=_recording_counter(counted),
         )
         # obs-2 still pays for "shared", so "extra" does not fit its budget.
         assert selection.ids == ["shared"]
@@ -166,7 +176,7 @@ class TestTokenCounting:
         selection = _select(
             by_obs={"obs-1": ["present", "missing"]},
             texts={"present": "a source"},
-            count_tokens=lambda text: counted.append(text) or _count_words(text),
+            count_tokens=_recording_counter(counted),
         )
         assert selection.ids == ["present"]
         assert selection.truncated is False
