@@ -565,6 +565,7 @@ async def test_same_content_retain_overtaken_between_load_and_write_stores_each_
     hash check passes and only the chunk guard stops B writing their facts again.
     """
     import contextvars
+    import sys
     from collections import Counter
 
     from hindsight_api.engine.retain import orchestrator
@@ -586,27 +587,17 @@ async def test_same_content_retain_overtaken_between_load_and_write_stores_each_
             await b_gate.wait()
         return await real_extract(*args, **kwargs)
 
-    delta_results = []
-    real_delta = orchestrator._try_delta_retain
-
-    async def recorded_delta(*args, **kwargs):
-        result = await real_delta(*args, **kwargs)
-        if who.get() == "B":
-            delta_results.append(result)
-        return result
-
-    b_drops = 0
+    # Which write dropped B's chunks: the delta write or a streaming batch.
+    b_guard_writers: list[str] = []
     real_drop = orchestrator._drop_committed_chunks
 
-    def counted_drop(*args, **kwargs):
-        nonlocal b_drops
+    def recorded_drop(*args, **kwargs):
         if who.get() == "B":
-            b_drops += 1
+            b_guard_writers.append(sys._getframe(1).f_code.co_name)
         return real_drop(*args, **kwargs)
 
     monkeypatch.setattr(orchestrator, "_extract_and_embed", paused_extract)
-    monkeypatch.setattr(orchestrator, "_try_delta_retain", recorded_delta)
-    monkeypatch.setattr(orchestrator, "_drop_committed_chunks", counted_drop)
+    monkeypatch.setattr(orchestrator, "_drop_committed_chunks", recorded_drop)
     cfg = memory_no_llm._config_resolver._global_config
     monkeypatch.setattr(cfg, "retain_chunk_batch_size", 2)
     # One batch for the whole document takes the delta path; a small budget splits it into slices,
@@ -655,11 +646,9 @@ async def test_same_content_retain_overtaken_between_load_and_write_stores_each_
         b_gate.set()
         await second
 
-        if path == "delta":
-            assert delta_results and delta_results[0] is not None, "B did not write through the delta path"
-        else:
-            assert all(r is None for r in delta_results), "B wrote through the delta path, not streaming"
-        assert b_drops, "B never reached the chunk guard, so the test proves nothing"
+        expected_writer = "_run_delta_db_work" if path == "delta" else "_run_mini_batch_db_work"
+        assert b_guard_writers, "B never reached the chunk guard, so the test proves nothing"
+        assert set(b_guard_writers) == {expected_writer}
         unit_texts = await stored_units()
         assert not {t[:80]: n for t, n in Counter(unit_texts).items() if n > 1}
         assert len(unit_texts) == len(expected_chunks)
