@@ -100,6 +100,8 @@ async def test_concurrent_partial_changes_keep_each_others_tags(memory: MemoryEn
         doc = await memory.get_document("doc", bank_id, request_context=request_context)
         assert doc is not None
         assert set(doc["tags"]) == {"base", *added}
+        facts = await _fact_tags(memory, bank_id, request_context)
+        assert facts and all(t == {"base", *added} for t in facts), facts
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
