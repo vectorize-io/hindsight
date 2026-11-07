@@ -11807,6 +11807,18 @@ class MemoryEngine(MemoryEngineInterface):
         )
         if observation_scopes is not None:
             self._refuse_unwritable_scopes(observation_scopes, write_scope)
+        # A retag replaces the DOCUMENT's tags on every unit, but the column also holds the
+        # projection of the `entity_labels` groups flagged `tag: true` — derived per memory from
+        # that memory's own entities at extraction, not from the document. This PATCH re-processes
+        # nothing, so it has no business rewriting them: each unit keeps the ones it carries
+        # (issue #4068). Resolved before the row lock below: on a cache miss it takes a second
+        # pool connection, which must not be awaited while holding the lock.
+        from .retain.entity_labels import label_tag_keys, split_label_tags
+
+        _label_keys: set[str] = set()
+        if tags is not None or partial:
+            _retag_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
+            _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
         backend = await self._get_backend()
         invalidated_obs = 0
         requeued_units = 0
@@ -11814,7 +11826,6 @@ class MemoryEngine(MemoryEngineInterface):
             async with acquire_with_retry(backend) as conn:
                 async with conn.transaction():
                     from .memories import get_memories
-                    from .retain.entity_labels import label_tag_keys, split_label_tags
 
                     _store = get_memories()
 
@@ -11842,6 +11853,9 @@ class MemoryEngine(MemoryEngineInterface):
                             raise OperationValidationError(
                                 "This bank's memory store does not support add_tags/remove_tags", status_code=400
                             )
+                        # Re-checked under the lock: a tag the caller may not write could have
+                        # arrived since `_require_writable`, and must not be removable by naming it.
+                        self._refuse_unwritable(current_tags, write_scope, f"document '{document_id}'")
                         removed = set(remove_tags or [])
                         kept = [t for t in current_tags if t not in removed]
                         tags = kept + [t for t in dict.fromkeys(add_tags or []) if t not in kept]
@@ -11857,16 +11871,6 @@ class MemoryEngine(MemoryEngineInterface):
                         if (tags is not None and (current_tags is None or set(current_tags) != set(tags)))
                         else None
                     )
-
-                    # A retag replaces the DOCUMENT's tags on every unit, but the column also
-                    # holds the projection of the `entity_labels` groups flagged `tag: true` —
-                    # derived per memory from that memory's own entities at extraction, not
-                    # from the document. This PATCH re-processes nothing, so it has no business
-                    # rewriting them: each unit keeps the ones it carries (issue #4068).
-                    _label_keys: set[str] = set()
-                    if retag is not None:
-                        _retag_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
-                        _label_keys = label_tag_keys(getattr(_retag_config, "entity_labels", None))
 
                     def _retagged(existing: list[str] | None) -> list[str]:
                         if retag is None:
