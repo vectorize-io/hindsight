@@ -164,14 +164,14 @@ asyncio.run(update_document_example())
 # [/docs:document-update-tags]
 
 
-async def _set_tags(tags):
+async def _set_tags(tags: list[str]) -> None:
     api = DocumentsApi(ApiClient(Configuration(host="http://localhost:8888")))
     await api.update_document(
         bank_id="my-bank", document_id="meeting-2024-03-15", update_document_request=UpdateDocumentRequest(tags=tags)
     )
 
 
-async def _current_tags():
+async def _current_tags() -> list[str] | None:
     api = DocumentsApi(ApiClient(Configuration(host="http://localhost:8888")))
     doc = await api.get_document(bank_id="my-bank", document_id="meeting-2024-03-15")
     return doc.tags
