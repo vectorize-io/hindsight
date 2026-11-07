@@ -1192,7 +1192,8 @@ async def import_bank(
     The **target bank must not already exist**: import restores a complete bank
     (config + facts + mental models + …) and is not a merge. If a bank with the
     target id is present, this raises — delete it first or pass ``target_bank_id``
-    for a fresh id. A migration restores *exact* state, so unlike the document
+    for a fresh id. Two restores racing into the same fresh id do not merge either: the
+    one whose bank row loses raises and writes nothing. A migration restores *exact* state, so unlike the document
     import it fires no retain webhooks and triggers no consolidation/graph
     maintenance: observations and mental models are restored as exported.
 
@@ -1272,13 +1273,15 @@ async def _restore_bank(
 
     # `internal_id` is a globally-unique (banks_internal_id_unique) local identifier
     # used only for per-bank index naming — it is NOT part of the bank's logical
-    # state and nothing in the archive references it. Drop it so the column DEFAULT
-    # (gen_random_uuid) mints a fresh one on insert. Keeping the source value makes
-    # the banks INSERT collide with the source bank on a same-instance re-import,
-    # where `ON CONFLICT DO NOTHING` then silently skips the parent row and every
-    # child (mental_models, …) trips its bank_id foreign key. See #3270.
+    # state and nothing in the archive references it. Replace it with a fresh one:
+    # keeping the source value makes the banks INSERT collide with the source bank
+    # on a same-instance re-import, where `ON CONFLICT DO NOTHING` then silently
+    # skips the parent row and every child (mental_models, …) trips its bank_id
+    # foreign key. See #3270. Minted here, not by the column default, so the
+    # restore can tell the row it wrote from one a concurrent restore wrote first.
+    minted_internal_id = str(uuid.uuid4())
     for row in parsed.bank_rows.get("banks", []):
-        row.pop("internal_id", None)
+        row["internal_id"] = minted_internal_id
         # A bank's default display name is its id (see create_bank_row_on_conn),
         # so restoring under a new id would leave the copy showing the *source's*
         # id as its name — two banks reading as the same one in any list that
@@ -1323,7 +1326,24 @@ async def _restore_bank(
                     bank_rows_json_encoding=bank_rows_json_encoding,
                 )
             else:
-                await bank_utils.create_bank_row_on_conn(conn, bank_id, ops=ops)
+                created = await bank_utils.create_bank_row_on_conn(conn, bank_id, ops=ops)
+            internal_id = await conn.fetchval(
+                f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id
+            )
+            if internal_id is None:
+                raise ValueError("The archive's bank config carries no bank row to restore.")
+            if restoring.bank_config:
+                created = str(internal_id) == minted_internal_id
+            # Two restores into the same fresh id both pass the existence check above,
+            # since neither has committed. The loser's insert waits for the winner and
+            # then inserts nothing; carrying on would write a second copy of every fact
+            # into the winner's bank. Refused before `on_bank_created`, so the loser
+            # never marks the bank as its own (a crash-retry would delete it).
+            if not created:
+                raise ValueError(
+                    f"Target bank '{bank_id}' was created by another restore while this one ran; "
+                    f"nothing was restored. Pass a different target bank id to restore this archive too."
+                )
             if on_bank_created is not None:
                 await on_bank_created(conn)
             # The restored banks row bypasses the fresh-INSERT gate that normally
@@ -1340,11 +1360,7 @@ async def _restore_bank(
             # store owns this bank's memories — the restored facts go to the store, so
             # there is nothing here to index (#4615). Both are decided inside
             # create_bank_vector_indexes, so this call stays unconditional.
-            internal_id = await conn.fetchval(
-                f"SELECT internal_id FROM {fq_table('banks')} WHERE bank_id = $1", bank_id
-            )
-            if internal_id is not None:
-                await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
+            await bank_utils.create_bank_vector_indexes(conn, bank_id, str(internal_id), ops=ops)
 
     # Only now does the bank row — and with it the archive's own config — exist, so
     # this is where the config the documents are replayed with has to come from.
