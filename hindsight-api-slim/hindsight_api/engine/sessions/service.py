@@ -482,8 +482,12 @@ class SessionService:
                         fb = feedback[n]
                         if log.feedback is not None and (log.feedback.verdict == "used" or fb == log.feedback):
                             continue
+                        # Weighed again only when the verdict changes: an agent naming a note twice
+                        # in its own words re-weighed it (live: a note that had written a rule and
+                        # retired another came back as "covered" the next morning, two calls spent).
+                        if log.feedback is None or log.feedback.verdict != fb.verdict:
+                            learned.append(n)
                         log.feedback = fb
-                        learned.append(n)
                         await conn.execute(
                             f"""
                             UPDATE {fq_table("session_events")} SET payload = $4::jsonb

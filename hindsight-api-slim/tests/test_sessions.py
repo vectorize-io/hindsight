@@ -1042,6 +1042,30 @@ def _learning_on(memory, monkeypatch, on: bool = True):
     monkeypatch.setattr(memory._config_resolver, "get_bank_config", get_bank_config)
 
 
+async def test_a_verdict_named_again_in_other_words_is_weighed_once(memory, request_context, monkeypatch):
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    stub = _LearnStub(0.1)
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: stub)
+    learned = await _session_with_a_verdict(
+        memory, request_context, monkeypatch, bank, "> 🧠 Hindsight thought #{n} — keep three panels; no change: done."
+    )
+    number = [
+        e.payload["number"]
+        for e in (await memory.sessions.events(bank, "s1", request_context=request_context)).items
+        if e.kind == "note"
+    ][0]
+    again = f"> 🧠 Hindsight thought #{number} — keep three panels; no change: I had already merged them."
+    await memory.sessions.append(
+        bank, "s1", _req({"id": "b", "role": "assistant", "text": again}), request_context=request_context
+    )
+    log = (await memory.sessions.events(bank, "s1", request_context=request_context)).items
+    assert len([e for e in log if e.kind == "learn"]) == 1 and len(stub.questions) == 1
+    # The note keeps the latest wording.
+    (note,) = [e for e in log if e.kind == "note"]
+    assert note.payload["feedback"]["reason"] == "I had already merged them."
+
+
 async def test_a_lasting_verdict_becomes_a_rule_every_later_check_reads(memory, request_context, monkeypatch):
     from hindsight_api.engine.response_models import LLMCallResult
     from hindsight_api.engine.sessions.learn import RuleDraft
