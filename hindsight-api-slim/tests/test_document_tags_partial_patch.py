@@ -129,3 +129,26 @@ async def test_partial_change_is_refused_when_the_store_cannot_read_the_tags(
         assert doc is not None and doc["tags"] == ["base"]
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_full_and_partial_changes_keep_memories_in_step(
+    memory: MemoryEngine, request_context: RequestContext
+):
+    """A full `tags` write decides from the tags it reads whether the memories need retagging; read
+    stale beside a partial change, it would leave the memories carrying a tag the document lost."""
+    bank_id = f"test_patch_tags_mixed_{uuid.uuid4().hex[:8]}"
+    try:
+        await _retain(memory, bank_id, ["a"], request_context)
+
+        for _ in range(3):
+            await asyncio.gather(
+                memory.update_document("doc", bank_id, tags=["a"], request_context=request_context),
+                memory.update_document("doc", bank_id, add_tags=["b"], request_context=request_context),
+            )
+            doc = await memory.get_document("doc", bank_id, request_context=request_context)
+            assert doc is not None
+            facts = await _fact_tags(memory, bank_id, request_context)
+            assert facts and all(t == set(doc["tags"]) for t in facts), (doc["tags"], facts)
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)

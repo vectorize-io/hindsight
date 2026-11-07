@@ -3094,8 +3094,9 @@ class MemoriesExtension(Extension, ABC):
         """The tags a document carries now, read before a retag overwrites them.
 
         ``for_update`` asks the store to hold the document until ``conn``'s transaction ends, so
-        a partial tag change (add/remove) computed from this read is not lost to a concurrent
-        one. The default record-based read cannot lock and ignores it.
+        a tag change decided from this read (a partial add/remove, or whether a full write must
+        retag the memories) is not undone by a concurrent one. The default record-based read
+        cannot lock and ignores it.
 
         Default: the store's record. A record that does not carry a "tags" key at all is
         unreadable for this purpose, not empty — collapsing it to [] would read a PATCH of []

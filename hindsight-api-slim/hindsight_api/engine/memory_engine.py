@@ -11829,10 +11829,12 @@ class MemoryEngine(MemoryEngineInterface):
                     # Compare as SETS — consolidation scopes a memory by its tag set, never
                     # by the order the array arrived in, so a reordered array changes
                     # nothing that consolidation can observe.
-                    # A partial change locks the row: it is computed from this read, so a concurrent
-                    # one must wait for it rather than overwrite it with a set missing its tags.
+                    # Lock the row for the whole update: a partial change is computed from this read,
+                    # and a full one decides from it whether the memories need retagging — either,
+                    # read stale under a concurrent update, loses tags or leaves the memories' tags
+                    # out of step with the document's. The UPDATE below locks this row anyway.
                     _current = await _store.current_document_tags(
-                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, for_update=partial
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, for_update=True
                     )
                     current_tags = _current.tags
                     if partial and _current.found:
