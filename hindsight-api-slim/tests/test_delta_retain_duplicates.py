@@ -552,7 +552,7 @@ async def test_concurrent_same_content_retains_out_of_order_store_each_chunk_onc
 @pytest.mark.memory_backend_incompatible
 @pytest.mark.parametrize(
     ("path", "batch_tokens"),
-    [("delta", 10_000_000), ("recovery", 1000)],
+    [("delta", 10_000_000), ("recovery", 4000)],
 )
 async def test_same_content_retain_overtaken_between_load_and_write_stores_each_chunk_once(
     memory_no_llm, request_context, monkeypatch, path: str, batch_tokens: int
@@ -610,7 +610,9 @@ async def test_same_content_retain_overtaken_between_load_and_write_stores_each_
     cfg = memory_no_llm._config_resolver._global_config
     monkeypatch.setattr(cfg, "retain_chunk_batch_size", 2)
     # One batch for the whole document takes the delta path; a small budget splits it into slices,
-    # which resume through the streaming recovery probe instead.
+    # which resume through the streaming recovery probe instead. The slices hold several chunks, so
+    # B's first slice still has chunks to write when it pauses: a first slice already fully stored
+    # would only touch the document row, and A would then stop as overtaken by a newer retain.
     monkeypatch.setattr(cfg, "retain_batch_tokens", batch_tokens)
 
     bank_id = f"test_same_overtaken_{_ts()}_{path}"
