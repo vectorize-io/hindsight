@@ -420,6 +420,13 @@ def test_an_answer_saying_there_is_nothing_to_say_is_not_a_note():
     assert not W.accept_note(s, cmd, "Nothing in memory genuinely explains this symptom.", ["m12"])
     assert not W.accept_note(s, cmd, "NOTHING in memory genuinely explains THIS symptom.", ["m13"])
     assert not W.accept_note(s, cmd, "No relevant information found in the retrieved evidence.", ["m14"])
+    # Its explanation read as a conflict claim ("not a change that violates project rules"), beta 2026-11-08.
+    there_is_none = (
+        "There is no conflict. Your request to run a query via aq.sh is an ad-hoc observation task, "
+        "not a code or configuration change that violates project rules."
+    )
+    assert not W.accept_note(s, cmd, there_is_none, ["m15"])
+    assert W.accept_note(W.WatchState(), cmd, "There is no backup before 05:00: run the dump first.", ["m16"])
     assert W.accept_note(s, cmd, "None of the pruning may touch ~/dev: the job's rule keeps it.", ["m3"])
     assert W.accept_note(s, cmd, "Keep the floor at 60 GB, not 50.", ["m4"])
     agrees = "The user is not contradicting any decision; they listed the path as left, which aligns with the rule."

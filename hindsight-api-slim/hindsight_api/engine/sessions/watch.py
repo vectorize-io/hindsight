@@ -591,7 +591,10 @@ _PROSE_WORD = re.compile(r"(?<![\w=/$.-])[A-Za-z][a-z']+(?![\w=/$.-])")
 # A conflict word the note itself negates claims nothing ("cannot contradict", "does not violate").
 NEGATED_CLAIM = re.compile(
     r"\b(?:cannot|can't|does not|doesn't|do not|don't|did not|didn't|is not|isn't|not|never)\s+(?:\w+\s+){0,2}?"
-    r"(?:contradict|conflict|violat|break|require)\w*",
+    r"(?:contradict|conflict|violat|break|require)\w*"
+    # "not a code or configuration change that violates project rules" negates the claim too (beta,
+    # 2026-11-08: its "violates" read as a conflict and "There is no conflict. ..." went out as a note).
+    r"|\bnot\s+(?:an?\s+)?(?:\w+\s+){0,5}?(?:that|which)\s+(?:\w+\s+)?(?:contradict|conflict|violat|break)\w*",
     re.I,
 )
 CLAIMS_CONFLICT = re.compile(
