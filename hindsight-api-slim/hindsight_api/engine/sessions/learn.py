@@ -38,6 +38,9 @@ MAX_EXISTING_RULES = 30
 # one run's free port ("tests must use 5617") was rejected on each of its first notes, and kept
 # coming back to every test run of the bank (2026-11-06).
 RETIRE_AFTER = 2
+# A verdict skipped for one of these is weighed again RETRY_AFTER_S later (see run_learn).
+RETRY_REASONS = frozenset({"decision failed", "writer failed"})
+RETRY_AFTER_S = 60
 RETIRED_TAG = "rule:retired"
 MAX_RULE_CHARS = 1200
 

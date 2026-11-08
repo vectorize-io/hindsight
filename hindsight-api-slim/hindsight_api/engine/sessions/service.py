@@ -842,17 +842,35 @@ class SessionService:
         logs = [log for log in logs if log is not None]
         if cfg.get("session_learn_rules"):
             logs += await self._retire_rejected_rules(bank_id, notes, rc)
-        if not logs:
+        # A verdict the models failed on is weighed again later, not dropped: verdicts are rare, and a
+        # dev gateway answering 429 "busy or still loading" skipped one for good (beta, 2026-11-08).
+        # ponytail: retried every minute with no cap; cap it if a model stays down for long.
+        retry = [log.note_seq for log in logs if log.reason in L.RETRY_REASONS]
+        logs = [log for log in logs if log.reason not in L.RETRY_REASONS]
+        if not logs and not retry:
             return
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
-                if await conn.fetchval(
-                    f"SELECT 1 FROM {fq_table('sessions')} WHERE bank_id = $1 AND session_id = $2 FOR UPDATE",
+                row = await conn.fetchrow(
+                    f"SELECT watch_state FROM {fq_table('sessions')} WHERE bank_id = $1 AND session_id = $2 FOR UPDATE",
                     bank_id,
                     session_id,
-                ):
-                    for log in logs:
-                        await self._log(conn, bank_id, session_id, "learn", log.model_dump(exclude_none=True))
+                )
+                if row is None:
+                    return
+                for log in logs:
+                    await self._log(conn, bank_id, session_id, "learn", log.model_dump(exclude_none=True))
+                if retry:
+                    later = W.WatchState.model_validate(conn.parse_json(row["watch_state"]) or {})
+                    later.learn_pending = list(dict.fromkeys(retry + later.learn_pending))
+                    await conn.execute(
+                        f"UPDATE {fq_table('sessions')} SET watch_state = $3::jsonb WHERE bank_id = $1 AND session_id = $2",
+                        bank_id,
+                        session_id,
+                        later.model_dump_json(),
+                    )
+        if retry and self._engine._task_backend.can_defer:
+            raise DeferOperation(exec_date=_now() + timedelta(seconds=L.RETRY_AFTER_S), reason="a model was busy")
 
     async def _retire_rejected_rules(
         self, bank_id: str, notes: dict[int, NoteLog], rc: RequestContext

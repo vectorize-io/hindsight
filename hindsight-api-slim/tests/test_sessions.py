@@ -1066,6 +1066,28 @@ async def test_a_verdict_named_again_in_other_words_is_weighed_once(memory, requ
     assert note.payload["feedback"]["reason"] == "I had already merged them."
 
 
+async def test_a_verdict_the_decision_model_failed_on_is_weighed_again_later(memory, request_context, monkeypatch):
+    """A dev gateway answering 429 skipped a verdict for good; verdicts are rare (beta)."""
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+
+    class _Busy:
+        async def pick_answering(self, question, context, texts):
+            raise RuntimeError("HTTP 429: the decision model is busy or still loading")
+
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: _Busy())
+    learned = await _session_with_a_verdict(
+        memory, request_context, monkeypatch, bank, "> 🧠 Hindsight thought #{n} — keep three panels; no change: done."
+    )
+    assert learned == [], "nothing logged as skipped: the verdict waits"
+    # The model is back: the same verdict is weighed.
+    stub = _LearnStub(0.1)
+    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: stub)
+    await memory.sessions.run_learn({"bank_id": bank, "session_id": "s1"})
+    log = (await memory.sessions.events(bank, "s1", request_context=request_context)).items
+    assert [e.payload["outcome"] for e in log if e.kind == "learn"] == ["no_rule"] and len(stub.questions) == 1
+
+
 async def test_a_lasting_verdict_becomes_a_rule_every_later_check_reads(memory, request_context, monkeypatch):
     from hindsight_api.engine.response_models import LLMCallResult
     from hindsight_api.engine.sessions.learn import RuleDraft
