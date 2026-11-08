@@ -4,6 +4,8 @@ Postgres only. The servers keep running; the steps per schema are:
 
 1. Add a nullable ``embedding_next`` column of the new dimension to ``memory_units`` and
    ``mental_models``. Adding a nullable column with no default is metadata only: no table copy.
+   The column's comment names the model, so a re-run with another model, even one of the same
+   dimension, starts over instead of keeping vectors from both.
 2. Install a trigger that clears ``embedding_next`` whenever a row's text or vector changes, so a
    write that lands while the fill runs is simply re-embedded by a later pass.
 3. Drop the old vector indexes. Every row is updated once; with an HNSW index still on the table each
@@ -109,6 +111,26 @@ async def _column_type(conn: asyncpg.Connection, schema: str, table: str, column
         table,
         column,
     )
+
+
+async def _column_model(conn: asyncpg.Connection, schema: str, table: str, column: str) -> str | None:
+    """The model a run wrote ``column``'s vectors with: its column comment (see :func:`_set_column_model`)."""
+    return await conn.fetchval(
+        """
+        SELECT col_description(a.attrelid, a.attnum) FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relname = $2 AND a.attname = $3 AND NOT a.attisdropped
+        """,
+        schema,
+        table,
+        column,
+    )
+
+
+async def _set_column_model(conn: asyncpg.Connection, schema: str, table: str, column: str, model_id: str) -> None:
+    """Record the model on the column itself, so the rename at the swap carries it to ``embedding``."""
+    literal = "'" + model_id.replace("'", "''") + "'"
+    await conn.execute(f"COMMENT ON COLUMN {_table(schema, table)}.{_q(column)} IS {literal}")
 
 
 async def _guard_installed(conn: asyncpg.Connection, schema: str) -> bool:
@@ -409,7 +431,18 @@ async def reembed_schema(
 ) -> SchemaReembed:
     """Run (or resume) the re-embed of one schema. ``conn`` must be autocommit (no open transaction)."""
     dim = embeddings.dimension
+    model_id = embedding_model_id(embeddings)
     if await _column_dimension(conn, schema, "memory_units", NEXT) is None and await _guard_installed(conn, schema):
+        # Swapped to another model: either this environment is stale, or the operator changed the
+        # model before --finish. Re-embedding now would replace the guard while servers run either
+        # model, so say which one the vectors are from instead. No comment: a swap made before the
+        # model was recorded.
+        swapped_to = await _column_model(conn, schema, "memory_units", "embedding")
+        if swapped_to not in (None, model_id):
+            raise RuntimeError(
+                f"{schema}: already swapped to {swapped_to}, but this run's model is {model_id}. "
+                "To move to this model, run `reembed --finish` first, then re-run."
+            )
         return SchemaReembed(schema, "already swapped")
 
     ext = await asyncio.to_thread(_resolve_vector_extension, sync_url)
@@ -417,10 +450,13 @@ async def reembed_schema(
         raise RuntimeError(f"pgvector HNSW indexes stop at 2000 dimensions; the new model has {dim}")
 
     for table in TABLES:
-        if await _column_dimension(conn, schema, table, NEXT) not in (None, dim):
-            # Left by an earlier run for a different model: its vectors are useless now.
+        next_dim = await _column_dimension(conn, schema, table, NEXT)
+        if next_dim is not None and (next_dim != dim or await _column_model(conn, schema, table, NEXT) != model_id):
+            # Left by an earlier run for a different model, of any size: its vectors are useless now.
             await conn.execute(f"ALTER TABLE {_table(schema, table)} DROP COLUMN {NEXT}")
         await conn.execute(f"ALTER TABLE {_table(schema, table)} ADD COLUMN IF NOT EXISTS {NEXT} vector({dim})")
+        if await _column_model(conn, schema, table, NEXT) != model_id:
+            await _set_column_model(conn, schema, table, NEXT, model_id)
         await _install_function(conn, schema, table, _fill_body(table))
         await conn.execute(f"DROP TRIGGER IF EXISTS {_TRIGGER} ON {_table(schema, table)}")
         await conn.execute(
