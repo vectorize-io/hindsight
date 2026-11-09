@@ -365,14 +365,13 @@ class PostgreSQLOps(DataAccessOps):
         sorted_links: list[tuple],
         bank_id: str,
         nil_entity_uuid: str,
-        exists_clause: str,
         chunk_size: int = 5000,
     ) -> None:
-        # exists_clause is unused on PostgreSQL: the memory_links → memory_units
-        # FKs are DEFERRABLE INITIALLY DEFERRED, so an INSERT takes no lock on the
-        # referenced parent rows until COMMIT — a concurrent committed DELETE in
-        # that window (consolidation pruning observations, document re-tracking)
-        # trips fk_memory_links_{to,from}_unit_id_memory_units at COMMIT (#1882),
+        # The memory_links → memory_units FKs are DEFERRABLE INITIALLY DEFERRED,
+        # so an INSERT takes no lock on the referenced parent rows until COMMIT —
+        # a concurrent committed DELETE in that window (consolidation pruning
+        # observations, document re-tracking) trips
+        # fk_memory_links_{to,from}_unit_id_memory_units at COMMIT (#1882),
         # and a WHERE EXISTS guard can't prevent it (the row passes the check,
         # then is deleted before the deferred check runs). Instead a CTE locks the
         # referenced units FOR KEY SHARE in the *same statement*: the lock blocks a
@@ -380,8 +379,8 @@ class PostgreSQLOps(DataAccessOps):
         # deferred check, and the INSERT only takes links whose endpoints are in
         # the locked set, so rows that already vanished are dropped. Folding it
         # into the one INSERT keeps this to a single round-trip — no extra query
-        # and no surrounding transaction needed. (Oracle's immediate FK has no
-        # such window and uses exists_clause via its own bulk_insert_links.)
+        # and no surrounding transaction needed. (Oracle's FK is immediate, so its
+        # own bulk_insert_links drops a vanished endpoint's link at insert time.)
         from ..schema import fq_store_table
 
         mu_table = fq_store_table("memory_units")

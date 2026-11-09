@@ -818,7 +818,6 @@ async def _relink_batch(
         conn,
         new_links,
         bank_id=bank_id,
-        skip_exists_check=False,
         ops=ops,
     )
     return len(new_links)

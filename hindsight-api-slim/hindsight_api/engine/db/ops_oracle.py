@@ -6,6 +6,7 @@ columns can't appear in GROUP BY).
 """
 
 import json
+import re
 import uuid as uuid_mod
 from datetime import UTC, datetime
 from typing import cast
@@ -25,6 +26,9 @@ from .result import DictResultRow as ResultRow
 from .result import ResultRow as DatabaseResultRow
 
 ORACLE_IN_LIST_LIMIT = 1000
+
+# ORA-02291 on a memory_links -> memory_units FK: the link's endpoint was deleted.
+_VANISHED_UNIT_FK = re.compile(r"ORA-02291\b.*\.FK_ML_(?:FROM|TO)\)", re.IGNORECASE)
 
 
 class OracleOps(DataAccessOps):
@@ -222,29 +226,34 @@ class OracleOps(DataAccessOps):
         sorted_links: list[tuple],
         bank_id: str,
         nil_entity_uuid: str,
-        exists_clause: str,
         chunk_size: int = 5000,
     ) -> None:
-        # The backend rewrites ON CONFLICT DO NOTHING for duplicate suppression.
-        # WHERE EXISTS checks are intentionally skipped: executemany does not support
-        # correlated subqueries in this form, and callers guarantee unit validity.
-        from_ids = [lnk[0] for lnk in sorted_links]
-        to_ids = [lnk[1] for lnk in sorted_links]
-        types = [lnk[2] for lnk in sorted_links]
-        weights = [lnk[3] for lnk in sorted_links]
-        entity_ids = [lnk[4] for lnk in sorted_links]
-
-        await conn.executemany(
-            f"""
+        # A link can point at a unit read before this transaction (an ANN or
+        # temporal neighbor) that a concurrent writer — consolidation pruning, a
+        # document re-retain — has deleted since. Like PostgreSQL, such links are
+        # dropped instead of failing the whole batch with ORA-02291 (#6440). Oracle's
+        # FK is immediate, so the insert itself is the existence check: one row per
+        # statement (the ON CONFLICT rewrite inserts row by row anyway), and a
+        # "parent key not found" on either unit FK drops just that link — Oracle
+        # rolls back the failed statement only. A link that does land holds back a
+        # concurrent DELETE of its endpoint until commit, so no window remains and
+        # no parent lock is needed. (A FOR UPDATE parent lock was tried first and
+        # dropped: Oracle's only row lock is exclusive, so concurrent retains
+        # linking to the same neighbors queued behind each other.)
+        query = f"""
             INSERT INTO {table}
                 (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)
             VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (from_unit_id, to_unit_id, link_type,
                          COALESCE(entity_id, '{nil_entity_uuid}'::uuid))
             DO NOTHING
-            """,
-            [(from_ids[i], to_ids[i], types[i], weights[i], entity_ids[i], bank_id) for i in range(len(sorted_links))],
-        )
+            """
+        for from_id, to_id, link_type, weight, entity_id in sorted_links:
+            try:
+                await conn.execute(query, from_id, to_id, link_type, weight, entity_id, bank_id)
+            except Exception as e:
+                if not _VANISHED_UNIT_FK.search(str(e)):
+                    raise
 
     async def bulk_insert_entities(
         self,

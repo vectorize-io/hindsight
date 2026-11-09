@@ -457,13 +457,14 @@ class DataAccessOps(ABC):
         sorted_links: list[tuple],
         bank_id: str,
         nil_entity_uuid: str,
-        exists_clause: str,
         chunk_size: int = 5000,
     ) -> None:
         """Bulk insert memory_links with conflict handling.
 
-        PG uses INSERT ... SELECT FROM unnest() with chunking.
-        Non-PG uses executemany.
+        Links whose endpoint unit no longer exists (deleted by a concurrent
+        writer since it was read) are dropped, not raised. PG filters them in
+        one INSERT ... SELECT FROM unnest() per chunk; Oracle inserts one row per
+        statement and lets its immediate FK reject them.
         """
         ...
 
