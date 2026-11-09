@@ -174,7 +174,7 @@ Each entry in `entity_labels` is a **label group** — one classification dimens
 | `values` | `[]` | Allowed values for `"value"` and `"multi-values"` types. Ignored for `"text"`, `"multi-text"` and `"map"`. |
 | `fields` | `{}` | Field definitions for `"map"` types. Each field is itself typed (`"text"`, `"multi-text"`, `"value"`, `"multi-values"`, or nested `"map"`). Ignored for non-map types. |
 | `optional` | `true` | When `true` the LLM may skip the label if not applicable. When `false` the LLM must always assign a value. Has no effect on `"multi-values"` or `"multi-text"` groups (always optional). |
-| `tag` | `false` | When `true`, extracted `key:value` labels are also written as tags on the memory unit, enabling filtering via `tags`/`tags_match` in recall/reflect. |
+| `tag` | `false` | When `true`, extracted `key:value` labels are also written as tags on the memory unit, enabling filtering via `tags`/`tags_match` in recall/reflect. A memory keeps these tags until it is extracted again: removing a group (or its `tag` flag) stops new memories from getting them, and changing a document's tags never strips them. To drop them from existing memories, reprocess the document. |
 
 **Enum groups** (`type: "value"` or `type: "multi-values"`): the LLM picks from the predefined `values` list; anything outside the list is silently dropped. Vocabulary stays stable and graph links stay tight. Use `"multi-values"` when a fact can belong to several values at once.
 

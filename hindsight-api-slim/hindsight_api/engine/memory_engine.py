@@ -11808,7 +11808,7 @@ class MemoryEngine(MemoryEngineInterface):
         # nothing, so it has no business rewriting them: each unit keeps the ones it carries
         # (issue #4068). Resolved before the row lock below: on a cache miss it takes a second
         # pool connection, which must not be awaited while holding the lock.
-        from .retain.entity_labels import label_tag_keys, split_label_tags
+        from .retain.entity_labels import carried_label_tags, label_tag_keys
 
         _label_keys: set[str] = set()
         if tags is not None or partial:
@@ -11874,7 +11874,7 @@ class MemoryEngine(MemoryEngineInterface):
                             return list(existing or [])
                         merged = list(retag)
                         seen = set(merged)
-                        for t in split_label_tags(existing, _label_keys):
+                        for t in carried_label_tags(existing, _label_keys, current_tags):
                             if t not in seen:
                                 seen.add(t)
                                 merged.append(t)

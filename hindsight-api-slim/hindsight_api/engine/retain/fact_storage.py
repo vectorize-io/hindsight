@@ -484,6 +484,7 @@ async def update_memory_units_metadata_and_tags(
     *,
     observation_scopes: list | str | None = None,
     label_tag_keys: set[str] | None = None,
+    previous_document_tags: list[str] | None = None,
     ops=None,
 ) -> int:
     """Update document-level attributes on existing memory units.
@@ -500,7 +501,9 @@ async def update_memory_units_metadata_and_tags(
     only acquires them by being extracted — so a survivor, which by definition was not
     re-extracted, keeps the ones it has. ``label_tag_keys`` names the group keys that
     projection claims; a ``key:value`` tag under one of them is carried forward rather
-    than overwritten (issue #4068).
+    than overwritten (issue #4068). So is any ``key:value`` tag the document did not carry
+    before this retain (``previous_document_tags``): it can only be the projection, even when
+    its group has since been removed from the config (issue #6336).
 
     Without that carry-forward the same document ended a delta retain holding units
     labelled ``category:durable`` beside units that were not, differing only in whether
@@ -531,13 +534,13 @@ async def update_memory_units_metadata_and_tags(
         Number of memory units updated.
     """
     from ..memories import get_memories
-    from .entity_labels import split_label_tags
+    from .entity_labels import carried_label_tags
 
     def _tags_for(existing: list[str] | None) -> list[str]:
         """The document tags, plus the label projection this unit already carries."""
         merged = list(tags or [])
         seen = set(merged)
-        for t in split_label_tags(existing, label_tag_keys):
+        for t in carried_label_tags(existing, label_tag_keys, previous_document_tags):
             if t not in seen:
                 seen.add(t)
                 merged.append(t)
