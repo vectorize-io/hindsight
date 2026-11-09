@@ -19,6 +19,11 @@ from one place, so we don't spawn a separate ``asyncio`` task per concern:
   per-model schedule lives in the cron expression; this loop only decides when to
   *check*. The same scan runs ``trigger.full_refresh_cron``, the independent
   schedule on which a (typically delta) model gets a full-mode refresh (#4340).
+- **Attachment sweep** (configurable, default daily): delete the images and files
+  of retains that failed after the API stored them — attachments their document
+  still does not reference a day later (never created, or its update failed).
+  Documents are read from the memories store, so this covers banks whose
+  documents live outside SQL too.
 
 The loop wakes on a short fixed tick and runs each job when its own
 ``last_run + interval`` is due (run-at-start, then on interval), so adding jobs
@@ -109,6 +114,16 @@ _RETENTION_MAX_BATCHES = 1000
 # pods sweeping at once multiply that, which is still orders of magnitude gentler
 # than the unbounded delete this replaces.
 _RETENTION_BATCH_PAUSE_SECONDS = 0.25
+# ── attachment sweep ──────────────────────────────────────────────────────────
+# A retain's attachments are stored before the retain runs; one its document
+# still does not reference a day later — the document was never created, or an
+# update to it failed — belongs to a retain that failed. Only the past
+# week is checked, so a daily run asks about each attachment about six times rather
+# than about every attachment the bank ever held.
+# ponytail: an attachment orphaned while every process was down (or its retain was
+# queued) for over a week is never swept; widen the lookback if that shows up.
+_ATTACHMENT_SWEEP_GRACE = timedelta(days=1)
+_ATTACHMENT_SWEEP_LOOKBACK = timedelta(days=7)
 
 
 @dataclass(frozen=True)
@@ -204,7 +219,8 @@ class MaintenanceLoop:
         llm_on = sweep_on and cfg.llm_trace_enabled and cfg.llm_trace_retention_days > 0
         mm_refresh_on = cfg.mental_model_refresh_tick_seconds > 0
         op_cleanup_on = cfg.operation_cleanup_interval_seconds > 0 and cfg.operation_retention_days > 0
-        return reconcile_on or audit_on or llm_on or mm_refresh_on or op_cleanup_on
+        attachment_sweep_on = cfg.attachment_sweep_interval_seconds > 0
+        return reconcile_on or audit_on or llm_on or mm_refresh_on or op_cleanup_on or attachment_sweep_on
 
     # ── loop ───────────────────────────────────────────────────────────────
 
@@ -268,6 +284,9 @@ class MaintenanceLoop:
             and self._is_due("operation_cleanup", cleanup_interval)
         ):
             await self._run_timed("operation cleanup", self._run_operation_cleanup(cfg))
+        attachment_interval = cfg.attachment_sweep_interval_seconds
+        if attachment_interval > 0 and self._is_due("attachment_sweep", attachment_interval):
+            await self._run_timed("attachment sweep", self._run_attachment_sweep())
 
     async def _run_timed(self, name: str, coro: Coroutine[Any, Any, None]) -> None:
         """Run a maintenance job and emit one timing line for it.
@@ -447,6 +466,62 @@ class MaintenanceLoop:
                 _current_schema.reset(token)
         if pruned:
             logger.info(f"Operation cleanup: pruned {pruned} operation(s) total")
+
+    # ── attachment sweep ─────────────────────────────────────────────────────
+
+    async def _run_attachment_sweep(self) -> None:
+        """Delete the attachments of retains that failed before writing their document.
+
+        Discovery is one query per served schema for the banks that stored an
+        attachment in the window; the engine then reads each of those documents from
+        the bank's memories store and drops the attachments its text does not show. Safe in every process at once: the delete is
+        idempotent, and a second sweeper finds nothing left.
+        """
+        engine = self._engine
+        try:
+            tenants = await engine._tenant_extension.list_tenants()
+        except Exception as e:
+            logger.warning(f"Attachment sweep tenant discovery failed: {e}")
+            return
+        tenant_by_schema = {t.schema: t for t in tenants}
+        default_schema = get_config().database_schema
+        now = datetime.now(timezone.utc)
+        created_before = now - _ATTACHMENT_SWEEP_GRACE
+        created_after = created_before - _ATTACHMENT_SWEEP_LOOKBACK
+
+        removed = 0
+        for schema in {default_schema, *tenant_by_schema}:
+            if self._stop.is_set():
+                break
+            tenant = tenant_by_schema.get(schema)
+            token = _current_schema.set(schema)
+            try:
+                async with acquire_with_retry(engine._backend, max_retries=1) as conn:
+                    bank_ids = [
+                        row["bank_id"]
+                        for row in await conn.fetch(
+                            f"SELECT DISTINCT bank_id FROM {fq_table_explicit('attachments', schema)} "
+                            f"WHERE created_at >= $1 AND created_at < $2",
+                            created_after,
+                            created_before,
+                        )
+                    ]
+                context = RequestContext(internal=True, tenant_id=tenant.tenant_id if tenant else None)
+                for bank_id in bank_ids:
+                    if self._stop.is_set():
+                        break
+                    try:
+                        removed += await engine.reclaim_unreferenced_attachments(
+                            bank_id, created_after, created_before, context
+                        )
+                    except Exception as e:
+                        logger.warning(f"Attachment sweep failed for bank {bank_id} in {schema}: {e}")
+            except Exception as e:
+                logger.warning(f"Attachment sweep failed for schema {schema}: {e}")
+            finally:
+                _current_schema.reset(token)
+        if removed:
+            logger.info(f"Attachment sweep: deleted {removed} attachment(s) of retains that failed")
 
     # ── consolidation reconcile ──────────────────────────────────────────────
 
