@@ -215,12 +215,21 @@ class TestReflect:
             reasons: list[str]
             confidence: str | None = None  # Optional for LLM flexibility
 
-        response = client.reflect(
-            bank_id=bank_id,
-            query="What programming language should I learn for data science?",
-            response_schema=RecommendationResponse.model_json_schema(),
-            max_tokens=10000,
-        )
+        # The extraction step has a deliberately short retry budget (#2433), so a busy provider
+        # (HTTP 429) can fail it; the server then says why in structured_output_error. Retry once,
+        # and only a None with no reason (the server dropping it silently) fails the test.
+        for _ in range(2):
+            response = client.reflect(
+                bank_id=bank_id,
+                query="What programming language should I learn for data science?",
+                response_schema=RecommendationResponse.model_json_schema(),
+                max_tokens=10000,
+            )
+            if response.structured_output is not None:
+                break
+            assert response.structured_output_error, "structured_output is None with no structured_output_error"
+        else:
+            pytest.skip(f"structured-output extraction failed twice: {response.structured_output_error}")
 
         assert response is not None
 
@@ -526,7 +535,6 @@ class TestEntities:
             assert entity.id == entity_id
 
 
-
 class TestTags:
     """Tests for tags filtering functionality."""
 
@@ -537,8 +545,14 @@ class TestTags:
             bank_id=bank_id,
             items=[
                 {"content": "Alice presented the Q3 roadmap at the Monday standup", "tags": ["project_x", "meetings"]},
-                {"content": "Bob wrote the architecture document for the new auth system", "tags": ["project_x", "docs"]},
-                {"content": "Charlie led the sprint planning session for the mobile app", "tags": ["project_y", "meetings"]},
+                {
+                    "content": "Bob wrote the architecture document for the new auth system",
+                    "tags": ["project_x", "docs"],
+                },
+                {
+                    "content": "Charlie led the sprint planning session for the mobile app",
+                    "tags": ["project_y", "meetings"],
+                },
                 {"content": "Diana announced the company picnic for next Friday", "tags": ["company"]},
                 {"content": "Eve mentioned she likes pineapple on pizza"},  # no tags
             ],
@@ -860,12 +874,21 @@ class TestAsyncReflect:
             reasons: list[str]
             confidence: str | None = None
 
-        response = await client.areflect(
-            bank_id=bank_id,
-            query="What programming language should I learn for data science?",
-            response_schema=RecommendationResponse.model_json_schema(),
-            max_tokens=10000,
-        )
+        # The extraction step has a deliberately short retry budget (#2433), so a busy provider
+        # (HTTP 429) can fail it; the server then says why in structured_output_error. Retry once,
+        # and only a None with no reason (the server dropping it silently) fails the test.
+        for _ in range(2):
+            response = await client.areflect(
+                bank_id=bank_id,
+                query="What programming language should I learn for data science?",
+                response_schema=RecommendationResponse.model_json_schema(),
+                max_tokens=10000,
+            )
+            if response.structured_output is not None:
+                break
+            assert response.structured_output_error, "structured_output is None with no structured_output_error"
+        else:
+            pytest.skip(f"structured-output extraction failed twice: {response.structured_output_error}")
 
         assert response is not None
         assert response.structured_output is not None

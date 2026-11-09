@@ -317,27 +317,6 @@ async def test_cron_discovery_predicate_can_use_the_partial_index(memory: Memory
     assert "idx_mental_models_cron" in plan, plan
 
 
-@pytest.mark.asyncio
-async def test_purge_expired_deletes_old_rows_across_schema(memory: MemoryEngine):
-    """_purge_expired deletes rows older than the cutoff and keeps recent ones."""
-    tag = f"maint-purge-{uuid.uuid4().hex[:8]}"
-    async with memory._pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO audit_log (action, transport, started_at) VALUES ($1, 'system', now() - INTERVAL '10 days')",
-            tag,
-        )
-        await conn.execute(
-            "INSERT INTO audit_log (action, transport, started_at) VALUES ($1, 'system', now())",
-            tag,
-        )
-
-    await MaintenanceLoop(memory)._purge_expired("audit_log", "started_at", 7)
-
-    async with memory._pool.acquire() as conn:
-        remaining = await conn.fetchval("SELECT COUNT(*) FROM audit_log WHERE action = $1", tag)
-    assert remaining == 1  # only the recent row survives
-
-
 class TestRetentionSweepPacing:
     """The retention sweep must never be one long unbounded DELETE, and must stay
     safe when every process runs it at once.

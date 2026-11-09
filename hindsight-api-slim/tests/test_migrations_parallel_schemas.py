@@ -122,7 +122,12 @@ def test_parallel_fans_out_across_schemas(monkeypatch):
         with lock:
             active += 1
             max_active = max(max_active, active)
-        time.sleep(0.05)
+        # Hold the slot until three overlap, not for a fixed sleep: on a loaded
+        # runner a thread can start more than 50ms late. Serialized runs never
+        # reach three and fall through on the deadline, so the assert still bites.
+        deadline = time.monotonic() + 5
+        while max_active < 3 and time.monotonic() < deadline:
+            time.sleep(0.005)
         with lock:
             active -= 1
 

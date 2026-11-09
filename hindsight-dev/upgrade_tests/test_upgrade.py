@@ -113,9 +113,12 @@ class TestUpgrade:
             new_results = resp.json()["results"]
             assert len(new_results) > 0, f"No results from recall after upgrade. Bank: {bank_id}"
 
-            # Verify Alice is found
-            found_alice = any("Alice" in r.get("text", "") for r in new_results)
-            assert found_alice, f"Alice not found in results after upgrade: {new_results}"
+            # Verify Alice is still found, if the old version stored her. The old
+            # version's real-LLM extraction sometimes drops that fact, which is not
+            # an upgrade regression (#6397).
+            if any("Alice" in r.get("text", "") for r in old_results):
+                found_alice = any("Alice" in r.get("text", "") for r in new_results)
+                assert found_alice, f"Alice not found in results after upgrade: {new_results}"
 
             # Verify reflect works
             resp = client.post(

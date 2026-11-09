@@ -9,7 +9,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from hindsight_api.admin.reembed import fact_embedding_text, finish_schema, reembed_schema
+from hindsight_api.admin.reembed import _vector_index_names, fact_embedding_text, finish_schema, reembed_schema
 from hindsight_api.engine.embeddings import EMBEDDING_MODEL_SETTING, Embeddings, embedding_model_id
 from hindsight_api.migrations import run_migrations
 
@@ -153,10 +153,9 @@ async def test_reembed_rebuilds_every_vector_and_guards_old_model_writes(pg0_db_
         assert await _stored(conn, schema, "mental_models", "mm1", "b2") == pytest.approx(vector("Weather It rains"))
 
         # The vector indexes exist again, on the new column.
-        indexes = await conn.fetch(
-            "SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND indexdef LIKE '%(embedding %'", schema
-        )
-        assert indexes
+        # Not pg_indexes: it renders every index in the database, and another xdist worker dropping
+        # its schema mid-scan fails the query with "could not open relation with OID".
+        assert await _vector_index_names(conn, schema, "memory_units", "embedding")
 
         new_vec = "[" + ",".join(["0.5"] * DIM) + "]"
         # A connection on the old model (untagged) may not write vectors...

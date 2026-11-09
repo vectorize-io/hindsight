@@ -58,6 +58,7 @@ from .structured_doc import (
     make_block_id,
     make_unique_id,
     normalize_block_text,
+    promote_embedded_headings,
     slugify_heading,
 )
 
@@ -808,4 +809,4 @@ def apply_operations(
 
         skip(op, f"unhandled op type: {type(op).__name__}")  # pragma: no cover
 
-    return AppliedDelta(document=new_doc, applied=applied, skipped=skipped)
+    return AppliedDelta(document=promote_embedded_headings(new_doc, reserved_ids), applied=applied, skipped=skipped)

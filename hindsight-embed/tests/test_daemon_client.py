@@ -799,6 +799,9 @@ class TestProcessCommandLine:
 
         monkeypatch.setattr(dem.platform, "system", lambda: "Windows")
         monkeypatch.setattr(DaemonEmbedManager, "_run_probe", staticmethod(_record))
+        # Force the probe fallback: on a real Windows runner the native read would
+        # otherwise answer for whatever process holds this PID (#6396).
+        monkeypatch.setattr(DaemonEmbedManager, "_windows_native_command_line", staticmethod(lambda _pid: None))
 
         assert DaemonEmbedManager._process_command_line(1234) is None
         assert timeouts, "expected the Windows branch to run at least one probe"
