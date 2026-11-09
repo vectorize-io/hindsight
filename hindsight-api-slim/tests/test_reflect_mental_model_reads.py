@@ -3,7 +3,7 @@
 `search_mental_models` used to return five whole pages with no token budget of any
 kind — 8.7-19k tokens measured on the refresh-cost eval, re-sent on every later
 turn of the loop, the largest single item in a reflect's floor (#4533). It now
-returns what the knowledge-page search returns, a snippet, and `read_mental_models`
+returns what the page search returns, a snippet, and `read_mental_models`
 fetches the pages the model actually wants, under a budget.
 """
 

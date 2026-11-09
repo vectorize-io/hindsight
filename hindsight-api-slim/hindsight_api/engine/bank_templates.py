@@ -6,7 +6,7 @@ server's default template (``HINDSIGHT_API_DEFAULT_BANK_TEMPLATE``) to every new
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from hindsight_api.config import RETAIN_EXTRACTION_MODES, get_config
 from hindsight_api.engine.interface import BankTemplateImportWrite
@@ -91,11 +91,11 @@ class BankTemplateConfig(BaseModel):
         description="When the server has a decision model, reflect lets it prune evidence and decide when to stop",
     )
     mental_model_refresh_use_decision_model: bool | None = Field(
-        default=None, description="The same, for knowledge-page refreshes"
+        default=None, description="The same, for page refreshes"
     )
     mental_model_delta_use_decision_model: bool | None = Field(
         default=None,
-        description="When the server has a decision model, a delta knowledge-page refresh asks it which new "
+        description="When the server has a decision model, a delta page refresh asks it which new "
         "memories could change the page instead of running reflect",
     )
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
@@ -176,10 +176,12 @@ class BankTemplateConfig(BaseModel):
     reflect_source_facts_max_tokens: int | None = Field(
         default=None, description="Max tokens of source facts per reflect call"
     )
-    knowledge_page_default_trigger: dict[str, Any] | None = Field(
+    page_default_trigger: dict[str, Any] | None = Field(
         default=None,
+        # Templates written before the rename carry the old key. Remove in 2.x.
+        validation_alias=AliasChoices("page_default_trigger", "knowledge_page_default_trigger"),
         description=(
-            "Trigger fields merged over the built-in knowledge-page default when a page is created "
+            "Trigger fields merged over the built-in page default when a page is created "
             '(e.g. {"refresh_cron": "0 * * * *"}). A trigger sent with the create request still wins.'
         ),
     )
@@ -190,7 +192,7 @@ class BankTemplateConfig(BaseModel):
             '(e.g. {"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}). '
             "Applied to every reflect request in the bank (API and MCP) that leaves the option unset. "
             "Mental-model refreshes do not read it: they take these options from their own trigger, "
-            "defaulted per bank by knowledge_page_default_trigger."
+            "defaulted per bank by page_default_trigger."
         ),
     )
     mental_model_min_refresh_interval_seconds: int | None = Field(

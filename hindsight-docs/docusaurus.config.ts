@@ -208,6 +208,8 @@ const config: Config = {
     // Indexes src/pages/changelog/integrations/*.md at build time so the
     // Integrations Hub knows which integrations have a changelog page.
     './plugins/integration-changelogs',
+    // Redirects from the old URLs of renamed docs pages.
+    './plugins/renamed-docs',
     [
       '@docusaurus/plugin-content-docs',
       {

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { describe, expect, it, vi } from "vitest";
-import type { ToolSpec } from "../core/knowledge-tools";
+import type { ToolSpec } from "../core/page-tools";
 import { createPiExtension, createPiHooks, toPiTool } from "./pi-extension";
 
 describe("pi extension adapter", () => {
@@ -167,10 +167,10 @@ describe("pi extension adapter", () => {
     expect(onTranscript).not.toHaveBeenCalled();
   });
 
-  it("adapts a knowledge ToolSpec into a pi native tool with a JSON-Schema parameters object", async () => {
+  it("adapts a page ToolSpec into a pi native tool with a JSON-Schema parameters object", async () => {
     const spec: ToolSpec = {
-      name: "hindsight_search_knowledge_pages",
-      description: "Search the knowledge pages",
+      name: "hindsight_search_pages",
+      description: "Search the pages",
       inputSchema: { query: z.string(), limit: z.number().optional() },
       annotations: {
         readOnlyHint: true,
@@ -182,8 +182,8 @@ describe("pi extension adapter", () => {
     };
 
     const def = toPiTool(spec);
-    expect(def.name).toBe("hindsight_search_knowledge_pages");
-    expect(def.label).toBe("hindsight_search_knowledge_pages");
+    expect(def.name).toBe("hindsight_search_pages");
+    expect(def.label).toBe("hindsight_search_pages");
     expect(def.parameters.type).toBe("object");
     expect((def.parameters.properties as Record<string, unknown>).query).toBeDefined();
 

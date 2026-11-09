@@ -32,7 +32,7 @@ export function usageFilePath(): string {
  *  Each segment needs a letter, so `hindsight__hindsight_reflect` cannot match from the first one. */
 const HINDSIGHT_TOOL_RE = /hindsight_(?:[a-z]+_)*[a-z]+$/;
 
-/** The credit line the injected tool guide prescribes (core/knowledge-injection.ts). */
+/** The credit line the injected tool guide prescribes (core/page-injection.ts). */
 const CREDIT_RE = /from hindsight memory/i;
 
 /**
@@ -42,10 +42,14 @@ const CREDIT_RE = /from hindsight memory/i;
  * on real sessions it read ~5% because ingest_document dominated.
  */
 const RETRIEVAL_TOOLS = new Set([
+  "hindsight_search_pages",
+  "hindsight_list_pages",
+  "hindsight_read_page",
+  "hindsight_reflect",
+  // Pre-rename names, still in transcripts recorded before the page tools were renamed. Remove in 2.x.
   "hindsight_search_knowledge_pages",
   "hindsight_list_knowledge_pages",
   "hindsight_read_knowledge_page",
-  "hindsight_reflect",
 ]);
 
 /** Roles a reader uses for the agent's own prose (Gemini-shaped transcripts say "model"). */

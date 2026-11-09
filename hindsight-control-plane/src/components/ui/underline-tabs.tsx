@@ -18,7 +18,7 @@ interface UnderlineTabsProps<T extends string> {
 }
 
 /**
- * The page-level sub-tab row (Memories, Knowledge, Bank Configuration).
+ * The page-level sub-tab row (Memories, Pages, Bank Configuration).
  *
  * On a narrow screen the row scrolls sideways inside itself instead of widening
  * the page, and the active tab is scrolled into view, so adding a tab never

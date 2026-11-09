@@ -79,7 +79,7 @@ def pg_search_vector_expr(
 
     Single source of truth shared by ``memory_units`` (the batch insert over the
     ``input_data`` CTE columns and the curation-revert recompute) and
-    ``mental_models`` (the knowledge-page writes), so the per-backend tokenization
+    ``mental_models`` (the page writes), so the per-backend tokenization
     can never drift between the two tables. Returns ``None`` for backends that
     leave ``search_vector`` unpopulated — pgroonga / pg_textsearch / pg_search
     index the base text columns directly and keep only a dummy column, so there is

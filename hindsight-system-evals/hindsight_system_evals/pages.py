@@ -1,4 +1,4 @@
-"""Build a knowledge page the way a caller does, and report what it converged to.
+"""Build a page the way a caller does, and report what it converged to.
 
 The scenario, end to end through the public API:
 
@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from hindsight_client import Hindsight
-from hindsight_client_api.models.create_knowledge_page_response import CreateKnowledgePageResponse
+from hindsight_client_api.models.create_page_response import CreatePageResponse
 
 from hindsight_system_evals import corpus as corpus_module
 from hindsight_system_evals.corpus import HardFact, HardQuestion
@@ -112,9 +112,9 @@ async def prepare_bank(client: Hindsight, bank_id: str) -> None:
     )
 
 
-async def create_page(client: Hindsight, bank_id: str, question: HardQuestion) -> CreateKnowledgePageResponse:
+async def create_page(client: Hindsight, bank_id: str, question: HardQuestion) -> CreatePageResponse:
     """Create the page for one question, reading raw facts and refreshed explicitly."""
-    return await client.knowledge_base.create_knowledge_page(
+    return await client.pages.create_page(
         bank_id,
         {
             "name": f"eval {question.id}",

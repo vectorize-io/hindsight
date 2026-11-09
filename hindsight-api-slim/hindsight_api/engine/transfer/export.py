@@ -40,10 +40,10 @@ from .schema import (
     TransferChunk,
     TransferDocument,
     TransferFact,
-    TransferKnowledgePage,
     TransferManifest,
     TransferObservation,
     TransferObservationSource,
+    TransferPage,
     TransferScope,
     TransferScopeManifest,
     standalone_mental_models,
@@ -88,7 +88,7 @@ _REPLAYED_TABLES = frozenset(
 #: given. Carried with ``bank_config``.
 _CONFIG_ROW_TABLES = ("banks", "directives", "webhooks")
 #: What the bank has *synthesized from its own memories* — mental models, and
-#: (as typed rows elsewhere) the knowledge-page tree over them. These are carried
+#: (as typed rows elsewhere) the page tree over them. These are carried
 #: with ``data``, not with the configuration: a mental model is a reading of the
 #: bank's facts, and its ``based_on`` evidence points straight at them, so it
 #: belongs with the memories it was derived from rather than with the settings.
@@ -330,11 +330,11 @@ async def stream_export_documents(
                 conn=conn, fq_table=fq_table, bank_id=bank_id, unit_index=tally.unit_index
             )
     mental_models: list[dict] = []
-    knowledge_pages: list[TransferKnowledgePage] = []
+    knowledge_pages: list[TransferPage] = []
     if include_knowledge_base:
         async with as_connection(backend) as conn:
             mental_models = await _dump_bank_rows(conn, "mental_models", bank_id)
-            knowledge_pages = await _load_knowledge_pages(conn, bank_id)
+            knowledge_pages = await _load_pages(conn, bank_id)
 
     if observations:
         async for chunk in streamer.write_file_bytes("observations.json", pydantic_core.to_json(observations)):
@@ -471,8 +471,8 @@ async def _collect(pages: AsyncIterator[list[dict]]) -> list[dict]:
     return [row async for page in pages for row in page]
 
 
-async def _load_knowledge_pages(conn: Any, bank_id: str) -> list[TransferKnowledgePage]:
-    """Load the knowledge-base tree (folders + pages) as typed rows.
+async def _load_pages(conn: Any, bank_id: str) -> list[TransferPage]:
+    """Load the page tree (folders + pages) as typed rows.
 
     Ordered parents-before-children (root folders first) via a recursive walk of
     ``parent_id`` so the archive is deterministic and import can insert in list
@@ -497,7 +497,7 @@ async def _load_knowledge_pages(conn: Any, bank_id: str) -> list[TransferKnowled
         bank_id,
     )
     return [
-        TransferKnowledgePage(
+        TransferPage(
             id=row["id"],
             parent_id=row["parent_id"],
             kind=row["kind"],
@@ -546,7 +546,7 @@ async def stream_export_bank(
     curation archive, the history tables and the mental-model history are read and
     written a page at a time, so none is ever held whole (#5737, #6259). The index
     of every fact, the observations and the bank's own rows (config, mental models,
-    knowledge pages) are still loaded in full before they are written.
+    pages) are still loaded in full before they are written.
 
     Consistency: ``conn_or_backend`` is either one connection (the admin CLI, which
     owns it) or a backend that each read borrows a connection from and returns —
@@ -566,7 +566,7 @@ async def stream_export_bank(
     attachments: list[TransferAttachment] = []
     # Rows written per entry by `write_row_pages`, for the manifest.
     row_counts: dict[str, int] = {}
-    knowledge_pages: list[TransferKnowledgePage] = []
+    knowledge_pages: list[TransferPage] = []
     bank_rows: dict[str, list[dict]] = {}
 
     async def write_rows(entry: str, rows: list[dict]) -> AsyncIterator[bytes]:
@@ -638,11 +638,11 @@ async def stream_export_bank(
 
         # Synthesized knowledge travels with the memories it was synthesized from:
         # a mental model reads the bank's facts and cites them by id, and a
-        # knowledge page is a view over a mental model.
+        # page is a view over a mental model.
         async with as_connection(conn_or_backend) as conn:
             for table in _SYNTHESIZED_ROW_TABLES:
                 bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
-            knowledge_pages = await _load_knowledge_pages(conn, bank_id)
+            knowledge_pages = await _load_pages(conn, bank_id)
         for table in CARRIED_HISTORY_TABLES:
             async for chunk in write_row_pages(
                 f"{table}.json", _iter_history_row_pages(conn_or_backend, table, bank_id)
@@ -657,7 +657,7 @@ async def stream_export_bank(
         async for chunk in write_rows(f"{table}.json", rows):
             yield chunk
     if scope.data:
-        # Typed knowledge-page tree (parent-first). Written even when empty so the
+        # Typed page tree (parent-first). Written even when empty so the
         # importer can distinguish "no pages" from a pre-tree archive.
         pages = pydantic_core.to_json(knowledge_pages) if knowledge_pages else b"[]\n"
         async for chunk in streamer.write_file_bytes("knowledge_pages.json", pages):
@@ -695,7 +695,7 @@ async def stream_export_bank(
 
     logger.info(
         "[transfer] Exported bank %s (data=%s, bank_config=%s, history=%s): %d document(s), "
-        "%d observation(s), %d attachment(s), %d operation(s), %d mental model(s), %d knowledge page(s), "
+        "%d observation(s), %d attachment(s), %d operation(s), %d mental model(s), %d page(s), "
         "%d directive(s), %d webhook(s)",
         bank_id,
         scope.data,
@@ -847,7 +847,7 @@ class BankExportPayload:
     blobs: dict[str, bytes] = field(default_factory=dict)
     data_rows: dict[str, list[dict]] = field(default_factory=dict)
     bank_rows: dict[str, list[dict]] = field(default_factory=dict)
-    knowledge_pages: list[TransferKnowledgePage] = field(default_factory=list)
+    knowledge_pages: list[TransferPage] = field(default_factory=list)
     history_rows: dict[str, list[dict]] = field(default_factory=dict)
 
 
@@ -880,7 +880,7 @@ async def load_bank_export(
         # exact eligibility instead of re-consolidating historical facts (#2965).
         #
         # Only the memories move to the store. Everything below — bank config, mental models,
-        # directives, webhooks, knowledge pages, the history tails — lives in Postgres for every
+        # directives, webhooks, pages, the history tails — lives in Postgres for every
         # deployment, so `conn` stays the source for all of it.
         loaded = await memories.load_transfer_documents(
             conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=None, include_lifecycle=True
@@ -901,16 +901,16 @@ async def load_bank_export(
         data_rows["invalidated_memory_units"] = await _collect(_iter_invalidated_units(conn, bank_id, memories))
 
     bank_rows: dict[str, list[dict]] = {}
-    knowledge_pages: list[TransferKnowledgePage] = []
+    knowledge_pages: list[TransferPage] = []
     if scope.data:
         # Synthesized knowledge travels with the memories it was synthesized from:
         # a mental model reads the bank's facts and cites them by id, and a
-        # knowledge page is a view over a mental model.
+        # page is a view over a mental model.
         for table in _SYNTHESIZED_ROW_TABLES:
             bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
         for table in CARRIED_HISTORY_TABLES:
             bank_rows[table] = await _collect(_iter_history_row_pages(conn, table, bank_id))
-        knowledge_pages = await _load_knowledge_pages(conn, bank_id)
+        knowledge_pages = await _load_pages(conn, bank_id)
     if scope.bank_config:
         for table in _CONFIG_ROW_TABLES:
             bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
@@ -946,7 +946,7 @@ async def build_bank_archive(payload: BankExportPayload) -> bytes:
     scope = payload.scope
     logger.info(
         "[transfer] Exported bank %s (data=%s, bank_config=%s, history=%s): %d document(s), "
-        "%d observation(s), %d attachment(s), %d operation(s), %d mental model(s), %d knowledge page(s), "
+        "%d observation(s), %d attachment(s), %d operation(s), %d mental model(s), %d page(s), "
         "%d directive(s), %d webhook(s), %d byte(s)",
         payload.bank_id,
         scope.data,
@@ -1003,7 +1003,7 @@ def _build_bank_archive_bytes(payload: BankExportPayload) -> bytes:
 
         for table, rows in bank_rows.items():
             zf.writestr(f"{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
-        # Typed knowledge-page tree (parent-first). Written even when empty so the
+        # Typed page tree (parent-first). Written even when empty so the
         # importer can distinguish "no pages" from a pre-tree archive.
         if scope.data:
             zf.writestr(

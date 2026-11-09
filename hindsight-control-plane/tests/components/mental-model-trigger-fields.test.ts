@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { triggerFormFromTrigger, triggerFromForm } from "@/components/mental-model-trigger-fields";
 
 /**
- * The server MERGES a trigger over the stored one (and over the knowledge-page
+ * The server MERGES a trigger over the stored one (and over the page
  * default), so the form must state what it turned off rather than omit it — an
  * omitted field silently keeps its old value.
  */

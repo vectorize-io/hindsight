@@ -92,8 +92,8 @@ describe("buildSessionStartContext", () => {
     // The learning note is USER-VISIBLE (systemMessage), not buried in model context.
     expect(out.systemMessage).toContain("is learning");
     expect(out.systemMessage).toContain("bank-1");
-    // The knowledge preamble is model context, lists live pages, and drops the old static mission.
-    expect(out.additionalContext).toContain("<hindsight_knowledge>");
+    // The pages preamble is model context, lists live pages, and drops the old static mission.
+    expect(out.additionalContext).toContain("<hindsight_pages>");
     expect(out.additionalContext).toContain("deliberately NOT listed here");
     expect(out.additionalContext).not.toContain("agent_knowledge_list_pages");
     // The banner must NOT be duplicated into model context. (The tool guide legitimately
@@ -405,8 +405,8 @@ describe("buildSessionStartContext", () => {
     // Seeding is unaffected by a listPages failure.
     expect(startSeed).toHaveBeenCalledWith("/repo/dir", { limit: 300, harness: "claude-code" });
     // Empty-state roster preamble still renders (no page names, no throw).
-    expect(out.additionalContext).toContain("<hindsight_knowledge>");
-    expect(out.additionalContext).toContain("No knowledge pages yet");
+    expect(out.additionalContext).toContain("<hindsight_pages>");
+    expect(out.additionalContext).toContain("No pages yet");
     expect(out.additionalContext).not.toContain("(p1)");
     // The background-learning note is still user-visible.
     expect(out.systemMessage).toContain("is learning");

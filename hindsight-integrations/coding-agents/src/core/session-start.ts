@@ -2,7 +2,7 @@
  * Shared `SessionStart` lifecycle: deterministically auto-seeds a cold repo's bank from its git
  * history (in the background, non-blocking), keeps warm banks deepening on every start, and
  * injects a short visible note plus the live
- * knowledge-page roster + guidance preamble that tells the agent to consult the repo's pages.
+ * page roster + guidance preamble that tells the agent to consult the repo's pages.
  *
  * Earlier design injected an instruction asking the AGENT to pose a y/n question to the user and
  * then run a seed command itself. Live testing showed that doesn't work: the model surfaces the
@@ -33,7 +33,7 @@ import { deriveBankIdOrSkip } from "./bank";
 import { brandWord } from "./brand";
 import { diag, readHookEvent } from "./diag";
 import { setLogLevel } from "./log";
-import { parsePageList, buildKnowledgePreamble, type PageRef } from "./knowledge-injection";
+import { parsePageList, buildPagesPreamble, type PageRef } from "./page-injection";
 import type { ClientOpts, RetainOpts } from "./hindsight";
 import { buildRetainStamp } from "./retain-stamp";
 import { detectLegacyClaudePlugin, legacyClaudePluginWarning } from "./legacy";
@@ -55,7 +55,7 @@ interface SeedContextClient {
   // Optional: whether the bank holds any document at all. Without it the first-prompt reflect is
   // never deferred — only a confirmed-empty bank is.
   hasDocuments?(): Promise<boolean>;
-  knowledgePagesSupported?: boolean;
+  pagesSupported?: boolean;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
   // minimal test clients omit it, and the baseline write guards on its presence.
   retain?(
@@ -156,7 +156,7 @@ export interface SessionStartHookSpec {
 
 /**
  * Build this session's additionalContext: (maybe) kick off a background auto-seed of a cold repo
- * and (always, unless the hook is disabled) append the knowledge-page bank mission. See module doc
+ * and (always, unless the hook is disabled) append the page bank mission. See module doc
  * for the tri-state cold check. Never throws.
  */
 export async function buildSessionStartContext(args: {
@@ -225,7 +225,7 @@ export async function buildSessionStartContext(args: {
 
   // The banner is USER-FACING and must ride `systemMessage` (the only hook field Claude Code
   // renders in the terminal); `additionalContext` is model-only and would show the human nothing.
-  // The knowledge preamble is model context and stays in `additionalContext`.
+  // The pages preamble is model context and stays in `additionalContext`.
   let systemMessage: string | undefined;
 
   if (cfg.autoSeed !== false) {
@@ -346,12 +346,12 @@ export async function buildSessionStartContext(args: {
   try {
     pages = parsePageList(await client.listPages());
   } catch {
-    if (client.knowledgePagesSupported === false) {
-      diag(harness, "knowledge_pages_unavailable", { bank: bankId });
+    if (client.pagesSupported === false) {
+      diag(harness, "pages_unavailable", { bank: bankId });
     }
     /* fail-open preamble */
   }
-  const additionalContext = buildKnowledgePreamble(pages, {
+  const additionalContext = buildPagesPreamble(pages, {
     reflectOnNewGoals: cfg.autoInject !== "reflect",
     extra: cfg.toolGuideExtra,
   });

@@ -1160,7 +1160,7 @@ def _create_text_search_index(
         # pgroonga index expression mirrors pg_textsearch
         if table_name == "memory_units":
             index_expr = "(COALESCE(text, '') || ' ' || COALESCE(context, '') || ' ' || COALESCE(text_signals, ''))"
-        else:  # mental_models — knowledge_bm25_arm repeats this verbatim
+        else:  # mental_models — page_bm25_arm repeats this verbatim
             index_expr = mental_models_text_document()
 
         logger.info(f"Creating pgroonga index on {table_name}")
@@ -1230,7 +1230,7 @@ def ensure_text_search_extension(
         pg_search_tokenizer: Optional ParadeDB tokenizer to apply to pg_search
             BM25 text fields when indexes are created. Empty keeps the
             ParadeDB default.
-        store_owned_memories: A custom memories store owns the memory rows and the knowledge-page
+        store_owned_memories: A custom memories store owns the memory rows and the page
             search, so neither table is reconciled and the mental_models BM25 index is dropped:
             nothing reads it, yet on the native backend Postgres maintains it on every page write
             (``search_vector`` is a generated column there)
@@ -1484,9 +1484,9 @@ def ensure_text_search_extension(
                     # native (pg_search_vector_expr passes native_inline=False),
                     # so it must be GENERATED exactly like the learnings /
                     # pinned_reflections migration creates it — a plain column
-                    # here would stay NULL and silently empty knowledge search.
+                    # here would stay NULL and silently empty page search.
                     # The 'english' config is hard-coded there and in
-                    # knowledge_bm25_arm's native branch; keep all three in step.
+                    # page_bm25_arm's native branch; keep all three in step.
                     conn.execute(
                         text(f"""
                             ALTER TABLE {schema_name}.{table_name}

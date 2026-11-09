@@ -1,4 +1,4 @@
-"""Where does a wrong knowledge page come from: the synthesis, or the edit?
+"""Where does a wrong page come from: the synthesis, or the edit?
 
 A page that is right after wave 1 and wrong after wave 2 has two candidate
 causes, and they need opposite fixes:

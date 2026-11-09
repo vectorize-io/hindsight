@@ -17,16 +17,21 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-SEARCH_TOOL = "hindsight_search_knowledge_pages"
+#: The search tool, plus its pre-rename name still found in older usage logs. Remove in 2.x.
+SEARCH_TOOLS = frozenset({"hindsight_search_pages", "hindsight_search_knowledge_pages"})
 
 #: The tools that hand memory back, mirroring core/usage.ts. Writes
 #: (ingest_document, capture_initiative) are not retrieval and never count.
 RETRIEVAL_TOOLS = frozenset(
     {
+        "hindsight_search_pages",
+        "hindsight_list_pages",
+        "hindsight_read_page",
+        "hindsight_reflect",
+        # Pre-rename names, still in usage logs recorded before the page tools were renamed. Remove in 2.x.
         "hindsight_search_knowledge_pages",
         "hindsight_list_knowledge_pages",
         "hindsight_read_knowledge_page",
-        "hindsight_reflect",
     }
 )
 
@@ -168,8 +173,8 @@ def read_usage_stats(
         tools.update(calls)
         unique = set(calls)
         stats.turns += 1
-        stats.searches += calls.count(SEARCH_TOOL)
-        stats.turns_with_search += SEARCH_TOOL in unique
+        stats.searches += sum(1 for c in calls if c in SEARCH_TOOLS)
+        stats.turns_with_search += bool(unique & SEARCH_TOOLS)
         retrieval = unique & RETRIEVAL_TOOLS
         stats.retrieval_calls += sum(1 for c in calls if c in RETRIEVAL_TOOLS)
         stats.turns_with_retrieval += bool(retrieval)

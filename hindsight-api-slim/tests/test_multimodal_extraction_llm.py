@@ -135,7 +135,7 @@ async def test_a_fact_is_extracted_from_what_the_image_shows() -> None:
         "After clicking it, wait ten seconds and reconnect.",
     )
 
-    facts_summary = await _extract(text, loader, context="Support knowledge-base article about VPN troubleshooting")
+    facts_summary = await _extract(text, loader, context="Support pages article about VPN troubleshooting")
 
     await assert_meets_criteria(
         response=facts_summary,
@@ -145,7 +145,7 @@ async def test_a_fact_is_extracted_from_what_the_image_shows() -> None:
             "at the image, such as the window being titled 'Network Settings'."
         ),
         context=(
-            "A knowledge-base article was retained as interleaved content: the sentence 'To reset "
+            "A pages article was retained as interleaved content: the sentence 'To reset "
             "the VPN connection, click the button shown below:', then a screenshot of a settings "
             "window with a blue button labelled 'Reset VPN', then 'After clicking it, wait ten "
             "seconds and reconnect.' The screenshot's button label appears nowhere in the text, "
@@ -169,7 +169,7 @@ async def test_the_image_is_read_in_the_context_of_the_prose_around_it() -> None
         "After clicking it, wait ten seconds and reconnect.",
     )
 
-    facts_summary = await _extract(text, loader, context="Support knowledge-base article about VPN troubleshooting")
+    facts_summary = await _extract(text, loader, context="Support pages article about VPN troubleshooting")
 
     await assert_meets_criteria(
         response=facts_summary,

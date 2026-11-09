@@ -54,7 +54,7 @@ describe("readOpencode2Messages", () => {
     const messages: Oc2Message[] = [
       { type: "user", text: "<hindsight_memories>\nleak\n</hindsight_memories>\nWhy retry?" },
       // a message that is NOTHING but injected memory renders empty and is dropped entirely
-      { type: "user", text: "<hindsight_knowledge>\nall of it\n</hindsight_knowledge>" },
+      { type: "user", text: "<hindsight_pages>\nall of it\n</hindsight_pages>" },
     ];
     expect(readOpencode2Messages(messages)).toEqual([{ role: "user", content: "Why retry?" }]);
   });

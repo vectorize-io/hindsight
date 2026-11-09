@@ -325,7 +325,7 @@ class DocumentTransferApi:
         bank_id: StrictStr,
         document_id: Annotated[Optional[List[StrictStr]], Field(description="Document id(s) to export; omit for all")] = None,
         include_observations: Annotated[Optional[StrictBool], Field(description="Also export consolidated observations (restored on import; whole-bank only)")] = None,
-        include_knowledge_base: Annotated[Optional[StrictBool], Field(description="Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)")] = None,
+        include_knowledge_base: Annotated[Optional[StrictBool], Field(description="Also export Mental Models and Pages (restored on import; whole-bank only)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -342,7 +342,7 @@ class DocumentTransferApi:
     ) -> DocumentExportSubmitResponse:
         """(Deprecated) Export documents (async)
 
-        Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).
+        Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Pages (all whole-bank export only).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -350,7 +350,7 @@ class DocumentTransferApi:
         :type document_id: List[str]
         :param include_observations: Also export consolidated observations (restored on import; whole-bank only)
         :type include_observations: bool
-        :param include_knowledge_base: Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)
+        :param include_knowledge_base: Also export Mental Models and Pages (restored on import; whole-bank only)
         :type include_knowledge_base: bool
         :param authorization:
         :type authorization: str
@@ -410,7 +410,7 @@ class DocumentTransferApi:
         bank_id: StrictStr,
         document_id: Annotated[Optional[List[StrictStr]], Field(description="Document id(s) to export; omit for all")] = None,
         include_observations: Annotated[Optional[StrictBool], Field(description="Also export consolidated observations (restored on import; whole-bank only)")] = None,
-        include_knowledge_base: Annotated[Optional[StrictBool], Field(description="Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)")] = None,
+        include_knowledge_base: Annotated[Optional[StrictBool], Field(description="Also export Mental Models and Pages (restored on import; whole-bank only)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -427,7 +427,7 @@ class DocumentTransferApi:
     ) -> ApiResponse[DocumentExportSubmitResponse]:
         """(Deprecated) Export documents (async)
 
-        Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).
+        Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Pages (all whole-bank export only).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -435,7 +435,7 @@ class DocumentTransferApi:
         :type document_id: List[str]
         :param include_observations: Also export consolidated observations (restored on import; whole-bank only)
         :type include_observations: bool
-        :param include_knowledge_base: Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)
+        :param include_knowledge_base: Also export Mental Models and Pages (restored on import; whole-bank only)
         :type include_knowledge_base: bool
         :param authorization:
         :type authorization: str
@@ -495,7 +495,7 @@ class DocumentTransferApi:
         bank_id: StrictStr,
         document_id: Annotated[Optional[List[StrictStr]], Field(description="Document id(s) to export; omit for all")] = None,
         include_observations: Annotated[Optional[StrictBool], Field(description="Also export consolidated observations (restored on import; whole-bank only)")] = None,
-        include_knowledge_base: Annotated[Optional[StrictBool], Field(description="Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)")] = None,
+        include_knowledge_base: Annotated[Optional[StrictBool], Field(description="Also export Mental Models and Pages (restored on import; whole-bank only)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -512,7 +512,7 @@ class DocumentTransferApi:
     ) -> RESTResponseType:
         """(Deprecated) Export documents (async)
 
-        Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).
+        Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Pages (all whole-bank export only).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -520,7 +520,7 @@ class DocumentTransferApi:
         :type document_id: List[str]
         :param include_observations: Also export consolidated observations (restored on import; whole-bank only)
         :type include_observations: bool
-        :param include_knowledge_base: Also export Mental Models and Knowledge Pages (restored on import; whole-bank only)
+        :param include_knowledge_base: Also export Mental Models and Pages (restored on import; whole-bank only)
         :type include_knowledge_base: bool
         :param authorization:
         :type authorization: str

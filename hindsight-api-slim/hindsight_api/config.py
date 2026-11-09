@@ -112,6 +112,12 @@ def static(default_value):
     return field(default=default_value, metadata={"hierarchical": False})
 
 
+# Config keys that were renamed: old name -> new name. Old names keep working
+# everywhere a key is read (env-style overrides, tenant overrides, stored bank
+# config, config PATCH bodies), so no stored row needs migrating. Remove in 2.x.
+_RENAMED_CONFIG_KEYS = {"knowledge_page_default_trigger": "page_default_trigger"}
+
+
 # Configuration key normalization utilities
 def normalize_config_key(key: str) -> str:
     """
@@ -130,7 +136,8 @@ def normalize_config_key(key: str) -> str:
     """
     if key.startswith("HINDSIGHT_API_"):
         key = key[len("HINDSIGHT_API_") :]
-    return key.lower()
+    key = key.lower()
+    return _RENAMED_CONFIG_KEYS.get(key, key)
 
 
 def normalize_config_dict(config: dict[str, Any]) -> dict[str, Any]:
@@ -534,7 +541,7 @@ ENV_MENTAL_MODEL_REFRESH_LLM_CACHE_AFFINITY = "HINDSIGHT_API_MENTAL_MODEL_REFRES
 ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 
 # Per-side embeddings (optional). Recall queries embed through the QUERY side, everything
-# that is stored (retain, consolidation, imports, knowledge pages) through the PASSAGE side
+# that is stored (retain, consolidation, imports, pages) through the PASSAGE side
 # (facts, observations and mental models).
 # A side is "the main embeddings config, with any HINDSIGHT_API_<SIDE>_EMBEDDINGS_<X> laid
 # over HINDSIGHT_API_EMBEDDINGS_<X>" — the same inherit-then-specialize shape as the
@@ -994,7 +1001,9 @@ ENV_OBSERVATION_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_OBSERVATION_HISTORY_MAX_ENT
 ENV_ENABLE_MENTAL_MODEL_HISTORY = "HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY"
 ENV_MENTAL_MODEL_HISTORY_MAX_ENTRIES = "HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES"
 ENV_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS = "HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS"
-ENV_KNOWLEDGE_PAGE_DEFAULT_TRIGGER = "HINDSIGHT_API_KNOWLEDGE_PAGE_DEFAULT_TRIGGER"
+ENV_PAGE_DEFAULT_TRIGGER = "HINDSIGHT_API_PAGE_DEFAULT_TRIGGER"
+# Deprecated name of ENV_PAGE_DEFAULT_TRIGGER, still read as a fallback. Remove in 2.x.
+ENV_PAGE_DEFAULT_TRIGGER_DEPRECATED = "HINDSIGHT_API_KNOWLEDGE_PAGE_DEFAULT_TRIGGER"
 ENV_REFLECT_DEFAULT_OPTIONS = "HINDSIGHT_API_REFLECT_DEFAULT_OPTIONS"
 
 # Webhook configuration (global, static - server-level only)
@@ -1959,10 +1968,10 @@ DEFAULT_ENABLE_MENTAL_MODEL_HISTORY = True  # Mental model history tracking enab
 # (API/MCP/control plane) ignore it entirely. Per-model
 # `trigger.min_refresh_interval_seconds` overrides this.
 DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS = 0
-# Trigger fields layered over the engine's built-in knowledge-page default
-# (MemoryEngine.KNOWLEDGE_PAGE_DEFAULT_TRIGGER) when a page is created; a request's
+# Trigger fields layered over the engine's built-in page default
+# (MemoryEngine.PAGE_DEFAULT_TRIGGER) when a page is created; a request's
 # own trigger still wins. JSON object, e.g. {"refresh_cron": "0 * * * *"}.
-DEFAULT_KNOWLEDGE_PAGE_DEFAULT_TRIGGER: dict | None = None
+DEFAULT_PAGE_DEFAULT_TRIGGER: dict | None = None
 # Reflect options applied whenever a reflect request leaves them unset, e.g.
 # {"reflect_search_observations_max_tokens": 3000}. Fields are those of ReflectDefaultOptions;
 # an explicit request value always wins. Mental-model refreshes do not read it (they use their trigger).
@@ -2144,7 +2153,7 @@ DEFAULT_CONSOLIDATION_WALL_TIMEOUT = 7200  # seconds (2 hours)
 
 # Reflect agent settings
 DEFAULT_REFLECT_MAX_ITERATIONS = 10  # Max tool call iterations before forcing response
-# Whether reflect (and, separately, a knowledge-page refresh) is decision-orchestrated when a
+# Whether reflect (and, separately, a page refresh) is decision-orchestrated when a
 # reflect decision model is set up: the retrieval layers run in parallel rounds and the decision
 # model prunes the evidence and judges when it is enough, in place of the LLM's per-layer turns.
 # On by default, so setting up a decision model is what turns it on; a bank can opt out.
@@ -3846,7 +3855,7 @@ class HindsightConfig:
     enable_mental_model_history: bool
     mental_model_history_max_entries: int
     mental_model_min_refresh_interval_seconds: int
-    knowledge_page_default_trigger: dict | None
+    page_default_trigger: dict | None
     consolidation_batch_size: int
     consolidation_dedup_threshold: float
     consolidation_max_memories_per_round: int
@@ -4293,7 +4302,7 @@ class HindsightConfig:
         "consolidation_strategies",
         # Mental model settings
         "mental_model_min_refresh_interval_seconds",
-        "knowledge_page_default_trigger",
+        "page_default_trigger",
         # Reflect settings
         "reflect_mission",
         "reflect_use_decision_model",
@@ -5662,10 +5671,11 @@ class HindsightConfig:
                     or DEFAULT_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS
                 ),
             ),
-            knowledge_page_default_trigger=json.loads(
-                os.getenv(ENV_KNOWLEDGE_PAGE_DEFAULT_TRIGGER, "").strip() or "null"
+            page_default_trigger=json.loads(
+                (os.getenv(ENV_PAGE_DEFAULT_TRIGGER) or os.getenv(ENV_PAGE_DEFAULT_TRIGGER_DEPRECATED) or "").strip()
+                or "null"
             )
-            or DEFAULT_KNOWLEDGE_PAGE_DEFAULT_TRIGGER,
+            or DEFAULT_PAGE_DEFAULT_TRIGGER,
             consolidation_batch_size=int(
                 os.getenv(ENV_CONSOLIDATION_BATCH_SIZE, str(DEFAULT_CONSOLIDATION_BATCH_SIZE))
             ),

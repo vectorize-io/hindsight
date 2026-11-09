@@ -201,7 +201,7 @@
       "content": [
         {
           "type": "title",
-          "text": "Knowledge pages"
+          "text": "Pages"
         }
       ],
       "width": 220
@@ -643,7 +643,7 @@
               }
             ]
           },
-          "say": "Its first job configures the bank and creates the repo’s knowledge pages, each a question about this project. They start empty."
+          "say": "Its first job configures the bank and creates the repo’s pages, each a question about this project. They start empty."
         },
         {
           "edges": [
@@ -832,7 +832,7 @@
               }
             ]
           },
-          "say": "By default it runs one bounded reflect over the bank. \"pages\" searches the knowledge pages and \"recall\" recalls memories instead — both retrieval-only.",
+          "say": "By default it runs one bounded reflect over the bank. \"pages\" searches the pages and \"recall\" recalls memories instead — both retrieval-only.",
           "ms": 3400
         },
         {
@@ -872,7 +872,7 @@
         {
           "edges": {
             "edge": "on-tool",
-            "data": "search_knowledge_pages(\"rounding\")"
+            "data": "search_pages(\"rounding\")"
           },
           "show": {
             "agent": [
@@ -884,17 +884,17 @@
               {
                 "tag": "tool",
                 "tone": "gray",
-                "text": "hindsight_search_knowledge_pages(\"rounding\")",
+                "text": "hindsight_search_pages(\"rounding\")",
                 "mono": true
               }
             ],
             "tools": [
               {
-                "text": "hindsight_search_knowledge_pages",
+                "text": "hindsight_search_pages",
                 "mono": true
               },
               {
-                "text": "hindsight_list / read_knowledge_page",
+                "text": "hindsight_list / read_page",
                 "mono": true
               },
               {
@@ -937,7 +937,7 @@
               }
             ]
           },
-          "say": "Page search ranks the pages and returns a snippet of each — fast, and visible as a tool call. hindsight_read_knowledge_page opens one in full.",
+          "say": "Page search ranks the pages and returns a snippet of each — fast, and visible as a tool call. hindsight_read_page opens one in full.",
           "ms": 2800
         },
         {
@@ -956,7 +956,7 @@
               {
                 "tag": "tool",
                 "tone": "gray",
-                "text": "hindsight_search_knowledge_pages(\"rounding\")",
+                "text": "hindsight_search_pages(\"rounding\")",
                 "mono": true
               },
               {

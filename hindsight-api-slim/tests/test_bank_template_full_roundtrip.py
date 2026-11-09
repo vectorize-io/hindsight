@@ -111,7 +111,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     ],
     "reflect_source_facts_max_tokens": 4096,
     "mental_model_min_refresh_interval_seconds": 900,
-    "knowledge_page_default_trigger": {"refresh_cron": "0 * * * *", "mode": "full"},
+    "page_default_trigger": {"refresh_cron": "0 * * * *", "mode": "full"},
     "reflect_default_options": {
         "reflect_search_observations_max_tokens": 3000,
         "reflect_search_observations_include_entities": False,

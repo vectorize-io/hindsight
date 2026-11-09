@@ -442,7 +442,7 @@ async def test_an_observation_in_a_bank_without_attachments_reads_nothing_more(m
 
 @pytest.mark.asyncio
 async def test_stored_evidence_ids_read_their_attachments_from_the_store(monkeypatch):
-    """A knowledge page holds its evidence as bare ids, so nothing was carried for them.
+    """A page holds its evidence as bare ids, so nothing was carried for them.
 
     Asked to read what was not carried, the lookup reads those memories from the store, never
     SQL. A memory carried with no ids is not read again, and the default (rows already rendered

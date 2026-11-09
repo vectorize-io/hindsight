@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish system-evals (knowledge-page convergence) results to the dashboard repo's gh-pages branch.
+# Publish system-evals (page convergence) results to the dashboard repo's gh-pages branch.
 #
 # Reads a system-evals JSON (from `pytest evals --output`), enriches it with
 # commit + workflow metadata, then pushes:

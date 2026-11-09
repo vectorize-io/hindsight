@@ -10,7 +10,7 @@ What happens, in order:
    small git repo written for the agent to work in;
 3. a **warm-up session** runs one throwaway turn. Its only job is to trigger the
    plugin's SessionStart seeding and then wait for the bank to settle — a cold
-   bank has no knowledge pages, so measuring against one would score an empty
+   bank has no pages, so measuring against one would score an empty
    memory rather than the prompt;
 4. the measured sessions run, each a fresh Claude session over the same scripted
    turns;

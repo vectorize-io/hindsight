@@ -50,9 +50,9 @@ const promptClient = () =>
   vi.fn(() => ({
     reflect: async () => "",
     listPages: async () => ({ items: [] }),
-    searchKnowledgePages: async () => [],
+    searchPages: async () => [],
     recallObservations: async () => [],
-    knowledgePagesSupported: false,
+    pagesSupported: false,
   }));
 
 const quietly = async (run: () => Promise<void>) => {
@@ -161,8 +161,8 @@ describe("Grok Build context delivery", () => {
     expect(delivered.hookSpecificOutput.hookEventName).toBe("PostToolUse");
     const context: string = delivered.hookSpecificOutput.additionalContext;
     // Both stashed blocks arrive: the session preamble and the prompt's roster refresh.
-    expect(context).toContain("<hindsight_knowledge>");
-    expect(context).toContain("<hindsight_knowledge_refresh>");
+    expect(context).toContain("<hindsight_pages>");
+    expect(context).toContain("<hindsight_page_refresh>");
 
     // Delivered once: the next tool call has nothing to hand over, and never builds a client.
     stdin = toolUse();

@@ -379,11 +379,11 @@ async def test_entities_are_confined(memory, scoped_bank):
 
 
 @pytest.mark.asyncio
-async def test_knowledge_base_is_confined(memory, scoped_bank):
+async def test_page_base_is_confined(memory, scoped_bank):
     admin = RequestContext()
     dan = RequestContext(api_key="dan")
-    kate_folder = await memory.create_knowledge_folder(scoped_bank, "Kate HR", request_context=admin)
-    kate_page = await memory.create_knowledge_page(
+    kate_folder = await memory.create_page_folder(scoped_bank, "Kate HR", request_context=admin)
+    kate_page = await memory.create_page(
         scoped_bank,
         "Kate career",
         "What is Kate planning?",
@@ -392,7 +392,7 @@ async def test_knowledge_base_is_confined(memory, scoped_bank):
         tags=["user:kate"],
         request_context=admin,
     )
-    rules_page = await memory.create_knowledge_page(
+    rules_page = await memory.create_page(
         scoped_bank,
         "Team rules",
         "What are the rules?",
@@ -400,29 +400,27 @@ async def test_knowledge_base_is_confined(memory, scoped_bank):
         tags=["kind:rule"],
         request_context=admin,
     )
-    empty_folder = await memory.create_knowledge_folder(scoped_bank, "Drafts", request_context=admin)
+    empty_folder = await memory.create_page_folder(scoped_bank, "Drafts", request_context=admin)
 
-    tree = await memory.list_knowledge_nodes(scoped_bank, request_context=dan)
+    tree = await memory.list_page_nodes(scoped_bank, request_context=dan)
     assert {n["id"] for n in tree} == {rules_page["id"], empty_folder["id"]}
-    assert await memory.get_knowledge_page(scoped_bank, kate_page["id"], request_context=dan) is None
-    assert await memory.get_knowledge_page(scoped_bank, rules_page["id"], request_context=dan) is not None
+    assert await memory.get_page(scoped_bank, kate_page["id"], request_context=dan) is None
+    assert await memory.get_page(scoped_bank, rules_page["id"], request_context=dan) is not None
 
-    found = await memory.search_knowledge_pages(scoped_bank, "Kate interviewing rules", request_context=dan)
+    found = await memory.search_pages(scoped_bank, "Kate interviewing rules", request_context=dan)
     assert [p["id"] for p in found] == [rules_page["id"]]
-    exported = await memory.export_knowledge_base(scoped_bank, request_context=dan)
+    exported = await memory.export_pages(scoped_bank, request_context=dan)
     assert "interviewing" not in str(exported)
 
     # Writes on what Dan cannot see read as missing; a page in someone else's folder is refused.
-    assert await memory.delete_knowledge_node(scoped_bank, kate_folder["id"], request_context=dan) is False
+    assert await memory.delete_page_node(scoped_bank, kate_folder["id"], request_context=dan) is False
     with pytest.raises(OperationValidationError) as refused:
-        await memory.create_knowledge_page(
-            scoped_bank, "Peek", "q", "", parent_id=kate_folder["id"], request_context=dan
-        )
+        await memory.create_page(scoped_bank, "Peek", "q", "", parent_id=kate_folder["id"], request_context=dan)
     assert refused.value.status_code == 404
     with pytest.raises(OperationValidationError):
-        await memory.update_knowledge_node(scoped_bank, kate_page["id"], name="mine", request_context=dan)
+        await memory.update_page_node(scoped_bank, kate_page["id"], name="mine", request_context=dan)
     with pytest.raises(OperationValidationError) as hidden_tags:
-        await memory.create_knowledge_page(scoped_bank, "Kate notes", "q", "", tags=["user:kate"], request_context=dan)
+        await memory.create_page(scoped_bank, "Kate notes", "q", "", tags=["user:kate"], request_context=dan)
     assert hidden_tags.value.status_code == 403
 
 
@@ -514,15 +512,15 @@ async def test_writes_are_confined_to_the_write_scope(memory, scoped_bank):
     )
     assert updated is not None and "every ad" in updated["content"]
 
-    # Knowledge pages follow the same rule: Dan cannot delete or rename the rules page.
-    page = await memory.create_knowledge_page(
+    # Pages follow the same rule: Dan cannot delete or rename the rules page.
+    page = await memory.create_page(
         scoped_bank, "Rules page", "What are the rules?", "", tags=["kind:rule"], request_context=kate
     )
     with pytest.raises(OperationValidationError) as e:
-        await memory.delete_knowledge_node(scoped_bank, page["id"], request_context=dan)
+        await memory.delete_page_node(scoped_bank, page["id"], request_context=dan)
     assert refused(e) == 403
     with pytest.raises(OperationValidationError):
-        await memory.update_knowledge_node(scoped_bank, page["id"], name="Dan's page", request_context=dan)
+        await memory.update_page_node(scoped_bank, page["id"], name="Dan's page", request_context=dan)
 
 
 @pytest.mark.asyncio
@@ -654,18 +652,16 @@ async def test_every_other_surface_respects_both_scopes(memory, scoped_bank):
     assert TagGroupLeaf(tags=["user:dan", "topic:ads"], match="all_strict") in resolved.tag_groups
 
     # A folder holding a page Dan can only read: renaming or moving into it is refused.
-    folder = await memory.create_knowledge_folder(scoped_bank, "Shared", request_context=admin)
-    await memory.create_knowledge_page(
+    folder = await memory.create_page_folder(scoped_bank, "Shared", request_context=admin)
+    await memory.create_page(
         scoped_bank, "Rules page", "q", "", parent_id=folder["id"], tags=["kind:rule"], request_context=kate
     )
-    my_page = await memory.create_knowledge_page(
-        scoped_bank, "My page", "q", "", tags=["user:dan"], request_context=dan
-    )
+    my_page = await memory.create_page(scoped_bank, "My page", "q", "", tags=["user:dan"], request_context=dan)
     with pytest.raises(OperationValidationError) as e:
-        await memory.update_knowledge_node(scoped_bank, folder["id"], name="Dan's folder", request_context=dan)
+        await memory.update_page_node(scoped_bank, folder["id"], name="Dan's folder", request_context=dan)
     assert e.value.status_code == 403
     with pytest.raises(OperationValidationError) as e:
-        await memory.update_knowledge_node(scoped_bank, my_page["id"], parent_id=folder["id"], request_context=dan)
+        await memory.update_page_node(scoped_bank, my_page["id"], parent_id=folder["id"], request_context=dan)
     assert e.value.status_code == 403
 
 
@@ -876,8 +872,8 @@ _UNSCOPED_BY_DESIGN = {
     "list_bank_aliases": "alias names: settings, no memory content",
     "check_bank_llm": "probes the bank's LLM connectivity; returns status only",
     "get_entity_state": "returns the entity with no observations",
-    "export_knowledge_base": "built from list_knowledge_nodes / get_knowledge_page, which apply the scope",
-    "_knowledge_read_filter": "computes the knowledge-tree scope filter itself",
+    "export_pages": "built from list_page_nodes / get_page, which apply the scope",
+    "_page_read_filter": "computes the page-tree scope filter itself",
     "authorize_bank_template_import_write": (
         "only inside bank_template_import_authorization, which refuses scoped callers"
     ),
@@ -898,10 +894,10 @@ _SCOPE_HANDLING = {
     "_check_retain_writes",
     "_memory_in_tag_scope",
     "_document_in_tag_scope",
-    "_require_knowledge_subtree_writable",
-    "_require_knowledge_nodes_in_tag_scope",
+    "_require_page_subtree_writable",
+    "_require_page_nodes_in_tag_scope",
     "_directive_writable",
-    "_knowledge_read_filter",
+    "_page_read_filter",
 }
 
 

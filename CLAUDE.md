@@ -152,7 +152,7 @@ Main operations:
 - **Retain**: Store memories, extracts facts/entities/relationships, supports document chunking
 - **Recall**: Retrieve memories via 4 parallel strategies (semantic, BM25, graph, temporal) + reranking
 - **Reflect**: Disposition-aware reasoning using memories and mental models
-- **Knowledge Base**: Tree of auto-refreshing synthetic documents (mental models) synthesized by LLM from bank observations; searchable, exportable as markdown, and mountable read-only to the filesystem via hindsight-cli (`hindsight fs mount`)
+- **Pages**: Tree of auto-refreshing synthetic documents (mental models) synthesized by LLM from bank observations; searchable, exportable as markdown, and mountable read-only to the filesystem via hindsight-cli (`hindsight fs mount`)
 - **Directives & Mental Models**: Manage behavioral guidelines (Directives) and consolidated facts (Mental Models)
 
 ### Database

@@ -42,3 +42,11 @@ it("keeps every manifest default through getPluginConfig", () => {
   const dropped = Object.keys(defaults).filter((key) => parsed[key] === undefined);
   expect(dropped).toEqual([]);
 });
+
+it("reads the deprecated allowKnowledgeDelete as allowPageDelete's fallback", () => {
+  expect(getPluginConfig(apiWith({ allowKnowledgeDelete: true })).allowPageDelete).toBe(true);
+  expect(
+    getPluginConfig(apiWith({ allowKnowledgeDelete: true, allowPageDelete: false })).allowPageDelete
+  ).toBe(false);
+  expect(getPluginConfig(apiWith({})).allowPageDelete).toBe(false);
+});

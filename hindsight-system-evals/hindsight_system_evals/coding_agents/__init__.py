@@ -2,7 +2,7 @@
 
 Measured on real Claude Code, in a throwaway HOME, against a real Hindsight
 server. The metric is one number: **searches per user turn** — how often a turn
-makes the agent call ``hindsight_search_knowledge_pages`` (and its sibling
+makes the agent call ``hindsight_search_pages`` (and its sibling
 retrieval tools).
 
 It exists because the observed rate on a developer's own machine was 0.5% of

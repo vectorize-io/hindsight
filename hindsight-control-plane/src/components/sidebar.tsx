@@ -30,7 +30,7 @@ type NavItem =
   | "data"
   | "documents"
   | "entities"
-  | "knowledge"
+  | "pages"
   | "profile";
 
 interface SidebarProps {
@@ -87,7 +87,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
   const navItems = [
     { id: "home" as NavItem, label: t("home"), icon: Home },
     { id: "data" as NavItem, label: t("memories"), icon: Database },
-    { id: "knowledge" as NavItem, label: t("knowledge"), icon: Network },
+    { id: "pages" as NavItem, label: t("pages"), icon: Network },
     { id: "recall" as NavItem, label: t("recall"), icon: Search },
     { id: "reflect" as NavItem, label: t("reflect"), icon: Sparkles },
     { id: "documents" as NavItem, label: t("documents"), icon: FileText },

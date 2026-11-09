@@ -7,7 +7,7 @@ identical, model-agnostic truncation before any backend's `encode()` runs.
 Config is exposed as the generic `HINDSIGHT_API_EMBEDDINGS_MAX_INPUT_TOKENS`, with the
 old LiteLLM-SDK-specific `HINDSIGHT_API_EMBEDDINGS_LITELLM_SDK_MAX_INPUT_TOKENS` kept as
 a deprecated alias for backward compatibility. It defaults to 8192 — the input limit of
-essentially every remote embedding model — because leaving it off let a knowledge page
+essentially every remote embedding model — because leaving it off let a page
 sized to its own 8192-token generation budget fail its refresh permanently (#4165); 0
 opts out.
 """
@@ -160,7 +160,7 @@ class TestFinalPayloadFitsTheCap:
         assert count_tokens(backend.received[0]) <= 50
 
     async def test_page_name_plus_content_fits(self):
-        """#4165: a knowledge page embeds `f"{name} {content}"`. Content sized to the
+        """#4165: a page embeds `f"{name} {content}"`. Content sized to the
         cap plus the name used to arrive exactly one token over."""
         backend = _FakeBackend()
         content = "consolidated " * 9000

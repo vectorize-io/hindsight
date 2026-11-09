@@ -186,7 +186,7 @@ async def retrieve_semantic_bm25_combined_sql(
     # --- BM25 UNION ALL arms (one per fact_type, only when tokens present) ---
     if _include_bm25:
         text_ext = config.text_search_extension
-        # Shared with knowledge search (search_knowledge_pages) so the two BM25
+        # Shared with page search (search_pages) so the two BM25
         # paths cannot drift apart on query shape again — see build_bm25_query_text.
         bm25_text_param: str = await build_bm25_query_text(
             conn,

@@ -80,7 +80,7 @@ describe("buildRetain usage stats", () => {
         msg("assistant", [
           {
             type: "tool_use",
-            name: "mcp__hindsight__hindsight_search_knowledge_pages",
+            name: "mcp__hindsight__hindsight_search_pages",
             input: { query: "rounding" },
           },
           { type: "tool_use", name: "Grep", input: { pattern: "round" } },
@@ -103,7 +103,7 @@ describe("buildRetain usage stats", () => {
         session: "sess-usage",
         bank: "bank-1",
         turn: 1,
-        calls: ["hindsight_search_knowledge_pages"],
+        calls: ["hindsight_search_pages"],
         credited: true,
       });
     } finally {

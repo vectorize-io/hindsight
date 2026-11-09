@@ -12,8 +12,8 @@ from .base import SQLDialect, bm25_score_gate
 
 
 @dataclass(frozen=True)
-class KnowledgeBm25Arm:
-    """Backend-specific BM25 clauses for the knowledge-page full-text arm.
+class PageBm25Arm:
+    """Backend-specific BM25 clauses for the page full-text arm.
 
     ``order_by`` is the arm's ranking expression (distance-based backends order by
     the raw, index-friendly ``ASC`` distance rather than a negated score).
@@ -63,7 +63,7 @@ def pg_search_should(fn: str, fields: tuple[str, ...], text_param: str, tokenize
     return "ARRAY[" + ", ".join(f"{fn}.match('{f}', {text_param})" for f in fields) + "]"
 
 
-def knowledge_bm25_arm(
+def page_bm25_arm(
     text_search_extension: str,
     *,
     table_alias: str,
@@ -72,12 +72,12 @@ def knowledge_bm25_arm(
     pg_search_tokenizer: str = "",
     max_query_terms: int = 0,
     backend_type: str = "postgresql",
-) -> KnowledgeBm25Arm:
-    """BM25 clauses for ``search_knowledge_pages`` on a given text-search backend.
+) -> PageBm25Arm:
+    """BM25 clauses for ``search_pages`` on a given text-search backend.
 
     Mirrors :meth:`PostgreSQLDialect.build_bm25_arm` (the memory-recall BM25 arm)
     but targets the ``mental_models`` BM25 index (``idx_mental_models_text_search``
-    over the page ``name`` + ``content``) that backs knowledge pages. Without this
+    over the page ``name`` + ``content``) that backs pages. Without this
     dispatch the native tsvector SQL (``ts_rank_cd`` / ``@@``) is sent to every
     backend and 500s wherever ``mental_models.search_vector`` is not a tsvector
     (see issue #3268).
@@ -104,7 +104,7 @@ def knowledge_bm25_arm(
         # memory-recall arm uses on memory_units(text). ``text_param`` carries the
         # OR-joined, escaped terms from OracleDialect.prepare_bm25_text. The PG
         # text-search extensions do not exist here, so this wins over them.
-        return KnowledgeBm25Arm(
+        return PageBm25Arm(
             order_by="SCORE(1) DESC",
             # ACCUM instead of the OR the dialect joins terms with: pages matching more
             # query terms rank higher, which OR (max of term scores) does not do.
@@ -121,7 +121,7 @@ def knowledge_bm25_arm(
         # The scalar subquery makes the query an InitPlan, built once per statement:
         # tokenize() is STABLE, so inline it would run again for every row (#5408).
         expr = f"-({a}.search_vector <&> (SELECT to_bm25query('idx_mental_models_text_search', tokenize({p}, 'llmlingua2'))))"
-        return KnowledgeBm25Arm(
+        return PageBm25Arm(
             order_by=f"{expr} DESC",
             # Gate on a positive score: the operator ranks every row, so a bare
             # LIMIT would pad the arm with zero-score non-matches.
@@ -135,7 +135,7 @@ def knowledge_bm25_arm(
         should = pg_search_should(
             pg_search_function_schema, ("name", "content"), p, pg_search_tokenizer, max_query_terms
         )
-        return KnowledgeBm25Arm(
+        return PageBm25Arm(
             order_by=f"{score} DESC",
             match_filter=f"AND {a}.id @@@ {pg_search_function_schema}.boolean(should => {should})",
         )
@@ -145,7 +145,7 @@ def knowledge_bm25_arm(
         # distance (lower = closer), so negate it for a higher-is-better score and
         # order by the raw ASC distance so the index drives the ordering.
         distance = f"{a}.content <@> to_bm25query({p}, 'idx_mental_models_text_search')"
-        return KnowledgeBm25Arm(
+        return PageBm25Arm(
             order_by=f"{distance} ASC",
             match_filter="",
         )
@@ -167,7 +167,7 @@ def knowledge_bm25_arm(
             f"(SELECT string_agg(pgroonga_query_escape(elem->>'value'), ' OR ') "
             f"FROM unnest(pgroonga_tokenize({p}, 'tokenizer', 'TokenBigram', 'normalizer', 'NormalizerNFKC150')) AS elem)"
         )
-        return KnowledgeBm25Arm(
+        return PageBm25Arm(
             order_by=f"{score} DESC, {a}.id",
             match_filter=f"AND {document} &@~ {query_expr}",
         )
@@ -183,9 +183,9 @@ def knowledge_bm25_arm(
     # multi-word queries to return 0 hits. Joining tokens with OR aligns candidate
     # generation with memory recall (build_bm25_arm); ranking is then ts_rank_cd,
     # fused with the vector arm when the search has an embedding to fuse with
-    # (search_knowledge_pages runs no reranker either way).
+    # (search_pages runs no reranker either way).
     score = f"ts_rank_cd({a}.search_vector, to_tsquery('english', {p}))"
-    return KnowledgeBm25Arm(
+    return PageBm25Arm(
         order_by=f"{score} DESC",
         match_filter=f"AND {a}.search_vector @@ to_tsquery('english', {p})",
     )

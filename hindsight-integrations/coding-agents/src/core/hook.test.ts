@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 /** One page with a preamble and two headed sections. Pages are fetched/cached for the
- *  hindsight_search_knowledge_pages tool but are NEVER auto-injected into context. */
+ *  hindsight_search_pages tool but are NEVER auto-injected into context. */
 const PAGE_CONTENT =
   "Preamble prose about this page.\n\n" +
   "## Retry backoff\n" +
@@ -43,7 +43,7 @@ function makeClient(
     reflect: (query: string, opts: { budget?: string; timeoutMs: number }) => Promise<string>;
     listPages: () => Promise<unknown>;
     getPage: (pageId: string) => Promise<unknown>;
-    searchKnowledgePages: (
+    searchPages: (
       query: string,
       opts?: { limit?: number; timeoutMs?: number }
     ) => Promise<{ id: string; name: string; snippet: string }[]>;
@@ -54,7 +54,7 @@ function makeClient(
     reflect: vi.fn(async () => "REFLECT_ANSWER"),
     listPages: vi.fn(async () => ({ items: [{ id: "p1", name: "Uploader guide" }] })),
     getPage: vi.fn(async () => ({ content: PAGE_CONTENT })),
-    searchKnowledgePages: vi.fn(async () => [] as { id: string; name: string; snippet: string }[]),
+    searchPages: vi.fn(async () => [] as { id: string; name: string; snippet: string }[]),
     recallObservations: vi.fn(async () => [] as string[]),
     ...overrides,
   };
@@ -305,7 +305,7 @@ describe("buildHookOutput", () => {
               now += cfg.reflectTimeoutMs;
               throw timedOut();
             }),
-            searchKnowledgePages: vi.fn(async () => {
+            searchPages: vi.fn(async () => {
               now += 1200;
               return [];
             }),
@@ -318,7 +318,7 @@ describe("buildHookOutput", () => {
             cacheFile,
           });
           const budget = injectTimeoutMs ?? 7000;
-          expect(client.searchKnowledgePages).toHaveBeenCalledWith(MATCHING_PROMPT, {
+          expect(client.searchPages).toHaveBeenCalledWith(MATCHING_PROMPT, {
             timeoutMs: budget,
           });
           expect(client.recallObservations).toHaveBeenCalledWith(MATCHING_PROMPT, {
@@ -330,12 +330,12 @@ describe("buildHookOutput", () => {
       }
     );
 
-    it("timeout -> injects matching knowledge pages, skips recall, caches it (no retry)", async () => {
+    it("timeout -> injects matching pages, skips recall, caches it (no retry)", async () => {
       const client = makeClient({
         reflect: vi.fn(async () => {
           throw timedOut();
         }),
-        searchKnowledgePages: vi.fn(async () => [HIT]),
+        searchPages: vi.fn(async () => [HIT]),
       });
       const args = {
         harness: "claude-code",
@@ -348,19 +348,19 @@ describe("buildHookOutput", () => {
       const t1 = await buildHookOutput(args);
 
       // No limit argument: it comes from the client's pageSearchLimit.
-      expect(client.searchKnowledgePages).toHaveBeenCalledWith(MATCHING_PROMPT, {
+      expect(client.searchPages).toHaveBeenCalledWith(MATCHING_PROMPT, {
         timeoutMs: expect.any(Number),
       });
       expect(client.recallObservations).not.toHaveBeenCalled();
       expect(t1.context).toContain("<hindsight_memory>");
       expect(t1.context).toContain("- Upload retries (kp-1): 200ms jitter window");
-      expect(t1.context).toContain("hindsight_read_knowledge_page");
+      expect(t1.context).toContain("hindsight_read_page");
       // The turn got memory, so it stays silent — the details live in the diag trail.
       expect(t1.notice).toBeUndefined();
 
       const t2 = await buildHookOutput(args);
       expect(client.reflect).toHaveBeenCalledTimes(1);
-      expect(client.searchKnowledgePages).toHaveBeenCalledTimes(1);
+      expect(client.searchPages).toHaveBeenCalledTimes(1);
       // Injected once, on the turn it ran — like a reflect answer.
       expect(t2.context ?? "").not.toContain("Upload retries");
     });
@@ -384,7 +384,7 @@ describe("buildHookOutput", () => {
         cacheFile,
       });
 
-      expect(client.searchKnowledgePages).toHaveBeenCalledTimes(1);
+      expect(client.searchPages).toHaveBeenCalledTimes(1);
       expect(client.recallObservations).toHaveBeenCalledWith(MATCHING_PROMPT, {
         timeoutMs: expect.any(Number),
       });
@@ -398,8 +398,8 @@ describe("buildHookOutput", () => {
         reflect: vi.fn(async () => {
           throw timedOut();
         }),
-        searchKnowledgePages: vi.fn(async () => {
-          throw new Error("knowledge pages unavailable");
+        searchPages: vi.fn(async () => {
+          throw new Error("pages unavailable");
         }),
         recallObservations: vi.fn(async () => ["An observation."]),
       });
@@ -452,7 +452,7 @@ describe("buildHookOutput", () => {
           client,
           cacheFile,
         });
-        expect(client.searchKnowledgePages).not.toHaveBeenCalled();
+        expect(client.searchPages).not.toHaveBeenCalled();
         expect(client.recallObservations).not.toHaveBeenCalled();
         expect(out.notice).toContain("no memory this turn");
       }
@@ -497,8 +497,7 @@ describe("buildHookOutput", () => {
           client,
           cacheFile: join(root, `${autoInject}-${injectTimeoutMs}.json`),
         });
-        const retrieve =
-          autoInject === "pages" ? client.searchKnowledgePages : client.recallObservations;
+        const retrieve = autoInject === "pages" ? client.searchPages : client.recallObservations;
         expect(retrieve).toHaveBeenCalledWith(MATCHING_PROMPT, {
           timeoutMs: injectTimeoutMs ?? 7000,
         });
@@ -509,7 +508,7 @@ describe("buildHookOutput", () => {
 
   it("autoInject pages: injects page-search hits once, never reflects or recalls", async () => {
     const client = makeClient({
-      searchKnowledgePages: vi.fn(async () => [
+      searchPages: vi.fn(async () => [
         { id: "p1", name: "Uploader guide", snippet: "retry backoff 200ms jitter" },
       ]),
     });
@@ -534,7 +533,7 @@ describe("buildHookOutput", () => {
       client,
       cacheFile,
     });
-    expect(client.searchKnowledgePages).toHaveBeenCalledTimes(1);
+    expect(client.searchPages).toHaveBeenCalledTimes(1);
     expect(next.context ?? "").not.toContain("<hindsight_memory>");
   });
 
@@ -543,7 +542,7 @@ describe("buildHookOutput", () => {
     // like a search that matched nothing, so a transient blip cost the whole session (#4607).
     const cfg = resolveConfig({ autoInject: "pages" });
     const client = makeClient({
-      searchKnowledgePages: vi.fn(async () => {
+      searchPages: vi.fn(async () => {
         throw new Error("search boom");
       }),
     });
@@ -551,11 +550,11 @@ describe("buildHookOutput", () => {
     await buildHookOutput(args);
     expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBeUndefined();
     await buildHookOutput(args);
-    expect(client.searchKnowledgePages).toHaveBeenCalledTimes(2);
+    expect(client.searchPages).toHaveBeenCalledTimes(2);
     // Budget spent — now it is cached, so a broken search costs 2 turns and then stops.
     expect(JSON.parse(readFileSync(cacheFile, "utf8")).reflectAnswer).toBe("");
     await buildHookOutput(args);
-    expect(client.searchKnowledgePages).toHaveBeenCalledTimes(2);
+    expect(client.searchPages).toHaveBeenCalledTimes(2);
   });
 
   it("autoInject recall: an EMPTY result retries on a later prompt, within a bounded budget", async () => {
@@ -617,7 +616,7 @@ describe("buildHookOutput", () => {
       cacheFile,
     });
     expect(client.reflect).not.toHaveBeenCalled();
-    expect(client.searchKnowledgePages).not.toHaveBeenCalled();
+    expect(client.searchPages).not.toHaveBeenCalled();
     expect(out.context).toContain("- Uploads retry 3 times.");
     expect(out.context).not.toContain("synthesis was unavailable");
   });
@@ -698,7 +697,7 @@ describe("buildHookOutput", () => {
     expect(result.context).not.toContain("Preamble prose about this page.");
     expect(result.context).not.toContain("200ms jitter window");
     expect(result.context).not.toContain("Auth tokens");
-    expect(result.context).not.toContain("hindsight_read_knowledge_page p1");
+    expect(result.context).not.toContain("hindsight_read_page p1");
     expect(result.context).toContain("Automatically retrieved by Hindsight");
     expect(result.context).toContain("REFLECT_ANSWER");
     // The roster is cached for the cadence-based refresh.
@@ -719,7 +718,7 @@ describe("buildHookOutput", () => {
     });
     expect(result.context).toContain("REFLECT_ANSWER"); // reflect still injected
     expect(result.context).not.toContain(PAGES_HEADER);
-    expect(result.context).not.toContain("hindsight_read_knowledge_page p1");
+    expect(result.context).not.toContain("hindsight_read_page p1");
   });
 
   it("empty page list -> no pages block", async () => {
@@ -736,7 +735,7 @@ describe("buildHookOutput", () => {
     expect(result.context).not.toContain(PAGES_HEADER);
     // The tool NAME now appears in the every-turn guide, so the thing to assert
     // is the absence of a page entry, not of the string.
-    expect(result.context).not.toContain("hindsight_read_knowledge_page p1");
+    expect(result.context).not.toContain("hindsight_read_page p1");
   });
 
   it("injects the page-roster refresh only on cadence turns", async () => {
@@ -750,7 +749,7 @@ describe("buildHookOutput", () => {
       client,
       cacheFile,
     });
-    expect(t1.context).not.toContain("hindsight_knowledge_refresh");
+    expect(t1.context).not.toContain("hindsight_page_refresh");
     // turn 2: multiple of 2 -> refresh injected, listing the page roster
     const t2 = await buildHookOutput({
       harness: "claude-code",
@@ -759,7 +758,7 @@ describe("buildHookOutput", () => {
       client,
       cacheFile,
     });
-    expect(t2.context).toContain("<hindsight_knowledge_refresh>");
+    expect(t2.context).toContain("<hindsight_page_refresh>");
     expect(t2.context).toContain("deliberately NOT listed here");
     // reflect block is NOT re-injected on cadence turns (injected once, on the reflect turn)
     expect(t2.context).not.toContain("REFLECT_ANSWER");

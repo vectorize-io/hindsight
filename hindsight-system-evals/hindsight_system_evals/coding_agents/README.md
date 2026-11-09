@@ -1,7 +1,7 @@
 # coding-agents: does the agent actually read memory?
 
 One number: **searches per user turn** — how often a real Claude Code turn calls
-`hindsight_search_knowledge_pages`.
+`hindsight_search_pages`.
 
 It exists because of a measurement, not a hunch. Two days of one developer's
 real Claude Code transcripts: **1360 user turns, 7 searches (0.5% of turns), 37
@@ -127,14 +127,14 @@ injection removes the reason to call the tool.
 **3. The roster is a substitute for search.** With the bank prefilled, the one
 turn whose answer lives only in memory ("the discount and the free shipping
 threshold interact weirdly") triggered retrieval in **5 of 5 sessions** — every
-time as `hindsight_read_knowledge_page`, straight from an id in the roster, and
+time as `hindsight_read_page`, straight from an id in the roster, and
 **never** as a search. The SessionStart block lists every page by title and id;
 with three pages, searching to find one of three titles you can already see is a
 wasted call. The model is behaving correctly. This is why the seeded bank now
 carries a dozen pages, the size of a real repo's.
 
 **4. Withholding the index is what creates a search — and costs retrieval.**
-Replacing the roster with a count plus "call `hindsight_search_knowledge_pages`
+Replacing the roster with a count plus "call `hindsight_search_pages`
 to find the ones that bear on this turn" took searches from 0 to 6 (15% of
 turns), the first non-zero search rate on a prefilled bank. But total retrieval
 *fell*, 30% → 17.5%: the index was doing real work, and a bare count is a weaker
@@ -203,13 +203,13 @@ flag (`transcript_credits`).
 Three changes, each measured separately, together 0% → 72.5%:
 
 1. **Withhold the index.** Tell the agent how many pages exist and how to find
-   them; do not list titles and ids. (`core/knowledge-injection.ts`, `indexLine`.)
+   them; do not list titles and ids. (`core/page-injection.ts`, `indexLine`.)
 2. **Repeat the guide every turn**, not every 10th
    (`pageRefreshEveryTurns`). Free, and worth 15% → 32.5% on its own. Now the
    shipped default, so a run needs no `--config` for it; pass
    `--config pageRefreshEveryTurns=10` to measure the old behaviour.
 3. **Name the trigger moments** rather than describing a category.
-   (`core/knowledge-injection.ts`, `TOOL_GUIDE`.)
+   (`core/page-injection.ts`, `TOOL_GUIDE`.)
 
 Leave `autoInject` alone: switching it off does not help search and halves
 attribution.

@@ -27,7 +27,7 @@ agent-plugin/
 ```
 
 - **`mcp.json`** points the client at Hindsight's built-in MCP server (retain, recall,
-  reflect, knowledge pages, and more — see [MCP Server docs](https://hindsight.vectorize.io/developer/mcp-server)).
+  reflect, pages, and more — see [MCP Server docs](https://hindsight.vectorize.io/developer/mcp-server)).
   The plugin is transport-only; all memory logic stays server-side.
 - **`skills/hindsight-memory/SKILL.md`** is loaded into the agent's context so it knows
   *when* to reach for memory, not just that the tools exist.

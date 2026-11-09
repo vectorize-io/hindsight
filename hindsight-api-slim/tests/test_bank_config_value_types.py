@@ -160,11 +160,11 @@ class TestFormatTaskError:
         assert format_task_error(TimeoutError()) == "TimeoutError"
 
 
-class TestKnowledgePageDefaultTrigger:
+class TestPagePageDefaultTrigger:
     def test_valid_partial_trigger_passes(self):
-        from hindsight_api.config_resolver import _validate_knowledge_page_default_trigger
+        from hindsight_api.config_resolver import _validate_page_default_trigger
 
-        _validate_knowledge_page_default_trigger({"refresh_cron": "0 * * * *", "mode": "full"})
+        _validate_page_default_trigger({"refresh_cron": "0 * * * *", "mode": "full"})
 
     @pytest.mark.parametrize(
         ("value", "match"),
@@ -176,10 +176,10 @@ class TestKnowledgePageDefaultTrigger:
         ],
     )
     def test_invalid_trigger_raises(self, value, match):
-        from hindsight_api.config_resolver import _validate_knowledge_page_default_trigger
+        from hindsight_api.config_resolver import _validate_page_default_trigger
 
         with pytest.raises(ValueError, match=match):
-            _validate_knowledge_page_default_trigger(value)
+            _validate_page_default_trigger(value)
 
 
 class TestReflectDefaultOptions:

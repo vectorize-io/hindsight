@@ -85,7 +85,7 @@ class UnknownParamsRoute(APIRoute):
         `dependant` is FastAPI's resolved view of the endpoint, so both the
         parameter name and any alias a client may legitimately send are covered.
         Sub-dependants are walked too: query params declared by a ``Depends()`` helper
-        (the knowledge-base tag filter) live there, and reading only the top level
+        (the pages tag filter) live there, and reading only the top level
         reported them as ignored while FastAPI was in fact applying them. Walked by
         hand rather than via ``fastapi.dependencies.utils.get_flat_dependant``, which
         newer FastAPI releases removed.

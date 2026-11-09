@@ -7,7 +7,7 @@ import {
   type Workspace,
 } from "./dsh";
 import { readDshEvents } from "./core/transcript-dsh";
-import type { ToolSpec } from "./core/knowledge-tools";
+import type { ToolSpec } from "./core/page-tools";
 import { z } from "zod";
 
 const session = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -68,7 +68,7 @@ describe("dsh pre-step injection", () => {
   it("does not re-append a block identical to the last one the history carries", async () => {
     // dsh keeps every injected message in the history it sends, so the same roster appended on
     // every turn stacked up as N identical copies (#5026).
-    let block = "<hindsight_knowledge_refresh>roster</hindsight_knowledge_refresh>";
+    let block = "<hindsight_page_refresh>roster</hindsight_page_refresh>";
     const core = {
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => block),
@@ -100,7 +100,7 @@ describe("dsh pre-step injection", () => {
     hooks = createDshHooks(() => fakeWorkspace(core));
     expect(await step("s-1", "after restart")).toHaveLength(1);
     // A changed block is injected again.
-    block = "<hindsight_knowledge_refresh>new page</hindsight_knowledge_refresh>";
+    block = "<hindsight_page_refresh>new page</hindsight_page_refresh>";
     expect(await step("s-1", "third")).toHaveLength(2);
   });
 

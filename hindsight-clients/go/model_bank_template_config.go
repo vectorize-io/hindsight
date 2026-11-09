@@ -52,7 +52,7 @@ type BankTemplateConfig struct {
 	DefaultObservationScopes NullableDefaultObservationScopes `json:"default_observation_scopes,omitempty"`
 	ConsolidationStrategies []ConsolidationStrategySpec `json:"consolidation_strategies,omitempty"`
 	ReflectSourceFactsMaxTokens NullableInt32 `json:"reflect_source_facts_max_tokens,omitempty"`
-	KnowledgePageDefaultTrigger map[string]interface{} `json:"knowledge_page_default_trigger,omitempty"`
+	PageDefaultTrigger map[string]interface{} `json:"page_default_trigger,omitempty"`
 	ReflectDefaultOptions map[string]interface{} `json:"reflect_default_options,omitempty"`
 	MentalModelMinRefreshIntervalSeconds NullableInt32 `json:"mental_model_min_refresh_interval_seconds,omitempty"`
 	LlmGeminiSafetySettings []interface{} `json:"llm_gemini_safety_settings,omitempty"`
@@ -1439,37 +1439,37 @@ func (o *BankTemplateConfig) UnsetReflectSourceFactsMaxTokens() {
 	o.ReflectSourceFactsMaxTokens.Unset()
 }
 
-// GetKnowledgePageDefaultTrigger returns the KnowledgePageDefaultTrigger field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *BankTemplateConfig) GetKnowledgePageDefaultTrigger() map[string]interface{} {
+// GetPageDefaultTrigger returns the PageDefaultTrigger field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetPageDefaultTrigger() map[string]interface{} {
 	if o == nil {
 		var ret map[string]interface{}
 		return ret
 	}
-	return o.KnowledgePageDefaultTrigger
+	return o.PageDefaultTrigger
 }
 
-// GetKnowledgePageDefaultTriggerOk returns a tuple with the KnowledgePageDefaultTrigger field value if set, nil otherwise
+// GetPageDefaultTriggerOk returns a tuple with the PageDefaultTrigger field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *BankTemplateConfig) GetKnowledgePageDefaultTriggerOk() (map[string]interface{}, bool) {
-	if o == nil || IsNil(o.KnowledgePageDefaultTrigger) {
+func (o *BankTemplateConfig) GetPageDefaultTriggerOk() (map[string]interface{}, bool) {
+	if o == nil || IsNil(o.PageDefaultTrigger) {
 		return map[string]interface{}{}, false
 	}
-	return o.KnowledgePageDefaultTrigger, true
+	return o.PageDefaultTrigger, true
 }
 
-// HasKnowledgePageDefaultTrigger returns a boolean if a field has been set.
-func (o *BankTemplateConfig) HasKnowledgePageDefaultTrigger() bool {
-	if o != nil && !IsNil(o.KnowledgePageDefaultTrigger) {
+// HasPageDefaultTrigger returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasPageDefaultTrigger() bool {
+	if o != nil && !IsNil(o.PageDefaultTrigger) {
 		return true
 	}
 
 	return false
 }
 
-// SetKnowledgePageDefaultTrigger gets a reference to the given map[string]interface{} and assigns it to the KnowledgePageDefaultTrigger field.
-func (o *BankTemplateConfig) SetKnowledgePageDefaultTrigger(v map[string]interface{}) {
-	o.KnowledgePageDefaultTrigger = v
+// SetPageDefaultTrigger gets a reference to the given map[string]interface{} and assigns it to the PageDefaultTrigger field.
+func (o *BankTemplateConfig) SetPageDefaultTrigger(v map[string]interface{}) {
+	o.PageDefaultTrigger = v
 }
 
 // GetReflectDefaultOptions returns the ReflectDefaultOptions field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2646,8 +2646,8 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	if o.ReflectSourceFactsMaxTokens.IsSet() {
 		toSerialize["reflect_source_facts_max_tokens"] = o.ReflectSourceFactsMaxTokens.Get()
 	}
-	if o.KnowledgePageDefaultTrigger != nil {
-		toSerialize["knowledge_page_default_trigger"] = o.KnowledgePageDefaultTrigger
+	if o.PageDefaultTrigger != nil {
+		toSerialize["page_default_trigger"] = o.PageDefaultTrigger
 	}
 	if o.ReflectDefaultOptions != nil {
 		toSerialize["reflect_default_options"] = o.ReflectDefaultOptions

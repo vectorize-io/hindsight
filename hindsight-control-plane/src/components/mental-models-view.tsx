@@ -145,8 +145,8 @@ export function MentalModelsView() {
   const [filesSelectedId, setFilesSelectedId] = useState<string | null>(null);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagsMatch, setTagsMatch] = useState<"any" | "all">("any");
-  // Off by default: knowledge pages are mental models too, and are listed unless hidden.
-  const [hideKnowledgePages, setHideKnowledgePages] = useState(false);
+  // Off by default: pages are mental models too, and are listed unless hidden.
+  const [hidePages, setHidePages] = useState(false);
   const [showUpdateDialog, setShowUpdateDialog] = useState(false);
   const [mentalModelToUpdate, setMentalModelToUpdate] = useState<MentalModel | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -185,7 +185,7 @@ export function MentalModelsView() {
         tags: selectedTags.length > 0 ? selectedTags : undefined,
         tagsMatch: selectedTags.length > 0 ? tagsMatch : undefined,
         detail: "content",
-        excludeKnowledgePages: hideKnowledgePages,
+        excludePages: hidePages,
       });
       setMentalModels(all);
     } catch (error) {
@@ -270,7 +270,7 @@ export function MentalModelsView() {
     if (currentBank) {
       loadData();
     }
-  }, [currentBank, selectedTags, tagsMatch, hideKnowledgePages]);
+  }, [currentBank, selectedTags, tagsMatch, hidePages]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -335,8 +335,8 @@ export function MentalModelsView() {
               className="flex-1 min-w-[260px]"
             />
             <label className="flex items-center gap-2 h-9 text-sm text-muted-foreground">
-              <Switch checked={hideKnowledgePages} onCheckedChange={setHideKnowledgePages} />
-              {t("hideKnowledgePages")}
+              <Switch checked={hidePages} onCheckedChange={setHidePages} />
+              {t("hidePages")}
             </label>
             <Button onClick={() => setShowCreateMentalModel(true)} size="sm">
               <Plus className="w-4 h-4 mr-2" />

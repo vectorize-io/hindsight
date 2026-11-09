@@ -10,7 +10,7 @@
  *   agent/session-start  -> RuntimeCore.seedIfCold      (cold-check + background git/codebase seed)
  *   agent/pre-step       -> RuntimeCore.onPrompt        (recall) + the injection as a sourced message
  *   agent/turn-stopping  -> RuntimeCore.onSessionIdle   (write-back of the completed exchange)
- *   ctx.tools            -> the hindsight_* knowledge suite, registered natively
+ *   ctx.tools            -> the hindsight_* page suite, registered natively
  *
  * ONE dsh PROCESS SERVES MANY WORKSPACES. Unlike opencode/Kilo/Cline — one process, one project —
  * dsh's Web UI creates sessions in whatever directory the user picks, each with its own
@@ -25,7 +25,7 @@
 import { randomUUID } from "node:crypto";
 import { resolveHostMemory } from "./core/host-client";
 import { diag } from "./core/diag";
-import type { ToolSpec } from "./core/knowledge-tools";
+import type { ToolSpec } from "./core/page-tools";
 import { log } from "./core/log";
 import { RuntimeCore } from "./core/runtime";
 import { HINDSIGHT_PLUGIN, readDshEvents, type DshSessionEvent } from "./core/transcript-dsh";
@@ -182,7 +182,7 @@ function workspaceFor(root: string): Workspace | undefined {
     return undefined;
   }
   // The 5th argument is this host's whole reason for existing here: RuntimeCore binds the
-  // knowledge tools (and retain stamps) to the workspace it is given, and dsh's process cwd is the
+  // page tools (and retain stamps) to the workspace it is given, and dsh's process cwd is the
   // launch directory, routinely a different repository from the session's.
   const core = new RuntimeCore(client, bankId, cfg, HARNESS, root);
   // The write-back path reads the log back off the live agent — dsh keeps the whole session in
@@ -201,7 +201,7 @@ function workspaceFor(root: string): Workspace | undefined {
  *
  * Fire-and-forget by design: `agent/session-start` is an emit that no extension point awaits, and
  * the Web UI must not wait on a network round-trip to open a session. Nothing the first prompt
- * needs comes from here — it builds its own knowledge preamble from that session's page list.
+ * needs comes from here — it builds its own pages preamble from that session's page list.
  */
 function ensureSeeded(workspace: Workspace): void {
   workspace.seeded ??= workspace.core.seedIfCold(workspace.root);

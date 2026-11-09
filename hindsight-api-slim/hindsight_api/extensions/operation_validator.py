@@ -1338,7 +1338,7 @@ class OperationValidatorExtension(Extension, ABC):
         Validate a bank read operation before execution.
 
         Override to implement custom validation logic for bank reads
-        (get_bank_profile, get_bank_stats, and the knowledge-base reads —
+        (get_bank_profile, get_bank_stats, and the page reads —
         knowledge_base_tree / get_knowledge_page / search_knowledge_base /
         export_knowledge_base, which expose mental-model content).
 

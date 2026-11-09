@@ -9,7 +9,7 @@ import { Sidebar } from "@/components/sidebar";
 import { DataView } from "@/components/data-view";
 import { DocumentsView } from "@/components/documents-view";
 import { EntitiesView } from "@/components/entities-view";
-import { KnowledgeBaseView } from "@/components/knowledge-base-view";
+import { PagesView } from "@/components/pages-view";
 import { HomeView } from "@/components/home-view";
 import { ThinkView } from "@/components/think-view";
 import { SearchDebugView } from "@/components/search-debug-view";
@@ -77,10 +77,10 @@ type NavItem =
   | "data"
   | "documents"
   | "entities"
-  | "knowledge"
+  | "pages"
   | "profile";
 type DataSubTab = "world" | "experience" | "observations";
-type KnowledgeTab = "pages" | "models";
+type PagesTab = "pages" | "models";
 type BankConfigTab =
   | "general"
   | "memory-defense"
@@ -109,7 +109,9 @@ export default function BankPage() {
   const { features } = useFeatures();
   const { currentBank: bankId, setCurrentBank, loadBanks } = useBank();
 
-  const view = (searchParams.get("view") || "home") as NavItem;
+  // "knowledge" / knowledgeTab are the tab's old names, still in bookmarked links.
+  const rawView = searchParams.get("view") || "home";
+  const view = (rawView === "knowledge" ? "pages" : rawView) as NavItem;
   // Memories reopens on the sub-tab the user last picked, not always World —
   // unless the URL names one, so a shared link still wins. `undefined` until
   // storage has been read after mount (it can't be read during server render),
@@ -119,7 +121,9 @@ export default function BankPage() {
   useEffect(() => setLastSubTab(readLastDataSubTab()), []);
   const subTab: DataSubTab = urlSubTab || lastSubTab || "world";
   const subTabReady = urlSubTab !== null || lastSubTab !== undefined;
-  const knowledgeTab = (searchParams.get("knowledgeTab") || "pages") as KnowledgeTab;
+  const pagesTab = (searchParams.get("pagesTab") ||
+    searchParams.get("knowledgeTab") ||
+    "pages") as PagesTab;
   const bankConfigTab = (searchParams.get("bankConfigTab") || "general") as BankConfigTab;
   const bankConfigEnabled = features?.bank_config_api ?? false;
   const llmTraceEnabled = features?.llm_trace ?? false;
@@ -206,9 +210,9 @@ export default function BankPage() {
     window.history.pushState(null, "", `?view=data&subTab=${newSubTab}`);
   };
 
-  const handleKnowledgeTabChange = (tab: KnowledgeTab) => {
+  const handlePagesTabChange = (tab: PagesTab) => {
     if (!bankId) return;
-    router.push(bankRoute(bankId, `?view=knowledge&knowledgeTab=${tab}`));
+    router.push(bankRoute(bankId, `?view=pages&pagesTab=${tab}`));
   };
 
   const handleBankConfigTabChange = (newTab: BankConfigTab) => {
@@ -685,16 +689,16 @@ export default function BankPage() {
                 </div>
               )}
 
-              {/* Knowledge Tab — Pages (knowledge base) + Mental Models sub-tabs. */}
-              {view === "knowledge" && (
+              {/* Pages tab — Pages + Mental Models sub-tabs. */}
+              {view === "pages" && (
                 <div>
-                  <h1 className="text-3xl font-bold mb-2 text-foreground">{t("knowledge")}</h1>
-                  <p className="text-muted-foreground mb-4">{t("knowledgeDescription")}</p>
+                  <h1 className="text-3xl font-bold mb-2 text-foreground">{t("pages")}</h1>
+                  <p className="text-muted-foreground mb-4">{t("pagesDescription")}</p>
 
                   <UnderlineTabs
                     className="mb-4"
-                    value={knowledgeTab}
-                    onChange={handleKnowledgeTabChange}
+                    value={pagesTab}
+                    onChange={handlePagesTabChange}
                     tabs={[
                       { id: "pages", label: t("pages") },
                       { id: "models", label: t("mentalModels") },
@@ -705,8 +709,8 @@ export default function BankPage() {
                       bank-scoped piece of state (tree, open tabs, selected page and
                       its backing mental model) is dropped in one go, instead of
                       effects re-running against a half-cleared previous bank. */}
-                  {knowledgeTab === "pages" && <KnowledgeBaseView key={bankId ?? "no-bank"} />}
-                  {knowledgeTab === "models" && (
+                  {pagesTab === "pages" && <PagesView key={bankId ?? "no-bank"} />}
+                  {pagesTab === "models" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">
                         {t("mentalModelsDescription")}

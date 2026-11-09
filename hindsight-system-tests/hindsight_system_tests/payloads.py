@@ -235,7 +235,7 @@ class AddSection(BaseModel):
 
 
 class DeltaOperations(BaseModel):
-    """What a delta knowledge-page refresh's edit call returns."""
+    """What a delta page refresh's edit call returns."""
 
     operations: list[AddSection]
 

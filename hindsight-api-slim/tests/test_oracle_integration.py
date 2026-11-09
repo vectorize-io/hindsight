@@ -1095,7 +1095,7 @@ class TestAdvancedFeatures:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
-    async def test_knowledge_page_failure_rolls_back_mental_model(
+    async def test_page_page_failure_rolls_back_mental_model(
         self, oracle_memory: MemoryEngine, request_context: RequestContext, monkeypatch
     ):
         bank_id = _bank_id("kb-rollback")
@@ -1109,7 +1109,7 @@ class TestAdvancedFeatures:
         monkeypatch.setattr(oracle_memory, "_insert_pinned_mental_model", insert_then_fail)
         try:
             with pytest.raises(RuntimeError, match="page write failed"):
-                await oracle_memory.create_knowledge_page(
+                await oracle_memory.create_page(
                     bank_id,
                     "Rolled back",
                     "What is rolled back?",

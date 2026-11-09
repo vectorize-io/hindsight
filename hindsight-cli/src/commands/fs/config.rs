@@ -29,7 +29,7 @@ pub struct MountConfig {
     pub api_url: String,
     /// Bearer token, if the API requires auth.
     pub api_token: Option<String>,
-    /// Bank whose knowledge base is mirrored.
+    /// Bank whose pages are mirrored.
     pub bank_id: String,
     /// Refresh interval in seconds for the sync loop.
     pub interval_seconds: u64,

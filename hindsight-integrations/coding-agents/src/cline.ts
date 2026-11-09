@@ -204,7 +204,7 @@ const plugin: ClinePlugin = {
     plugin.hooks.beforeModel = hooks.beforeModel;
     plugin.hooks.afterRun = hooks.afterRun;
     // This starts the shared SessionStart lifecycle once for the Cline session: bank cold-check,
-    // knowledge pages, and background seed. Do not await it in setup because Cline loads plugins
+    // pages, and background seed. Do not await it in setup because Cline loads plugins
     // before rendering its TUI; the first beforeModel waits for this shared lifecycle work.
   },
   hooks: {

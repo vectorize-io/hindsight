@@ -11,7 +11,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     const detail = searchParams.get("detail");
     const limit = searchParams.get("limit");
     const offset = searchParams.get("offset");
-    const excludeKnowledgePages = searchParams.get("exclude_knowledge_pages");
+    const excludePages = searchParams.get("exclude_pages");
 
     if (!bankId) {
       return NextResponse.json(
@@ -39,8 +39,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ bank
     if (offset) {
       queryParams.append("offset", offset);
     }
-    if (excludeKnowledgePages) {
-      queryParams.append("exclude_knowledge_pages", excludeKnowledgePages);
+    if (excludePages) {
+      queryParams.append("exclude_pages", excludePages);
     }
 
     const url = dataplaneBankUrl(

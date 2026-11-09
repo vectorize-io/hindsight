@@ -25,7 +25,7 @@ version, config. Then check both sides:
   - The PRs behind them: `gh pr list --state all --search "<keywords>"`, `gh pr view <N> --comments`.
   - Related or duplicate issues: `gh issue list --state all --search "<keywords>"`.
   - Hindsight memory, if the plugin is installed (the `hindsight_*` tools are available): search the
-    knowledge pages and, when you need the *why*, run a reflect. Treat what it says as a past
+    pages and, when you need the *why*, run a reflect. Treat what it says as a past
     record — check it against the code.
 
 ## 2. If it makes no sense, stop here

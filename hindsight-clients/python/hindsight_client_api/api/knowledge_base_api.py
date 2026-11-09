@@ -20,13 +20,13 @@ from pydantic import Field, StrictStr, field_validator
 from typing import Any, List, Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.create_folder_request import CreateFolderRequest
-from hindsight_client_api.models.create_knowledge_page_response import CreateKnowledgePageResponse
 from hindsight_client_api.models.create_page_request import CreatePageRequest
-from hindsight_client_api.models.knowledge_node import KnowledgeNode
-from hindsight_client_api.models.knowledge_page_bundle_response import KnowledgePageBundleResponse
-from hindsight_client_api.models.knowledge_page_response import KnowledgePageResponse
-from hindsight_client_api.models.knowledge_page_search_response import KnowledgePageSearchResponse
-from hindsight_client_api.models.knowledge_tree_response import KnowledgeTreeResponse
+from hindsight_client_api.models.create_page_response import CreatePageResponse
+from hindsight_client_api.models.page_bundle_response import PageBundleResponse
+from hindsight_client_api.models.page_node import PageNode
+from hindsight_client_api.models.page_response import PageResponse
+from hindsight_client_api.models.page_search_response import PageSearchResponse
+from hindsight_client_api.models.page_tree_response import PageTreeResponse
 from hindsight_client_api.models.update_node_request import UpdateNodeRequest
 
 from hindsight_client_api.api_client import ApiClient, RequestSerialized
@@ -65,10 +65,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> KnowledgeNode:
-        """Create a knowledge-base folder
+    ) -> PageNode:
+        """(Deprecated) Create a folder (deprecated path)
 
-        Create a folder, optionally nested under a parent folder.
+        Deprecated alias of `POST /v1/default/banks/{bank_id}/pages/folders`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -97,6 +97,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/knowledge-base/folders is deprecated.", DeprecationWarning)
 
         _param = self._create_knowledge_folder_serialize(
             bank_id=bank_id,
@@ -109,7 +110,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '201': "KnowledgeNode",
+            '201': "PageNode",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -141,10 +142,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[KnowledgeNode]:
-        """Create a knowledge-base folder
+    ) -> ApiResponse[PageNode]:
+        """(Deprecated) Create a folder (deprecated path)
 
-        Create a folder, optionally nested under a parent folder.
+        Deprecated alias of `POST /v1/default/banks/{bank_id}/pages/folders`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -173,6 +174,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/knowledge-base/folders is deprecated.", DeprecationWarning)
 
         _param = self._create_knowledge_folder_serialize(
             bank_id=bank_id,
@@ -185,7 +187,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '201': "KnowledgeNode",
+            '201': "PageNode",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -218,9 +220,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Create a knowledge-base folder
+        """(Deprecated) Create a folder (deprecated path)
 
-        Create a folder, optionally nested under a parent folder.
+        Deprecated alias of `POST /v1/default/banks/{bank_id}/pages/folders`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -249,6 +251,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/knowledge-base/folders is deprecated.", DeprecationWarning)
 
         _param = self._create_knowledge_folder_serialize(
             bank_id=bank_id,
@@ -261,7 +264,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '201': "KnowledgeNode",
+            '201': "PageNode",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -371,10 +374,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> CreateKnowledgePageResponse:
-        """Create a knowledge-base page
+    ) -> CreatePageResponse:
+        """(Deprecated) Create a page (deprecated path)
 
-        Create a page (a mental model + tree node). Content is generated asynchronously; use the returned operation_id to track completion.
+        Deprecated alias of `POST /v1/default/banks/{bank_id}/pages`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -403,6 +406,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/knowledge-base/pages is deprecated.", DeprecationWarning)
 
         _param = self._create_knowledge_page_serialize(
             bank_id=bank_id,
@@ -415,7 +419,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '201': "CreateKnowledgePageResponse",
+            '201': "CreatePageResponse",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -447,10 +451,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[CreateKnowledgePageResponse]:
-        """Create a knowledge-base page
+    ) -> ApiResponse[CreatePageResponse]:
+        """(Deprecated) Create a page (deprecated path)
 
-        Create a page (a mental model + tree node). Content is generated asynchronously; use the returned operation_id to track completion.
+        Deprecated alias of `POST /v1/default/banks/{bank_id}/pages`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -479,6 +483,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/knowledge-base/pages is deprecated.", DeprecationWarning)
 
         _param = self._create_knowledge_page_serialize(
             bank_id=bank_id,
@@ -491,7 +496,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '201': "CreateKnowledgePageResponse",
+            '201': "CreatePageResponse",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -524,9 +529,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Create a knowledge-base page
+        """(Deprecated) Create a page (deprecated path)
 
-        Create a page (a mental model + tree node). Content is generated asynchronously; use the returned operation_id to track completion.
+        Deprecated alias of `POST /v1/default/banks/{bank_id}/pages`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -555,6 +560,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("POST /v1/default/banks/{bank_id}/knowledge-base/pages is deprecated.", DeprecationWarning)
 
         _param = self._create_knowledge_page_serialize(
             bank_id=bank_id,
@@ -567,7 +573,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '201': "CreateKnowledgePageResponse",
+            '201': "CreatePageResponse",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -678,9 +684,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> object:
-        """Delete a knowledge-base node
+        """(Deprecated) Delete a page node (deprecated path)
 
-        Delete a folder or page and its whole subtree (pages' mental models are removed too).
+        Deprecated alias of `DELETE /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -709,6 +715,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("DELETE /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id} is deprecated.", DeprecationWarning)
 
         _param = self._delete_knowledge_node_serialize(
             bank_id=bank_id,
@@ -754,9 +761,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> ApiResponse[object]:
-        """Delete a knowledge-base node
+        """(Deprecated) Delete a page node (deprecated path)
 
-        Delete a folder or page and its whole subtree (pages' mental models are removed too).
+        Deprecated alias of `DELETE /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -785,6 +792,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("DELETE /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id} is deprecated.", DeprecationWarning)
 
         _param = self._delete_knowledge_node_serialize(
             bank_id=bank_id,
@@ -830,9 +838,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Delete a knowledge-base node
+        """(Deprecated) Delete a page node (deprecated path)
 
-        Delete a folder or page and its whole subtree (pages' mental models are removed too).
+        Deprecated alias of `DELETE /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -861,6 +869,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("DELETE /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id} is deprecated.", DeprecationWarning)
 
         _param = self._delete_knowledge_node_serialize(
             bank_id=bank_id,
@@ -969,10 +978,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> KnowledgePageBundleResponse:
-        """Export the knowledge base as a markdown bundle
+    ) -> PageBundleResponse:
+        """(Deprecated) Export the pages as a markdown bundle (deprecated path)
 
-        Return a portable markdown bundle: a nested index.md, one <id>.md per page, and history logs.
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/export`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -999,6 +1008,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/export is deprecated.", DeprecationWarning)
 
         _param = self._export_knowledge_base_serialize(
             bank_id=bank_id,
@@ -1010,7 +1020,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgePageBundleResponse",
+            '200': "PageBundleResponse",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -1042,10 +1052,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[KnowledgePageBundleResponse]:
-        """Export the knowledge base as a markdown bundle
+    ) -> ApiResponse[PageBundleResponse]:
+        """(Deprecated) Export the pages as a markdown bundle (deprecated path)
 
-        Return a portable markdown bundle: a nested index.md, one <id>.md per page, and history logs.
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/export`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1072,6 +1082,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/export is deprecated.", DeprecationWarning)
 
         _param = self._export_knowledge_base_serialize(
             bank_id=bank_id,
@@ -1083,7 +1094,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgePageBundleResponse",
+            '200': "PageBundleResponse",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -1116,9 +1127,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Export the knowledge base as a markdown bundle
+        """(Deprecated) Export the pages as a markdown bundle (deprecated path)
 
-        Return a portable markdown bundle: a nested index.md, one <id>.md per page, and history logs.
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/export`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1145,6 +1156,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/export is deprecated.", DeprecationWarning)
 
         _param = self._export_knowledge_base_serialize(
             bank_id=bank_id,
@@ -1156,7 +1168,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgePageBundleResponse",
+            '200': "PageBundleResponse",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -1253,10 +1265,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> KnowledgeTreeResponse:
-        """Get the knowledge-base tree
+    ) -> PageTreeResponse:
+        """(Deprecated) Get the page tree (deprecated path)
 
-        Return the knowledge base as a nested tree of folders and pages.
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/tree`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1289,6 +1301,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/tree is deprecated.", DeprecationWarning)
 
         _param = self._get_knowledge_base_tree_serialize(
             bank_id=bank_id,
@@ -1303,7 +1316,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgeTreeResponse",
+            '200': "PageTreeResponse",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -1338,10 +1351,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[KnowledgeTreeResponse]:
-        """Get the knowledge-base tree
+    ) -> ApiResponse[PageTreeResponse]:
+        """(Deprecated) Get the page tree (deprecated path)
 
-        Return the knowledge base as a nested tree of folders and pages.
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/tree`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1374,6 +1387,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/tree is deprecated.", DeprecationWarning)
 
         _param = self._get_knowledge_base_tree_serialize(
             bank_id=bank_id,
@@ -1388,7 +1402,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgeTreeResponse",
+            '200': "PageTreeResponse",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -1424,9 +1438,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Get the knowledge-base tree
+        """(Deprecated) Get the page tree (deprecated path)
 
-        Return the knowledge base as a nested tree of folders and pages.
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/tree`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1459,6 +1473,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/tree is deprecated.", DeprecationWarning)
 
         _param = self._get_knowledge_base_tree_serialize(
             bank_id=bank_id,
@@ -1473,7 +1488,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgeTreeResponse",
+            '200': "PageTreeResponse",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -1584,10 +1599,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> KnowledgePageResponse:
-        """Get a knowledge-base page
+    ) -> PageResponse:
+        """(Deprecated) Get a page (deprecated path)
 
-        Return a single page as a markdown document (frontmatter + markdown body).
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/{page_id}`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1616,6 +1631,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/pages/{page_id} is deprecated.", DeprecationWarning)
 
         _param = self._get_knowledge_page_serialize(
             bank_id=bank_id,
@@ -1628,7 +1644,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgePageResponse",
+            '200': "PageResponse",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1660,10 +1676,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[KnowledgePageResponse]:
-        """Get a knowledge-base page
+    ) -> ApiResponse[PageResponse]:
+        """(Deprecated) Get a page (deprecated path)
 
-        Return a single page as a markdown document (frontmatter + markdown body).
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/{page_id}`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1692,6 +1708,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/pages/{page_id} is deprecated.", DeprecationWarning)
 
         _param = self._get_knowledge_page_serialize(
             bank_id=bank_id,
@@ -1704,7 +1721,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgePageResponse",
+            '200': "PageResponse",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1737,9 +1754,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Get a knowledge-base page
+        """(Deprecated) Get a page (deprecated path)
 
-        Return a single page as a markdown document (frontmatter + markdown body).
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/{page_id}`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1768,6 +1785,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/pages/{page_id} is deprecated.", DeprecationWarning)
 
         _param = self._get_knowledge_page_serialize(
             bank_id=bank_id,
@@ -1780,7 +1798,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgePageResponse",
+            '200': "PageResponse",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -1881,10 +1899,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> KnowledgePageSearchResponse:
-        """Hybrid search over knowledge pages (BM25 + vector)
+    ) -> PageSearchResponse:
+        """(Deprecated) Hybrid search over pages (BM25 + vector) (deprecated path)
 
-        Doc-level hybrid search across a bank's knowledge pages: a full-text (BM25) match and a vector-similarity match, Reciprocal-Rank-Fusion fused. No reranker — tuned for latency.
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/search`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -1921,6 +1939,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/search is deprecated.", DeprecationWarning)
 
         _param = self._search_knowledge_base_serialize(
             bank_id=bank_id,
@@ -1937,7 +1956,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgePageSearchResponse",
+            '200': "PageSearchResponse",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -1974,10 +1993,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[KnowledgePageSearchResponse]:
-        """Hybrid search over knowledge pages (BM25 + vector)
+    ) -> ApiResponse[PageSearchResponse]:
+        """(Deprecated) Hybrid search over pages (BM25 + vector) (deprecated path)
 
-        Doc-level hybrid search across a bank's knowledge pages: a full-text (BM25) match and a vector-similarity match, Reciprocal-Rank-Fusion fused. No reranker — tuned for latency.
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/search`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2014,6 +2033,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/search is deprecated.", DeprecationWarning)
 
         _param = self._search_knowledge_base_serialize(
             bank_id=bank_id,
@@ -2030,7 +2050,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgePageSearchResponse",
+            '200': "PageSearchResponse",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -2068,9 +2088,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Hybrid search over knowledge pages (BM25 + vector)
+        """(Deprecated) Hybrid search over pages (BM25 + vector) (deprecated path)
 
-        Doc-level hybrid search across a bank's knowledge pages: a full-text (BM25) match and a vector-similarity match, Reciprocal-Rank-Fusion fused. No reranker — tuned for latency.
+        Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/search`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2107,6 +2127,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("GET /v1/default/banks/{bank_id}/knowledge-base/search is deprecated.", DeprecationWarning)
 
         _param = self._search_knowledge_base_serialize(
             bank_id=bank_id,
@@ -2123,7 +2144,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgePageSearchResponse",
+            '200': "PageSearchResponse",
             '404': None,
             '422': "HTTPValidationError",
         }
@@ -2245,10 +2266,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> KnowledgeNode:
-        """Rename/move a knowledge-base node or update a page's options
+    ) -> PageNode:
+        """(Deprecated) Rename/move a page node or update a page's options (deprecated path)
 
-        Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.
+        Deprecated alias of `PATCH /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2279,6 +2300,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("PATCH /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id} is deprecated.", DeprecationWarning)
 
         _param = self._update_knowledge_node_serialize(
             bank_id=bank_id,
@@ -2292,7 +2314,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgeNode",
+            '200': "PageNode",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2325,10 +2347,10 @@ class KnowledgeBaseApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[KnowledgeNode]:
-        """Rename/move a knowledge-base node or update a page's options
+    ) -> ApiResponse[PageNode]:
+        """(Deprecated) Rename/move a page node or update a page's options (deprecated path)
 
-        Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.
+        Deprecated alias of `PATCH /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2359,6 +2381,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("PATCH /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id} is deprecated.", DeprecationWarning)
 
         _param = self._update_knowledge_node_serialize(
             bank_id=bank_id,
@@ -2372,7 +2395,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgeNode",
+            '200': "PageNode",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(
@@ -2406,9 +2429,9 @@ class KnowledgeBaseApi:
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
     ) -> RESTResponseType:
-        """Rename/move a knowledge-base node or update a page's options
+        """(Deprecated) Rename/move a page node or update a page's options (deprecated path)
 
-        Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.
+        Deprecated alias of `PATCH /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
 
         :param bank_id: (required)
         :type bank_id: str
@@ -2439,6 +2462,7 @@ class KnowledgeBaseApi:
         :type _host_index: int, optional
         :return: Returns the result object.
         """ # noqa: E501
+        warnings.warn("PATCH /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id} is deprecated.", DeprecationWarning)
 
         _param = self._update_knowledge_node_serialize(
             bank_id=bank_id,
@@ -2452,7 +2476,7 @@ class KnowledgeBaseApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "KnowledgeNode",
+            '200': "PageNode",
             '422': "HTTPValidationError",
         }
         response_data = await self.api_client.call_api(

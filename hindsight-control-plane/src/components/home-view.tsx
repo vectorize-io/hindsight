@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { client, type KnowledgeNode } from "@/lib/api";
+import { client, type PageNode } from "@/lib/api";
 import { bankRoute } from "@/lib/bank-url";
 import { Constellation } from "./constellation";
 import type { GraphData, GraphNode, GraphLink } from "./graph-data";
@@ -12,7 +12,7 @@ import { Network, FileText, Layers, FilePlus, ArrowRight } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { formatRelativeTime, formatAbsoluteDateTime } from "@/lib/relative-time";
 import { MemoryStoreCard, MemoriesActivityChart, type BankStats } from "./bank-stats-view";
-import { TreeRow } from "./knowledge-base-view";
+import { TreeRow } from "./pages-view";
 import { useFeatures } from "@/lib/features-context";
 
 const FALLBACK_COLOR = "#0074d9";
@@ -32,7 +32,7 @@ const TYPE_COLORS: Record<string, string> = {
 // source), so recent-docs shows the document id.
 type DocItem = { id?: string; created_at?: string | null };
 
-function flattenPages(nodes: KnowledgeNode[], out: KnowledgeNode[] = []): KnowledgeNode[] {
+function flattenPages(nodes: PageNode[], out: PageNode[] = []): PageNode[] {
   for (const n of nodes) {
     if (n.kind === "page") out.push(n);
     if (n.children?.length) flattenPages(n.children, out);
@@ -40,7 +40,7 @@ function flattenPages(nodes: KnowledgeNode[], out: KnowledgeNode[] = []): Knowle
   return out;
 }
 
-function flattenAll(nodes: KnowledgeNode[], out: KnowledgeNode[] = []): KnowledgeNode[] {
+function flattenAll(nodes: PageNode[], out: PageNode[] = []): PageNode[] {
   for (const n of nodes) {
     out.push(n);
     if (n.children?.length) flattenAll(n.children, out);
@@ -56,15 +56,15 @@ export function HomeView({
   onNavigate: (tab: string) => void;
 }) {
   const t = useTranslations("home");
-  const tk = useTranslations("knowledgeBase");
+  const tk = useTranslations("pages");
   const router = useRouter();
   const { features } = useFeatures();
   const observationsEnabled = features?.observations ?? false;
   const [stats, setStats] = useState<BankStats | null>(null);
   const [graph, setGraph] = useState<{ nodes?: unknown[]; edges?: unknown[] } | null>(null);
   const [graphLoading, setGraphLoading] = useState(true);
-  const [roots, setRoots] = useState<KnowledgeNode[]>([]);
-  const [pages, setPages] = useState<KnowledgeNode[]>([]);
+  const [roots, setRoots] = useState<PageNode[]>([]);
+  const [pages, setPages] = useState<PageNode[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,13 +84,13 @@ export function HomeView({
     // fast, so the dashboard paints immediately.
     Promise.allSettled([
       client.getBankStats(bankId),
-      client.getKnowledgeTree(bankId),
+      client.getPageTree(bankId),
       client.listDocuments({ bank_id: bankId, limit: 6 }),
     ]).then(([s, k, d]) => {
       if (cancelled) return;
       if (s.status === "fulfilled") setStats(s.value as BankStats);
       if (k.status === "fulfilled") {
-        const r = (k.value as { roots?: KnowledgeNode[] }).roots || [];
+        const r = (k.value as { roots?: PageNode[] }).roots || [];
         setRoots(r);
         const flat = flattenPages(r);
         setPages(flat);
@@ -223,14 +223,14 @@ export function HomeView({
           )}
         </div>
 
-        {/* Right column: knowledge pages + recent documents (share the row height). */}
+        {/* Right column: pages + recent documents (share the row height). */}
         <div className="flex flex-col gap-4 lg:h-full min-h-0">
           <div className="bg-card border border-border border-solid rounded-[16px] flex-1 min-h-0 flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
               <h2 className="text-sm font-semibold text-foreground">{t("pagesTitle")}</h2>
               {pages.length > 0 && (
                 <button
-                  onClick={() => onNavigate("knowledge")}
+                  onClick={() => onNavigate("pages")}
                   className="text-xs text-primary hover:underline flex items-center gap-1"
                 >
                   {t("viewAll")} <ArrowRight className="w-3 h-3" />
@@ -239,7 +239,7 @@ export function HomeView({
             </div>
             {pages.length > 0 ? (
               // Same folder/page tree (TOC) as the Pages tab, read-only: shows the
-              // structure + freshness badges; clicking a page opens the Knowledge tab.
+              // structure + freshness badges; clicking a page opens the Pages tab.
               <ul className="py-2 flex-1 min-h-0 overflow-y-auto">
                 {roots.map((node) => (
                   <TreeRow
@@ -251,9 +251,7 @@ export function HomeView({
                     selectedId={null}
                     onToggle={toggleFolder}
                     onOpenPage={(pageId) =>
-                      router.push(
-                        bankRoute(bankId, `?view=knowledge&knowledgeTab=pages&page=${pageId}`)
-                      )
+                      router.push(bankRoute(bankId, `?view=pages&pagesTab=pages&page=${pageId}`))
                     }
                     t={tk}
                   />
@@ -263,7 +261,7 @@ export function HomeView({
               <div className="px-4 py-8 text-center">
                 <Layers className="w-7 h-7 mx-auto mb-2 text-muted-foreground opacity-60" />
                 <p className="text-sm text-muted-foreground mb-3">{t("pagesEmpty")}</p>
-                <Button size="sm" onClick={() => onNavigate("knowledge")}>
+                <Button size="sm" onClick={() => onNavigate("pages")}>
                   <FilePlus className="w-4 h-4 mr-2" />
                   {t("pagesEmptyCta")}
                 </Button>
@@ -318,7 +316,7 @@ export function HomeView({
         </div>
       </div>
 
-      {/* Memory stats demoted below the constellation + knowledge/docs. */}
+      {/* Memory stats demoted below the constellation + pages/docs. */}
       {stats && (
         <div className="mt-4">
           <MemoryStoreCard stats={stats} observationsEnabled={observationsEnabled} />

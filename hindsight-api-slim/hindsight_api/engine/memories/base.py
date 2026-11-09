@@ -767,7 +767,7 @@ class MemoryScopeWatermark:
     """One "has this scope changed?" question, for the batched staleness check.
 
     ``key`` is opaque to the store — it is whatever the caller wants the answer
-    reported under (a mental-model id, a knowledge-page id) — and the scope
+    reported under (a mental-model id, a page id) — and the scope
     fields are the same ones :meth:`MemoriesExtension.any_memory_updated_since`
     takes for a single model, so the two surfaces cannot drift apart.
     """
@@ -933,8 +933,8 @@ class FullRecallRequest:
 
 
 @dataclass
-class KnowledgePageEntry:
-    """One knowledge page as the store indexes it.
+class PageEntry:
+    """One page as the store indexes it.
 
     Only what a search needs. The page's own row — its name, body, folder, trigger, history —
     stays in Postgres, which remains the authority; this is the derived half.
@@ -949,13 +949,13 @@ class KnowledgePageEntry:
     #: The page's visibility tags, so a scoped search filters inside the store rather than
     #: over-fetching and discarding — a discarded hit has already cost a top-k slot.
     tags: list[str] = field(default_factory=list)
-    #: When the page's row last changed. Read back by :meth:`MemoriesExtension.list_knowledge_pages`
+    #: When the page's row last changed. Read back by :meth:`MemoriesExtension.list_pages`
     #: so a reconcile can spot a stale index entry without reading the page.
     updated_at: datetime | None = None
 
 
 @dataclass
-class KnowledgePageRef:
+class PageRef:
     """A page as the reconcile pass sees it: what the store holds and how old it thinks it is."""
 
     page_id: str
@@ -963,7 +963,7 @@ class KnowledgePageRef:
 
 
 @dataclass
-class KnowledgePageMatch:
+class PageMatch:
     """One search result. ``score`` is comparable within a result set, not across stores."""
 
     page_id: str
@@ -1154,9 +1154,9 @@ class MemoriesExtension(Extension, ABC):
     #: entire retain — resolution, upserts and the document replace — as ONE atomic server-side call
     #: (``retain``). The orchestrator then needs no Postgres connection phase for it.
     #:
-    #: It also selects the KNOWLEDGE-PAGE index: a store that owns its memories serves
-    #: `search_knowledge_pages` and the reflect tool from its own index, and the page write paths
-    #: call :meth:`index_knowledge_pages` / :meth:`delete_knowledge_pages`. The Postgres row is
+    #: It also selects the PAGE index: a store that owns its memories serves
+    #: `search_pages` and the reflect tool from its own index, and the page write paths
+    #: call :meth:`index_pages` / :meth:`delete_pages`. The Postgres row is
     #: still written first and is still what a hit is hydrated from — the store holds a DERIVED
     #: copy, so a divergence is repaired by indexing again rather than restored from a backup.
     #:
@@ -1253,9 +1253,9 @@ class MemoriesExtension(Extension, ABC):
         live in different backends. Defaults to the class attribute."""
         return self.derives_semantic_links_internally
 
-    # -- the knowledge-page index -------------------------------------------
+    # -- the page index -------------------------------------------
     #
-    # Knowledge pages are the one place where a store holds a DERIVED copy rather than the
+    # Pages are the one place where a store holds a DERIVED copy rather than the
     # authority. The page's row stays in Postgres; the store keeps only an index over its text and
     # embedding, so a lost or diverged entry is repaired by indexing it again and the two never need
     # a transaction between them.
@@ -1266,7 +1266,7 @@ class MemoriesExtension(Extension, ABC):
     # already the thing answering its searches, so splitting the two only creates a combination
     # nothing sets and every call site has to keep handling.
 
-    async def index_knowledge_pages(self, bank_id: str, entries: list["KnowledgePageEntry"]) -> None:
+    async def index_pages(self, bank_id: str, entries: list["PageEntry"]) -> None:
         """Upsert pages into the store's index. A ``page_id`` already present is replaced.
 
         Called after the Postgres row is committed, so an entry here always describes a row that
@@ -1276,14 +1276,14 @@ class MemoriesExtension(Extension, ABC):
         Replacing rather than merging is deliberate: a derived index has nothing worth preserving
         across a rewrite, and it makes re-indexing everything idempotent, which is what lets the
         reconcile pass be "put them all again"."""
-        raise NotImplementedError("this store does not index knowledge pages")
+        raise NotImplementedError("this store does not index pages")
 
-    async def delete_knowledge_pages(self, bank_id: str, page_ids: list[str]) -> None:
+    async def delete_pages(self, bank_id: str, page_ids: list[str]) -> None:
         """Remove pages from the index. Deleting one the store does not hold must be a no-op, so a
         reconcile can reap an entry it believes is stale without first proving it is there."""
-        raise NotImplementedError("this store does not index knowledge pages")
+        raise NotImplementedError("this store does not index pages")
 
-    async def search_knowledge_pages(
+    async def search_pages(
         self,
         bank_id: str,
         *,
@@ -1293,7 +1293,7 @@ class MemoriesExtension(Extension, ABC):
         tags: list[str] | None = None,
         tags_match: TagsMatch = "any",
         tag_groups: list | None = None,
-    ) -> list["KnowledgePageMatch"]:
+    ) -> list["PageMatch"]:
         """Hybrid search over the bank's pages: text and (when given) embedding, fused BY THE STORE.
 
         Fusion is the store's business because only it knows what its arms produce — one returning
@@ -1304,9 +1304,9 @@ class MemoriesExtension(Extension, ABC):
         Returns ids only. The caller joins them back to Postgres for name, snippet and folder — and
         that join is also what filters out ids that are not pages, so the store never needs to know
         the difference between a page and a pinned mental model."""
-        raise NotImplementedError("this store does not index knowledge pages")
+        raise NotImplementedError("this store does not index pages")
 
-    async def search_knowledge_pages_semantic(
+    async def search_pages_semantic(
         self,
         bank_id: str,
         *,
@@ -1316,24 +1316,24 @@ class MemoriesExtension(Extension, ABC):
         tags_match: TagsMatch = "any",
         tag_groups: list | None = None,
         exclude_ids: list[str] | None = None,
-    ) -> list["KnowledgePageMatch"]:
+    ) -> list["PageMatch"]:
         """Pure vector search over the bank's pages, for the reflect tool.
 
-        Separate from :meth:`search_knowledge_pages` because the two want different answers, not
+        Separate from :meth:`search_pages` because the two want different answers, not
         different tunings of one: this one reports ``score`` as a **similarity in [0, 1]**, which
         the agent surfaces as a relevance figure, and a fused hybrid score cannot stand in for it.
 
         ``exclude_ids`` drops pages from the result — a refresh must not retrieve the very page it
         is regenerating."""
-        raise NotImplementedError("this store does not index knowledge pages")
+        raise NotImplementedError("this store does not index pages")
 
-    async def list_knowledge_pages(self, bank_id: str) -> list["KnowledgePageRef"]:
+    async def list_pages(self, bank_id: str) -> list["PageRef"]:
         """Every page the store currently indexes for this bank.
 
         The read half of the reconcile: diff it against the bank's `mental_models` rows to find both
         what is missing from the index and what is left over in it. Bounded by the bank's page
         count, which is a curated set rather than its corpus."""
-        raise NotImplementedError("this store does not index knowledge pages")
+        raise NotImplementedError("this store does not index pages")
 
     async def retain(
         self,
@@ -2171,7 +2171,7 @@ class MemoriesExtension(Extension, ABC):
     ) -> dict[str, bool]:
         """:meth:`any_memory_updated_since` for many scopes at once, keyed by ``scope.key``.
 
-        The knowledge tree and the mental-model list both need the answer for
+        The page tree and the mental-model list both need the answer for
         every model in a bank on one read, and asking one at a time makes the
         round-trips, not the scans, the cost. A store that can answer them
         together should override this; the default is the honest loop, so a
@@ -2239,7 +2239,7 @@ class MemoriesExtension(Extension, ABC):
     ) -> list[StoredMemory] | None:
         """The memories in :meth:`newest_memory_updated_at`'s scope and window, oldest first.
 
-        A delta knowledge-page refresh reads them to ask a decision model which could
+        A delta page refresh reads them to ask a decision model which could
         change the page, instead of searching for them. None means this store cannot
         list them, and the refresh searches as it always has.
         """
@@ -2340,7 +2340,7 @@ class MemoriesExtension(Extension, ABC):
         the bank's memories, or None for an empty bank. It is the bank-wide
         counterpart of :meth:`any_memory_updated_since`: a mental model whose
         ``last_memory_seen_at`` is at or after it cannot be stale, whatever its
-        scope — which is how the stats and knowledge-tree surfaces answer "is
+        scope — which is how the stats and page-tree surfaces answer "is
         this up to date" for many models without a scoped scan each.
         """
         raise NotImplementedError

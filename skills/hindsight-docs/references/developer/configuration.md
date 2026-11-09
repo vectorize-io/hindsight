@@ -1079,7 +1079,7 @@ Do not mix embeddings from different models in the same vector index. Switching 
 The default ONNX query/document prefixes (`query: ` and `passage: `) are for E5 models. Clear both prefix variables for non-E5 models such as MiniLM or BGE, otherwise Hindsight will prepend E5-style text to models that were not trained with that format.
 #### Separate Query and Passage Embeddings
 
-Every search embeds a query: recall, reflect, knowledge-page search, and the searches consolidation runs to find related observations. Everything that gets stored (facts, observations and mental models) is embedded as a passage. By default both go through the one embeddings config above. You can give either side its own config, the same way [per-operation LLMs](#per-operation-llm-configuration) work: each side starts from the main embeddings config, and any variable you set for that side replaces the main one.
+Every search embeds a query: recall, reflect, page search, and the searches consolidation runs to find related observations. Everything that gets stored (facts, observations and mental models) is embedded as a passage. By default both go through the one embeddings config above. You can give either side its own config, the same way [per-operation LLMs](#per-operation-llm-configuration) work: each side starts from the main embeddings config, and any variable you set for that side replaces the main one.
 
 | Side | Used for | Variable pattern |
 |---|---|---|
@@ -1617,7 +1617,7 @@ The `jina-mlx` provider uses [`jinaai/jina-reranker-v3-mlx`](https://huggingface
 ### Decision model
 
 A decision model answers typed questions (pick one of these, how likely is this) in well
-under a second, so recall, consolidation, reflect and knowledge-page refresh can skip LLM
+under a second, so recall, consolidation, reflect and page refresh can skip LLM
 calls. It is optional: with the provider at `none` (the default), every operation keeps its
 LLM-only path. See [Decision Models](./decision-models.md) for what each operation does with it,
 and [Models › Decision Model](./models.md#decision-model) for the providers and their default models.
@@ -1658,7 +1658,7 @@ Every request is retried on its own when it is rate-limited (429) or fails trans
 replace the global value for that operation only. Key, model and URL fall back to the global
 value only while the operation uses the global provider; an operation that switches to another
 provider takes that provider's defaults and needs its own key. You can also give one operation
-a decision model without a global one. Reflect and knowledge-page refresh share the reflect
+a decision model without a global one. Reflect and page refresh share the reflect
 setup, and support only `hindsight` and `typesafe` for now.
 
 ```bash
@@ -1680,8 +1680,8 @@ default, so setting up a decision model is what turns them on.
 | Recall (keep the cross-encoder) | `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=none` | — |
 | Consolidation | `HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_PROVIDER=none` | `consolidation_use_decision_model: false` |
 | Reflect | `HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER=none` | `reflect_use_decision_model: false` |
-| Knowledge-page full refresh | `HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER=none` | `mental_model_refresh_use_decision_model: false` |
-| Knowledge-page delta refresh | `HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER=none` | `mental_model_delta_use_decision_model: false` |
+| Page full refresh | `HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER=none` | `mental_model_refresh_use_decision_model: false` |
+| Page delta refresh | `HINDSIGHT_API_REFLECT_DECISION_MODEL_PROVIDER=none` | `mental_model_delta_use_decision_model: false` |
 
 The bank settings are also listed with their operation under [Observations](#observations) and [Reflect](#reflect).
 
@@ -1692,7 +1692,7 @@ The bank settings are also listed with their operation under [Observations](#obs
 | `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE` | Also drop recall candidates judged no help, instead of only ordering them (see below). Per bank (`recall_decision_model_prune`). | `false` |
 | `HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP` | Also drop recall candidates repeating a better-ranked one (see below). Per bank (`recall_decision_model_dedup`). | `false` |
 | `HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK` | When the decision model fails or refuses a recall's ranking after its retries, rank that recall with the configured `HINDSIGHT_API_RERANKER_*` reranker (failover chain included) instead of failing it. Off, the recall fails, so you see the outage instead of quietly worse results. Server-wide. | `false` |
-| `HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES` | The most new memories a delta knowledge-page refresh asks the decision model about; past it, the refresh runs reflect. See [Reflect](#reflect). | `200` |
+| `HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES` | The most new memories a delta page refresh asks the decision model about; past it, the refresh runs reflect. See [Reflect](#reflect). | `200` |
 
 - **Rate limits.** `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` caps requests in flight for
   each operation. Recall asks one question per candidate, batched into as few requests as fit
@@ -1718,7 +1718,7 @@ the reranker).
 
 The `typesafe` [reranker](#reranker) provider is deprecated. Set up the shared decision model
 with the `typesafe` provider instead: recall uses it in place of the reranker, and
-consolidation, reflect and knowledge pages get it too.
+consolidation, reflect and pages get it too.
 
 ```bash
 # Before
@@ -1861,7 +1861,7 @@ validates the address it resolved, and a proxy would contact one that was never 
 | `HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS` | For the `exponential` decay function: the age (in days) at which a memory is considered neutral — younger memories get a recency boost, older ones a penalty. Smaller values favour very recent memories more aggressively. Only used when `HINDSIGHT_API_RECENCY_DECAY_FUNCTION=exponential`. | `90` |
 | `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY` | Track history of content changes to each mental model (previous content + timestamp), stored one row per change in the `mental_model_history` table. Set to `false` to disable entirely — no history rows are written, reducing storage if audit trails are not needed. **This is how you turn the feature off** (not a zero cap). | `true` |
 | `HINDSIGHT_API_MENTAL_MODEL_MIN_REFRESH_INTERVAL_SECONDS` | Minimum seconds between two *automatic* refreshes of the same mental model — the after-consolidation trigger and the cron schedule. A trigger that fires sooner is not dropped: its refresh is queued and parked until the window closes, and every further trigger in the meantime folds into that one queued refresh, so a burst of small retains costs one refresh instead of one per retain. Raise it when a bank ingests continuously and its models do not need to be current to the minute — the parked refresh still sees everything that accumulated while it waited. Explicit refreshes (API, MCP, control plane) ignore the floor and run immediately, and additionally release a parked refresh they fold into. `0` = no floor, every trigger refreshes at once. Hierarchical — overridable per bank via the [config API](#hierarchical-configuration), and per model via `trigger.min_refresh_interval_seconds` (which wins, including an explicit `0` to exempt one hot model from a bank-wide floor). | `0` |
-| `HINDSIGHT_API_KNOWLEDGE_PAGE_DEFAULT_TRIGGER` | Default refresh settings for newly created knowledge pages, as a JSON object merged over the built-in default (`{"mode": "delta", "fact_types": ["observation"], "exclude_mental_models": true, "refresh_after_consolidation": true}`). Set only the fields you want to change — e.g. `{"refresh_cron": "0 * * * *"}` makes new pages refresh hourly instead of after every consolidation. A trigger sent when creating the page still wins; existing pages are not changed. Configurable per bank. | - |
+| `HINDSIGHT_API_PAGE_DEFAULT_TRIGGER` | Default refresh settings for newly created [pages](./pages.md), as a JSON object merged over the built-in default (`{"mode": "delta", "fact_types": ["observation"], "exclude_mental_models": true, "refresh_after_consolidation": true}`). Set only the fields you want to change — e.g. `{"refresh_cron": "0 * * * *"}` makes new pages refresh hourly instead of after every consolidation. A trigger sent when creating the page still wins; existing pages are not changed. Configurable per bank (`page_default_trigger`). The old name `HINDSIGHT_API_KNOWLEDGE_PAGE_DEFAULT_TRIGGER` (bank key `knowledge_page_default_trigger`) still works but is deprecated and will be removed in 2.x. | - |
 | `HINDSIGHT_API_MENTAL_MODEL_HISTORY_MAX_ENTRIES` | Max history rows kept per mental model. On each refresh the previous version is inserted into the `mental_model_history` table and the oldest rows beyond this cap are deleted, so per-model history can't grow without bound. `0` or a negative value **removes the cap** (history then grows with every refresh — unbounded); to turn history off entirely set `HINDSIGHT_API_ENABLE_MENTAL_MODEL_HISTORY=false` instead. | `50` |
 
 The five embedding-dependent gates—main semantic retrieval, graph seeds, temporal retrieval, semantic-link
@@ -1914,7 +1914,7 @@ rest of the deployment recalls. Semantic always runs; it is the baseline retriev
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_ENABLE_TEXT_SEARCH` | Run the keyword (BM25) retrieval arm. `false` leaves **pure vector search** — the arm is left out of the query entirely rather than filtered to nothing, so its SQL, its query tokenization and its `pg_stats` term-selection lookup are all skipped. Also drops the keyword arm from knowledge-page search. | `true` |
+| `HINDSIGHT_API_ENABLE_TEXT_SEARCH` | Run the keyword (BM25) retrieval arm. `false` leaves **pure vector search** — the arm is left out of the query entirely rather than filtered to nothing, so its SQL, its query tokenization and its `pg_stats` term-selection lookup are all skipped. Also drops the keyword arm from page search. | `true` |
 | `HINDSIGHT_API_ENABLE_TEMPORAL_RETRIEVAL` | Run the temporal retrieval arm. `false` also skips the date-aware query analysis that feeds it — without a detected constraint there is nothing to filter on. | `true` |
 | `HINDSIGHT_API_ENABLE_GRAPH_RETRIEVAL` | Run the entity/link graph traversal arm. `false` skips those queries and returns no graph results. | `true` |
 | `HINDSIGHT_API_ENABLE_RERANKING` | Rerank fused candidates with the cross-encoder. `false` returns the RRF-fused ordering directly — faster, but less precise. | `true` |
@@ -2632,14 +2632,14 @@ export HINDSIGHT_API_OBSERVATIONS_MISSION="Observations are recurring patterns i
 |----------|-------------|---------|
 | `HINDSIGHT_API_REFLECT_MAX_ITERATIONS` | Max tool call iterations before forcing a response | `10` |
 | `HINDSIGHT_API_REFLECT_USE_DECISION_MODEL` | When a decision model is set up for reflect (see [Decision model](#decision-model)), reflect is decision-orchestrated: one LLM call rewrites the request into a search query, the layers run in parallel with that query, and the decision model prunes the evidence and judges whether it already answers the request. If it does, the answer is the next LLM call. If not, the LLM writes the next query and another parallel round runs, judged the same way. Fewer LLM calls than agent turns, so it costs less. If the decision model fails, reflect falls back to agent turns. Only the `hindsight` and `typesafe` providers are supported here for now: with another provider reflect keeps agent turns and logs a warning. Set `false` to keep agent turns (one LLM turn per retrieval layer, each writing its own query). Hierarchical (per bank). | `true` |
-| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL` | The same, for the reflect that refreshes a knowledge page. Hierarchical (per bank). | `true` |
-| `HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL` | When a decision model is set up for reflect (see [Decision model](#decision-model)), a delta knowledge-page refresh skips reflect: it asks the decision model which of the memories added since its last run could change the page, and edits the page from those alone. None of them means no LLM call. Set `false` to run reflect for delta refreshes too. Hierarchical (per bank). | `true` |
+| `HINDSIGHT_API_MENTAL_MODEL_REFRESH_USE_DECISION_MODEL` | The same, for the reflect that refreshes a page. Hierarchical (per bank). | `true` |
+| `HINDSIGHT_API_MENTAL_MODEL_DELTA_USE_DECISION_MODEL` | When a decision model is set up for reflect (see [Decision model](#decision-model)), a delta page refresh skips reflect: it asks the decision model which of the memories added since its last run could change the page, and edits the page from those alone. None of them means no LLM call. Set `false` to run reflect for delta refreshes too. Hierarchical (per bank). | `true` |
 | `HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES` | The most new memories that gated delta refresh asks the decision model about; past it, the refresh runs reflect instead. Each memory is one decision-model request carrying the whole page, and one refresh sends at most 8 at a time. A question that fails after others answered keeps its memory. Server-level. | `200` |
 | `HINDSIGHT_API_REFLECT_MAX_CONTEXT_TOKENS` | Max accumulated context tokens in the reflect loop before forcing final synthesis. Prevents `context_length_exceeded` errors on large banks. Lower this if your LLM has a context window smaller than 128K. | `100000` |
 | `HINDSIGHT_API_REFLECT_WALL_TIMEOUT` | Wall-clock timeout in seconds for the entire reflect operation. If exceeded, the request returns HTTP 504. Also bounds a whole mental-model refresh in the worker: one that runs past it is cancelled and marked failed instead of holding its worker slot. | `300` |
 | `HINDSIGHT_API_REFLECT_MISSION` | Global reflect mission (identity and reasoning framing). Overridden per bank via config API. | - |
 | `HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS` | Token budget for source facts in `search_observations` during reflect. `-1` disables source facts (default), `0` enables with no limit, `>0` enables with a token budget. Hierarchical — can be overridden per bank via config API. | `-1` |
-| `HINDSIGHT_API_REFLECT_DEFAULT_OPTIONS` | Default reflect options as a JSON object, applied whenever a reflect request leaves the option unset. Mental-model refreshes do not read it — they take these settings from their own trigger, defaulted per bank by `knowledge_page_default_trigger`, and always get only the best-ranked mental model in full. `reflect_search_observations_max_tokens` sets the budget for the `search_observations` tool (a smaller budget drops the lowest-ranked observations and shrinks the reflect context); `reflect_search_observations_include_entities` turns off the resolved entity names attached to each observation, which can be more than half the tool payload; `reflect_search_mental_models_max_tokens` sets the budget for the mental models `search_mental_models` returns in full (default 16000; the best match is always in full, the others that do not fit come back as a snippet the model can read). E.g. `{"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}`. Hierarchical — can be overridden per bank via config API. | - |
+| `HINDSIGHT_API_REFLECT_DEFAULT_OPTIONS` | Default reflect options as a JSON object, applied whenever a reflect request leaves the option unset. Mental-model refreshes do not read it — they take these settings from their own trigger, defaulted per bank by `page_default_trigger`, and always get only the best-ranked mental model in full. `reflect_search_observations_max_tokens` sets the budget for the `search_observations` tool (a smaller budget drops the lowest-ranked observations and shrinks the reflect context); `reflect_search_observations_include_entities` turns off the resolved entity names attached to each observation, which can be more than half the tool payload; `reflect_search_mental_models_max_tokens` sets the budget for the mental models `search_mental_models` returns in full (default 16000; the best match is always in full, the others that do not fit come back as a snippet the model can read). E.g. `{"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}`. Hierarchical — can be overridden per bank via config API. | - |
 
 #### Internal recall (used by reflect and mental model refresh)
 
@@ -2686,7 +2686,9 @@ export HINDSIGHT_API_MCP_ENABLED_TOOLS=recall
 export HINDSIGHT_API_MCP_ENABLED_TOOLS=recall,reflect
 ```
 
-Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`, `get_knowledge_base_tree`, `search_knowledge_base`, `get_knowledge_page`, `create_knowledge_folder`, `create_knowledge_page`, `update_knowledge_node`, `delete_knowledge_node`.
+Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`, `get_page_tree`, `search_pages`, `get_page`, `create_page_folder`, `create_page`, `update_page_node`, `delete_page_node`.
+
+The page tools used to be named `get_knowledge_base_tree`, `search_knowledge_base`, `get_knowledge_page`, `create_knowledge_folder`, `create_knowledge_page`, `update_knowledge_node` and `delete_knowledge_node`. Those names, like the old `/knowledge-base/...` paths, still work but are deprecated and will be removed in 2.x.
 
 This can also be overridden per bank via the [config API](#hierarchical-configuration):
 
@@ -2853,7 +2855,7 @@ The same table also records the other model calls Hindsight pays for, told apart
 | Decision model | `decision_*` (e.g. `decision_recall_rerank`, `decision_consolidation_triage`, `decision_rank`, `decision_cut`, `decision_evidence_sufficiency`, `decision_page_impact`) | the request and the answers, input tokens, timing — one row per request |
 | LLM | every other scope | as above |
 
-Filter on a kind with `?call_type=embedding|rerank|decision|llm` on both `/llm-requests` and `/llm-requests/stats`. Every call joins the run of the operation it belongs to (`retain`, `recall`, `reflect`, `consolidation`, `refresh_mental_model`), so a reflect's searches show inside that reflect. A knowledge page created or edited directly, outside a refresh, is embedded under its own `mental_model_write` run.
+Filter on a kind with `?call_type=embedding|rerank|decision|llm` on both `/llm-requests` and `/llm-requests/stats`. Every call joins the run of the operation it belongs to (`retain`, `recall`, `reflect`, `consolidation`, `refresh_mental_model`), so a reflect's searches show inside that reflect. A page created or edited directly, outside a refresh, is embedded under its own `mental_model_write` run.
 
 Rows are buffered in memory and written in batches (at most every 0.5s, or once 500 are waiting), so tracing a recall costs no extra database round trip on the request path. Rows still in the buffer when the process is killed are lost; a normal shutdown writes them first.
 

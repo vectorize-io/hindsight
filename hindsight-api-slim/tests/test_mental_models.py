@@ -1505,7 +1505,7 @@ class TestMentalModelStaleness:
     async def test_batched_staleness_matches_the_single_model_answer(self, memory: MemoryEngine, request_context):
         """The batched check is the same question, asked once for many models.
 
-        The knowledge tree and the mental-model list read staleness in bulk; the
+        The page tree and the mental-model list read staleness in bulk; the
         single-model read and the refresh gate read it one at a time. They must
         never disagree, so this pins every scope shape the batch handles — flat
         tags in each match mode, a fact-type filter, and the compound tag_groups

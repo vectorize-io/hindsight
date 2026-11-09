@@ -4,7 +4,7 @@
 five pages put all five into the prompt — and into every later turn of the loop.
 It now packs whole pages in rank order up to a token budget
 (`reflect_search_mental_models_max_tokens`), answers the rest the way the
-knowledge-page search does — a snippet — and offers `read_mental_models` for
+page search does — a snippet — and offers `read_mental_models` for
 whatever else the model decides it needs. The best-ranked page is always whole.
 
 That is two capabilities meeting — the page layer and the reflect loop — so the

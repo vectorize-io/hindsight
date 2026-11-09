@@ -219,7 +219,7 @@ Reach for `rename-bank` when the old id must genuinely stop existing — an alia
 
 :::
 
-Change a bank's id in place. Every memory, document, entity, mental model and knowledge page is kept exactly as it is. Nothing is re-extracted or re-embedded, and no LLM calls are made.
+Change a bank's id in place. Every memory, document, entity, mental model and page is kept exactly as it is. Nothing is re-extracted or re-embedded, and no LLM calls are made.
 
 ```bash
 hindsight-admin rename-bank --from OLD_ID --to NEW_ID [OPTIONS]

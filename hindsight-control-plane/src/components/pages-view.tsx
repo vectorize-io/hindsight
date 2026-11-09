@@ -1,0 +1,1201 @@
+"use client";
+
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { client, type PageNode, type PageTagFilter, type MentalModel } from "@/lib/api";
+import { useBank } from "@/lib/bank-context";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  ChevronDown,
+  ChevronRight,
+  Download,
+  FilePlus,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Info,
+  Pencil,
+  Search,
+  SlidersHorizontal,
+  Trash2,
+  X,
+} from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
+import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
+import { CompactMarkdown } from "./compact-markdown";
+import { StalenessBadge } from "./staleness-badge";
+import { useRefreshAttempts, type RefreshAttempt } from "@/lib/use-refresh-attempts";
+import { FreshnessLine } from "./freshness-line";
+import { MentalModelDetailModal } from "./mental-model-detail-modal";
+import { PageSearchDialog } from "./page-search-dialog";
+import { TagChip } from "@/components/ui/facet-chip";
+import { PageSearchResult, type PageSearchHit } from "./page-search-result";
+import { buildPathIndex } from "@/lib/page-path";
+import { isTagFilterActive } from "@/lib/tag-filter-params";
+import { downloadMarkdown, printPage } from "@/lib/page-download";
+import { UpdateMentalModelDialog } from "./mental-models-view";
+import {
+  AttachmentStrip,
+  attachmentUrl,
+  type RetainedAttachment,
+} from "@/components/ui/inline-attachment-text";
+
+type PageDetail = Awaited<ReturnType<typeof client.getPage>>;
+
+// The synthetic top-level folder representing the bank root. Its id is "" so
+// "add child" under it creates a node at the root (parent_id null).
+const ROOT_ID = "";
+// How often the tree view silently re-polls so page stats (last refresh / sync
+// status) stay live while pages refresh in the background.
+const AUTO_REFRESH_MS = 12000;
+
+// The sidebar filter before the user touches it, and what the clear button restores.
+const DEFAULT_TAG_FILTER: PageTagFilter = { tags_match: "any_strict" };
+
+/** Shared empty map, so a TreeRow without in-flight data does not remount on every render. */
+const EMPTY_ATTEMPTS: Map<string, RefreshAttempt> = new Map();
+
+function flatten(nodes: PageNode[], out: PageNode[] = []): PageNode[] {
+  for (const n of nodes) {
+    out.push(n);
+    if (n.children?.length) flatten(n.children, out);
+  }
+  return out;
+}
+
+export function PagesView() {
+  const t = useTranslations("pages");
+  const tc = useTranslations("common");
+  const { currentBank } = useBank();
+  const searchParams = useSearchParams();
+  const pageParam = searchParams.get("page");
+
+  // The tree is stamped with the bank it was fetched for, and read back through
+  // `roots` below, so a bank change invalidates it *during the same render* that
+  // sees the new bank. State cleared from an effect would come too late: other
+  // effects in that same commit would still run against the old bank's tree and
+  // request its page / mental model ids under the new bank (#3807).
+  const [tree, setTree] = useState<{ bank: string; roots: PageNode[] } | null>(null);
+  const [loading, setLoading] = useState(false);
+  // Only the tree fetched for the bank on screen counts; while a switch is in
+  // flight there is no tree, which parks the selection effects below.
+  const treeLoaded = tree !== null && tree.bank === currentBank;
+  const roots = useMemo(() => (treeLoaded ? tree.roots : []), [treeLoaded, tree]);
+  // The bank of the newest tree request, so a slow response for a bank we have
+  // since left can't overwrite the current one.
+  const treeRequestBankRef = useRef<string | null>(null);
+  // Root folder starts expanded so its contents are visible by default.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set([ROOT_ID]));
+
+  // Hybrid search (BM25 + vector). A non-empty query swaps the tree for ranked hits.
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<PageSearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  // The same search with its limit exposed and the raw response beside the hits.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  // Tag filter applied to both the tree and the search (recall's tags / tags_match).
+  // `#tag` typed in the search box becomes a chip; strict by default, so a tag
+  // filter shows only pages carrying the tag (the advanced dialog can widen it).
+  const [tagFilter, setTagFilter] = useState<PageTagFilter>(DEFAULT_TAG_FILTER);
+  const tagFilterActive = isTagFilterActive(tagFilter);
+  const removeTag = (tag: string) =>
+    setTagFilter((f) => ({ ...f, tags: (f.tags ?? []).filter((x) => x !== tag) }));
+  // Enter/space/comma closes a `#tag` token into a chip; backspace on an empty box pops one.
+  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    const token = query.match(/(?:^|\s)#(\S+)$/);
+    if (token && (e.key === "Enter" || e.key === " " || e.key === ",")) {
+      e.preventDefault();
+      const tag = token[1];
+      setTagFilter((f) => ({ ...f, tags: [...new Set([...(f.tags ?? []), tag])] }));
+      setQuery(query.slice(0, token.index).trimEnd() + (token.index ? " " : ""));
+    } else if (e.key === "Backspace" && !query && tagFilter.tags?.length) {
+      removeTag(tagFilter.tags[tagFilter.tags.length - 1]);
+    }
+  };
+
+  // Obsidian-style editor tabs: multiple pages open at once; `activeId` is focused.
+  const [tabs, setTabs] = useState<PageDetail[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const selected = useMemo(() => tabs.find((tb) => tb.id === activeId) ?? null, [tabs, activeId]);
+  // Provenance: how many source memories grounded the open page's last synthesis.
+  // Derived from the backing mental model's reflect_response (not the page endpoint).
+  const [supportingCount, setSupportingCount] = useState(0);
+  // Images behind the page's evidence, deduplicated: several facts from one
+  // screenshot all carry it, and the page shows it once.
+  const [pageAttachments, setPageAttachments] = useState<RetainedAttachment[]>([]);
+  const [selectedMmId, setSelectedMmId] = useState<string | null>(null);
+  // Non-null while the provenance dialog (the backing model's based_on) is open.
+  const [provenanceMmId, setProvenanceMmId] = useState<string | null>(null);
+  // Non-null while the page's backing model is open on its configuration, and
+  // then while its options are being edited. Kept in this view rather than
+  // linking across to the Mental Models tab: changing a page's scope is part of
+  // working on the page, and navigating away loses the page you were reading.
+  const [optionsMmId, setOptionsMmId] = useState<string | null>(null);
+  const [optionsModel, setOptionsModel] = useState<MentalModel | null>(null);
+  // Mirror of open tabs for the auto-refresh interval / openPage without re-arming.
+  const tabsRef = useRef<PageDetail[]>([]);
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
+  // Ensures we auto-open the first page only once per bank (not on every poll,
+  // and not fighting the user after they close a page).
+  const autoSelectedRef = useRef(false);
+
+  const [createKind, setCreateKind] = useState<"folder" | "page" | null>(null);
+  const [form, setForm] = useState({ name: "", sourceQuery: "", parentId: "" });
+  const [creating, setCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<PageNode | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Editing the open page's options (name / source query). Tags and the rest of
+  // the retrieval scope live on the backing mental model — see optionsMmId.
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({ name: "", sourceQuery: "" });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  // `silent` skips the loading spinner so the background auto-refresh poll
+  // doesn't flicker the tree every tick.
+  const loadTree = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!currentBank) return;
+      const bank = currentBank;
+      treeRequestBankRef.current = bank;
+      if (!opts?.silent) setLoading(true);
+      let nextRoots: PageNode[] = [];
+      try {
+        const result = await client.getPageTree(bank, tagFilter);
+        nextRoots = result.roots || [];
+      } catch {
+        // toast handled by interceptor
+      } finally {
+        if (!opts?.silent) setLoading(false);
+      }
+      if (treeRequestBankRef.current !== bank) return;
+      // Stamped even when the fetch failed (empty tree), so the selection effects
+      // don't stay parked forever waiting for a tree that isn't coming.
+      setTree({ bank, roots: nextRoots });
+    },
+    [currentBank, tagFilter]
+  );
+
+  useEffect(() => {
+    if (currentBank) {
+      setTabs([]);
+      setActiveId(null);
+      loadTree();
+    }
+  }, [currentBank, loadTree]);
+
+  // Debounced hybrid search — a non-empty query drives the sidebar's result list.
+  useEffect(() => {
+    const q = query.trim();
+    if (!currentBank || !q) {
+      setResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      client
+        .searchPages(currentBank, q, 20, tagFilter)
+        .then((r) => {
+          if (!cancelled) setResults(r.results);
+        })
+        .catch(() => {
+          if (!cancelled) setResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSearching(false);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [query, currentBank, tagFilter]);
+
+  // Auto-refresh: silently re-poll the tree (freshness badges) and refresh every
+  // open tab's content on the same tick.
+  useEffect(() => {
+    if (!currentBank) return;
+    const id = setInterval(() => {
+      loadTree({ silent: true });
+      tabsRef.current.forEach((tb) =>
+        client
+          .getPage(currentBank, tb.id)
+          .then((p) => setTabs((prev) => prev.map((x) => (x.id === p.id ? p : x))))
+          .catch(() => {})
+      );
+    }, AUTO_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [currentBank, loadTree]);
+
+  const allNodes = useMemo(() => flatten(roots), [roots]);
+  // Where each hit lives, for the search result list — see buildPathIndex.
+  const pathById = useMemo(
+    () => buildPathIndex(allNodes, currentBank || "/"),
+    [allNodes, currentBank]
+  );
+  // A synthetic top-level folder for the bank so the root itself is visible and
+  // you can add folders/pages directly under it. Its "" id makes add-child create
+  // at the root; it's never deletable (TreeRow hides delete for the root).
+  const rootNode = useMemo<PageNode>(
+    () => ({
+      id: ROOT_ID,
+      kind: "folder",
+      name: currentBank || "/",
+      parent_id: null,
+      mental_model_id: null,
+      managed: false,
+      description: null,
+      tags: [],
+      timestamp: null,
+      is_stale: null,
+      last_refresh_failed_at: null,
+      trigger: null,
+      children: roots,
+    }),
+    [currentBank, roots]
+  );
+  const folders = useMemo(() => allNodes.filter((n) => n.kind === "folder"), [allNodes]);
+
+  // Sync status for the open page, read from the tree (the page detail response
+  // doesn't carry it); updates as the auto-refresh poll refreshes the tree.
+  const selectedStale = useMemo(
+    () => (selected ? (allNodes.find((n) => n.id === selected.id)?.is_stale ?? null) : null),
+    [selected, allNodes]
+  );
+
+  // Same read the mental-model list does: a page whose refresh is still being
+  // retried is not paused yet, so neither the tree nor the header may say it is.
+  const refreshAttempts = useRefreshAttempts(currentBank, AUTO_REFRESH_MS);
+
+  // Read from the same tree node as the staleness above: a page whose refresh keeps
+  // failing stops rebuilding itself, and the header must not keep promising it will.
+  const selectedRefreshFailedAt = useMemo(
+    () =>
+      selected
+        ? (allNodes.find((n) => n.id === selected.id)?.last_refresh_failed_at ?? null)
+        : null,
+    [selected, allNodes]
+  );
+
+  // The trigger comes from the same tree node, for the same reason: the page
+  // detail response carries neither, and the badge needs it to tell a page that
+  // will refresh itself from one that is waiting on a person.
+  const selectedTrigger = useMemo(
+    () => (selected ? (allNodes.find((n) => n.id === selected.id)?.trigger ?? null) : null),
+    [selected, allNodes]
+  );
+
+  // Provenance count: fetch the open page's backing mental model and sum the
+  // source memories (world/experience/observation) in its reflect_response —
+  // no extra field on the page endpoint.
+  useEffect(() => {
+    if (!selected || !currentBank) {
+      setSupportingCount(0);
+      setPageAttachments([]);
+      return;
+    }
+    const mmId = allNodes.find((n) => n.id === selected.id)?.mental_model_id;
+    setSelectedMmId(mmId ?? null);
+    if (!mmId) {
+      setSupportingCount(0);
+      setPageAttachments([]);
+      return;
+    }
+    let cancelled = false;
+    // Clear now, not on arrival: until this page's evidence loads, the strip
+    // would otherwise keep showing the previous page's images.
+    setPageAttachments([]);
+    client
+      .getMentalModel(currentBank, mmId)
+      .then((mm) => {
+        if (cancelled) return;
+        const basedOn = mm.reflect_response?.based_on ?? {};
+        const facts = (["world", "experience", "observation"] as const).flatMap(
+          (ft) => basedOn[ft] ?? []
+        );
+        setSupportingCount(facts.length);
+        const byId = new Map<string, RetainedAttachment>();
+        for (const fact of facts) {
+          for (const attachment of fact.attachments ?? []) byId.set(attachment.id, attachment);
+        }
+        setPageAttachments([...byId.values()]);
+      })
+      .catch(() => {
+        setSupportingCount(0);
+        setPageAttachments([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, allNodes, currentBank]);
+
+  const openPage = useCallback(
+    async (pageId: string) => {
+      if (!currentBank) return;
+      setActiveId(pageId);
+      // Already open → just focus its tab (the poll keeps it fresh).
+      if (tabsRef.current.some((tb) => tb.id === pageId)) return;
+      setLoadingDetail(true);
+      try {
+        const page = await client.getPage(currentBank, pageId);
+        setTabs((prev) =>
+          prev.some((tb) => tb.id === page.id)
+            ? prev.map((tb) => (tb.id === page.id ? page : tb))
+            : [...prev, page]
+        );
+        setActiveId(page.id);
+      } catch {
+        // toast handled by interceptor
+      } finally {
+        setLoadingDetail(false);
+      }
+    },
+    [currentBank]
+  );
+
+  const closeTab = useCallback((id: string) => {
+    const cur = tabsRef.current;
+    const idx = cur.findIndex((tb) => tb.id === id);
+    const next = cur.filter((tb) => tb.id !== id);
+    setTabs(next);
+    // If the closed tab was active, focus its neighbour (right, then left).
+    setActiveId((a) => (a === id ? (next[idx]?.id ?? next[idx - 1]?.id ?? null) : a));
+  }, []);
+
+  // The ?page= id, but only once this bank's tree confirms it owns it. An id from
+  // another bank (a stale deep link) resolves to null instead of being requested,
+  // and auto-selection below takes over. Deliberately the id string and not the
+  // node, so the auto-refresh poll's new node objects don't re-run the effect and
+  // yank focus back to the deep-linked tab.
+  const deepLinkPageId = useMemo(
+    () =>
+      pageParam && allNodes.some((n) => n.id === pageParam && n.kind === "page") ? pageParam : null,
+    [pageParam, allNodes]
+  );
+
+  // Deep-link: open the page named in ?page= (e.g. navigated from the Home card).
+  useEffect(() => {
+    if (treeLoaded && deepLinkPageId) openPage(deepLinkPageId);
+  }, [treeLoaded, deepLinkPageId, openPage]);
+
+  // Reset the once-per-bank auto-select guard when switching banks.
+  useEffect(() => {
+    autoSelectedRef.current = false;
+  }, [currentBank]);
+
+  // Open the first page on entry so the content pane isn't empty — unless a page
+  // is deep-linked or already open. Fires once per bank (guarded), so closing a
+  // page doesn't snap it back open. A ?page= id this bank doesn't own falls
+  // through to here rather than leaving the pane empty.
+  useEffect(() => {
+    if (autoSelectedRef.current || !treeLoaded || deepLinkPageId || selected || !allNodes.length)
+      return;
+    const firstPage = allNodes.find((n) => n.kind === "page");
+    if (firstPage) {
+      autoSelectedRef.current = true;
+      openPage(firstPage.id);
+    }
+  }, [allNodes, treeLoaded, deepLinkPageId, selected, openPage]);
+
+  const toggleFolder = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const openCreate = (kind: "folder" | "page", parentId = "") => {
+    setForm({ name: "", sourceQuery: "", parentId });
+    setCreateKind(kind);
+  };
+
+  const handleCreate = async () => {
+    if (!currentBank || !createKind || !form.name.trim()) return;
+    if (createKind === "page" && !form.sourceQuery.trim()) return;
+    setCreating(true);
+    try {
+      const parent_id = form.parentId || null;
+      if (createKind === "folder") {
+        await client.createPageFolder(currentBank, {
+          name: form.name.trim(),
+          parent_id,
+        });
+      } else {
+        // No tags: a page is created reading the whole bank. Tags SCOPE a page
+        // rather than labelling it, and a tagged page defaults to `all_strict`
+        // (every tag required, untagged memories excluded), so tags typed here to
+        // describe a topic silently matched nothing and the page generated as
+        // "I don't have information about this" (#3687). Scoping is a deliberate
+        // choice made afterwards, on the backing mental model, next to the
+        // tags_match and tag_groups that govern how it is applied.
+        await client.createPage(currentBank, {
+          name: form.name.trim(),
+          source_query: form.sourceQuery.trim(),
+          parent_id,
+        });
+      }
+      if (parent_id) setExpanded((prev) => new Set(prev).add(parent_id));
+      setCreateKind(null);
+      await loadTree();
+    } catch {
+      // toast handled by interceptor
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const openEdit = () => {
+    if (!selected) return;
+    setEditForm({
+      name: selected.name,
+      // `description` carries the page's source query (the question that rebuilds it).
+      sourceQuery: selected.description ?? "",
+    });
+    setEditing(true);
+  };
+
+  const handleUpdatePage = async () => {
+    if (!currentBank || !selected || !editForm.name.trim()) return;
+    setSavingEdit(true);
+    try {
+      // `tags` is deliberately absent: the PATCH applies only the keys present,
+      // so omitting it preserves whatever scope the page has. Sending the field
+      // from a dialog that no longer shows it would clear every page's scope on
+      // an unrelated rename.
+      await client.updatePageNode(currentBank, selected.id, {
+        name: editForm.name.trim(),
+        source_query: editForm.sourceQuery.trim(),
+      });
+      setEditing(false);
+      await loadTree();
+      // Pull the (possibly re-synthesizing) page back into its open tab.
+      const p = await client.getPage(currentBank, selected.id);
+      setTabs((prev) => prev.map((x) => (x.id === p.id ? p : x)));
+    } catch {
+      // toast handled by interceptor
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!currentBank || !deleteTarget) return;
+    setDeleting(true);
+    try {
+      await client.deletePageNode(currentBank, deleteTarget.id);
+      closeTab(deleteTarget.id);
+      setDeleteTarget(null);
+      await loadTree();
+    } catch {
+      // toast handled by interceptor
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div>
+      {/* Obsidian-style workspace: one frame, a file-explorer sidebar + editor pane.
+          On phones the explorer stacks above the page instead of squeezing beside it. */}
+      <div className="flex flex-col md:flex-row items-stretch overflow-hidden h-[calc(100dvh-13rem)] min-h-[520px]">
+        <aside className="w-full max-h-[45%] md:w-1/3 md:max-h-none flex-shrink-0 bg-muted/30 border-b md:border-b-0 md:border-r border-border flex flex-col">
+          {/* One box for both filters: free text runs the hybrid search, `#tag` tokens
+              become chips that filter the tree and the search alike. The sliders open
+              the same filter against the raw endpoints. */}
+          <div className="shrink-0 border-b border-border p-2 flex items-stretch gap-1">
+            <div className="relative flex-1 flex flex-wrap items-center gap-1 pl-7 pr-7 py-1 rounded-md bg-background border border-border focus-within:ring-1 focus-within:ring-primary">
+              <Search className="absolute left-2 top-2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              {(tagFilter.tags ?? []).map((tag) => (
+                <TagChip
+                  key={tag}
+                  tag={tag}
+                  size="xs"
+                  onRemove={() => removeTag(tag)}
+                  removeLabel={tc("removeTag", { tag })}
+                />
+              ))}
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={onSearchKeyDown}
+                placeholder={tagFilter.tags?.length ? "" : t("searchPlaceholder")}
+                aria-label={t("searchPlaceholder")}
+                className="flex-1 min-w-[6rem] py-0.5 text-sm bg-transparent focus:outline-none"
+              />
+              {(query || tagFilterActive) && (
+                <button
+                  onClick={() => {
+                    setQuery("");
+                    // The whole filter: a kept `exact` would still filter (the untagged scope).
+                    setTagFilter(DEFAULT_TAG_FILTER);
+                  }}
+                  className="absolute right-1.5 top-1.5 rounded p-0.5 text-muted-foreground hover:text-foreground hover:bg-muted"
+                  aria-label={t("clearSearch")}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            <button
+              onClick={() => setAdvancedOpen(true)}
+              title={t("advancedSearchTitle")}
+              aria-label={t("advancedSearchTitle")}
+              className={`relative flex items-center justify-center rounded-md border px-1.5 hover:bg-muted ${
+                tagFilterActive
+                  ? "border-primary text-primary"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {currentBank && advancedOpen && (
+            <PageSearchDialog
+              open
+              onOpenChange={setAdvancedOpen}
+              bankId={currentBank}
+              initialQuery={query}
+              tagFilter={tagFilter}
+              onTagFilterChange={setTagFilter}
+              pathById={pathById}
+              onOpenPage={openPage}
+              initialMentalModelId={selectedMmId}
+            />
+          )}
+
+          <div className="flex-1 overflow-y-auto">
+            {query.trim() ? (
+              searching ? (
+                <div className="flex items-center justify-center py-16">
+                  <Spinner size="md" variant="jump" />
+                </div>
+              ) : results.length === 0 ? (
+                <p className="px-3 py-6 text-sm text-muted-foreground text-center">
+                  {t("searchEmpty")}
+                </p>
+              ) : (
+                <ul className="py-1">
+                  {results.map((r, i) => (
+                    <li key={r.id}>
+                      <PageSearchResult
+                        hit={r}
+                        rank={i + 1}
+                        path={pathById.get(r.id) ?? currentBank ?? "/"}
+                        selected={selected?.id === r.id}
+                        onClick={() => openPage(r.id)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )
+            ) : loading ? (
+              <div className="flex items-center justify-center py-16">
+                <Spinner size="md" variant="jump" />
+              </div>
+            ) : (
+              <ul className="py-2">
+                <TreeRow
+                  node={rootNode}
+                  depth={0}
+                  isRoot
+                  expanded={expanded}
+                  selectedId={selected?.id ?? null}
+                  onToggle={toggleFolder}
+                  onOpenPage={openPage}
+                  onAddChild={openCreate}
+                  onDelete={setDeleteTarget}
+                  refreshAttempts={refreshAttempts}
+                  t={t}
+                />
+                {roots.length === 0 && (
+                  <li
+                    className="text-xs text-muted-foreground italic"
+                    style={{ paddingLeft: `${1 * 18 + 34}px` }}
+                  >
+                    {t("emptyHint")}
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
+        </aside>
+
+        <main className="flex-1 min-w-0 overflow-y-auto bg-background">
+          {/* Editor tabs — open pages, click to focus, × to close. */}
+          {tabs.length > 0 && (
+            <div className="sticky top-0 z-10 flex items-stretch border-b border-border bg-muted overflow-x-auto">
+              {tabs.map((tb) => (
+                <div
+                  key={tb.id}
+                  onClick={() => setActiveId(tb.id)}
+                  className={`group flex items-center gap-2 px-3 py-2 border-r border-border cursor-pointer text-sm whitespace-nowrap ${
+                    tb.id === activeId
+                      ? "bg-background text-foreground"
+                      : "text-muted-foreground hover:bg-background/50"
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="truncate max-w-[160px]">{tb.name}</span>
+                  <button
+                    className="rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-foreground"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closeTab(tb.id);
+                    }}
+                    aria-label={t("close")}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {loadingDetail && !selected ? (
+            <div className="flex items-center justify-center py-24">
+              <Spinner size="lg" variant="jump" />
+            </div>
+          ) : selected ? (
+            <div className="p-4 sm:p-8 max-w-3xl mx-auto">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <h1 className="min-w-0 break-words text-2xl font-bold text-foreground">
+                  {selected.name}
+                </h1>
+                <div className="flex gap-2 shrink-0">
+                  {selected.body && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          <Download className="w-3.5 h-3.5 mr-1.5" />
+                          {t("downloadButton")}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() =>
+                            printPage({
+                              name: selected.name,
+                              body: selected.body ?? "",
+                              updatedAt: selected.timestamp,
+                              tags: selected.tags,
+                              images: currentBank
+                                ? {
+                                    label: t("evidenceImages"),
+                                    urls: pageAttachments
+                                      .filter((a) => a.media_type?.startsWith("image/"))
+                                      .map((a) => attachmentUrl(currentBank, a)),
+                                  }
+                                : undefined,
+                            })
+                          }
+                        >
+                          {t("downloadPdf")}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() =>
+                            downloadMarkdown({ name: selected.name, body: selected.body ?? "" })
+                          }
+                        >
+                          {t("downloadMarkdown")}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
+                  <Button variant="outline" size="sm" onClick={openEdit}>
+                    <Pencil className="w-3.5 h-3.5 mr-1.5" />
+                    {t("editButton")}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-1.5 flex items-center gap-3 flex-wrap">
+                {/* Provenance: this wiki isn't written, it's grounded. Links back
+                    into the memory substrate the page was synthesized from. */}
+                {supportingCount > 0 && selectedMmId && (
+                  <button
+                    onClick={() => setProvenanceMmId(selectedMmId)}
+                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                  >
+                    {t("backedBy", { count: supportingCount })}
+                  </button>
+                )}
+                {/* A page IS a mental model with a place in the tree, and the model
+                    is where its retrieval scope lives — tags, tags_match, tag_groups,
+                    fact types. Rather than reproduce a partial copy of that form here
+                    (the tags input used to sit in the page dialogs, with no way to see
+                    or change the match mode that decides what they actually select),
+                    the page links to the one editor that owns the whole scope. */}
+                {selectedMmId && (
+                  <button
+                    onClick={() => setOptionsMmId(selectedMmId)}
+                    className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                  >
+                    <SlidersHorizontal className="w-3 h-3" />
+                    {t("mentalModelOptions")}
+                  </button>
+                )}
+              </div>
+
+              {/* Freshness + tags. The generation prompt (machinery) is tucked
+                  behind the expander so the page opens with the knowledge. */}
+              {/* The same freshness line the mental-model detail shows — a page is a
+                  mental model with a place in the tree, so the two headers read
+                  identically rather than one saying "Updated 5 hours ago [IN SYNC]"
+                  and the other a sentence. */}
+              {selected.timestamp ? (
+                <FreshnessLine
+                  className="mt-2"
+                  isStale={selectedStale}
+                  trigger={selectedTrigger}
+                  lastRefreshedAt={selected.timestamp}
+                  refreshFailedAt={selectedRefreshFailedAt}
+                  attempt={selectedMmId ? refreshAttempts.get(selectedMmId) : undefined}
+                />
+              ) : (
+                <div className="text-xs text-muted-foreground mt-2">{t("generating")}</div>
+              )}
+              <div className="flex items-center gap-2 flex-wrap text-xs mt-2">
+                {selected.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+
+              {selected.description && (
+                <details className="mt-2">
+                  <summary className="text-xs text-muted-foreground cursor-pointer list-none inline-flex items-center gap-1 hover:text-foreground [&::-webkit-details-marker]:hidden">
+                    <Info className="w-3 h-3" />
+                    {t("howDerived")}
+                  </summary>
+                  <p className="text-xs text-muted-foreground mt-1.5 italic pl-3 border-l-2 border-border">
+                    &ldquo;{selected.description}&rdquo;
+                  </p>
+                </details>
+              )}
+
+              {selected.body ? (
+                <div className="prose prose-sm dark:prose-invert max-w-none border-t border-border mt-5 pt-5">
+                  <CompactMarkdown>{selected.body}</CompactMarkdown>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground italic border-t border-border mt-5 pt-5">
+                  {t("noBody")}
+                </p>
+              )}
+
+              {pageAttachments.length > 0 && currentBank && (
+                <section className="border-t border-border mt-5 pt-4">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                    {t("evidenceImages")}
+                  </h3>
+                  <AttachmentStrip bankId={currentBank} attachments={pageAttachments} />
+                </section>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-full min-h-[480px] px-6 text-center">
+              <div>
+                <FileText className="w-8 h-8 mx-auto mb-3 text-muted-foreground opacity-60" />
+                <div className="text-sm text-muted-foreground">{t("selectPagePrompt")}</div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* Create folder/page dialog */}
+      <Dialog open={createKind !== null} onOpenChange={(o) => !o && setCreateKind(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {createKind === "folder" ? t("createFolderTitle") : t("createPageTitle")}
+            </DialogTitle>
+            <DialogDescription>{t("description")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">{t("fieldName")}</label>
+              <Input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                autoFocus
+              />
+            </div>
+            {createKind === "page" && (
+              <>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-foreground">
+                    {t("fieldSourceQuery")}
+                  </label>
+                  <Textarea
+                    value={form.sourceQuery}
+                    onChange={(e) => setForm({ ...form, sourceQuery: e.target.value })}
+                    className="min-h-[100px]"
+                  />
+                </div>
+              </>
+            )}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">{t("fieldParent")}</label>
+              <Select
+                value={form.parentId || "__root__"}
+                onValueChange={(v) => setForm({ ...form, parentId: v === "__root__" ? "" : v })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__root__">{t("rootFolder")}</SelectItem>
+                  {folders.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateKind(null)} disabled={creating}>
+              {t("cancel")}
+            </Button>
+            <Button
+              onClick={handleCreate}
+              disabled={
+                creating || !form.name.trim() || (createKind === "page" && !form.sourceQuery.trim())
+              }
+            >
+              {creating ? <Spinner size="sm" className="mr-1" /> : null}
+              {t("create")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit page dialog — updates the open page's name / source query / tags. */}
+      <Dialog open={editing} onOpenChange={(o) => !o && setEditing(false)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t("editPageTitle")}</DialogTitle>
+            <DialogDescription>{t("editPageDescription")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">{t("fieldName")}</label>
+              <Input
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">{t("fieldSourceQuery")}</label>
+              <Textarea
+                value={editForm.sourceQuery}
+                onChange={(e) => setEditForm({ ...editForm, sourceQuery: e.target.value })}
+                className="min-h-[100px]"
+              />
+              <p className="text-xs text-muted-foreground">{t("editSourceQueryHint")}</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(false)} disabled={savingEdit}>
+              {t("cancel")}
+            </Button>
+            <Button onClick={handleUpdatePage} disabled={savingEdit || !editForm.name.trim()}>
+              {savingEdit ? <Spinner size="sm" className="mr-1" /> : null}
+              {t("saveChanges")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("deleteButton")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("deleteConfirm", { name: deleteTarget?.name ?? "" })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-row justify-end space-x-2">
+            <AlertDialogCancel className="mt-0">{t("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? <Spinner size="sm" className="mr-1" /> : null}
+              {t("deleteButton")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Provenance dialog — reuses the mental-model detail modal to show the
+          backing model's based_on (the memories this page was synthesized from). */}
+      {provenanceMmId && (
+        <MentalModelDetailModal
+          mentalModelId={provenanceMmId}
+          onClose={() => setProvenanceMmId(null)}
+        />
+      )}
+
+      {/* The page's backing model, opened on its configuration. `onEdit` hands off
+          to the very same dialog the Mental Models tab uses, so the scope controls
+          (tags + tags_match + tag_groups, fact types, schedule) have one
+          implementation rather than a partial copy living on the page (#3687). */}
+      {optionsMmId && (
+        <MentalModelDetailModal
+          mentalModelId={optionsMmId}
+          initialTab="configuration"
+          onClose={() => setOptionsMmId(null)}
+          onEdit={(m) => setOptionsModel(m)}
+        />
+      )}
+
+      {optionsModel && (
+        <UpdateMentalModelDialog
+          open
+          mentalModel={optionsModel}
+          onClose={() => setOptionsModel(null)}
+          onUpdated={async () => {
+            setOptionsModel(null);
+            setOptionsMmId(null);
+            // Tags and trigger drive the tree's chips and freshness line, so pull
+            // the page back in rather than leaving the reader looking at stale scope.
+            await loadTree();
+            if (selected && currentBank) {
+              const p = await client.getPage(currentBank, selected.id);
+              setTabs((prev) => prev.map((x) => (x.id === p.id ? p : x)));
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+export function TreeRow({
+  node,
+  depth,
+  isRoot = false,
+  readOnly = false,
+  expanded,
+  selectedId,
+  onToggle,
+  onOpenPage,
+  onAddChild,
+  onDelete,
+  refreshAttempts = EMPTY_ATTEMPTS,
+  t,
+}: {
+  node: PageNode;
+  depth: number;
+  isRoot?: boolean;
+  readOnly?: boolean;
+  expanded: Set<string>;
+  selectedId: string | null;
+  onToggle: (id: string) => void;
+  onOpenPage: (id: string) => void;
+  onAddChild?: (kind: "folder" | "page", parentId: string) => void;
+  onDelete?: (node: PageNode) => void;
+  /** In-flight refreshes by mental-model id, so a page being retried is not called paused.
+   *  Optional: a read-only tree (the home view) shows the tree without polling for them. */
+  refreshAttempts?: Map<string, RefreshAttempt>;
+  t: ReturnType<typeof useTranslations>;
+}) {
+  const isFolder = node.kind === "folder";
+  const isOpen = expanded.has(node.id);
+  const isActive = selectedId === node.id;
+
+  return (
+    <li>
+      <div
+        className={`group relative flex items-center gap-1.5 pr-2 py-1.5 cursor-pointer border-l-2 transition-colors ${
+          isActive
+            ? "bg-primary/10 border-primary text-foreground"
+            : "border-transparent hover:bg-muted text-foreground"
+        }`}
+        style={{ paddingLeft: `${depth * 18 + 10}px` }}
+        onClick={() => (isFolder ? onToggle(node.id) : onOpenPage(node.id))}
+      >
+        {isFolder ? (
+          <>
+            {isOpen ? (
+              <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />
+            )}
+            {isOpen ? (
+              <FolderOpen className="w-4 h-4 flex-shrink-0 text-amber-500" />
+            ) : (
+              <Folder className="w-4 h-4 flex-shrink-0 text-amber-500" />
+            )}
+          </>
+        ) : (
+          <>
+            <span className="w-3.5 flex-shrink-0" />
+            <FileText className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+          </>
+        )}
+        <div className="min-w-0 flex-1">
+          {/* Name owns the full first line; status is a compact dot so it never
+              steals width from the name (the full label shows in the page header). */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm truncate" title={node.name}>
+              {node.name}
+            </span>
+            {!isFolder && node.managed && (
+              <span
+                className="w-1.5 h-1.5 rounded-full bg-violet-500 flex-shrink-0"
+                title={t("autoBadge")}
+              />
+            )}
+            {/* The dot variant of the shared badge: the tree is dense and the name
+                needs the width, but the meaning, colours and tooltips are the same
+                ones the page header and the mental-model list show. */}
+            {!isFolder && (
+              <StalenessBadge
+                isStale={node.is_stale}
+                trigger={node.trigger}
+                refreshFailedAt={node.last_refresh_failed_at}
+                retrying={Boolean(
+                  node.mental_model_id && refreshAttempts.has(node.mental_model_id)
+                )}
+                variant="dot"
+              />
+            )}
+          </div>
+          {!isFolder && (
+            <div
+              className="text-xs text-muted-foreground/80 truncate"
+              title={node.timestamp ? formatAbsoluteDateTime(node.timestamp) : undefined}
+            >
+              {node.timestamp
+                ? `${t("updatedLabel")} ${formatRelativeTime(node.timestamp)}`
+                : t("generating")}
+            </div>
+          )}
+          {!isFolder && node.tags && node.tags.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {node.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-full bg-muted-foreground/10 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        {!readOnly && (
+          <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity rounded-md bg-muted/95 shadow-sm px-0.5">
+            {isFolder && (
+              <>
+                <button
+                  className="p-1 rounded hover:bg-background text-muted-foreground hover:text-foreground"
+                  title={t("newFolder")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddChild?.("folder", node.id);
+                  }}
+                >
+                  <FolderPlus className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  className="p-1 rounded hover:bg-background text-muted-foreground hover:text-foreground"
+                  title={t("newPage")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAddChild?.("page", node.id);
+                  }}
+                >
+                  <FilePlus className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
+            {!isRoot && (
+              <button
+                className="p-1 rounded hover:bg-background text-muted-foreground hover:text-red-600"
+                title={t("deleteButton")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete?.(node);
+                }}
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      {isFolder && isOpen && node.children?.length > 0 && (
+        <ul>
+          {node.children.map((child) => (
+            <TreeRow
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              readOnly={readOnly}
+              expanded={expanded}
+              selectedId={selectedId}
+              onToggle={onToggle}
+              onOpenPage={onOpenPage}
+              onAddChild={onAddChild}
+              onDelete={onDelete}
+              refreshAttempts={refreshAttempts}
+              t={t}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}

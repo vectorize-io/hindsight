@@ -521,11 +521,11 @@ caller can narrow its view but never widen it:
 
 - **Filtered reads** — recall, reflect (and every tool it runs), the memory,
   document and mental-model lists, observation scopes, tag lists, the memory
-  graph, the timeseries, entities and the entity graph, and the knowledge-base
+  graph, the timeseries, entities and the entity graph, and the page
   tree, search and export — only see rows inside the scope. Entity counts are
   recounted over the visible memories.
 - **Reads and writes by id** — a memory, a document and its chunks, a mental
-  model or knowledge page — answer `404` when the item is outside the scope.
+  model or page — answer `404` when the item is outside the scope.
   A retain that names an existing document outside the scope is refused (`403`),
   since replacing or appending to it would touch someone else's text.
 - **Source text follows the document.** A memory can be visible through its own
@@ -533,7 +533,7 @@ caller can narrow its view but never widen it:
   note is not. Its chunk and document text are only returned when the
   *document's* tags pass the filter. This applies to every tag-filtered recall
   and reflect, with or without an extension.
-- **Mental models and knowledge pages** created or updated by a scoped caller
+- **Mental models and pages** created or updated by a scoped caller
   must carry tags inside the scope (`403` otherwise — the caller could not see
   what it made), and record the scope in their trigger (`scope_tag_groups`),
   which every refresh AND-s with the model's own filter, so they can never be
@@ -571,9 +571,9 @@ restricted writer cannot produce or change one. That covers:
 - **memories and documents**: editing, invalidating or clearing the observations
   of a memory; updating (including the new tags), reprocessing or deleting a
   document;
-- **mental models and knowledge pages**: creating one (its tags), updating,
+- **mental models and pages**: creating one (its tags), updating,
   refreshing, clearing or deleting one, and renaming, moving or deleting a
-  knowledge node (every page under it, and under the folder it moves into);
+  page node (every page under it, and under the folder it moves into);
 - **directives**: creating, updating or deleting one. An untagged directive
   steers everyone's reflect, so a restricted writer cannot create one.
 

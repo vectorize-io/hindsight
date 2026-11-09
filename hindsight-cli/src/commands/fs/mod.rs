@@ -1,4 +1,4 @@
-//! `hindsight fs` — mirror a Hindsight bank's knowledge base (folders + pages)
+//! `hindsight fs` — mirror a Hindsight bank's pages (folders + pages)
 //! as a folder of markdown files that stay current via a background refresh
 //! loop. Once mounted, ordinary shell tools (ls, cat, grep, find, rg, fzf …)
 //! work against real files.
@@ -91,7 +91,7 @@ pub enum FsCommands {
         #[arg(long = "stale-after")]
         stale_after: Option<u64>,
     },
-    /// List the bank's knowledge-base folders + pages (no files written)
+    /// List the bank's folders + pages (no files written)
     List {
         #[command(flatten)]
         common: FsCommonArgs,
@@ -396,10 +396,10 @@ fn cmd_status(
 fn cmd_list(common: &FsCommonArgs, baseline: &Baseline) -> Result<()> {
     let config = resolve_config(&overrides_from(common), baseline, true)?;
     let client = client::FsClient::new(&config.api_url, config.api_token.as_deref())?;
-    let snapshot = client.load_knowledge(&config.bank_id)?;
+    let snapshot = client.load_pages(&config.bank_id)?;
     let plan = format::plan_mirror(&snapshot);
     if plan.dirs.is_empty() && plan.files.is_empty() {
-        println!("No knowledge base in bank \"{}\".", config.bank_id);
+        println!("No pages in bank \"{}\".", config.bank_id);
         return Ok(());
     }
     for dir in &plan.dirs {

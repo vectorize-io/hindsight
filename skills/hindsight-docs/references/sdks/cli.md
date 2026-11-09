@@ -318,59 +318,59 @@ hindsight webhook deliveries my-cli-bank "$WEBHOOK_ID"
 hindsight webhook delete my-cli-bank "$WEBHOOK_ID" -y
 ```
 
-## Knowledge Base
+## Pages
 
-Manage a bank's knowledge pages — living documents organized in a folder tree. See [Knowledge Pages](../developer/api/knowledge-pages.md) for what they are and how they refresh.
+Manage a bank's pages — living documents organized in a folder tree. See [Pages](../developer/api/pages.md) for what they are and how they refresh.
 
 ```bash
 # Show the folder/page tree (pages that have fallen behind are marked stale)
-hindsight knowledge-base tree my-cli-bank
+hindsight pages tree my-cli-bank
 ```
 
 ```bash
 # Create a folder, optionally nested under another
-hindsight knowledge-base create-folder my-cli-bank "Operations"
+hindsight pages create-folder my-cli-bank "Operations"
 ```
 
 ```bash
-hindsight knowledge-base create-folder my-cli-bank "Runbooks" --parent-id "$FOLDER_ID"
+hindsight pages create-folder my-cli-bank "Runbooks" --parent-id "$FOLDER_ID"
 ```
 
 ```bash
 # Create a page — content is generated in the background
-hindsight knowledge-base create-page my-cli-bank \
+hindsight pages create-page my-cli-bank \
   "Deploying the API" \
   "How is the API deployed?" \
   --parent-id "$FOLDER_ID" \
   --tags ops,type:runbook
 
 # Build a page from raw facts instead of the observation-only default
-hindsight knowledge-base create-page my-cli-bank "Recent Incidents" \
+hindsight pages create-page my-cli-bank "Recent Incidents" \
   "What incidents happened recently?" \
   --fact-types experience,world --mode full
 ```
 
 ```bash
 # Read a page as a markdown document
-hindsight knowledge-base get-page my-cli-bank "$PAGE_ID"
+hindsight pages get-page my-cli-bank "$PAGE_ID"
 
 # Hybrid search (full-text + vector) over whole pages
-hindsight knowledge-base search my-cli-bank "how do we deploy" --limit 5
+hindsight pages search my-cli-bank "how do we deploy" --limit 5
 
 # Rename, move, or reconfigure a node
-hindsight knowledge-base update my-cli-bank "$NODE_ID" --name "New name"
-hindsight knowledge-base update my-cli-bank "$PAGE_ID" --source-query "New question?"
+hindsight pages update my-cli-bank "$NODE_ID" --name "New name"
+hindsight pages update my-cli-bank "$PAGE_ID" --source-query "New question?"
 
-# Export the whole knowledge base as a markdown bundle
-hindsight knowledge-base export my-cli-bank
+# Export all pages as a markdown bundle
+hindsight pages export my-cli-bank
 
 # Delete a folder or page and everything under it
-hindsight knowledge-base delete my-cli-bank "$NODE_ID" -y
+hindsight pages delete my-cli-bank "$NODE_ID" -y
 ```
 
 > **💡 Tip**
 >
-`hindsight fs mount --bank <bank_id>` mirrors the same knowledge base onto disk as
+`hindsight fs mount --bank <bank_id>` mirrors the same pages onto disk as
 real markdown files, kept current by a background refresh loop — handy when you'd
 rather use `grep`, `rg`, or your editor than the commands above.
 ## Audit Logs

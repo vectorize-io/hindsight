@@ -50,6 +50,12 @@ import type {
   CreateOrUpdateBankData,
   CreateOrUpdateBankErrors,
   CreateOrUpdateBankResponses,
+  CreatePageData,
+  CreatePageErrors,
+  CreatePageFolderData,
+  CreatePageFolderErrors,
+  CreatePageFolderResponses,
+  CreatePageResponses,
   CreateWebhookData,
   CreateWebhookErrors,
   CreateWebhookResponses,
@@ -74,6 +80,9 @@ import type {
   DeleteOperationData,
   DeleteOperationErrors,
   DeleteOperationResponses,
+  DeletePageNodeData,
+  DeletePageNodeErrors,
+  DeletePageNodeResponses,
   DeleteWebhookData,
   DeleteWebhookErrors,
   DeleteWebhookResponses,
@@ -101,6 +110,9 @@ import type {
   ExportKnowledgeBaseData,
   ExportKnowledgeBaseErrors,
   ExportKnowledgeBaseResponses,
+  ExportPagesData,
+  ExportPagesErrors,
+  ExportPagesResponses,
   FileRetainData,
   FileRetainErrors,
   FileRetainResponses,
@@ -168,6 +180,12 @@ import type {
   GetOperationStatusData,
   GetOperationStatusErrors,
   GetOperationStatusResponses,
+  GetPageData,
+  GetPageErrors,
+  GetPageResponses,
+  GetPageTreeData,
+  GetPageTreeErrors,
+  GetPageTreeResponses,
   GetReadinessData,
   GetReadinessResponses,
   GetVersionData,
@@ -269,6 +287,9 @@ import type {
   SearchKnowledgeBaseData,
   SearchKnowledgeBaseErrors,
   SearchKnowledgeBaseResponses,
+  SearchPagesData,
+  SearchPagesErrors,
+  SearchPagesResponses,
   SetBankAliasPrimaryData,
   SetBankAliasPrimaryErrors,
   SetBankAliasPrimaryResponses,
@@ -302,6 +323,9 @@ import type {
   UpdateMentalModelData,
   UpdateMentalModelErrors,
   UpdateMentalModelResponses,
+  UpdatePageNodeData,
+  UpdatePageNodeErrors,
+  UpdatePageNodeResponses,
   UpdateWebhookData,
   UpdateWebhookErrors,
   UpdateWebhookResponses,
@@ -806,9 +830,11 @@ export const clearMentalModel = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * Get the knowledge-base tree
+ * Get the page tree (deprecated path)
  *
- * Return the knowledge base as a nested tree of folders and pages.
+ * Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/tree`; same request and response. Removed in 2.x.
+ *
+ * @deprecated
  */
 export const getKnowledgeBaseTree = <ThrowOnError extends boolean = false>(
   options: Options<GetKnowledgeBaseTreeData, ThrowOnError>
@@ -820,9 +846,24 @@ export const getKnowledgeBaseTree = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/knowledge-base/tree", ...options });
 
 /**
- * Create a knowledge-base folder
+ * Get the page tree
  *
- * Create a folder, optionally nested under a parent folder.
+ * Return a bank's pages as a nested tree of folders and pages.
+ */
+export const getPageTree = <ThrowOnError extends boolean = false>(
+  options: Options<GetPageTreeData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetPageTreeResponses, GetPageTreeErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/pages/tree",
+    ...options,
+  });
+
+/**
+ * Create a folder (deprecated path)
+ *
+ * Deprecated alias of `POST /v1/default/banks/{bank_id}/pages/folders`; same request and response. Removed in 2.x.
+ *
+ * @deprecated
  */
 export const createKnowledgeFolder = <ThrowOnError extends boolean = false>(
   options: Options<CreateKnowledgeFolderData, ThrowOnError>
@@ -841,9 +882,28 @@ export const createKnowledgeFolder = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * Create a knowledge-base page
+ * Create a folder
  *
- * Create a page (a mental model + tree node). Content is generated asynchronously; use the returned operation_id to track completion.
+ * Create a folder, optionally nested under a parent folder.
+ */
+export const createPageFolder = <ThrowOnError extends boolean = false>(
+  options: Options<CreatePageFolderData, ThrowOnError>
+) =>
+  (options.client ?? client).post<CreatePageFolderResponses, CreatePageFolderErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/pages/folders",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Create a page (deprecated path)
+ *
+ * Deprecated alias of `POST /v1/default/banks/{bank_id}/pages`; same request and response. Removed in 2.x.
+ *
+ * @deprecated
  */
 export const createKnowledgePage = <ThrowOnError extends boolean = false>(
   options: Options<CreateKnowledgePageData, ThrowOnError>
@@ -862,9 +922,28 @@ export const createKnowledgePage = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * Export the knowledge base as a markdown bundle
+ * Create a page
  *
- * Return a portable markdown bundle: a nested index.md, one <id>.md per page, and history logs.
+ * Create a page (a mental model + tree node). Content is generated asynchronously; use the returned operation_id to track completion.
+ */
+export const createPage = <ThrowOnError extends boolean = false>(
+  options: Options<CreatePageData, ThrowOnError>
+) =>
+  (options.client ?? client).post<CreatePageResponses, CreatePageErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/pages",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Export the pages as a markdown bundle (deprecated path)
+ *
+ * Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/export`; same request and response. Removed in 2.x.
+ *
+ * @deprecated
  */
 export const exportKnowledgeBase = <ThrowOnError extends boolean = false>(
   options: Options<ExportKnowledgeBaseData, ThrowOnError>
@@ -876,9 +955,24 @@ export const exportKnowledgeBase = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/knowledge-base/export", ...options });
 
 /**
- * Hybrid search over knowledge pages (BM25 + vector)
+ * Export the pages as a markdown bundle
  *
- * Doc-level hybrid search across a bank's knowledge pages: a full-text (BM25) match and a vector-similarity match, Reciprocal-Rank-Fusion fused. No reranker — tuned for latency.
+ * Return a portable markdown bundle: a nested index.md, one <id>.md per page, and history logs.
+ */
+export const exportPages = <ThrowOnError extends boolean = false>(
+  options: Options<ExportPagesData, ThrowOnError>
+) =>
+  (options.client ?? client).get<ExportPagesResponses, ExportPagesErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/pages/export",
+    ...options,
+  });
+
+/**
+ * Hybrid search over pages (BM25 + vector) (deprecated path)
+ *
+ * Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/search`; same request and response. Removed in 2.x.
+ *
+ * @deprecated
  */
 export const searchKnowledgeBase = <ThrowOnError extends boolean = false>(
   options: Options<SearchKnowledgeBaseData, ThrowOnError>
@@ -890,9 +984,24 @@ export const searchKnowledgeBase = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/knowledge-base/search", ...options });
 
 /**
- * Get a knowledge-base page
+ * Hybrid search over pages (BM25 + vector)
  *
- * Return a single page as a markdown document (frontmatter + markdown body).
+ * Doc-level hybrid search across a bank's pages: a full-text (BM25) match and a vector-similarity match, Reciprocal-Rank-Fusion fused. No reranker — tuned for latency.
+ */
+export const searchPages = <ThrowOnError extends boolean = false>(
+  options: Options<SearchPagesData, ThrowOnError>
+) =>
+  (options.client ?? client).get<SearchPagesResponses, SearchPagesErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/pages/search",
+    ...options,
+  });
+
+/**
+ * Get a page (deprecated path)
+ *
+ * Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/{page_id}`; same request and response. Removed in 2.x.
+ *
+ * @deprecated
  */
 export const getKnowledgePage = <ThrowOnError extends boolean = false>(
   options: Options<GetKnowledgePageData, ThrowOnError>
@@ -903,9 +1012,24 @@ export const getKnowledgePage = <ThrowOnError extends boolean = false>(
   });
 
 /**
- * Delete a knowledge-base node
+ * Get a page
  *
- * Delete a folder or page and its whole subtree (pages' mental models are removed too).
+ * Return a single page as a markdown document (frontmatter + markdown body).
+ */
+export const getPage = <ThrowOnError extends boolean = false>(
+  options: Options<GetPageData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetPageResponses, GetPageErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/pages/{page_id}",
+    ...options,
+  });
+
+/**
+ * Delete a page node (deprecated path)
+ *
+ * Deprecated alias of `DELETE /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
+ *
+ * @deprecated
  */
 export const deleteKnowledgeNode = <ThrowOnError extends boolean = false>(
   options: Options<DeleteKnowledgeNodeData, ThrowOnError>
@@ -917,9 +1041,11 @@ export const deleteKnowledgeNode = <ThrowOnError extends boolean = false>(
   >({ url: "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}", ...options });
 
 /**
- * Rename/move a knowledge-base node or update a page's options
+ * Rename/move a page node or update a page's options (deprecated path)
  *
- * Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.
+ * Deprecated alias of `PATCH /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
+ *
+ * @deprecated
  */
 export const updateKnowledgeNode = <ThrowOnError extends boolean = false>(
   options: Options<UpdateKnowledgeNodeData, ThrowOnError>
@@ -930,6 +1056,36 @@ export const updateKnowledgeNode = <ThrowOnError extends boolean = false>(
     ThrowOnError
   >({
     url: "/v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+/**
+ * Delete a page node
+ *
+ * Delete a folder or page and its whole subtree (pages' mental models are removed too).
+ */
+export const deletePageNode = <ThrowOnError extends boolean = false>(
+  options: Options<DeletePageNodeData, ThrowOnError>
+) =>
+  (options.client ?? client).delete<DeletePageNodeResponses, DeletePageNodeErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/pages/nodes/{node_id}",
+    ...options,
+  });
+
+/**
+ * Rename/move a page node or update a page's options
+ *
+ * Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.
+ */
+export const updatePageNode = <ThrowOnError extends boolean = false>(
+  options: Options<UpdatePageNodeData, ThrowOnError>
+) =>
+  (options.client ?? client).patch<UpdatePageNodeResponses, UpdatePageNodeErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/pages/nodes/{node_id}",
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -1473,7 +1629,7 @@ export const importDocuments = <ThrowOnError extends boolean = false>(
 /**
  * Export documents (async)
  *
- * Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Knowledge Pages (all whole-bank export only).
+ * Submit an async export of a bank's documents (extracted facts, entity names, causal links, chunks) as a transfer ZIP archive. Embeddings and database ids are not included — importing re-embeds with the target bank's model and re-resolves entities. Runs as a background operation to avoid pinning the API on large banks. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}. On completion the operation's result_metadata carries download_url (fetch the ZIP from GET /v1/default/files/download/{key}), storage_key, byte_size, and filename. Pass document_id query params to export specific documents, or omit to export the whole bank; include_observations=true carries consolidated observations and include_knowledge_base=true carries Mental Models plus Pages (all whole-bank export only).
  *
  * @deprecated
  */
@@ -1488,7 +1644,7 @@ export const exportDocuments = <ThrowOnError extends boolean = false>(
 /**
  * Export a bank (async)
  *
- * Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, knowledge pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
+ * Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
  */
 export const exportBankTransfer = <ThrowOnError extends boolean = false>(
   options: Options<ExportBankTransferData, ThrowOnError>
@@ -1530,7 +1686,7 @@ export const importBankTransfer = <ThrowOnError extends boolean = false>(
  *
  * Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.
  *
- * This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and knowledge pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).
+ * This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).
  *
  * Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.
  *

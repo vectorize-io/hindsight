@@ -136,7 +136,7 @@ When `refresh_after_consolidation` is enabled, the mental model will be re-gener
 
 When `refresh_cron` is set, Hindsight checks the schedule on the server's mental-model refresh tick and refreshes the model only if memories in its scope have changed since the last refresh. `refresh_cron` and `refresh_after_consolidation` are mutually exclusive, so a model refreshes either after consolidation or on a fixed UTC schedule, not both.
 
-`last_refresh_failed_at` on the model (and on a page in the knowledge tree) carries when that happened, so a list view can show which models have stopped refreshing themselves without reading each one's history.
+`last_refresh_failed_at` on the model (and on a page in the page tree) carries when that happened, so a list view can show which models have stopped refreshing themselves without reading each one's history.
 
 **A failed refresh pauses the automatic ones.** A failed refresh is retried by the worker (`HINDSIGHT_API_WORKER_MAX_RETRIES`, 3 by default) and then stops. None of `refresh_after_consolidation`, `refresh_cron` or `full_refresh_cron` queues that model again until a refresh succeeds, so a refresh that cannot work (a prompt too large for the model, an empty account, a delta that will not apply) costs a few attempts instead of an LLM bill every tick. The failure shows in the model's [history](#history). Fix the cause and refresh the model yourself: a successful refresh resumes the automatic ones. A refresh cut off by `HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, which bounds a whole refresh the same way it bounds a reflect, counts as a failure too.
 
@@ -212,7 +212,7 @@ Both automatic triggers run the same check before spending an LLM call: **is the
 
 **Untagged writes never make a tagged model stale.** Under `tags_match: "any"` or `"all"` a refresh also *reads* untagged memories, but staleness only counts writes that carry the model's tags. Otherwise, on a bank that mixes tagged and untagged writes, every such model would read stale after nearly every write (#4857). The same goes for `tag_groups` leaves using those modes; a group that selects untagged memories explicitly (an `exact` leaf with no tags, or a `not`) still counts them. A model with no tags has the whole bank as its scope, so any write marks it stale.
 
-Every `is_stale` you can read is computed by that same rule: the flag on a single mental-model read, the one on the list, the one surfaced to the reflect agent, and the per-page flag on the [knowledge-base tree](./knowledge-pages). A model flagged stale is one a refresh would actually rewrite.
+Every `is_stale` you can read is computed by that same rule: the flag on a single mental-model read, the one on the list, the one surfaced to the reflect agent, and the per-page flag on the [page tree](./pages). A model flagged stale is one a refresh would actually rewrite.
 
 Listing does not cost one query per model — the whole page is answered together — so you do not have to approximate. If you are already holding `last_memory_write_at` from the bank stats endpoint, a model whose `last_memory_seen_at` is at or after it is provably up to date without asking at all: nothing in the bank changed, so nothing in that model's scope did.
 
@@ -261,7 +261,7 @@ Delta mode falls back to a full regeneration automatically in two cases:
 
 **A delta refresh never replaces the document with a partial one.** Because delta retrieval only reads memories newer than the last refresh, an answer written from that window covers just the recent slice of the topic — it is material for editing the document, not a replacement for it. So when the edits can't be made at all — the provider call fails, the response can't be read, or every single operation is rejected — the existing content stays exactly as it is and the refresh **fails** instead of completing. Nothing is lost, the refresh's time window is not advanced, and a retry sees the same memories again. The same holds for an empty answer: a populated document is never overwritten with an empty one. A delta refresh is never turned into a full rewrite behind your back: if a model's delta refreshes keep failing, switch its `mode` to `full`.
 
-**With a decision model, a delta refresh can skip reflect.** When a [decision model](/developer/decision-models) is set up for reflect, a delta refresh asks it which memories added since the last refresh could change the document, and sends only those to the LLM that writes the operations — none of them means no LLM call. See [Knowledge Pages](/developer/knowledge-pages#decision-model-refresh) for limits and fallbacks.
+**With a decision model, a delta refresh can skip reflect.** When a [decision model](/developer/decision-models) is set up for reflect, a delta refresh asks it which memories added since the last refresh could change the document, and sends only those to the LLM that writes the operations — none of them means no LLM call. See [Pages](../pages.mdx#decision-model-refresh) for limits and fallbacks.
 
 | Use Case | Recommended Mode | Why |
 |----------|-----------------|-----|
@@ -352,7 +352,7 @@ Enable automatic refresh for mental models that need to stay current. Disable it
 </TabItem>
 </Tabs>
 
-A [knowledge page](./knowledge-pages) keeps its content in a mental model, so the list includes the models behind pages too. Each item carries `is_knowledge_page` to tell them apart, and `exclude_knowledge_pages=true` lists standalone mental models only (both the items and `total`).
+A [page](./pages) keeps its content in a mental model, so the list includes the models behind pages too. Each item carries `is_page` to tell them apart, and `exclude_pages=true` lists standalone mental models only (both the items and `total`).
 
 ---
 

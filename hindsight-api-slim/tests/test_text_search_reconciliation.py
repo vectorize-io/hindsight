@@ -250,7 +250,7 @@ def test_reconcile_ddl_is_re_executable(monkeypatch, extension):
 
 @pytest.mark.parametrize("extension", ["native", "vchord", "pg_textsearch", "pgroonga", "pg_search"])
 def test_store_owned_memories_drops_mental_models_bm25_index_and_reconciles_nothing(monkeypatch, extension):
-    """A custom store answers knowledge-page search, so the mental_models BM25 index has no reader —
+    """A custom store answers page search, so the mental_models BM25 index has no reader —
     yet on native Postgres maintains it on every page write. memory_units holds no rows at all."""
     conn = _run(
         monkeypatch,

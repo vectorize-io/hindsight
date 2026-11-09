@@ -1,10 +1,10 @@
-//! Minimal Hindsight API client — only the knowledge-base read endpoints needed
-//! to mirror a bank's knowledge base into a folder. Uses a blocking `reqwest`
+//! Minimal Hindsight API client — only the page read endpoints needed
+//! to mirror a bank's pages into a folder. Uses a blocking `reqwest`
 //! client so the sync engine stays plain synchronous code.
 //!
 //! Two endpoints, fetched once per sync:
-//!  - GET /knowledge-base/tree   → the folder/page hierarchy (no page bodies)
-//!  - GET /knowledge-base/export → every page's markdown in one bundle
+//!  - GET /pages/tree   → the folder/page hierarchy (no page bodies)
+//!  - GET /pages/export → every page's markdown in one bundle
 //! We join them by page id, so a bank of any size is two HTTP calls.
 
 use anyhow::{anyhow, Result};
@@ -12,9 +12,9 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
 
-/// A folder or page in the knowledge-base tree.
+/// A folder or page in the page tree.
 #[derive(Debug, Clone, Deserialize)]
-pub struct KnowledgeNode {
+pub struct PageNode {
     pub id: String,
     /// "folder" or "page".
     pub kind: String,
@@ -28,19 +28,19 @@ pub struct KnowledgeNode {
     #[serde(default)]
     pub timestamp: Option<String>,
     #[serde(default)]
-    pub children: Vec<KnowledgeNode>,
+    pub children: Vec<PageNode>,
 }
 
-impl KnowledgeNode {
+impl PageNode {
     pub fn is_folder(&self) -> bool {
         self.kind == "folder"
     }
 }
 
 /// The joined tree + page bodies for one bank.
-pub struct KnowledgeSnapshot {
+pub struct PageSnapshot {
     /// Top-level folder/page nodes (each with nested `children`).
-    pub roots: Vec<KnowledgeNode>,
+    pub roots: Vec<PageNode>,
     /// page id → its full markdown document (frontmatter + body).
     pub content: HashMap<String, String>,
 }
@@ -48,7 +48,7 @@ pub struct KnowledgeSnapshot {
 #[derive(Debug, Deserialize)]
 struct TreeResponse {
     #[serde(default)]
-    roots: Vec<KnowledgeNode>,
+    roots: Vec<PageNode>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,7 +84,7 @@ impl FsClient {
 
     fn base(&self, bank_id: &str) -> String {
         format!(
-            "{}/v1/default/banks/{}/knowledge-base",
+            "{}/v1/default/banks/{}/pages",
             self.api_url,
             urlencode(bank_id)
         )
@@ -120,19 +120,13 @@ impl FsClient {
         Ok(resp.json::<T>()?)
     }
 
-    /// Fetch the knowledge-base tree + page contents and join them.
-    pub fn load_knowledge(&self, bank_id: &str) -> Result<KnowledgeSnapshot> {
+    /// Fetch the page tree + page contents and join them.
+    pub fn load_pages(&self, bank_id: &str) -> Result<PageSnapshot> {
         let base = self.base(bank_id);
-        let tree: TreeResponse = self.get_json(
-            &format!("{}/tree", base),
-            "fetch knowledge-base tree",
-            bank_id,
-        )?;
-        let bundle: ExportResponse = self.get_json(
-            &format!("{}/export", base),
-            "export knowledge base",
-            bank_id,
-        )?;
+        let tree: TreeResponse =
+            self.get_json(&format!("{}/tree", base), "fetch page tree", bank_id)?;
+        let bundle: ExportResponse =
+            self.get_json(&format!("{}/export", base), "export pages", bank_id)?;
 
         // The bundle holds `<page-id>.md` (the page doc), `index.md`, and
         // `<page-id>.log.md` (history). We only want the page docs.
@@ -146,7 +140,7 @@ impl FsClient {
             }
         }
 
-        Ok(KnowledgeSnapshot {
+        Ok(PageSnapshot {
             roots: tree.roots,
             content,
         })

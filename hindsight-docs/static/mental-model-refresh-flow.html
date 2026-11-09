@@ -310,12 +310,12 @@
 <div class="page">
 
   <header>
-    <div class="eyebrow">Hindsight · engine/reflect · knowledge pages</div>
+    <div class="eyebrow">Hindsight · engine/reflect · pages</div>
     <h1>How a mental model refreshes</h1>
     <hr class="masthead-rule">
   </header>
 
-  <p class="standfirst">Every knowledge page in Hindsight is a mental model that rewrites itself. This is the whole pipeline — the mode decision, the seven phases, every branch, and each of the four outcomes — traced against the code as it stands today.</p>
+  <p class="standfirst">Every page in Hindsight is a mental model that rewrites itself. This is the whole pipeline — the mode decision, the seven phases, every branch, and each of the four outcomes — traced against the code as it stands today.</p>
 
   <nav class="toc" aria-label="Contents">
     <ol>
@@ -432,7 +432,7 @@
   <!-- ================================================================== -->
   <h2 id="gate">2 · Phase 2 — the mode gate</h2>
 
-  <p>Asking for delta mode is not the same as getting it. <code>requested_mode</code> comes from the trigger — knowledge pages get <code>KNOWLEDGE_PAGE_DEFAULT_TRIGGER</code>, which sets <code>mode: "delta"</code>, so <b>delta is the default for every page</b>. Three gates then decide whether the request survives.</p>
+  <p>Asking for delta mode is not the same as getting it. <code>requested_mode</code> comes from the trigger — pages get <code>PAGE_DEFAULT_TRIGGER</code>, which sets <code>mode: "delta"</code>, so <b>delta is the default for every page</b>. Three gates then decide whether the request survives.</p>
 
   <figure class="bleed">
     <svg viewBox="0 0 900 400" role="img" aria-label="The mode gate: a delta request passes through a baseline check and a source-query check to become use_delta, with two fallback reasons branching off to full mode.">
@@ -706,7 +706,7 @@
 
       <!-- 1 create -->
       <rect class="d-box" x="24" y="28" width="240" height="66" rx="4"/>
-      <text class="d-head" x="40" y="50">① create_knowledge_page</text>
+      <text class="d-head" x="40" y="50">① create_page</text>
       <text class="d-t-sm" x="40" y="68">client POSTs markdown</text>
       <text class="d-m-sm" x="40" y="85">structured_content stays NULL</text>
       <path class="d-line" d="M 264 61 L 282 61 L 282 239 L 296 239" marker-end="url(#a4)"/>
@@ -838,8 +838,8 @@
 
   <h3>What the inversion does not remove</h3>
   <ul>
-    <li><b>The <code>content</code> column.</b> <code>search_knowledge_pages</code> fuses BM25 over page name and content, and returns content snippets. A rendered form has to stay materialised, so the parser problem is traded for a projection-sync problem.</li>
-    <li><b>The parser.</b> <code>create_knowledge_page</code> accepts markdown from clients, and imports restore markdown bodies. Both still need markdown → structure.</li>
+    <li><b>The <code>content</code> column.</b> <code>search_pages</code> fuses BM25 over page name and content, and returns content snippets. A rendered form has to stay materialised, so the parser problem is traded for a projection-sync problem.</li>
+    <li><b>The parser.</b> <code>create_page</code> accepts markdown from clients, and imports restore markdown bodies. Both still need markdown → structure.</li>
     <li><b>The schema ceiling.</b> Five block types, with images and raw HTML explicitly out of scope. Under inversion, anything unmodelled becomes unrepresentable at ingest rather than degraded later — arguably better, since it fails where someone can act on it.</li>
   </ul>
 

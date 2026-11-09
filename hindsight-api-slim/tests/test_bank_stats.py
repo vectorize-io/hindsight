@@ -59,7 +59,7 @@ async def test_bank_stats_exposes_memory_write_watermark(api_client, memory, tes
     """/stats must carry the bank's newest memory write time.
 
     It rides along on the consolidation aggregate for free, and is what the
-    mental-models card and the knowledge tree compare each `last_refreshed_at`
+    mental-models card and the page tree compare each `last_refreshed_at`
     against — the alternative being a scan of the bank's memories per model.
     """
     try:

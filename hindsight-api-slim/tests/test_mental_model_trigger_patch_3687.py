@@ -1,11 +1,11 @@
 """Updating one trigger setting must not reset the others — issue #3687.
 
-`_merge_trigger` landed with #3506, but only the two knowledge-page routes were
+`_merge_trigger` landed with #3506, but only the two page routes were
 wired to it. `PATCH /mental-models/{id}` kept dumping the whole request model and
 the engine kept writing that dict wholesale, so a client that set one field also
 stamped `MentalModelTrigger`'s own defaults over everything it left unset.
 
-That is the route the control plane uses to edit a knowledge page's advanced
+That is the route the control plane uses to edit a page's advanced
 options, and the MCP `update_mental_model` tool drives it with a literal one-key
 dict (`{"refresh_after_consolidation": ...}`). Either one silently turned a page
 from an observation-only delta document into a from-scratch rebuild over every
@@ -24,7 +24,7 @@ from hindsight_api import MemoryEngine, RequestContext
 
 pytestmark = pytest.mark.asyncio
 
-# What a knowledge page is created with, and therefore everything a one-field
+# What a page is created with, and therefore everything a one-field
 # patch has to leave standing.
 PAGE_TRIGGER = {
     "mode": "delta",
@@ -37,7 +37,7 @@ PAGE_TRIGGER = {
 async def _page(memory: MemoryEngine, request_context: RequestContext) -> tuple[str, str]:
     bank_id = f"mmpatch-{uuid.uuid4().hex[:8]}"
     await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
-    node = await memory.create_knowledge_page(
+    node = await memory.create_page(
         bank_id=bank_id,
         name="Homelab Infrastructure",
         source_query="NAS, ThinkPad, docker containers, jellyfin",
@@ -150,19 +150,19 @@ class TestMentalModelTriggerPatch:
         assert trigger["fact_types"] == ["observation"]
 
 
-class TestKnowledgePageDefaultTriggerConfig:
+class TestPagePageDefaultTriggerConfig:
     async def test_bank_default_trigger_applies_to_new_pages_and_request_still_wins(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        """knowledge_page_default_trigger merges over the built-in page default."""
+        """page_default_trigger merges over the built-in page default."""
         bank_id = f"kpdefault-{uuid.uuid4().hex[:8]}"
         await memory.update_bank_config(
             bank_id,
-            {"knowledge_page_default_trigger": {"refresh_cron": "0 * * * *"}},
+            {"page_default_trigger": {"refresh_cron": "0 * * * *"}},
             request_context=request_context,
         )
 
-        default_page = await memory.create_knowledge_page(
+        default_page = await memory.create_page(
             bank_id=bank_id, name="A", source_query="a", content="", request_context=request_context
         )
         assert default_page is not None
@@ -171,7 +171,7 @@ class TestKnowledgePageDefaultTriggerConfig:
         assert not trigger.get("refresh_after_consolidation")  # cron replaced auto-refresh
         assert trigger["mode"] == "delta"  # built-in default kept
 
-        explicit_page = await memory.create_knowledge_page(
+        explicit_page = await memory.create_page(
             bank_id=bank_id,
             name="B",
             source_query="b",
@@ -187,9 +187,9 @@ class TestKnowledgePageDefaultTriggerConfig:
     async def test_invalid_bank_default_trigger_is_rejected_on_write(
         self, memory: MemoryEngine, request_context: RequestContext
     ):
-        with pytest.raises(ValueError, match="knowledge_page_default_trigger"):
+        with pytest.raises(ValueError, match="page_default_trigger"):
             await memory.update_bank_config(
                 f"kpdefault-{uuid.uuid4().hex[:8]}",
-                {"knowledge_page_default_trigger": {"refresh_cron": "every hour"}},
+                {"page_default_trigger": {"refresh_cron": "every hour"}},
                 request_context=request_context,
             )

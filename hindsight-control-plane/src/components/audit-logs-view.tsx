@@ -87,10 +87,10 @@ function getActionOptions(t: TranslateFn) {
     { value: "memory_defense", label: t("actionMemoryDefense") },
     { value: "sync_retain", label: t("actionSyncRetain") },
     { value: "invalidate_memory", label: t("actionInvalidateMemory") },
-    { value: "create_knowledge_folder", label: t("actionCreateKnowledgeFolder") },
-    { value: "create_knowledge_page", label: t("actionCreateKnowledgePage") },
-    { value: "update_knowledge_node", label: t("actionUpdateKnowledgeNode") },
-    { value: "delete_knowledge_node", label: t("actionDeleteKnowledgeNode") },
+    { value: "create_page_folder", label: t("actionCreatePageFolder") },
+    { value: "create_page", label: t("actionCreatePage") },
+    { value: "update_page_node", label: t("actionUpdatePageNode") },
+    { value: "delete_page_node", label: t("actionDeletePageNode") },
   ];
 }
 

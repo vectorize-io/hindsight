@@ -73,15 +73,15 @@ def test_update_mental_model_clears_a_nullable_field(monkeypatch):
     assert request.trigger.to_dict() == {"refresh_cron": None, "keep_trace": True}
 
 
-def test_create_knowledge_page_keeps_the_page_defaults(monkeypatch):
-    """Page creation patches over KNOWLEDGE_PAGE_DEFAULT_TRIGGER (delta, observation-only,
+def test_create_page_keeps_the_page_defaults(monkeypatch):
+    """Page creation patches over PAGE_DEFAULT_TRIGGER (delta, observation-only,
     exclude_mental_models). A trigger naming one setting used to carry mode="full" with it
     and turn a page into a from-scratch rebuild that reflected over its siblings."""
     client = _client()
     captured: dict[str, object] = {}
-    _capture(monkeypatch, client._knowledge_base_api, "create_knowledge_page", captured)
+    _capture(monkeypatch, client._pages_api, "create_page", captured)
 
-    client.create_knowledge_page("bank-1", name="Page", source_query="q", trigger={"tags_match": "all"})
+    client.create_page("bank-1", name="Page", source_query="q", trigger={"tags_match": "all"})
 
     _, request = captured["args"]
     assert request.trigger.to_dict() == {"tags_match": "all"}

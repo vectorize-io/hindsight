@@ -44,7 +44,7 @@ class BankTransferApi:
         self,
         bank_id: StrictStr,
         target_bank_id: Annotated[StrictStr, Field(description="Bank to create; must not already exist")],
-        include_data: Annotated[Optional[StrictBool], Field(description="Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them")] = None,
+        include_data: Annotated[Optional[StrictBool], Field(description="Copy the memories, what backs them, and the mental models and pages synthesized from them")] = None,
         include_bank_config: Annotated[Optional[StrictBool], Field(description="Copy the bank's config overrides, directives and webhooks")] = None,
         include_history: Annotated[Optional[StrictBool], Field(description="Copy audit_log and llm_requests")] = None,
         authorization: Optional[StrictStr] = None,
@@ -63,13 +63,13 @@ class BankTransferApi:
     ) -> BankTransferSubmitResponse:
         """Clone a bank (async)
 
-        Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.  This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and knowledge pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).  Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.  target_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.
+        Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.  This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).  Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.  target_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.
 
         :param bank_id: (required)
         :type bank_id: str
         :param target_bank_id: Bank to create; must not already exist (required)
         :type target_bank_id: str
-        :param include_data: Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them
+        :param include_data: Copy the memories, what backs them, and the mental models and pages synthesized from them
         :type include_data: bool
         :param include_bank_config: Copy the bank's config overrides, directives and webhooks
         :type include_bank_config: bool
@@ -133,7 +133,7 @@ class BankTransferApi:
         self,
         bank_id: StrictStr,
         target_bank_id: Annotated[StrictStr, Field(description="Bank to create; must not already exist")],
-        include_data: Annotated[Optional[StrictBool], Field(description="Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them")] = None,
+        include_data: Annotated[Optional[StrictBool], Field(description="Copy the memories, what backs them, and the mental models and pages synthesized from them")] = None,
         include_bank_config: Annotated[Optional[StrictBool], Field(description="Copy the bank's config overrides, directives and webhooks")] = None,
         include_history: Annotated[Optional[StrictBool], Field(description="Copy audit_log and llm_requests")] = None,
         authorization: Optional[StrictStr] = None,
@@ -152,13 +152,13 @@ class BankTransferApi:
     ) -> ApiResponse[BankTransferSubmitResponse]:
         """Clone a bank (async)
 
-        Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.  This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and knowledge pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).  Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.  target_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.
+        Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.  This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).  Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.  target_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.
 
         :param bank_id: (required)
         :type bank_id: str
         :param target_bank_id: Bank to create; must not already exist (required)
         :type target_bank_id: str
-        :param include_data: Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them
+        :param include_data: Copy the memories, what backs them, and the mental models and pages synthesized from them
         :type include_data: bool
         :param include_bank_config: Copy the bank's config overrides, directives and webhooks
         :type include_bank_config: bool
@@ -222,7 +222,7 @@ class BankTransferApi:
         self,
         bank_id: StrictStr,
         target_bank_id: Annotated[StrictStr, Field(description="Bank to create; must not already exist")],
-        include_data: Annotated[Optional[StrictBool], Field(description="Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them")] = None,
+        include_data: Annotated[Optional[StrictBool], Field(description="Copy the memories, what backs them, and the mental models and pages synthesized from them")] = None,
         include_bank_config: Annotated[Optional[StrictBool], Field(description="Copy the bank's config overrides, directives and webhooks")] = None,
         include_history: Annotated[Optional[StrictBool], Field(description="Copy audit_log and llm_requests")] = None,
         authorization: Optional[StrictStr] = None,
@@ -241,13 +241,13 @@ class BankTransferApi:
     ) -> RESTResponseType:
         """Clone a bank (async)
 
-        Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.  This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and knowledge pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).  Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.  target_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.
+        Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.  This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).  Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.  target_bank_id must not already exist. Returns an operation_id, recorded against the source bank (the target does not exist yet); poll GET /v1/default/banks/{bank_id}/operations/{operation_id} for status and the per-component counts.
 
         :param bank_id: (required)
         :type bank_id: str
         :param target_bank_id: Bank to create; must not already exist (required)
         :type target_bank_id: str
-        :param include_data: Copy the memories, what backs them, and the mental models and knowledge pages synthesized from them
+        :param include_data: Copy the memories, what backs them, and the mental models and pages synthesized from them
         :type include_data: bool
         :param include_bank_config: Copy the bank's config overrides, directives and webhooks
         :type include_bank_config: bool
@@ -412,7 +412,7 @@ class BankTransferApi:
     ) -> BankTransferSubmitResponse:
         """Export a bank (async)
 
-        Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, knowledge pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
+        Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -501,7 +501,7 @@ class BankTransferApi:
     ) -> ApiResponse[BankTransferSubmitResponse]:
         """Export a bank (async)
 
-        Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, knowledge pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
+        Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
 
         :param bank_id: (required)
         :type bank_id: str
@@ -590,7 +590,7 @@ class BankTransferApi:
     ) -> RESTResponseType:
         """Export a bank (async)
 
-        Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, knowledge pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
+        Submit an async export of a bank as a transfer ZIP archive. Three flags choose what the archive carries: include_data (documents, facts, observations, attachments and their bytes, the curation archive, the operations log and the maintenance queues), include_bank_config (bank config, mental models and their history, pages), include_bank_config (the bank's config overrides, directives and webhooks) and include_history (audit_log, llm_requests). Embeddings and database ids are never carried — importing re-embeds with the target bank's model and re-resolves entities, so an archive moves between instances configured with different embedding models. Returns an operation_id; poll GET /v1/default/banks/{bank_id}/operations/{operation_id}, then fetch the archive from the download_url in its result_metadata. Pass document_id to export specific documents instead of the whole bank (a document subset carries no bank-level sections).
 
         :param bank_id: (required)
         :type bank_id: str

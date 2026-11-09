@@ -61,7 +61,7 @@ export interface WebhookHttpConfig {
   params: Record<string, string>;
 }
 
-export interface KnowledgeNode {
+export interface PageNode {
   id: string;
   kind: "folder" | "page";
   name: string;
@@ -76,7 +76,7 @@ export interface KnowledgeNode {
   last_refresh_failed_at?: string | null;
   /** Pages only: when the page rebuilds itself and over which facts. Null on folders. */
   trigger: MentalModel["trigger"] | null;
-  children: KnowledgeNode[];
+  children: PageNode[];
 }
 
 export interface Webhook {
@@ -231,11 +231,11 @@ export interface OperationProgress {
 
 export type { TagsMatch };
 
-/** Tag filter for the knowledge-base tree and search (recall's tags / tags_match). */
-export type KnowledgeTagFilter = TagFilter;
+/** Tag filter for the page tree and search (recall's tags / tags_match). */
+export type PageTagFilter = TagFilter;
 
 /** `&tags=..&tags_match=..`, or "" when the filter is empty. */
-function knowledgeTagQuery(filter?: KnowledgeTagFilter): string {
+function pageTagQuery(filter?: PageTagFilter): string {
   const params = new URLSearchParams();
   if (filter) appendTagFilter(params, filter);
   const qs = params.toString();
@@ -295,8 +295,8 @@ export interface MentalModel {
   created_at: string;
   reflect_response?: any;
   is_stale?: boolean | null;
-  /** True when this model holds a knowledge page's content (not a standalone model). */
-  is_knowledge_page?: boolean | null;
+  /** True when this model holds a page's content (not a standalone model). */
+  is_page?: boolean | null;
   /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
   last_refresh_failed_at?: string | null;
   /** When a refresh last ran in full mode. `trigger.full_refresh_cron` comes due against this. */
@@ -958,18 +958,18 @@ export class ControlPlaneClient {
   }
 
   /**
-   * Get the knowledge base as a nested folder/page tree.
+   * Get the pages as a nested folder/page tree.
    */
-  async getKnowledgeTree(bankId: string, filter?: KnowledgeTagFilter) {
-    return this.fetchApi<{ roots: KnowledgeNode[] }>(
-      `/api/knowledge-base/tree?bank_id=${encodeURIComponent(bankId)}${knowledgeTagQuery(filter)}`
+  async getPageTree(bankId: string, filter?: PageTagFilter) {
+    return this.fetchApi<{ roots: PageNode[] }>(
+      `/api/pages/tree?bank_id=${encodeURIComponent(bankId)}${pageTagQuery(filter)}`
     );
   }
 
   /**
-   * Hybrid search (BM25 + vector) across a bank's knowledge pages.
+   * Hybrid search (BM25 + vector) across a bank's pages.
    */
-  async searchKnowledgePages(bankId: string, q: string, limit = 10, filter?: KnowledgeTagFilter) {
+  async searchPages(bankId: string, q: string, limit = 10, filter?: PageTagFilter) {
     return this.fetchApi<{
       results: Array<{
         id: string;
@@ -981,14 +981,14 @@ export class ControlPlaneClient {
       }>;
       total: number;
     }>(
-      `/api/knowledge-base/search?bank_id=${encodeURIComponent(bankId)}&q=${encodeURIComponent(q)}&limit=${limit}${knowledgeTagQuery(filter)}`
+      `/api/pages/search?bank_id=${encodeURIComponent(bankId)}&q=${encodeURIComponent(q)}&limit=${limit}${pageTagQuery(filter)}`
     );
   }
 
   /**
-   * Get a single knowledge page rendered as a markdown document.
+   * Get a single page rendered as a markdown document.
    */
-  async getKnowledgePage(bankId: string, pageId: string) {
+  async getPage(bankId: string, pageId: string) {
     return this.fetchApi<{
       id: string;
       name: string;
@@ -998,25 +998,23 @@ export class ControlPlaneClient {
       timestamp: string | null;
       body: string | null;
       markdown: string;
-    }>(
-      `/api/knowledge-base/pages/${encodeURIComponent(pageId)}?bank_id=${encodeURIComponent(bankId)}`
-    );
+    }>(`/api/pages/${encodeURIComponent(pageId)}?bank_id=${encodeURIComponent(bankId)}`);
   }
 
   /**
    * Create a folder, optionally under a parent folder.
    */
-  async createKnowledgeFolder(bankId: string, body: { name: string; parent_id?: string | null }) {
-    return this.fetchApi<KnowledgeNode>(
-      `/api/knowledge-base/folders?bank_id=${encodeURIComponent(bankId)}`,
-      { method: "POST", body: JSON.stringify(body) }
-    );
+  async createPageFolder(bankId: string, body: { name: string; parent_id?: string | null }) {
+    return this.fetchApi<PageNode>(`/api/pages/folders?bank_id=${encodeURIComponent(bankId)}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   }
 
   /**
    * Create a page (mental model + tree node). Content is generated asynchronously.
    */
-  async createKnowledgePage(
+  async createPage(
     bankId: string,
     body: {
       name: string;
@@ -1025,13 +1023,13 @@ export class ControlPlaneClient {
       /** Scopes which memories build the page — see `trigger.tags_match`, which defaults
        *  to `all_strict` (every tag required, untagged memories excluded). */
       tags?: string[];
-      /** Refresh settings. Applied as a patch over the knowledge-page defaults, so sending
+      /** Refresh settings. Applied as a patch over the page defaults, so sending
        *  one field does not reset the rest. */
       trigger?: { tags_match?: TagsMatch };
     }
   ) {
     return this.fetchApi<{ page_id: string; mental_model_id: string; operation_id: string | null }>(
-      `/api/knowledge-base/pages?bank_id=${encodeURIComponent(bankId)}`,
+      `/api/pages?bank_id=${encodeURIComponent(bankId)}`,
       { method: "POST", body: JSON.stringify(body) }
     );
   }
@@ -1040,7 +1038,7 @@ export class ControlPlaneClient {
    * Rename/move a node and/or update a page's options. Pass `parent_id: null`
    * to move to the root. Changing `source_query` rebuilds the page's content.
    */
-  async updateKnowledgeNode(
+  async updatePageNode(
     bankId: string,
     nodeId: string,
     body: {
@@ -1063,8 +1061,8 @@ export class ControlPlaneClient {
       };
     }
   ) {
-    return this.fetchApi<KnowledgeNode>(
-      `/api/knowledge-base/nodes/${encodeURIComponent(nodeId)}?bank_id=${encodeURIComponent(bankId)}`,
+    return this.fetchApi<PageNode>(
+      `/api/pages/nodes/${encodeURIComponent(nodeId)}?bank_id=${encodeURIComponent(bankId)}`,
       { method: "PATCH", body: JSON.stringify(body) }
     );
   }
@@ -1072,19 +1070,19 @@ export class ControlPlaneClient {
   /**
    * Delete a node and its whole subtree.
    */
-  async deleteKnowledgeNode(bankId: string, nodeId: string) {
+  async deletePageNode(bankId: string, nodeId: string) {
     return this.fetchApi<{ status: string }>(
-      `/api/knowledge-base/nodes/${encodeURIComponent(nodeId)}?bank_id=${encodeURIComponent(bankId)}`,
+      `/api/pages/nodes/${encodeURIComponent(nodeId)}?bank_id=${encodeURIComponent(bankId)}`,
       { method: "DELETE" }
     );
   }
 
   /**
-   * Export the knowledge base as a portable markdown bundle (markdown files).
+   * Export the pages as a portable markdown bundle (markdown files).
    */
-  async exportKnowledgeBase(bankId: string) {
+  async exportPages(bankId: string) {
     return this.fetchApi<{ files: Array<{ path: string; content: string }> }>(
-      `/api/knowledge-base/export?bank_id=${encodeURIComponent(bankId)}`
+      `/api/pages/export?bank_id=${encodeURIComponent(bankId)}`
     );
   }
 
@@ -1822,8 +1820,8 @@ export class ControlPlaneClient {
       detail?: "metadata" | "content" | "full";
       limit?: number;
       offset?: number;
-      /** Leave out the models that back knowledge pages (standalone models only). */
-      excludeKnowledgePages?: boolean;
+      /** Leave out the models that back pages (standalone models only). */
+      excludePages?: boolean;
     } = {}
   ) {
     const params = new URLSearchParams();
@@ -1842,8 +1840,8 @@ export class ControlPlaneClient {
     if (options.offset !== undefined) {
       params.append("offset", String(options.offset));
     }
-    if (options.excludeKnowledgePages) {
-      params.append("exclude_knowledge_pages", "true");
+    if (options.excludePages) {
+      params.append("exclude_pages", "true");
     }
     const query = params.toString();
     // Shape of detail="full"; the endpoint DEFAULTS to "metadata", which omits
@@ -1882,8 +1880,8 @@ export class ControlPlaneClient {
         last_memory_seen_at: string | null;
         /** Whether a memory in this model's own scope has been written since it last read them. */
         is_stale: boolean | null;
-        /** True when this model holds a knowledge page's content (not a standalone model). */
-        is_knowledge_page?: boolean | null;
+        /** True when this model holds a page's content (not a standalone model). */
+        is_page?: boolean | null;
         /** When the last refresh failed. Set = automatic refreshes are paused for this model. */
         last_refresh_failed_at?: string | null;
         created_at: string;
@@ -1911,7 +1909,7 @@ export class ControlPlaneClient {
       tags?: string[];
       tagsMatch?: string;
       detail?: "metadata" | "content" | "full";
-      excludeKnowledgePages?: boolean;
+      excludePages?: boolean;
     } = {}
   ) {
     const PAGE_SIZE = 1000;
@@ -2147,19 +2145,19 @@ export class ControlPlaneClient {
    * Export documents from a bank as a transfer ZIP archive (no LLM re-extraction).
    * Pass documentIds to export specific documents, or omit to export the whole bank.
    * Set includeObservations to also carry consolidated observations. Set
-   * includeKnowledgeBase to carry Mental Models and Knowledge Pages.
+   * includePages to carry Mental Models and Pages.
    * Returns the raw zip Blob so callers can trigger a download.
    */
   async exportDocuments(
     bankId: string,
     documentIds?: string[],
     includeObservations = false,
-    includeKnowledgeBase = false
+    includePages = false
   ): Promise<Blob> {
     const params = new URLSearchParams({ bank_id: bankId });
     (documentIds || []).forEach((id) => params.append("document_id", id));
     if (includeObservations) params.set("include_observations", "true");
-    if (includeKnowledgeBase) params.set("include_knowledge_base", "true");
+    if (includePages) params.set("include_knowledge_base", "true");
     // Direct fetch (not fetchApi) because the response is a binary zip, not JSON.
     const response = await fetch(withBasePath(`/api/documents/transfer?${params.toString()}`));
     if (!response.ok) {

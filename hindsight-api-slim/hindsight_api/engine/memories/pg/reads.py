@@ -747,7 +747,7 @@ async def any_memory_updated_since_batch(
 ) -> dict[str, bool]:
     """:func:`any_memory_updated_since` for many scopes, in one query per scope *shape*.
 
-    The knowledge tree and the mental-model list ask this for every model in the
+    The page tree and the mental-model list ask this for every model in the
     bank on a poll, and one round-trip each is what made the exact answer look
     expensive. Scopes are grouped by the tag clause they generate and the query
     shape it implies (a bank's pages almost always share both), each group is

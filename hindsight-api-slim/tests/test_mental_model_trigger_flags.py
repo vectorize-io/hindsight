@@ -335,7 +335,7 @@ class TestTriggerRoundTrip:
 
         ``update_mental_model`` overwrites the whole trigger column, so a caller that
         sends only the field it wants used to strip every flag it did not mention —
-        the defect #3506 fixed for knowledge pages, on the endpoint every MCP agent
+        the defect #3506 fixed for pages, on the endpoint every MCP agent
         goes through.
         """
         bank_id = f"test-trigger-patch-{uuid.uuid4().hex[:8]}"

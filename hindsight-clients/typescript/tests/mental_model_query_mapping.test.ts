@@ -34,7 +34,7 @@ describe("mental-model query mapping", () => {
       detail: "metadata",
       limit: 25,
       offset: 50,
-      excludeKnowledgePages: true,
+      excludePages: true,
       signal,
     });
 
@@ -47,7 +47,7 @@ describe("mental-model query mapping", () => {
           detail: "metadata",
           limit: 25,
           offset: 50,
-          exclude_knowledge_pages: true,
+          exclude_pages: true,
         },
         signal,
       })

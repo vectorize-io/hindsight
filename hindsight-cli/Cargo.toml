@@ -21,7 +21,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 
 # HTTP client (for timeout configuration and multipart file uploads).
-# The blocking client backs the `fs` subcommand's knowledge-base sync engine.
+# The blocking client backs the `fs` subcommand's pages sync engine.
 reqwest = { version = "0.12", features = ["multipart", "blocking"] }
 
 # Serialization (for config and output formatting)

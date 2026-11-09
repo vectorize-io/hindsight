@@ -3105,7 +3105,7 @@ async def test_semantic_ann_uses_hnsw_index(memory, request_context):
                 "Deep learning models require large amounts of training data. "
                 "Gradient descent is the primary optimization algorithm used in neural networks."
             ),
-            context="ML knowledge base",
+            context="ML pages",
             event_date=datetime(2024, 3, 1, tzinfo=timezone.utc),
             request_context=request_context,
         )
@@ -3118,7 +3118,7 @@ async def test_semantic_ann_uses_hnsw_index(memory, request_context):
                 "Neural networks learn by adjusting weights through backpropagation. "
                 "Training deep learning models requires GPUs for fast gradient computation."
             ),
-            context="ML knowledge base",
+            context="ML pages",
             event_date=datetime(2024, 3, 2, tzinfo=timezone.utc),
             request_context=request_context,
         )

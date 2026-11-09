@@ -58,12 +58,12 @@ class TransferScope:
         their bytes, the curation archive (``invalidated_memory_units``), the
         async operations log, the graph/entity maintenance queues, and the
         knowledge the bank synthesized from all of it — mental models, their
-        refresh history, and the knowledge-page tree over them.
+        refresh history, and the page tree over them.
     ``bank_config`` — how the bank is set up:
         the ``banks`` row (per-bank config overrides), directives and webhooks.
     ``history`` — operational history: ``audit_log`` and ``llm_requests``.
 
-    Mental models and knowledge pages sit under ``data`` rather than
+    Mental models and pages sit under ``data`` rather than
     ``bank_config`` because they are a reading of the bank's facts, not a
     setting: a mental model's ``based_on`` evidence cites memory units by id, so
     carrying it without them would restore a synthesis whose grounding resolves
@@ -239,8 +239,8 @@ class TransferDocument(BaseModel):
     facts: list[TransferFact] = Field(default_factory=list)
 
 
-class TransferKnowledgePage(BaseModel):
-    """One node of the knowledge-base tree (a folder or a page).
+class TransferPage(BaseModel):
+    """One node of the page tree (a folder or a page).
 
     Carried verbatim across a whole-bank transfer so the folder/page hierarchy,
     ``managed`` flags, and ordering survive. IDs are preserved (a page's
@@ -262,11 +262,11 @@ class TransferKnowledgePage(BaseModel):
     updated_at: datetime | None = None
 
 
-def standalone_mental_models(mental_models: list[dict], knowledge_pages: list[TransferKnowledgePage]) -> list[dict]:
-    """The mental_models rows that are not a knowledge page's backing model.
+def standalone_mental_models(mental_models: list[dict], knowledge_pages: list[TransferPage]) -> list[dict]:
+    """The mental_models rows that are not a page's backing model.
 
     Pages keep their content in a mental_models row, so those rows travel with
-    the archive; they are counted as knowledge pages, not as mental models.
+    the archive; they are counted as pages, not as mental models.
     """
     page_model_ids = {p.mental_model_id for p in knowledge_pages if p.mental_model_id}
     return [row for row in mental_models if str(row["id"]) not in page_model_ids]

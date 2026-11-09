@@ -1,4 +1,4 @@
-"""The decision-model gate in front of a delta knowledge-page refresh.
+"""The decision-model gate in front of a delta page refresh.
 
 With a decision model set up, a delta refresh reads the memories new since its last run,
 asks the decision model which could change the page, and hands only those to the delta LLM
