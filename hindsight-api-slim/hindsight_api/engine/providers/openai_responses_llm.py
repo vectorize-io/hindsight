@@ -15,7 +15,7 @@ reasoning and function tools coexist. This provider issues requests against
 - the flat ``reasoning_effort`` scalar → a ``reasoning={"effort": ...}`` object,
 - ``response_format`` → ``text={"format": {...}}``,
 
-and reads ``response.output_text``. No request carries tools: reflect's tool calls
+and reads the reply message (``_reply_text``). No request carries tools: reflect's tool calls
 are replies to a response schema (see ``tools_via_schema``).
 
 It is OpenAI-only (unlike the multi-vendor ``OpenAICompatibleLLM``, it carries no
@@ -74,6 +74,28 @@ class RetryableResponsesError(Exception):
 
     ``_run_with_retries`` backs off and retries it like a connection error.
     """
+
+
+def _reply_message_index(phases: list[str | None]) -> int:
+    """Which of a response's assistant messages (at least one) is the reply, given each
+    one's ``phase``.
+
+    Codex-family models stream a ``commentary`` preamble before the ``final_answer``
+    message (#6347). Under a strict schema both are JSON, so joining them, as the SDK's
+    ``output_text`` does, is not a reply. Without phase labels the last message answers.
+    """
+    finals = [i for i, phase in enumerate(phases) if phase == "final_answer"]
+    return finals[-1] if finals else len(phases) - 1
+
+
+def _reply_text(response: Any) -> str:
+    """The text of the response's reply message (see ``_reply_message_index``)."""
+    messages = [item for item in (response.output or []) if getattr(item, "type", None) == "message"]
+    if len(messages) < 2:
+        # One message is the whole reply, and ``output_text`` is exactly its text.
+        return response.output_text or ""
+    reply = messages[_reply_message_index([getattr(m, "phase", None) for m in messages])]
+    return "".join(part.text for part in reply.content if getattr(part, "type", None) == "output_text")
 
 
 def _to_responses_content(content: Any, role: str | None) -> Any:
@@ -487,7 +509,7 @@ class OpenAIResponsesLLM(LLMInterface):
             self._raise_if_truncated(response)
             usage = self._extract_usage(response)
             duration = time.perf_counter() - start_time
-            content = _strip_reasoning_tags(response.output_text or "")
+            content = _strip_reasoning_tags(_reply_text(response))
 
             if response_format is not None:
                 json_data = json.loads(_strip_code_fences(content))

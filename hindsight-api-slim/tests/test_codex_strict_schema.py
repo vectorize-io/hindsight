@@ -224,3 +224,58 @@ async def test_non_strict_keeps_a_fence_marker_inside_a_json_value():
             ).content
 
     assert result.fact == "wrap it in ```json fences"
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps({'type': event, **data})}\n\n"
+
+
+def _message_stream(*messages: tuple[str | None, str]) -> str:
+    """One message output item per ``(phase, text)``, streamed as deltas then the done item."""
+    out = ""
+    for index, (phase, text) in enumerate(messages):
+        item_id = f"msg_{index}"
+        out += _sse("response.output_text.delta", {"item_id": item_id, "output_index": index, "delta": text})
+        item = {"id": item_id, "type": "message", "content": [{"type": "output_text", "text": text}]}
+        if phase is not None:
+            item["phase"] = phase
+        out += _sse("response.output_item.done", {"output_index": index, "item": item})
+    return out
+
+
+@pytest.mark.asyncio
+async def test_only_the_final_answer_message_is_the_reply():
+    """Codex models label a preamble message ``commentary`` and the answer ``final_answer``
+    (#6347). Under a strict schema both are JSON; joined they fail with "Extra data"."""
+    llm = build_llm()
+    stream = _message_stream(("commentary", '{"fact": "draft"}'), ("final_answer", '{"fact": "editors"}'))
+    with stub_codex_stream(llm, CodexReply(text=stream)):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "x"}], response_format=_Fact, strict_schema=True, max_retries=0
+        )
+    assert result.content == _Fact(fact="editors")
+
+
+@pytest.mark.asyncio
+async def test_without_phase_labels_the_last_message_is_the_reply():
+    llm = build_llm()
+    stream = _message_stream((None, '{"fact": "draft"}'), (None, '{"fact": "editors"}'))
+    with stub_codex_stream(llm, CodexReply(text=stream)):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "x"}], response_format=_Fact, strict_schema=True, max_retries=0
+        )
+    assert result.content == _Fact(fact="editors")
+
+
+@pytest.mark.asyncio
+async def test_a_reasoning_item_with_content_is_not_the_reply():
+    llm = build_llm()
+    reasoning = {"id": "rs_0", "type": "reasoning", "content": [{"type": "reasoning_text", "text": "thinking"}]}
+    stream = _sse("response.output_item.done", {"output_index": 0, "item": reasoning}) + _message_stream(
+        (None, '{"fact": "editors"}')
+    ).replace('"output_index": 0', '"output_index": 1')
+    with stub_codex_stream(llm, CodexReply(text=stream)):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "x"}], response_format=_Fact, strict_schema=True, max_retries=0
+        )
+    assert result.content == _Fact(fact="editors")
