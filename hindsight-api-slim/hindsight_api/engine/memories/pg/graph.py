@@ -69,7 +69,8 @@ MAX_SEMANTIC_LINKS_PER_UNIT = 50
 _DRAIN_BATCH_SIZE = 50
 
 # A claimed queue row is finished within one batch, well under a second; a claim
-# this old belongs to a worker that died mid-batch, so the row is claimable again.
+# this old belongs to a batch that failed or a worker that died mid-batch, so the
+# row is claimable again. A failed batch is retried no sooner than this.
 _CLAIM_STALE_AFTER = timedelta(minutes=10)
 
 # Defensive guard against runaway relink loops — at _DRAIN_BATCH_SIZE units per
@@ -561,8 +562,8 @@ async def enqueue_graph_maintenance_at_commit(
     locks last until commit. Run early in a retain or an edit, they made every other
     writer of the same bank wait out that whole transaction (#6417). Held back to
     commit time they last milliseconds, and the #3034 guarantee still holds: a
-    worker claiming the row before the insert deletes it, and the insert then lands
-    a fresh row the next drain picks up.
+    worker that claimed the row earlier loses the claim to this insert, so its
+    finishing delete leaves the row queued for a pass over the committed state.
     """
     table = fq_table("graph_maintenance_queue")
 
