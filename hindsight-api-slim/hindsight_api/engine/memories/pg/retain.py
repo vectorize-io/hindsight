@@ -152,21 +152,15 @@ async def load_document_chunks(
     from ...db_utils import acquire_with_retry
 
     async with acquire_with_retry(pool) as conn:
-        if include_text:
-            doc_row_at_load = await conn.fetchrow(
-                f"SELECT content_hash, original_text FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-                document_id,
-                bank_id,
-            )
-            doc_hash_at_load = doc_row_at_load["content_hash"] if doc_row_at_load else None
-            original_text_at_load = doc_row_at_load["original_text"] if doc_row_at_load else None
-        else:
-            doc_hash_at_load = await conn.fetchval(
-                f"SELECT content_hash FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
-                document_id,
-                bank_id,
-            )
-            original_text_at_load = None
+        doc_row_at_load = await conn.fetchrow(
+            f"SELECT content_hash, tags{', original_text' if include_text else ''} "
+            f"FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2",
+            document_id,
+            bank_id,
+        )
+        doc_hash_at_load = doc_row_at_load["content_hash"] if doc_row_at_load else None
+        original_text_at_load = doc_row_at_load["original_text"] if doc_row_at_load and include_text else None
+        tags_at_load = list(doc_row_at_load["tags"] or []) if doc_row_at_load else None
 
         # Load chunks after the document version. If a concurrent writer commits
         # between these reads, the hash precondition on metadata-only writes (or
@@ -175,7 +169,7 @@ async def load_document_chunks(
             conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
         )
     return DocumentChunkState(
-        content_hash=doc_hash_at_load, original_text=original_text_at_load, chunks=existing_chunks
+        content_hash=doc_hash_at_load, original_text=original_text_at_load, chunks=existing_chunks, tags=tags_at_load
     )
 
 

@@ -1034,6 +1034,8 @@ class DocumentChunkState:
     content_hash: str | None
     original_text: str | None
     chunks: list[ExistingChunk] = field(default_factory=list)
+    # The document's tags at load, before the retain rewrites them; None when not readable.
+    tags: list[str] | None = None
 
 
 def document_chunk_state(
@@ -1053,6 +1055,7 @@ def document_chunk_state(
     return DocumentChunkState(
         content_hash=rec.get("content_hash"),
         original_text=rec.get("original_text") if include_text else None,
+        tags=list(rec["tags"] or []) if "tags" in rec else None,
         chunks=[
             ExistingChunk(
                 chunk_id=build_chunk_id(bank_id, document_id, index),

@@ -1258,6 +1258,7 @@ async def _delta_store_owned_write(
     changed_indices: list,
     removed_indices: list,
     doc_hash_at_load: str | None,
+    doc_tags_at_load: list[str] | None = None,
 ) -> "tuple[bool, list]":
     """A store-owned bank's delta write: ONE `retain`, scoped to the chunks that moved.
 
@@ -1410,6 +1411,7 @@ async def _delta_store_owned_write(
                     retain_params.get("metadata", {}),
                     observation_scopes=retain_params.get("observation_scopes"),
                     label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
+                    previous_document_tags=doc_tags_at_load,
                     ops=pool.ops,
                 )
 
@@ -4065,6 +4067,9 @@ async def _try_delta_retain(
             include_text=full_document_body is not None,
         )
     doc_hash_at_load = state.content_hash
+    # The document's tags before this retain rewrites them: a survivor's tag the document did not
+    # carry is its label projection, kept even if its group has left the config (#6336).
+    doc_tags_at_load = state.tags
     original_text_at_load = state.original_text
     existing_chunks = state.chunks
 
@@ -4149,6 +4154,7 @@ async def _try_delta_retain(
                 full_document_body=full_document_body,
                 config=config,
                 expected_content_hash=doc_hash_at_load,
+                previous_document_tags=doc_tags_at_load,
             )
         logger.info(f"Delta retain: no unchanged chunks for {effective_doc_id}, falling back to full retain")
         return None
@@ -4184,6 +4190,7 @@ async def _try_delta_retain(
             full_document_body=full_document_body,
             config=config,
             expected_content_hash=doc_hash_at_load,
+            previous_document_tags=doc_tags_at_load,
         )
 
     # Build content items for only the changed/new chunks
@@ -4212,6 +4219,7 @@ async def _try_delta_retain(
             full_document_body=full_document_body,
             config=config,
             expected_content_hash=doc_hash_at_load,
+            previous_document_tags=doc_tags_at_load,
         )
 
     # Freshness recheck BEFORE the (expensive) LLM extraction.
@@ -4267,6 +4275,8 @@ async def _try_delta_retain(
                 full_document_body=full_document_body,
                 config=config,
                 expected_content_hash=recheck_hash,
+                # No previous_document_tags: a concurrent retain moved the document after it was
+                # loaded, so those tags are stale — survivors keep the config-claimed label tags only.
             )
         log_buffer.append(
             f"[delta] Recheck: {len(recheck.changed) + len(recheck.new) + len(recheck.removed)} chunks still differ — "
@@ -4353,6 +4363,7 @@ async def _try_delta_retain(
                 changed_indices=changed_indices,
                 removed_indices=removed_indices,
                 doc_hash_at_load=doc_hash_at_load,
+                doc_tags_at_load=doc_tags_at_load,
             )
             return ok
 
@@ -4479,6 +4490,7 @@ async def _try_delta_retain(
                     retain_params.get("metadata", {}),
                     observation_scopes=retain_params.get("observation_scopes"),
                     label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
+                    previous_document_tags=doc_tags_at_load,
                     ops=pool.ops,
                 )
                 log_buffer.append(
@@ -4595,6 +4607,7 @@ async def _delta_metadata_only(
     full_document_body: str | None = None,
     config: Any,
     expected_content_hash: str | None = None,
+    previous_document_tags: list[str] | None = None,
 ) -> RetainBatchResult | None:
     """Handle the case where no chunks changed — just update document metadata and tags."""
     from ..memories import get_memories as _get_memories_meta
@@ -4654,6 +4667,7 @@ async def _delta_metadata_only(
                     retain_params.get("metadata", {}),
                     observation_scopes=retain_params.get("observation_scopes"),
                     label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
+                    previous_document_tags=previous_document_tags,
                     ops=pool.ops,
                 )
         if outbox_callback is not None:
@@ -4703,6 +4717,7 @@ async def _delta_metadata_only(
                     retain_params.get("metadata", {}),
                     observation_scopes=retain_params.get("observation_scopes"),
                     label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
+                    previous_document_tags=previous_document_tags,
                     ops=pool.ops,
                 )
                 if outbox_callback is not None:

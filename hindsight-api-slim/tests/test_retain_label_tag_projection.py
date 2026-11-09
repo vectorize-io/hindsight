@@ -17,6 +17,7 @@ document tags alone, which drops a survivor's label tags while the units extract
 beside it in the same retain keep theirs.
 """
 
+import asyncio
 from datetime import datetime, timezone
 
 import pytest
@@ -294,5 +295,74 @@ async def test_label_tag_also_supplied_as_a_document_tag_is_not_duplicated(memor
             raw = list(unit.get("tags") or [])
             assert raw.count("category:durable") == 1, f"{unit['id']} carries a duplicated tag: {raw}"
             assert set(raw) == {"category:durable", "t2"}, raw
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+def test_carried_label_tags_rule():
+    """#6336: a ``key:value`` tag the document did not carry is the projection, config or not."""
+    from hindsight_api.engine.retain.entity_labels import carried_label_tags
+
+    unit = ["scope:first", "category:durable", "plain"]
+    # The group left the config: still kept, because the document never carried it.
+    assert carried_label_tags(unit, set(), ["scope:first", "plain"]) == ["category:durable"]
+    # A caller tag the document carried is the caller's, even with a colon.
+    assert "scope:first" not in carried_label_tags(unit, set(), ["scope:first", "plain"])
+    # A label tag that equals a document tag is still claimed by the live config.
+    assert carried_label_tags(unit, {"category"}, ["category:durable", "scope:first"]) == ["category:durable"]
+    # Document tags unreadable: the config keys alone, as before.
+    assert carried_label_tags(unit, {"category"}, None) == ["category:durable"]
+    assert carried_label_tags(unit, set(), None) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(600)
+async def test_label_tags_survive_their_group_leaving_the_config(memory, request_context):
+    """#6336: removing a ``tag: true`` group stops NEW extraction from assigning it; it does not
+    strip the mirror from facts extracted while it existed — on the tags PATCH or a delta re-retain."""
+    bank_id = f"test_6336_{datetime.now(timezone.utc).timestamp()}"
+    doc = "doc-6336"
+    try:
+        await memory._ensure_bank_exists(bank_id, request_context)
+        await memory._config_resolver.update_bank_config(
+            bank_id, {"entity_labels": _labels("durable"), "retain_chunk_size": 60}
+        )
+        await _retain(memory, bank_id, doc, _A + "\n\n" + _B, ["scope:first"], {}, request_context)
+        before = await _units(memory, bank_id, doc, request_context)
+        assert before and all(u["tags"] == {"scope:first", "category:durable"} for u in before.values()), before
+
+        # The group leaves the taxonomy.
+        await memory._config_resolver.update_bank_config(bank_id, {"entity_labels": []})
+
+        assert await memory.update_document(doc, bank_id, tags=["scope:second"], request_context=request_context)
+        after = await _units(memory, bank_id, doc, request_context)
+        assert set(after) == set(before)
+        for uid, u in after.items():
+            assert u["tags"] == {"scope:second", "category:durable"}, f"{uid}: {u['tags']}"
+
+        # The partial form (#6339) — the issue's own case, removing one ordinary tag.
+        assert await memory.update_document(
+            doc, bank_id, remove_tags=["scope:second"], add_tags=["scope:partial"], request_context=request_context
+        )
+        partial = await _units(memory, bank_id, doc, request_context)
+        for uid, u in partial.items():
+            assert u["tags"] == {"scope:partial", "category:durable"}, f"{uid}: {u['tags']}"
+
+        # A delta re-retain: survivors keep their mirror, the re-extracted chunk gets none.
+        await _retain(memory, bank_id, doc, _A + "\n\n" + _C, ["scope:third"], {}, request_context)
+        final = await _units(memory, bank_id, doc, request_context)
+        survivors = {uid: u for uid, u in final.items() if uid in before}
+        fresh = {uid: u for uid, u in final.items() if uid not in before}
+        assert survivors and fresh
+        for uid, u in survivors.items():
+            assert u["tags"] == {"scope:third", "category:durable"}, f"{uid}: {u['tags']}"
+        for uid, u in fresh.items():
+            assert u["tags"] == {"scope:third"}, f"{uid}: {u['tags']}"
+
+        # The documented way to drop them: reprocess re-extracts under the current config.
+        assert await memory.reprocess_document(bank_id=bank_id, document_id=doc, request_context=request_context)
+        await asyncio.sleep(0.5)
+        reprocessed = await _units(memory, bank_id, doc, request_context)
+        assert reprocessed and all(u["tags"] == {"scope:third"} for u in reprocessed.values()), reprocessed
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
