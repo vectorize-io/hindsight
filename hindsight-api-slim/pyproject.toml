@@ -56,7 +56,9 @@ dependencies = [
     "opentelemetry-exporter-prometheus>=0.65b0",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-semantic-conventions>=0.65b0",
-    "dateparser>=1.4.2",
+    # 1.5.0: search_parse returns (text, date, period) and detection changed;
+    # engine/temporal_language_detection.py mirrors that version (#6359).
+    "dateparser>=1.5.0",
     # Transitive via dateparser, pinned here because the floor is load-bearing:
     # 2025.11.3 turns concurrent entry into dateparser's locale caches into a SIGSEGV
     # inside _regex (verified -- exit 139 in seconds, 3/3; the same probe on 2026.9.3
