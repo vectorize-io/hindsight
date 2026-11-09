@@ -114,7 +114,9 @@ class TestTheCall:
     async def test_declared_tools_are_the_prompt_and_tools_the_choice(self):
         """A turn may narrow what it calls and keep the prompt (and its cached prefix) unchanged."""
         llm = LLMProvider(provider="openai", api_key="k", base_url="http://vllm:8000/v1", model="gemma-4")
-        llm._provider_impl.call = AsyncMock(return_value=_reply({"call": {"name": "recall", "arguments": {}}}))
+        llm._provider_impl.call = AsyncMock(
+            return_value=_reply({"call": {"name": "recall", "arguments": {"query": "q"}}})
+        )
         await llm.call_with_tools(
             messages=[{"role": "user", "content": "q"}],
             tools=TOOLS[:1],
@@ -149,8 +151,41 @@ class TestTheCall:
 
     @pytest.mark.asyncio
     async def test_a_reply_naming_no_call_is_a_turn_without_one(self):
-        result, _ = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}))
+        result, call = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}), _reply({"call": {}}))
+        assert call.await_count == 2  # asked once more, with what was wrong
         assert result.tool_calls == []
+
+    @pytest.mark.asyncio
+    async def test_arguments_flattened_next_to_the_name_are_corrected_once(self):
+        """#6420: an endpoint that does not enforce the schema. The flat call reached the agent as
+        a successful ``done`` and failed there as "no answer"; now the model is told and re-asked."""
+        flat = {"call": {"name": "recall", "query": "editors"}}
+        wrapped = {"call": {"name": "recall", "arguments": {"query": "editors"}}}
+        result, call = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply(flat), _reply(wrapped))
+
+        assert call.await_count == 2
+        assert (result.input_tokens, result.output_tokens) == (200, 40)  # both calls billed
+        correction = call.await_args.kwargs["messages"][-1]["content"]
+        assert 'under "arguments"' in correction and "ONE of the declared functions" in correction
+        assert [(c.name, c.arguments) for c in result.tool_calls] == [("recall", {"query": "editors"})]
+
+    @pytest.mark.asyncio
+    async def test_a_required_argument_left_out_is_corrected_once(self):
+        """#6302: ``recall`` with no query reached the tool, which failed and burned a turn."""
+        result, call = await _call(
+            LLMToolChoice.named("recall"), _reply({"reason": "look"}), _reply({"query": "editors"})
+        )
+        assert call.await_count == 2
+        assert "'query' is a required property" in call.await_args.kwargs["messages"][-1]["content"]
+        assert result.tool_calls[0].arguments == {"query": "editors"}
+
+    @pytest.mark.asyncio
+    async def test_a_reply_still_wrong_after_the_correction_is_a_turn_without_a_call(self):
+        """So the caller reports a model that does not follow the schema, not a missing answer."""
+        flat = {"call": {"name": "recall", "query": "editors"}}
+        result, call = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply(flat), _reply(flat))
+        assert call.await_count == 2
+        assert result.tool_calls == [] and result.content == json.dumps(flat)
 
     @pytest.mark.asyncio
     async def test_a_reply_cut_off_at_the_cap_is_sampled_once_more(self):
@@ -293,3 +328,67 @@ class TestTheRefresh:
         assert cited["memory_ids"]["items"]["enum"] == ["f1"]
         assert cited["observation_ids"]["maxItems"] == 0
         assert json.dumps(closing_done).count('"markdown"') >= 1
+
+
+class TestAFlatDone:
+    @pytest.mark.asyncio
+    async def test_a_done_with_its_answer_beside_the_name_ends_in_that_answer(self, mock_functions):  # noqa: F811
+        """#6420: Ollama Cloud does not enforce the schema, and DeepSeek wrote the closing call as
+        ``{"call": {"name": "done", "answer": ...}}``. Reflect failed with "no answer" though the
+        model wrote one; told what was wrong, the model puts it under ``arguments``."""
+        replies: list[str] = []
+
+        def _fill(schema: dict[str, Any]) -> Any:
+            """A reply that fits ``schema``, as an enforcing endpoint would hold one to."""
+            if "anyOf" in schema:
+                return _fill(schema["anyOf"][0])
+            kind = schema.get("type")
+            if kind == "object":
+                return {k: _fill(v) for k, v in (schema.get("properties") or {}).items()}
+            if kind == "array":
+                enum = (schema.get("items") or {}).get("enum")
+                return enum[:1] if enum and schema.get("maxItems", 1) else []
+            if kind == "boolean":
+                return True
+            if kind in ("integer", "number"):
+                return 1000
+            return schema["enum"][0] if "enum" in schema else "The user prefers ruff."
+
+        async def _model(*, messages, response_format=None, **kwargs):
+            if response_format is None:
+                return _reply("The user prefers ruff.")
+            schema = response_format.model_json_schema()
+            searched = any(m["content"].startswith("Result of") for m in messages if m["role"] == "user")
+            options = (
+                {o["properties"]["name"]["enum"][0]: o for o in schema["properties"]["call"]["anyOf"]}
+                if (response_format.__name__ == "next_call")
+                else {}
+            )
+            if response_format.__name__ == "done":
+                arguments = _fill(schema)
+                corrected = "does not fit the required format" in messages[-1]["content"]
+                reply = arguments if corrected else {"call": {"name": "done", **arguments}}  # the flat call
+            elif options:
+                name = "answer_ready" if searched and "answer_ready" in options else next(iter(options))
+                reply = {"call": {"name": name, "arguments": _fill(options[name]["properties"]["arguments"])}}
+            else:
+                reply = _fill(schema)
+            replies.append(json.dumps(reply))
+            return _reply(reply)
+
+        llm = LLMProvider(provider="openai", api_key="k", base_url="http://vllm:8000/v1", model="deepseek")
+        llm._provider_impl.call = AsyncMock(side_effect=_model)
+
+        result = await run_reflect_agent(
+            llm_config=llm,
+            bank_id="b",
+            query="What tools does the user prefer?",
+            bank_profile={"name": "T", "mission": "M"},
+            has_mental_models=False,
+            budget="high",
+            max_iterations=8,
+            **mock_functions,
+        )
+
+        assert any('"name": "done", "answer"' in r for r in replies), replies  # the flat call was made
+        assert result.text == "The user prefers ruff."

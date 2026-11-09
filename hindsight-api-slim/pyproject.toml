@@ -38,6 +38,7 @@ dependencies = [
     # Contained to engine/token_encoding.py — see that module for the rationale.
     "toktok-rs>=0.3.0",
     "httpx>=0.27.0",
+    "jsonschema>=4.0.0",  # checks a tool call's reply against its function (engine/providers/tools_via_schema.py)
     "fastmcp>=3.2.0", # SSRF/path traversal, OAuth confused deputy, command injection fixes
     "python-dateutil>=2.8.0",
     # Two coupled reasons for these floors — keep all six pins moving together:

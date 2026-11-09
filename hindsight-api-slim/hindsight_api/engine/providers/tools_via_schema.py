@@ -24,6 +24,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+import jsonschema
+
 from ..llm_interface import LLMToolChoice, LLMToolChoiceMode
 from ..response_models import LLMToolCall
 
@@ -173,6 +175,36 @@ def calls_from_reply(content: str | None, tools: list[dict[str, Any]], tool_choi
     else:
         arguments = {k: v for k, v in arguments.items() if v is not None}
     return [LLMToolCall(id=f"call_{name}_{uuid.uuid4().hex[:12]}", name=name, arguments=arguments)]
+
+
+def reply_violation(content: str | None, calls: list[LLMToolCall], tools: list[dict[str, Any]]) -> str | None:
+    """How a reply breaks the call it was held to, in words the model can correct; ``None`` if it does not.
+
+    Only the schema keeps a reply in shape, and not every endpoint enforces one (Ollama Cloud
+    does not; Gemini ignores ``additionalProperties``). Unchecked, a call with its arguments
+    flattened next to its name (``{"call": {"name": "done", "answer": ...}}``, #6420) or with
+    a required argument missing (#6302) reached the agent as a successful call and failed
+    there as "no answer" or "requires a query". Checked against the tool's own parameters,
+    not the closed schema: a model may leave an optional argument out.
+    """
+    if not calls:
+        return 'the reply names no function; reply as {"call": {"name": <function name>, "arguments": {...}}}'
+    call = calls[0]
+    tool = next((t for t in tools if _function(t).get("name") == call.name), None)
+    if tool is None:
+        return f"`{call.name}` is not one of the declared functions"
+    if set(call.arguments) == {"_raw"}:
+        try:
+            json.loads(content or "")
+        except json.JSONDecodeError:
+            return None  # JSON that does not parse: the caller's repair judges it (#5272)
+        return f'the arguments of `{call.name}` must be one JSON object, under "arguments"'
+    parameters = _function(tool).get("parameters") or {"type": "object"}
+    error = jsonschema.exceptions.best_match(jsonschema.Draft202012Validator(parameters).iter_errors(call.arguments))
+    if error is None:
+        return None
+    where = "/".join(str(p) for p in error.absolute_path)
+    return f"the arguments of `{call.name}` are invalid{f' at `{where}`' if where else ''}: {error.message}"
 
 
 def _unwrapped(reply: Any, name: str) -> Any:
