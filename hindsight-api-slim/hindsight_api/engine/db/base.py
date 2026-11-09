@@ -39,8 +39,6 @@ class DatabaseConnection(ABC):
     Methods mirror asyncpg's connection API for minimal migration friction.
     """
 
-    __slots__ = ("_before_commit",)
-
     def __init__(self) -> None:
         # Keyed by the caller's key: one held write per key, flushed at commit.
         self._before_commit: dict[str, _HeldWrite] = {}

@@ -22,6 +22,9 @@ class _FakeConn:
     async def transaction(self):
         yield
 
+    def is_in_transaction(self) -> bool:
+        return False
+
 
 class _FakePool:
     def __init__(self):
