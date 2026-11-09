@@ -259,6 +259,17 @@ def _scores_something(analyzer: DateparserQueryAnalyzer, query: str) -> bool:
     )
 
 
+def test_find_dates_returns_pairs_and_explicit_date_constrains(analyzer) -> None:
+    """dateparser 1.5.0's private search_parse returns triples; we must still hand out pairs (#6359)."""
+    from dateparser.conf import settings as ds
+
+    results = analyzer._find_dates("Which team did John sign with on 21 May, 2023?", settings=ds)
+    assert results and all(len(r) == 2 for r in results)
+    analysis = analyzer.analyze("Which team did John sign with on 21 May, 2023?", datetime(2026, 11, 8))
+    assert analysis.temporal_constraint is not None
+    assert analysis.temporal_constraint.start_date.date() == datetime(2023, 5, 21).date()
+
+
 def _assert_prefilter_sound(analyzer: DateparserQueryAnalyzer, query: str) -> None:
     if _query_can_score(query):
         return  # slow path taken; nothing to prove

@@ -4,8 +4,8 @@ language detection.
 ``dateparser.search.search_dates`` spends ~98% of its time in
 ``FullTextLanguageDetector._best_language`` deciding which of 205 locales the
 text is in. Three costs in that function are pure waste, and none of them are
-fixed upstream (``search/text_detection.py`` on dateparser master is byte-identical
-to the 1.2.2 copy we ship):
+fixed upstream. This mirrors the 1.5.0 detector (kana drops Chinese candidates,
+native-letter counts break ties), which is why ``dateparser>=1.5.0`` is the floor:
 
 1. ``get_unique_characters()`` does an O(locales²) set-difference sweep — 42,025
    set operations — to work out which characters are unique to each locale. The
@@ -50,6 +50,7 @@ randomly generated strings and requires identical answers.
 
 from __future__ import annotations
 
+import re
 import threading
 from dataclasses import dataclass
 
@@ -63,6 +64,8 @@ from dateparser.utils import normalize_unicode
 # characters carries no language signal, so detection short-circuits to the
 # first candidate locale.
 _SYMBOL_SET = frozenset("0123456789 /-)(.:\\,'")
+# Hiragana and katakana, except the middle dot, which Chinese also uses.
+_KANA = re.compile(r"[\u3041-\u3096\u30a1-\u30fa\u30fc-\u30ff]")
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,10 @@ def _character_check(text: str, languages: list[Locale], settings: Settings) -> 
     if text_chars & _SYMBOL_SET == text_chars:
         return languages[:1]
 
+    if _KANA.search(text):
+        # Chinese words are also Japanese ones, e.g. 後天 ("acquired").
+        languages = [lang for lang in languages if lang.shortname.split("-")[0] not in {"zh", "yue"}] or languages
+
     tables = _char_tables(languages, settings)
 
     for i, chars in enumerate(tables.unique_chars):
@@ -201,21 +208,28 @@ def best_language(text: str, languages: list[Locale], settings: Settings | None 
     stripped, _ = pop_tz_offset_from_string(text, as_offset=False)
     tz_changed = stripped != text
 
-    applicable: list[tuple[str, list[int]]] = []
+    applicable: list[tuple[str, tuple[int, ...]]] = []
     for language in candidates:
-        _ensure_dictionary_warm(language, settings)
-        counts = language.count_applicability(text, strip_timezone=False, settings=settings)
-        if counts[0] > 0 or counts[1] > 0:
-            applicable.append((language.shortname, counts))
-            continue
-        if not tz_changed:
-            # The retry strips a timezone that is not there, so it would re-run
-            # the identical computation and get the identical [0, 0].
-            continue
-        counts = language.count_applicability(stripped, strip_timezone=False, settings=settings)
-        if counts[0] > 0 or counts[1] > 0:
-            applicable.append((language.shortname, counts))
+        # The retry on the timezone-stripped text is skipped when there was no
+        # timezone: it would re-run the identical computation and get [0, 0] again.
+        for candidate_text in (text, stripped) if tz_changed else (text,):
+            counts = _counts(language, candidate_text, settings)
+            if counts[0] > 0 or counts[1] > 0:
+                # On a tie, prefer the language that matches more words without
+                # letter variants, so that e.g. Arabic text is not taken for Persian.
+                # ``_native`` is a dateparser 1.5.0 private, like the rest of what
+                # this module mirrors; the differential tests catch it changing.
+                native = language._native
+                native_counts = counts if native is language else _counts(native, candidate_text, settings)
+                applicable.append((language.shortname, (*counts, *native_counts)))
+                break
 
     if not applicable:
         return None
-    return max(applicable, key=lambda pair: (pair[1][0], pair[1][1]))[0]
+    return max(applicable, key=lambda pair: pair[1])[0]
+
+
+def _counts(language: Locale, text: str, settings: Settings) -> list[int]:
+    """``count_applicability`` on an already timezone-stripped text, after the one-time warmup."""
+    _ensure_dictionary_warm(language, settings)
+    return language.count_applicability(text, strip_timezone=False, settings=settings)

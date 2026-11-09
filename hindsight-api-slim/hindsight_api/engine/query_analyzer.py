@@ -10,7 +10,7 @@ import re
 import threading
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
-from typing import cast
+from typing import Any, cast
 
 from dateparser.conf import Settings, apply_settings
 from pydantic import BaseModel, Field
@@ -344,7 +344,9 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
             self._loaded = True
 
     @apply_settings
-    def _find_dates(self, query: str, settings: "Settings | None" = None) -> list[tuple[str, datetime]] | None:
+    def _find_dates(
+        self, query: str, settings: "Settings | dict[str, Any] | None" = None
+    ) -> list[tuple[str, datetime]] | None:
         """``dateparser.search.search_dates`` without its redundant work.
 
         Same three steps as upstream — preprocess, detect the language, parse the
@@ -365,7 +367,7 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
         # keyword-argument contract. Fall back rather than assert so a direct
         # call without the decorator still behaves like dateparser's own entry
         # points.
-        settings = settings or dateparser_defaults
+        settings = cast("Settings", settings or dateparser_defaults)
         check_settings(settings)
         # dateparser's caches are process-global and built lazily; only one
         # thread may be inside them at a time. See _DATEPARSER_LOCK.
@@ -380,7 +382,12 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
             )
             if not language:
                 return None
-            return self._exact_search.search_parse(language, text, settings=settings) or None
+            results = self._exact_search.search_parse(language, text, settings=settings)
+            # Since dateparser 1.5.0 this private method returns (text, date, period)
+            # triples, while the public search_dates still returns pairs. Unpacking the
+            # triples as pairs raised on every dated query and recall silently lost its
+            # temporal constraint (#6359), so narrow them back to (text, date) here.
+            return [(r[0], r[1]) for r in results] or None
 
     def analyze(self, query: str, reference_date: datetime | None = None) -> QueryAnalysis:
         """
