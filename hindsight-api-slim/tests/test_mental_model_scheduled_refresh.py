@@ -382,11 +382,14 @@ async def test_failed_model_is_not_requeued_until_a_refresh_succeeds(
     bank = await _make_bank(memory, request_context)
     async with memory._pool.acquire() as conn:
         mm_id = await _insert_mm(conn, bank, refresh_cron="*/5 * * * *", last_refreshed_offset="1 day")
-    await _new_fact(memory, bank)
     _stall_worker(memory, monkeypatch)
+    # Fail it before it goes stale. The pass scans every bank in the shared database, so
+    # one run by another test process between "stale" and "failed" would queue this
+    # model for real and the zero below would read one (#6390).
     await memory._record_mental_model_refresh_failure(
         bank, mm_id, outcome="refresh_failed_error", failure_reason="unexpected_error", error_message="boom"
     )
+    await _new_fact(memory, bank)
 
     loop = MaintenanceLoop(memory)
     await loop._run_scheduled_mm_refresh()

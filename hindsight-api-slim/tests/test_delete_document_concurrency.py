@@ -96,17 +96,33 @@ async def delete_race(pg0_db_url):
         await setup.close()
 
 
+# How long a step may take to reach its expected wait. Generous: on a loaded CI box the
+# steps leading to a wait (pool acquire, the sweep, cold imports) have taken over 10s, and
+# a longer budget weakens nothing, because what each test proves is that the wait (or the
+# finish) is reached while the other side is still held (#6388).
+STEP_TIMEOUT = 30
+
+
 async def wait_for_lock(race: DeleteRace, query_contains: str = "") -> None:
     # Observe a real wait rather than relying on a scheduler-dependent sleep. With
     # query_contains, wait until that statement is the one blocked: under load an earlier
-    # statement can wait briefly on a lock first (#6355).
-    async with asyncio.timeout(10):
-        while not await race.setup.fetchval(
-            "SELECT wait_event_type = 'Lock' AND position($2 in query) > 0 FROM pg_stat_activity WHERE pid=$1",
+    # statement can wait briefly on a lock first (#6355, #6388).
+    try:
+        async with asyncio.timeout(STEP_TIMEOUT):
+            while not await race.setup.fetchval(
+                "SELECT wait_event_type = 'Lock' AND position($2 in query) > 0 FROM pg_stat_activity WHERE pid=$1",
+                race.second_pid,
+                query_contains,
+            ):
+                await asyncio.sleep(0.01)
+    except TimeoutError:
+        # Name what the second connection is doing instead, and who holds it up.
+        rows = await race.setup.fetch(
+            "SELECT pid, state, wait_event_type, wait_event, query, pg_blocking_pids(pid) AS blockers "
+            "FROM pg_stat_activity WHERE pid = $1 OR pid = ANY(pg_blocking_pids($1))",
             race.second_pid,
-            query_contains,
-        ):
-            await asyncio.sleep(0.01)
+        )
+        raise AssertionError(f"never blocked on {query_contains!r}: {[dict(r) for r in rows]}") from None
 
 
 @pytest.mark.parametrize("replace", [False, True])
@@ -186,7 +202,7 @@ async def test_document_mutation_and_relink_preserve_queue(
     )
     tasks = [worker_task]
     try:
-        await asyncio.wait_for(claimed.wait(), 10)
+        await asyncio.wait_for(claimed.wait(), STEP_TIMEOUT)
         tasks.append(asyncio.create_task(mutate()))
         # The mutation must block on the queue insert behind the claimed batch.
         await wait_for_lock(race, "INSERT INTO public.graph_maintenance_queue")
@@ -245,7 +261,7 @@ async def test_shared_observation_deletes_complete_after_commit_or_rollback(dele
     first._delete_stale_observations_for_memories = pause_after_delete
     tasks = [asyncio.create_task(first.delete_document("a", race.banks[0], request_context=request_context))]
     try:
-        await asyncio.wait_for(paused.wait(), 10)
+        await asyncio.wait_for(paused.wait(), STEP_TIMEOUT)
         tasks.append(asyncio.create_task(second.delete_document("b", race.banks[0], request_context=request_context)))
         await wait_for_lock(race)
     finally:
@@ -301,7 +317,7 @@ async def test_reingest_and_delete_of_observation_sources_both_complete(delete_r
     first._delete_stale_observations_for_memories = pause_after_cascade
     tasks = [asyncio.create_task(first.delete_document("a", race.banks[0], request_context=request_context))]
     try:
-        await asyncio.wait_for(paused.wait(), 10)
+        await asyncio.wait_for(paused.wait(), STEP_TIMEOUT)
         tasks.append(asyncio.create_task(reingest_b()))
         await wait_for_lock(race)
     finally:
@@ -333,7 +349,7 @@ async def test_reingest_and_delete_of_linked_documents_both_complete(delete_race
     async def rendezvous(conn, query: str) -> None:
         if (query.strip() in cascades or "WITH matched_links" in query) and id(conn) not in arrived:
             arrived.add(id(conn))
-            await asyncio.wait_for(barrier.wait(), 10)
+            await asyncio.wait_for(barrier.wait(), STEP_TIMEOUT)
 
     async def rendezvous_execute(conn, query, *args, **kwargs):
         await rendezvous(conn, query)
@@ -426,8 +442,10 @@ async def test_other_bank_can_delete_while_first_bank_is_paused(delete_race, req
     first._delete_stale_observations_for_memories = pause_after_delete
     task = asyncio.create_task(first.delete_document("a", race.banks[0], request_context=request_context))
     try:
-        await asyncio.wait_for(paused.wait(), 10)
-        result = await asyncio.wait_for(second.delete_document("b", race.banks[1], request_context=request_context), 10)
+        await asyncio.wait_for(paused.wait(), STEP_TIMEOUT)
+        result = await asyncio.wait_for(
+            second.delete_document("b", race.banks[1], request_context=request_context), STEP_TIMEOUT
+        )
         assert result["document_deleted"] == 1
         assert await second.get_document("a", race.banks[1], request_context=request_context) is not None
     finally:
@@ -462,7 +480,7 @@ async def test_bank_cleanup_and_document_delete_use_same_lock_order(
     cleanup = first.clear_observations if clear_observations else first.delete_bank
     tasks = [asyncio.create_task(cleanup(race.banks[0], request_context=request_context))]
     try:
-        await asyncio.wait_for(paused.wait(), 10)
+        await asyncio.wait_for(paused.wait(), STEP_TIMEOUT)
         tasks.append(asyncio.create_task(second.delete_document("b", race.banks[0], request_context=request_context)))
         await wait_for_lock(race)
     finally:

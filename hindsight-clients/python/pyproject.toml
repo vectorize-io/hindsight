@@ -44,7 +44,10 @@ log_cli = true
 log_cli_level = "INFO"
 log_cli_format = "%(asctime)s %(levelname)s %(message)s"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
-addopts = "--timeout 120 -n auto --durations=10 -v"
+# 300s, not 120s: CI's shared inference endpoint answers HTTP 429 under load, and the server's
+# configured LLM retries (8, backoff from 2s) can legitimately spend minutes on one retain,
+# so a lower per-test budget times out a healthy run (#6393). Matches the client's HTTP timeout.
+addopts = "--timeout 300 -n auto --durations=10 -v"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 log_auto_indent = true

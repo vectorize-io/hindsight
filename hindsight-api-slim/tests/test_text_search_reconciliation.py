@@ -59,7 +59,7 @@ class _Connection:
         if "information_schema.columns" in sql:
             column_type = self.tables[params["table_name"]].column
             return _Result(row=("USER-DEFINED", column_type) if column_type else None)
-        if "FROM pg_indexes" in sql:
+        if "pg_get_indexdef" in sql:
             table = self.tables[params["table_name"]]
             return _Result(row=(table.index, table.indexdef) if table.index else None)
         count_target = _COUNT_TABLE.search(" ".join(sql.split()))

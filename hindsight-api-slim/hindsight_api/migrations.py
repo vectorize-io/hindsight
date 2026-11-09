@@ -907,14 +907,20 @@ def ensure_vector_extension(
                 text(f"SELECT COUNT(*) FROM {schema_name}.{table_name} WHERE embedding IS NOT NULL")
             ).scalar()
 
-            # Check current index type by querying pg_indexes
+            # Check current index type. Read from the table's own indexes, not
+            # pg_indexes: that view renders every index in the database, and a
+            # schema dropped concurrently (tenant delete) fails the render — see
+            # _vector_index_names.
             current_index_rows = conn.execute(
                 text("""
-                    SELECT indexdef, indexname
-                    FROM pg_indexes
-                    WHERE schemaname = :schema
-                      AND tablename = :table_name
-                      AND indexname LIKE :index_pattern
+                    SELECT pg_get_indexdef(i.oid), i.relname
+                    FROM pg_class t
+                    JOIN pg_namespace n ON n.oid = t.relnamespace
+                    JOIN pg_index x ON x.indrelid = t.oid
+                    JOIN pg_class i ON i.oid = x.indexrelid
+                    WHERE n.nspname = :schema
+                      AND t.relname = :table_name
+                      AND i.relname LIKE :index_pattern
                 """),
                 {"schema": schema_name, "table_name": table_name, "index_pattern": "%embedding%"},
             ).fetchall()
@@ -1316,15 +1322,15 @@ def ensure_text_search_extension(
             # access method but only pg_search uses the `key_field` reloption).
             current_index_info = conn.execute(
                 text("""
-                    SELECT am.amname, pi.indexdef
-                    FROM pg_indexes pi
-                    JOIN pg_class c
-                      ON c.relname = pi.indexname
-                     AND c.relnamespace = to_regnamespace(pi.schemaname)
-                    JOIN pg_am am ON am.oid = c.relam
-                    WHERE pi.schemaname = :schema
-                      AND pi.tablename = :table_name
-                      AND pi.indexname = :index_name
+                    SELECT am.amname, pg_get_indexdef(i.oid)
+                    FROM pg_class t
+                    JOIN pg_namespace n ON n.oid = t.relnamespace
+                    JOIN pg_index x ON x.indrelid = t.oid
+                    JOIN pg_class i ON i.oid = x.indexrelid
+                    JOIN pg_am am ON am.oid = i.relam
+                    WHERE n.nspname = :schema
+                      AND t.relname = :table_name
+                      AND i.relname = :index_name
                 """),
                 {
                     "schema": schema_name,

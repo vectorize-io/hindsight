@@ -20,7 +20,7 @@ import uuid
 import pytest
 from hindsight_client import Hindsight
 
-from hindsight_system_tests.payloads import extracted, fact
+from hindsight_system_tests.payloads import consolidation, extracted, fact
 
 from .conftest import BANK_PREFIX, QUERY_EMBEDDINGS_MODEL
 
@@ -42,6 +42,8 @@ async def test_queries_embed_with_the_query_model_and_still_find_stored_facts(
     llm.on_step("extract_facts", contains="Quillon").returns(
         extracted(fact(FACT, who="Quillon", where="Ljubljana", entities=["Quillon", "Ljubljana"]))
     )
+    # The retain queues a consolidation; the worker may run it before the bank is deleted (#6436).
+    llm.on_step("consolidate").returns(consolidation())
     try:
         await split_embeddings_client.aretain(bank_id=bank, content="Quillon repairs harpsichords in Ljubljana.")
         response = await split_embeddings_client.arecall(bank_id=bank, query=QUERY)

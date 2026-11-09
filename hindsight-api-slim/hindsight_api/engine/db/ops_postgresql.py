@@ -7,6 +7,8 @@ efficient batch operations.
 import asyncio
 from datetime import datetime
 
+import asyncpg
+
 from .base import DatabaseConnection
 from .ops import (
     ChunkIdOwnedByAnotherBank,
@@ -20,6 +22,49 @@ from .ops import (
     memory_unit_columns,
 )
 from .result import ResultRow
+
+# How long a bank create keeps trying to build its indexes before giving up (#5805).
+_INDEX_LOCK_BUDGET_SECONDS = 300.0
+
+
+async def _create_index_without_queueing(conn: DatabaseConnection, ddl: str) -> None:
+    """Run a plain CREATE INDEX on memory_units without parking in its lock queue.
+
+    The ShareLock it needs conflicts with every INSERT/UPDATE/DELETE, and Postgres
+    queues later lockers behind a waiting one. So while it waits — behind another bank
+    delete's DROP INDEX CONCURRENTLY, or a CONCURRENTLY build, both of which wait for
+    every older transaction to end — every write to memory_units, in every bank, waits
+    with it (#5805). Instead each attempt waits in a savepoint for at most twice
+    ``deadlock_timeout``, then leaves the queue and backs off so writers get through.
+
+    Twice, not less: a CONCURRENTLY build can be waiting on this very transaction, and
+    the deadlock detector only looks once a wait passes ``deadlock_timeout``. Waiting
+    past it keeps that cycle a DeadlockDetectedError, which the callers already retry
+    (#5830). The bank create itself still waits as long as the lock takes; callers
+    that cannot retry (import, a caller's own transaction) see no new failure short of
+    the budget, where the last lock error is raised.
+    """
+    deadline = asyncio.get_running_loop().time() + _INDEX_LOCK_BUDGET_SECONDS
+    delay = 0.1
+    while True:
+        try:
+            # Savepoint: a timed-out attempt rolls back alone, its lock wait and the
+            # local lock_timeout with it, and the caller's transaction carries on.
+            async with conn.transaction():
+                previous = await conn.fetchval("SELECT current_setting('lock_timeout')")
+                await conn.execute(
+                    "SELECT set_config('lock_timeout', (setting::int * 2)::text, true)"
+                    " FROM pg_settings WHERE name = 'deadlock_timeout'"
+                )
+                await conn.execute(ddl)
+                # A local setting outlives the savepoint's release; restore the caller's.
+                await conn.execute("SELECT set_config('lock_timeout', $1, true)", previous)
+            return
+        except asyncpg.LockNotAvailableError:
+            if asyncio.get_running_loop().time() >= deadline:
+                raise
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 2.0)
 
 
 def pg_search_vector_expr(
@@ -1331,10 +1376,11 @@ class PostgreSQLOps(DataAccessOps):
             for ft, suffix in fact_types.items():
                 uid = str(internal_id).replace("-", "")[:16]
                 idx = f"idx_mu_emb_{suffix}_{uid}"
-                await conn.execute(
+                await _create_index_without_queueing(
+                    conn,
                     f"CREATE INDEX IF NOT EXISTS {idx} "
                     f"ON {table} {index_clause} "
-                    f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'"
+                    f"WHERE fact_type = '{ft}' AND bank_id = '{escaped}'",
                 )
 
     async def drop_bank_vector_indexes(

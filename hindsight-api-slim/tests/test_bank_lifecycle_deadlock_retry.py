@@ -12,8 +12,10 @@ The deadlock is injected via monkeypatch (one-shot ``DeadlockDetectedError``)
 so the retry path is exercised deterministically, without racing real workers.
 """
 
+import asyncio
 import uuid
 
+import asyncpg
 import pytest
 from asyncpg.exceptions import DeadlockDetectedError
 
@@ -147,3 +149,66 @@ async def test_write_that_creates_its_bank_retries_transient_deadlock(
         assert calls == 2, "expected exactly one retry after the injected deadlock"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_bank_create_waiting_on_index_lock_does_not_stall_other_banks(
+    memory: MemoryEngine, request_context: RequestContext, pg0_db_url: str
+):
+    """A new bank whose index DDL waits must not hold every other bank's writes up with it (#5805).
+
+    Real locks, no mocks: an open transaction keeps another bank's DROP INDEX CONCURRENTLY
+    waiting (it holds a lock that conflicts with CREATE INDEX). A plain CREATE INDEX parked
+    behind it would queue every memory_units write in the database; the create must step
+    out of the queue between tries, and still finish once the holder ends.
+    """
+    backend = await memory._get_backend()
+    tag = uuid.uuid4().hex[:8]
+    other_bank, new_bank = f"test-lockq-other-{tag}", f"test-lockq-new-{tag}"
+    holder, dropper, observer = [await asyncpg.connect(pg0_db_url) for _ in range(3)]
+    tx = holder.transaction()
+    create = drop = None
+    try:
+        await observer.execute(f"CREATE INDEX idx_lockq_{tag} ON memory_units(bank_id) WHERE bank_id = '{other_bank}'")
+        await observer.execute("INSERT INTO banks(bank_id) VALUES($1)", other_bank)
+        await tx.start()
+        await holder.fetchval("SELECT count(*) FROM memory_units WHERE bank_id = $1", other_bank)
+        drop = asyncio.create_task(dropper.execute(f"DROP INDEX CONCURRENTLY idx_lockq_{tag}"))
+        await _wait_until_lock_wait(observer, f"DROP INDEX CONCURRENTLY idx_lockq_{tag}")
+
+        create = asyncio.create_task(bank_utils.get_or_create_bank_profile(backend, new_bank))
+        await _wait_until_lock_wait(observer, f"WHERE fact_type = 'world' AND bank_id = '{new_bank}'")
+        # Another bank's write goes through while the create is still waiting.
+        await asyncio.wait_for(
+            observer.execute("INSERT INTO memory_units(bank_id, text, fact_type) VALUES($1, 'x', 'world')", other_bank),
+            15,
+        )
+        assert not create.done()
+
+        await tx.rollback()
+        await asyncio.wait_for(drop, 15)
+        result = await asyncio.wait_for(create, 30)
+        assert result.created is True
+    finally:
+        await holder.close()  # ends its transaction, if the test did not get to
+        for task in (create, drop):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(*(t for t in (create, drop) if t is not None), return_exceptions=True)
+        await observer.execute(f"DROP INDEX IF EXISTS idx_lockq_{tag}")
+        await observer.execute("DELETE FROM memory_units WHERE bank_id = $1", other_bank)
+        await observer.execute("DELETE FROM banks WHERE bank_id = $1", other_bank)
+        for conn in (dropper, observer):
+            await conn.close()
+        await memory.delete_bank(new_bank, request_context=request_context)
+
+
+async def _wait_until_lock_wait(observer: asyncpg.Connection, query_contains: str) -> None:
+    async with asyncio.timeout(30):
+        while not await observer.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity"
+            " WHERE wait_event_type = 'Lock' AND position($1 in query) > 0)",
+            query_contains,
+        ):
+            await asyncio.sleep(0.01)
