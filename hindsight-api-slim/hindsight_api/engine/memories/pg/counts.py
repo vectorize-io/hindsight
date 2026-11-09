@@ -109,7 +109,8 @@ async def link_counts(*, conn, fq_table: Callable[[str], str], bank_id: str) -> 
             WHERE mu.bank_id = $1
             GROUP BY ue.entity_id
         )
-        SELECT COALESCE(SUM(LEAST(n - 1, $2)), 0)::bigint AS count
+        -- Each of the n units sharing an entity links to up to LEAST(n - 1, cap) others.
+        SELECT COALESCE(SUM(n * LEAST(n - 1, $2)), 0)::bigint AS count
         FROM per_entity
         """,
         bank_id,
