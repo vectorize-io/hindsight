@@ -171,7 +171,6 @@ async def _bulk_insert_links(
     links: list[tuple],
     bank_id: str = "",
     chunk_size: int = 5000,
-    skip_exists_check: bool = False,
     ops=None,
 ) -> None:
     """Bulk-insert links using sorted INSERT FROM unnest().
@@ -186,9 +185,6 @@ async def _bulk_insert_links(
         bank_id: Bank identifier stored on memory_links for fast filtering.
         chunk_size: Max rows per INSERT statement to avoid query timeouts on
                     very large tables (100M+ rows).
-        skip_exists_check: Skip WHERE EXISTS checks on memory_units. Use when
-                    all referenced unit IDs are guaranteed to exist (e.g., within
-                    the same transaction that inserted them).
         ops: DataAccessOps instance for backend-specific bulk operations.
     """
     if not links:
@@ -198,20 +194,12 @@ async def _bulk_insert_links(
     # index locks in the same order — prevents circular-wait deadlocks.
     sorted_links = sorted(links, key=_lock_order_key)
 
-    exists_clause = ""
-    if not skip_exists_check:
-        exists_clause = (
-            f"WHERE EXISTS (SELECT 1 FROM {fq_table('memory_units')} mu WHERE mu.id = f)"
-            f"  AND EXISTS (SELECT 1 FROM {fq_table('memory_units')} mu WHERE mu.id = t)"
-        )
-
     await ops.bulk_insert_links(
         conn,
         fq_table("memory_links"),
         sorted_links,
         bank_id,
         _NIL_ENTITY_UUID,
-        exists_clause,
         chunk_size,
     )
 
@@ -562,7 +550,7 @@ async def create_temporal_links_batch_per_fact(
 
         if links:
             insert_start = time_mod.perf_counter()
-            await _bulk_insert_links(conn, links, bank_id=bank_id, skip_exists_check=True, ops=ops)
+            await _bulk_insert_links(conn, links, bank_id=bank_id, ops=ops)
             _log(
                 log_buffer,
                 f"      [7.4] Insert {len(links)} temporal links: {time_mod.perf_counter() - insert_start:.3f}s",
@@ -1041,7 +1029,7 @@ async def _write_causal_links_batch(
 
         if links:
             insert_start = time_mod.perf_counter()
-            await _bulk_insert_links(conn, links, bank_id=bank_id, skip_exists_check=True, ops=ops)
+            await _bulk_insert_links(conn, links, bank_id=bank_id, ops=ops)
             logger.debug(
                 f"      [10.1] Insert {len(links)} causal links: {time_mod.perf_counter() - insert_start:.3f}s"
             )

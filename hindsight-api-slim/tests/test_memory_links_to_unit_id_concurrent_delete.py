@@ -1,9 +1,8 @@
 """Regression for #1882 — the ``to_unit_id`` side of the memory_links FK race.
 
 Mirror of #1795 (which covered ``from_unit_id``). Temporal / ANN link inserts
-reference a **pre-existing neighbor** unit as ``to_unit_id`` and bulk-insert with
-``skip_exists_check=True`` (see ``create_temporal_links_batch_per_fact`` /
-``compute_semantic_links_ann``). The FK
+reference a **pre-existing neighbor** unit as ``to_unit_id`` (see
+``create_temporal_links_batch_per_fact`` / ``compute_semantic_links_ann``). The FK
 ``fk_memory_links_to_unit_id_memory_units`` is ``DEFERRABLE INITIALLY DEFERRED``
 (migration ``9f8e7d6c5b4a``), so the INSERT takes **no lock** on the parent
 ``memory_units`` row — the check is pushed to COMMIT. A concurrent committed
@@ -78,7 +77,6 @@ async def test_to_unit_id_survives_concurrent_neighbor_delete(pg0_db_url):
             PostgresConnection(conn_a),
             [(from_id, neighbor_id, "temporal", 1.0, None)],
             bank_id=bank_id,
-            skip_exists_check=True,  # the racy path: no EXISTS guard
             ops=ops,
         )
 
