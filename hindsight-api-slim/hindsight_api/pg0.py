@@ -88,6 +88,14 @@ class EmbeddedPostgres:
                 return uri
             except Exception as e:
                 last_error = str(e)
+                # The API and the worker of one deployment share an instance, and each starts it: the
+                # second one used to fail all five attempts on "Instance already running" and exit
+                # (live, 2026-11-06 the worker, 2026-11-09 the API). Running means started: use it.
+                if "already running" in last_error.lower():
+                    running = await loop.run_in_executor(None, pg0.info)
+                    if running.running and running.uri:
+                        logger.info(f"PostgreSQL already running: {running.uri}")
+                        return running.uri
                 if attempt < max_retries:
                     delay = retry_delay * (2 ** (attempt - 1))
                     logger.debug(f"pg0 start attempt {attempt}/{max_retries} failed: {last_error}")

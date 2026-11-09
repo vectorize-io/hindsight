@@ -172,3 +172,15 @@ async def test_start_without_a_uri_fails_with_a_clear_error() -> None:
     with pytest.raises(RuntimeError, match="returned no connection URI"):
         await pg0.start(max_retries=2, retry_delay=0)
     assert pg0._pg0.start.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_an_instance_another_process_started_is_used_not_a_failure():
+    """The API and the worker share one instance and both start it: the second one used to exit."""
+    pg = EmbeddedPostgres(name="shared", port=5591)
+    fake = MagicMock()
+    fake.start.side_effect = RuntimeError("Error: Instance already running (pid: 43509)")
+    fake.info.return_value = SimpleNamespace(running=True, uri="postgresql://u:p@localhost:5591/db")
+    pg._pg0 = fake
+    assert await pg.start(max_retries=2, retry_delay=0) == "postgresql://u:p@localhost:5591/db"
+    assert fake.start.call_count == 1
