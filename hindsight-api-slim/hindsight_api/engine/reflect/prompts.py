@@ -1322,8 +1322,9 @@ RULES
 - NEVER emit operations to "normalize" formatting (numbered → bulleted, casing
   changes, paragraph → list, etc).
 - Every operation MUST be justifiable by a specific fact in SUPPORTING FACTS.
-- Output ``{"operations": []}`` only if the new facts are already reflected
-  in the document (e.g., from a concurrent update).
+- Output ``{"operations": []}`` when the new facts are already covered by the
+  document, are off-topic for it, or change nothing it states. That is a normal,
+  expected answer.
 
 ALLOWED OPERATIONS (each line shows the JSON shape)
 - ``{"op": "append_block", "section_id": "...", "text": "..."}``
