@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import pytest
 from aiohttp import web
 
+from hindsight_api.engine.aiohttp_session import HINDSIGHT_USER_AGENT
 from hindsight_api.engine.parsers import iris
 from hindsight_api.engine.parsers.base import UnsupportedFileTypeError
 from hindsight_api.engine.parsers.iris import IrisParser
@@ -31,6 +32,7 @@ class _Upstream:
                 return web.Response(status=status, text=f"refused at {suffix}")
         if request.method == "POST" and path.endswith("/org/org-1/files"):
             assert request.headers["Authorization"] == "Bearer tok"
+            assert request.headers["User-Agent"] == HINDSIGHT_USER_AGENT
             body = await request.json()
             assert body == {"name": "doc.pdf", "contentType": "application/pdf"}
             upload_url = f"{request.scheme}://{request.host}/presigned/upload?{_SIGNATURE}"

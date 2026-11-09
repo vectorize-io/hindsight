@@ -15,6 +15,7 @@ import pytest
 from aiohttp import web
 
 from hindsight_api.config import ENV_FILE_PARSER_LLAMA_PARSE_API_KEY
+from hindsight_api.engine.aiohttp_session import HINDSIGHT_USER_AGENT
 from hindsight_api.engine.parsers import llama_parse
 from hindsight_api.engine.parsers.base import UnsupportedFileTypeError
 from hindsight_api.engine.parsers.llama_parse import LlamaParseParser
@@ -73,6 +74,7 @@ class _Upstream:
 
     async def handler(self, request: web.Request) -> web.StreamResponse:
         assert request.headers["Authorization"].startswith("Bearer ")
+        assert request.headers["User-Agent"] == HINDSIGHT_USER_AGENT
         if request.method == "POST":
             assert request.path == "/upload"
             reader = await request.multipart()
