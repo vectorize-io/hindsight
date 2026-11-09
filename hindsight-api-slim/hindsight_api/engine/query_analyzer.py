@@ -383,8 +383,10 @@ class DateparserQueryAnalyzer(QueryAnalyzer):
             if not language:
                 return None
             results = self._exact_search.search_parse(language, text, settings=settings)
-            # dateparser >= 1.5.0 returns (text, date, period) triples; < 1.5.0 returns
-            # pairs. Keep the public search_dates contract: (text, date) pairs (#6359).
+            # Since dateparser 1.5.0 this private method returns (text, date, period)
+            # triples, while the public search_dates still returns pairs. Unpacking the
+            # triples as pairs raised on every dated query and recall silently lost its
+            # temporal constraint (#6359), so narrow them back to (text, date) here.
             return [(r[0], r[1]) for r in results] or None
 
     def analyze(self, query: str, reference_date: datetime | None = None) -> QueryAnalysis:

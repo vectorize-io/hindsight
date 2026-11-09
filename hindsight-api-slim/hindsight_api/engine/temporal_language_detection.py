@@ -210,13 +210,15 @@ def best_language(text: str, languages: list[Locale], settings: Settings | None 
 
     applicable: list[tuple[str, tuple[int, ...]]] = []
     for language in candidates:
+        # The retry on the timezone-stripped text is skipped when there was no
+        # timezone: it would re-run the identical computation and get [0, 0] again.
         for candidate_text in (text, stripped) if tz_changed else (text,):
-            # The retry strips a timezone; when there is none it would re-run
-            # the identical computation and get the identical [0, 0].
             counts = _counts(language, candidate_text, settings)
             if counts[0] > 0 or counts[1] > 0:
                 # On a tie, prefer the language that matches more words without
                 # letter variants, so that e.g. Arabic text is not taken for Persian.
+                # ``_native`` is a dateparser 1.5.0 private, like the rest of what
+                # this module mirrors; the differential tests catch it changing.
                 native = language._native
                 native_counts = counts if native is language else _counts(native, candidate_text, settings)
                 applicable.append((language.shortname, (*counts, *native_counts)))
@@ -228,5 +230,6 @@ def best_language(text: str, languages: list[Locale], settings: Settings | None 
 
 
 def _counts(language: Locale, text: str, settings: Settings) -> list[int]:
+    """``count_applicability`` on an already timezone-stripped text, after the one-time warmup."""
     _ensure_dictionary_warm(language, settings)
     return language.count_applicability(text, strip_timezone=False, settings=settings)
