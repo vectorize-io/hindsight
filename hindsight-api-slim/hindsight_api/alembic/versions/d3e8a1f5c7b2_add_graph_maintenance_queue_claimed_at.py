@@ -7,7 +7,7 @@ relink deletes the rows at its end, only where the stamp is still its own. A
 re-queue clears the stamp, so the change it signals survives the delete.
 
 Revision ID: d3e8a1f5c7b2
-Revises: c7e2f9a4d1b8
+Revises: d3f8a1c6e9b2
 Create Date: 2026-11-09
 """
 
@@ -18,7 +18,7 @@ from alembic import context, op
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "d3e8a1f5c7b2"
-down_revision: str | Sequence[str] | None = "c7e2f9a4d1b8"
+down_revision: str | Sequence[str] | None = "d3f8a1c6e9b2"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
