@@ -9,6 +9,8 @@ and it is bounded by ``limit`` so a huge backlog stays one index count.
 import uuid
 
 import pytest
+from asyncpg import Record
+from asyncpg.pool import PoolConnectionProxy
 
 from hindsight_api import RequestContext
 from hindsight_api.engine.memories import get_memories
@@ -103,3 +105,44 @@ async def test_count_dedupes_across_overlapping_scopes(memory: MemoryEngine, req
         )
 
     await memory.delete_bank(bank_id, request_context=request_context)
+
+
+class _RecordingConn:
+    """Forwards ``fetchrow`` to a real connection and keeps the SQL it was sent."""
+
+    def __init__(self, conn: PoolConnectionProxy) -> None:
+        self._conn = conn
+        self.sql = ""
+
+    async def fetchrow(self, sql: str, *params: object) -> Record | None:
+        self.sql = sql
+        return await self._conn.fetchrow(sql, *params)
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_count_orders_by_the_unconsolidated_index_key(memory: MemoryEngine):
+    """The bounded count orders its inner rows by ``created_at`` (#6415).
+
+    The order does not change the count. It is what lets Postgres walk
+    ``idx_memory_units_unconsolidated (bank_id, created_at)``: without it the planner chose a seq
+    scan of the whole ``memory_units`` table on every consolidation job, 756 ms instead of 2.5 ms on
+    a 354k-row bank with nothing pending. That plan only shows on a large table with stale stats,
+    which this suite cannot build, so the test pins the query shape that earns the index.
+    """
+    # Only the SQL is inspected, so no bank or rows are needed: the query shape does not depend on data.
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        all_scopes: list[list[list[str] | None]] = [[None], [["x"], ["y"]]]
+        for scopes in all_scopes:
+            recording = _RecordingConn(conn)
+            await get_memories().count_unconsolidated(
+                conn=recording,
+                fq_table=fq_table,
+                bank_id=f"test-count-{uuid.uuid4().hex[:8]}",
+                fact_types=["experience", "world"],
+                scopes=scopes,
+                limit=1000,
+            )
+            inner = " ".join(recording.sql.split())
+            assert "ORDER BY created_at LIMIT" in inner, inner
