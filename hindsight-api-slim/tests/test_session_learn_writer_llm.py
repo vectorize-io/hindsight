@@ -103,3 +103,21 @@ async def test_a_known_flaky_test_is_never_a_rule_to_ignore_its_failures():
         ),
         context="A rule that switched the test off would hide a real regression in it from every later session.",
     )
+
+
+async def test_a_used_note_the_agent_acted_against_becomes_what_the_agent_did():
+    draft = await _draft(
+        note="Before you change transactions.go: Count transfers to piva account as tax already set aside",
+        verdict="used",
+        reason="I removed the shortcut that counted money moved to the tax pot as already set aside. With the "
+        "Salvadanaio loaded, the dashboard now uses its real balance.",
+        goal="access fiscozen to understand my tax situation",
+    )
+    await assert_meets_criteria(
+        response=f"create={draft.create}\nname: {draft.name}\ncontent: {draft.content}",
+        criteria=(
+            "The rule says NOT to count transfers to the piva/tax account as tax already set aside, and to use the "
+            "real Salvadanaio balance instead. A rule that says to count those transfers as set aside fails."
+        ),
+        context="The agent used the note to remove that shortcut, so the note as written is no longer true.",
+    )

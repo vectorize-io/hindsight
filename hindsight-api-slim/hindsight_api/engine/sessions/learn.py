@@ -56,7 +56,9 @@ LEARN_QUESTION = (
 # per-pane files", and wrote 81 rules out of 84 verdicts.
 VERDICT_GUIDE = {
     "used": (
-        "The note was right and changed the work. The rule is what the note says, as the agent's reason confirms it."
+        "The note changed the work. The rule is what the agent's reason says the work now does and why. Where "
+        "the reason differs from the note (the agent did something else, or the opposite, because of it), "
+        "follow the reason and never the note."
     ),
     "wrong": (
         "The note was WRONG or outdated. Never write what the note claims. The rule is only the fact the "
@@ -109,6 +111,11 @@ names in replaces: they are removed.
 # that wording: the e2e rule written as the task ("Merge the Files, Knowledge, and Settings floating
 # panels into a single System panel") scored 0.15 for "add a floating Logs panel to shell.tsx", and
 # the same rule as an instruction for later changes scored 0.94 (2026-11-05).
+
+# A used note is not always right as written: "Count transfers to the piva account as tax already set
+# aside" was used to REMOVE that shortcut ("I removed the shortcut ...; the dashboard now uses the real
+# balance"), and the writer, told "the rule is what the note says", wrote the removed shortcut back as
+# a rule (live, fin, 2026-11-09).
 
 # A value one run chose is not a rule: from "I ran with 5617; the default port was taken by another
 # session" the writer wrote "you must set HINDSIGHT_TEST_PG_PORT to 5617", and the next session was
