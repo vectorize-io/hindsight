@@ -21,6 +21,7 @@ import pytest
 
 from hindsight_api.engine import memory_engine
 from hindsight_api.engine.search.tracer import SearchTracer
+from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 
 
 def _phases_only_tracer() -> SearchTracer:
@@ -40,11 +41,13 @@ def test_phases_are_recorded_but_payloads_are_dropped():
     t.add_entry_point("id-1", "text", 0.9, 1)
     t.add_retrieval_results(
         method_name="semantic",
-        results=[("id-1", {"text": "text", "similarity": 0.9})],
+        results=[RetrievalResult(id="id-1", text="text", fact_type="world", similarity=0.9)],
         duration_seconds=0.1,
         score_field="similarity",
     )
-    t.add_rrf_merged([("id-1", {"text": "text"}, {"rrf_score": 0.5})])
+    t.add_rrf_merged(
+        [MergedCandidate(retrieval=RetrievalResult(id="id-1", text="text", fact_type="world"), rrf_score=0.5)]
+    )
     t.add_reranked([{"id": "id-1", "text": "text"}], [])
     t.visit_node(
         node_id="id-1",

@@ -10,6 +10,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from . import types as search_types
 from .trace import (
     EntryPoint,
     NodeVisit,
@@ -244,9 +245,9 @@ class SearchTracer:
     def add_retrieval_results(
         self,
         method_name: Literal["semantic", "bm25", "graph", "temporal"],
-        results: list[tuple],  # List of (doc_id, data) tuples
+        results: list[search_types.RetrievalResult],
         duration_seconds: float,
-        score_field: str,  # e.g., "similarity", "bm25_score"
+        score_field: Literal["similarity", "bm25_score", "activation", "temporal_score"],
         metadata: dict[str, Any] | None = None,
         fact_type: str | None = None,
     ):
@@ -255,9 +256,9 @@ class SearchTracer:
 
         Args:
             method_name: Name of the retrieval method
-            results: List of (doc_id, data) tuples from retrieval
+            results: The arm's hits, in rank order
             duration_seconds: Time taken for this retrieval
-            score_field: Field name containing the score in data dict
+            score_field: The hit attribute holding this arm's score
             metadata: Optional metadata about this retrieval method
             fact_type: Fact type this retrieval was for (world, experience)
         """
@@ -270,18 +271,18 @@ class SearchTracer:
         if self.phases_only:
             return
         retrieval_results = []
-        for rank, (doc_id, data) in enumerate(results, start=1):
-            score = data.get(score_field)
+        for rank, hit in enumerate(results, start=1):
+            score = getattr(hit, score_field)
             if score is None:
                 score = 0.0
             retrieval_results.append(
                 RetrievalResult(
                     rank=rank,
-                    node_id=doc_id,
-                    text=data.get("text") or "",
-                    context=data.get("context") or "",
-                    event_date=data.get("event_date"),
-                    fact_type=data.get("fact_type") or fact_type,
+                    node_id=hit.id,
+                    text=hit.text or "",
+                    context=hit.context or "",
+                    event_date=hit.event_date,
+                    fact_type=hit.fact_type or fact_type,
                     score=score,
                     score_name=score_field,
                 )
@@ -297,26 +298,23 @@ class SearchTracer:
             )
         )
 
-    def add_rrf_merged(self, merged_results: list[tuple]):
+    def add_rrf_merged(self, merged_results: list[search_types.MergedCandidate]):
         """
         Record RRF merged results.
 
         Args:
-            merged_results: List of (doc_id, data, rrf_meta) tuples from RRF merge
+            merged_results: The fused candidates, in merged order
         """
         if self.phases_only:
             return
         self.rrf_merged = []
-        for rank, (doc_id, data, rrf_meta) in enumerate(merged_results, start=1):
-            source_ranks = rrf_meta.get("source_ranks")
-            if source_ranks is None:
-                source_ranks = {key: value for key, value in rrf_meta.items() if key.endswith("_rank")}
+        for rank, candidate in enumerate(merged_results, start=1):
             self.rrf_merged.append(
                 RRFMergeResult(
-                    node_id=doc_id,
-                    text=data.get("text", ""),
-                    rrf_score=rrf_meta.get("rrf_score", 0.0),
-                    source_ranks=source_ranks,
+                    node_id=candidate.id,
+                    text=candidate.retrieval.text,
+                    rrf_score=candidate.rrf_score,
+                    source_ranks=dict(candidate.source_ranks),
                     final_rrf_rank=rank,
                 )
             )
