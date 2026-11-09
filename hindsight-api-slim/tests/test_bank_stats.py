@@ -466,6 +466,8 @@ async def test_bank_stats_counts_entity_links_per_unit(api_client, memory, test_
     links (the per-unit cap is 10). Counting each entity once gave 1 + 3 + 10 = 14.
     """
     try:
+        # Seeded with SQL because retain lets the LLM pick entities, so it cannot
+        # produce exact mention counts. The assertion still goes through /stats.
         async with memory._pool.acquire() as conn:
             for mentions in (2, 4, 13):
                 entity_id = await conn.fetchval(
