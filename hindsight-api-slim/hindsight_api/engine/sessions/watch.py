@@ -69,6 +69,8 @@ MAX_RUNNING_CHECKS = 3
 BUSY_RETRY_S = 10
 # How long a check waits on a loaded host (host_busy) before it looks again.
 BUSY_HOST_RETRY_S = 30
+# ...for at most this long since the moment was made; then the check runs on the loaded host.
+BUSY_HOST_MAX_WAIT_S = 300
 # Words in a heads-up's "Before you change <X>" that name no code of their own.
 _GENERIC_TARGET_WORDS = frozenset(
     "code handling change changes rule rules workflow workflows documentation installation deployment "
@@ -541,9 +543,10 @@ def host_busy() -> bool:
         return False
 
 
-def skip_reason(state: WatchState, m: Moment) -> str | None:
-    """Why the moment is not worth a reflect call, or None (and then it is recorded as judged)."""
-    if host_busy():
+def skip_reason(state: WatchState, m: Moment, *, busy_ok: bool = False) -> str | None:
+    """Why the moment is not worth a reflect call, or None (and then it is recorded as judged).
+    ``busy_ok``: the moment already waited out a loaded host as long as it may (BUSY_HOST_MAX_WAIT_S)."""
+    if not busy_ok and host_busy():
         return "host busy"
     if state.request_notes >= MAX_NOTES:
         return "note limit reached"

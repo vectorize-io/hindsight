@@ -688,8 +688,9 @@ async def test_a_check_waits_out_a_busy_host_instead_of_being_dropped(memory, re
     with pytest.raises(DeferOperation) as deferred:
         await memory.sessions.run_check({"bank_id": bank, "session_id": "s1"})
     assert "settle" in deferred.value.reason and calls == []
-    # Once the load drops, the same moment is checked: nothing was skipped.
-    monkeypatch.setattr(watch, "host_busy", lambda: False)
+    # The load never drops: once the moment has waited the cap, it is checked anyway (beta: two hours
+    # of a load that stayed high ran no check at all).
+    monkeypatch.setattr(watch, "BUSY_HOST_MAX_WAIT_S", 0)
     await memory.sessions.run_check({"bank_id": bank, "session_id": "s1"})
     assert len(calls) == 1
     log = (await memory.sessions.events(bank, "s1", request_context=request_context)).items

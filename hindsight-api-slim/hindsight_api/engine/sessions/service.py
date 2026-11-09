@@ -1054,18 +1054,21 @@ class SessionService:
                         >= W.MAX_RUNNING_CHECKS
                     ):
                         settle = row["db_now"] + timedelta(seconds=W.BUSY_RETRY_S)
-                    if settle is None and state.pending is not None and W.host_busy():
-                        # A loaded host waits it out instead of dropping the moment: skipped as "host
-                        # busy", 227 of 331 checks in one hour were lost (beta, 2026-11-06). The wait
-                        # holds the session's latest moment, so a newer one replaces this one.
-                        # ponytail: no cap on how long a moment waits; add one if waited heads-ups go stale.
+                    # A loaded host waits it out instead of dropping the moment: skipped as "host busy",
+                    # 227 of 331 checks in one hour were lost (beta, 2026-11-06). The wait holds the
+                    # session's latest moment, so a newer one replaces this one. Capped: under a load that
+                    # never dropped, no check ran for two hours and 29 waited (beta, 2026-11-09); past the
+                    # cap the check runs anyway, and may time out, rather than never.
+                    waited = (row["db_now"] - row["pending_since"]).total_seconds() if row["pending_since"] else 0.0
+                    busy_ok = waited >= W.BUSY_HOST_MAX_WAIT_S
+                    if settle is None and state.pending is not None and not busy_ok and W.host_busy():
                         settle = row["db_now"] + timedelta(seconds=W.BUSY_HOST_RETRY_S)
                     if state.pending is not None and settle is not None and self._engine._task_backend.can_defer:
                         # Not yet: back in the queue until the session settles. A deferral is not a
                         # failed attempt, and appends meanwhile fold into this same operation.
                         raise DeferOperation(exec_date=settle, reason="waiting for the session to settle")
                     moment = W.take_moment(state)
-                    skip = W.skip_reason(state, moment) if moment else None
+                    skip = W.skip_reason(state, moment, busy_ok=busy_ok) if moment else None
                     if moment and not skip and moment.trigger in ("command", "plan"):
                         state.last_command_check = row["db_now"].isoformat()
                     await conn.execute(
