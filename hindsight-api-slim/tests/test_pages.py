@@ -2172,3 +2172,14 @@ def test_old_config_key_maps_to_new():
     assert (
         BankTemplateConfig.model_validate({"knowledge_page_default_trigger": trigger}).page_default_trigger == trigger
     )
+
+
+def test_old_page_trigger_env_var_is_still_read(monkeypatch):
+    from hindsight_api.config import HindsightConfig
+
+    monkeypatch.delenv("HINDSIGHT_API_PAGE_DEFAULT_TRIGGER", raising=False)
+    monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_PAGE_DEFAULT_TRIGGER", '{"refresh_cron": "0 * * * *"}')
+    assert HindsightConfig.from_env().page_default_trigger == {"refresh_cron": "0 * * * *"}
+
+    monkeypatch.setenv("HINDSIGHT_API_PAGE_DEFAULT_TRIGGER", '{"refresh_cron": "5 * * * *"}')
+    assert HindsightConfig.from_env().page_default_trigger == {"refresh_cron": "5 * * * *"}
