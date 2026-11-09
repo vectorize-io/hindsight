@@ -1028,7 +1028,8 @@ async def test_batch_api_rejects_duplicate_and_unexpected_custom_ids(
             schema=None,
         )
 
-    assert len(extraction.facts) == 1 and "Bob" in extraction.facts[0].fact_text
+    assert len(extraction.facts) == 1
+    assert "Bob" in extraction.facts[0].fact_text
     assert extraction.chunks[0].fact_count == 0
     assert extraction.chunks[1].fact_count == 1
     assert len(recorded) == 1

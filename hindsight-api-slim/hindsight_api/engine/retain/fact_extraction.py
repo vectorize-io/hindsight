@@ -3134,16 +3134,15 @@ async def extract_facts_from_contents_batch_api(
             message = f"{custom_id}: provider returned a result for a request that was never sent"
             logger.warning(message)
             extraction_errors.add(message)
-    results_by_id = {custom_id: results[0] for custom_id, results in results_for_id.items() if len(results) == 1}
 
     for chunk_idx, (chunk_content, content_index, chunk_index_in_content, event_date, context) in enumerate(
         all_chunks_info
     ):
         custom_id = f"chunk_{chunk_idx}"
-        result = results_by_id.get(custom_id)
+        results = results_for_id.get(custom_id, [])
 
-        if custom_id in results_for_id and not result:
-            message = f"{custom_id}: provider returned {len(results_for_id[custom_id])} results for this request"
+        if len(results) > 1:
+            message = f"{custom_id}: provider returned {len(results)} results for this request"
             logger.error(message)
             extraction_errors.add(message)
             chunks_metadata.append(
@@ -3153,7 +3152,7 @@ async def extract_facts_from_contents_batch_api(
             )
             continue
 
-        if not result:
+        if not results:
             message = f"{custom_id}: missing batch result"
             logger.warning(message)
             extraction_errors.add(message)
@@ -3163,6 +3162,8 @@ async def extract_facts_from_contents_batch_api(
                 )
             )
             continue
+
+        result = results[0]
 
         # Check for errors
         if result.error:
