@@ -966,7 +966,12 @@ class CodexLLM(LLMInterface):
                         key = data.get("output_index", data.get("item_id"))
                         texts[key] = texts.get(key, "") + data["delta"]
                         streamed.add(key)
-                    elif isinstance(data.get("item"), dict) and "content" in data["item"]:
+                    # Only message items are the reply: a reasoning item can carry content too.
+                    elif (
+                        isinstance(data.get("item"), dict)
+                        and data["item"].get("type") == "message"
+                        and "content" in data["item"]
+                    ):
                         item = data["item"]
                         key = data.get("output_index", item.get("id"))
                         if isinstance(item.get("phase"), str):
@@ -985,10 +990,11 @@ class CodexLLM(LLMInterface):
                     # Skip malformed JSON events
                     pass
 
+        if not texts:
+            return _CodexStreamReply(text="", usage=usage)
         keys = list(texts)
-        index = _reply_message_index([phases.get(key) for key in keys])
-        reply_key = None if index is None else keys[index]
-        return _CodexStreamReply(text=texts.get(reply_key, ""), usage=usage)
+        reply_key = keys[_reply_message_index([phases.get(key) for key in keys])]
+        return _CodexStreamReply(text=texts[reply_key], usage=usage)
 
     async def cleanup(self) -> None:
         """Clean up HTTP sessions."""

@@ -265,3 +265,17 @@ async def test_without_phase_labels_the_last_message_is_the_reply():
             messages=[{"role": "user", "content": "x"}], response_format=_Fact, strict_schema=True, max_retries=0
         )
     assert result.content == _Fact(fact="editors")
+
+
+@pytest.mark.asyncio
+async def test_a_reasoning_item_with_content_is_not_the_reply():
+    llm = build_llm()
+    reasoning = {"id": "rs_0", "type": "reasoning", "content": [{"type": "reasoning_text", "text": "thinking"}]}
+    stream = _sse("response.output_item.done", {"output_index": 0, "item": reasoning}) + _message_stream(
+        (None, '{"fact": "editors"}')
+    ).replace('"output_index": 0', '"output_index": 1')
+    with stub_codex_stream(llm, CodexReply(text=stream)):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "x"}], response_format=_Fact, strict_schema=True, max_retries=0
+        )
+    assert result.content == _Fact(fact="editors")

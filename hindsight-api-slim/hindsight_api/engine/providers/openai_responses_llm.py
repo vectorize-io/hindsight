@@ -76,25 +76,25 @@ class RetryableResponsesError(Exception):
     """
 
 
-def _reply_message_index(phases: list[str | None]) -> int | None:
-    """Which of a response's assistant messages is the reply, given each one's ``phase``.
+def _reply_message_index(phases: list[str | None]) -> int:
+    """Which of a response's assistant messages (at least one) is the reply, given each
+    one's ``phase``.
 
     Codex-family models stream a ``commentary`` preamble before the ``final_answer``
     message (#6347). Under a strict schema both are JSON, so joining them, as the SDK's
     ``output_text`` does, is not a reply. Without phase labels the last message answers.
     """
     finals = [i for i, phase in enumerate(phases) if phase == "final_answer"]
-    if finals:
-        return finals[-1]
-    return len(phases) - 1 if phases else None
+    return finals[-1] if finals else len(phases) - 1
 
 
 def _reply_text(response: Any) -> str:
     """The text of the response's reply message (see ``_reply_message_index``)."""
     messages = [item for item in (response.output or []) if getattr(item, "type", None) == "message"]
     if len(messages) < 2:
+        # One message is the whole reply, and ``output_text`` is exactly its text.
         return response.output_text or ""
-    reply = messages[_reply_message_index([getattr(m, "phase", None) for m in messages]) or 0]
+    reply = messages[_reply_message_index([getattr(m, "phase", None) for m in messages])]
     return "".join(part.text for part in reply.content if getattr(part, "type", None) == "output_text")
 
 
