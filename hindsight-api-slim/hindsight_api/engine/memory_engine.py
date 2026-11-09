@@ -10470,8 +10470,9 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Record retrieval results for tracer - per fact type.
             # `enable_trace`, NOT `if tracer`: the tracer always exists so phase timings are
-            # always collected, but these payloads are built eagerly by the CALLER and then
-            # dropped inside the tracer when phases_only is set -- pure waste on every recall.
+            # always collected. These calls once converted every hit to an (id, dict) tuple here,
+            # before the tracer dropped them under phases_only; the tracer now takes the typed
+            # hits, but the gate still skips the per-fact-type loop on every untraced recall.
             if request.enable_trace:
                 # Add retrieval results per fact type (to show parallel execution in UI)
                 for ft_name in request.fact_type:
@@ -10611,10 +10612,9 @@ class MemoryEngine(MemoryEngineInterface):
                 fusion_span.set_attribute("hindsight.merged_count", len(merged_candidates))
                 fusion_span.end()
 
-            # The payload build is gated on `enable_trace`; the phase metric is not. The
-            # tracer always exists so timings are always collected -- but `tracer_merged`
-            # is built by the CALLER and then dropped inside the tracer when phases_only
-            # is set, so building it unconditionally is pure waste on every recall.
+            # The payload is gated on `enable_trace`; the phase metric is not. The tracer
+            # always exists so timings are always collected. It takes the merged candidates
+            # as they are -- the (id, dict, meta) tuples once built here for it are gone.
             if request.enable_trace:
                 tracer.add_rrf_merged(merged_candidates)
             tracer.add_phase_metric("rrf_merge", step_duration, {"candidates_merged": len(merged_candidates)})
@@ -11139,22 +11139,8 @@ class MemoryEngine(MemoryEngineInterface):
             if request.enable_trace:
                 for sr in top_scored:
                     result_dict = sr.to_dict()
-                    # Convert datetime objects to ISO strings for JSON serialization
-                    if result_dict.get("occurred_start"):
-                        occurred_start = result_dict["occurred_start"]
-                        result_dict["occurred_start"] = (
-                            occurred_start.isoformat() if hasattr(occurred_start, "isoformat") else occurred_start
-                        )
-                    if result_dict.get("occurred_end"):
-                        occurred_end = result_dict["occurred_end"]
-                        result_dict["occurred_end"] = (
-                            occurred_end.isoformat() if hasattr(occurred_end, "isoformat") else occurred_end
-                        )
-                    if result_dict.get("mentioned_at"):
-                        mentioned_at = result_dict["mentioned_at"]
-                        result_dict["mentioned_at"] = (
-                            mentioned_at.isoformat() if hasattr(mentioned_at, "isoformat") else mentioned_at
-                        )
+                    for key in ("occurred_start", "occurred_end", "mentioned_at"):
+                        result_dict[key] = _iso_or_passthrough(result_dict[key])
                     top_results_dicts.append(result_dict)
 
             tracer.add_phase_metric(
