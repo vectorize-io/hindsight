@@ -27,7 +27,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import IO, TYPE_CHECKING, Any, Literal, NoReturn, ParamSpec, TypeVar, cast
 
@@ -1943,6 +1943,70 @@ class MemoryTimeseriesBucketData:
             "experience": self.experience,
             "observation": self.observation,
         }
+
+
+@dataclass(frozen=True)
+class _ChunkSlot:
+    """One rank position in a recall's chunk order: a fact's own chunk, or an observation.
+
+    An observation has no chunk of its own; its source chunks are expanded at its slot so they
+    land at the observation's rank rather than appended at the end.
+    """
+
+    id: str  # the chunk id, or the observation id when ``is_observation``
+    is_observation: bool
+
+
+def _iso_or_passthrough(value: date | str | None) -> str | None:
+    """ISO string for a date or datetime; a store that already returns a string (or nothing) passes through."""
+    return value.isoformat() if isinstance(value, date) else value
+
+
+@dataclass(frozen=True)
+class SearchRequest:
+    """Every parameter of one recall, resolved by ``recall_async`` and handed to the search pipeline.
+
+    These used to be ~35 loose keyword arguments on ``_search_with_retries``; adding a recall flag
+    meant threading it through every signature by hand, and a missed hop would silently use the
+    default (#6351). ``request_context`` through ``recall_id`` are per-call execution context, not
+    user-facing parameters. ``max_entity_tokens`` is deliberately absent: entity summaries moved to
+    mental models, so entities come back with no observations and there is nothing to budget.
+    """
+
+    bank_id: str
+    query: str
+    fact_type: list[str]
+    thinking_budget: int
+    max_tokens: int
+    enable_trace: bool
+    question_date: datetime | None = None
+    include_entities: bool = False
+    include_chunks: bool = False
+    max_chunk_tokens: int = 8192
+    prefer_observations: bool = False
+    prune: bool = False
+    dedup: bool = False
+    tags: list[str] | None = None
+    tags_match: TagsMatch = "any"
+    tag_groups: list[TagGroup] | None = None
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+    min_scores: MinScores | None = None
+    temporal_window: TemporalWindow | None = None
+    include_source_facts: bool = False
+    max_source_facts_tokens: int = 4096
+    max_source_facts_tokens_per_observation: int = -1
+    reranking: RecallReranking = "cross_encoder"
+    reranker_max_candidates: int | None = None
+    enable_text_search: bool = True
+    enable_temporal_retrieval: bool = True
+    enable_graph_retrieval: bool = True
+    request_context: "RequestContext | None" = None
+    semaphore_wait: float = 0.0
+    connection_budget: int | None = None
+    quiet: bool = False
+    query_embedding: list[float] | None = None
+    recall_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -9765,41 +9829,42 @@ class MemoryEngine(MemoryEngineInterface):
                     try:
                         _t0_swr2 = time.perf_counter()
                         result = await self._search_with_retries(
-                            bank_id,
-                            query,
-                            fact_type,
-                            thinking_budget,
-                            max_tokens,
-                            enable_trace,
-                            question_date,
-                            include_entities,
-                            max_entity_tokens,
-                            include_chunks,
-                            max_chunk_tokens,
-                            request_context,
-                            semaphore_wait=semaphore_wait,
-                            prefer_observations=prefer_observations,
-                            prune=prune,
-                            dedup=dedup,
-                            tags=tags,
-                            tags_match=tags_match,
-                            tag_groups=tag_groups,
-                            created_after=created_after,
-                            created_before=created_before,
-                            min_scores=min_scores,
-                            temporal_window=temporal_window,
-                            connection_budget=_connection_budget,
-                            quiet=_quiet,
-                            query_embedding=_query_embedding,
-                            include_source_facts=include_source_facts,
-                            max_source_facts_tokens=max_source_facts_tokens,
-                            max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
-                            reranking=reranking,
-                            reranker_max_candidates=reranker_max_candidates,
-                            enable_text_search=enable_text_search,
-                            enable_temporal_retrieval=enable_temporal_retrieval,
-                            enable_graph_retrieval=enable_graph_retrieval,
-                            recall_id=recall_id,
+                            SearchRequest(
+                                bank_id=bank_id,
+                                query=query,
+                                fact_type=fact_type,
+                                thinking_budget=thinking_budget,
+                                max_tokens=max_tokens,
+                                enable_trace=enable_trace,
+                                question_date=question_date,
+                                include_entities=include_entities,
+                                include_chunks=include_chunks,
+                                max_chunk_tokens=max_chunk_tokens,
+                                request_context=request_context,
+                                semaphore_wait=semaphore_wait,
+                                prefer_observations=prefer_observations,
+                                prune=prune,
+                                dedup=dedup,
+                                tags=tags,
+                                tags_match=tags_match,
+                                tag_groups=tag_groups,
+                                created_after=created_after,
+                                created_before=created_before,
+                                min_scores=min_scores,
+                                temporal_window=temporal_window,
+                                connection_budget=_connection_budget,
+                                quiet=_quiet,
+                                query_embedding=_query_embedding,
+                                include_source_facts=include_source_facts,
+                                max_source_facts_tokens=max_source_facts_tokens,
+                                max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
+                                reranking=reranking,
+                                reranker_max_candidates=reranker_max_candidates,
+                                enable_text_search=enable_text_search,
+                                enable_temporal_retrieval=enable_temporal_retrieval,
+                                enable_graph_retrieval=enable_graph_retrieval,
+                                recall_id=recall_id,
+                            )
                         )
                         get_metrics_collector().record_recall_phase(
                             "search_with_retries", time.perf_counter() - _t0_swr2, diagnostic=True
@@ -9964,44 +10029,7 @@ class MemoryEngine(MemoryEngineInterface):
             return None
         return vectors or None
 
-    async def _search_with_retries(
-        self,
-        bank_id: str,
-        query: str,
-        fact_type: list[str],
-        thinking_budget: int,
-        max_tokens: int,
-        enable_trace: bool,
-        question_date: datetime | None = None,
-        include_entities: bool = False,
-        max_entity_tokens: int = 500,
-        include_chunks: bool = False,
-        max_chunk_tokens: int = 8192,
-        request_context: "RequestContext" = None,
-        semaphore_wait: float = 0.0,
-        prefer_observations: bool = False,
-        prune: bool = False,
-        dedup: bool = False,
-        tags: list[str] | None = None,
-        tags_match: TagsMatch = "any",
-        tag_groups: list[TagGroup] | None = None,
-        created_after: datetime | None = None,
-        created_before: datetime | None = None,
-        min_scores: MinScores | None = None,
-        temporal_window: TemporalWindow | None = None,
-        connection_budget: int | None = None,
-        quiet: bool = False,
-        query_embedding: list[float] | None = None,
-        include_source_facts: bool = False,
-        max_source_facts_tokens: int = 4096,
-        max_source_facts_tokens_per_observation: int = -1,
-        reranking: RecallReranking = "cross_encoder",
-        reranker_max_candidates: int | None = None,
-        enable_text_search: bool = True,
-        enable_temporal_retrieval: bool = True,
-        enable_graph_retrieval: bool = True,
-        recall_id: str = "",
-    ) -> RecallResultModel:
+    async def _search_with_retries(self, request: SearchRequest) -> RecallResultModel:
         """
         Search implementation with modular retrieval and reranking.
 
@@ -10016,17 +10044,7 @@ class MemoryEngine(MemoryEngineInterface):
         5. Chunks: Fetch chunks from top-scored results (BEFORE token filtering)
         6. Token Filter: Limit facts to max_tokens budget
 
-        Args:
-            bank_id: bank IDentifier
-            query: Search query
-            fact_type: Type of facts to search
-            thinking_budget: Nodes to explore in graph traversal
-            max_tokens: Maximum tokens to return (counts only 'text' field)
-            enable_trace: Whether to return search trace (deprecated)
-            include_entities: Whether to include entity observations
-            max_entity_tokens: Maximum tokens for entity observations
-            include_chunks: Whether to include raw chunks (fetched before max_tokens filtering)
-            max_chunk_tokens: Maximum tokens for chunks
+        ``request`` carries every recall parameter; see :class:`SearchRequest`.
 
         Returns:
             RecallResultModel with results, trace, optional entities, and optional chunks
@@ -10049,14 +10067,14 @@ class MemoryEngine(MemoryEngineInterface):
         # `question_date` when they supplied one -- not the moment the trace happened to be built.
         # Reporting wall-clock here made an applied anchor look ignored (#4217).
         tracer = SearchTracer(
-            query,
-            thinking_budget,
-            max_tokens,
-            tags=tags,
-            tags_match=tags_match,
-            query_timestamp=_recall_scoring_now(question_date),
+            request.query,
+            request.thinking_budget,
+            request.max_tokens,
+            tags=request.tags,
+            tags_match=request.tags_match,
+            query_timestamp=_recall_scoring_now(request.question_date),
         )
-        tracer.phases_only = not enable_trace
+        tracer.phases_only = not request.enable_trace
         tracer.start()
 
         backend_acquire_start = time.perf_counter()
@@ -10066,9 +10084,9 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Buffer logs for clean output in concurrent scenarios.
         log_buffer = []
-        tags_info = f", tags={tags}, tags_match={tags_match}" if tags else ""
+        tags_info = f", tags={request.tags}, tags_match={request.tags_match}" if request.tags else ""
         log_buffer.append(
-            f"[RECALL {recall_id}] Query: '{query[:50]}...' (budget={thinking_budget}, max_tokens={max_tokens}{tags_info})"
+            f"[RECALL {request.recall_id}] Query: '{request.query[:50]}...' (budget={request.thinking_budget}, max_tokens={request.max_tokens}{tags_info})"
         )
 
         # Import tracing utilities
@@ -10081,19 +10099,19 @@ class MemoryEngine(MemoryEngineInterface):
             step_start = time.perf_counter()
 
             embedding_span = tracer_otel.start_span("hindsight.recall_embedding")
-            embedding_span.set_attribute("hindsight.bank_id", bank_id)
-            embedding_span.set_attribute("hindsight.query", query[:100])
+            embedding_span.set_attribute("hindsight.bank_id", request.bank_id)
+            embedding_span.set_attribute("hindsight.query", request.query[:100])
 
             try:
                 get_metrics_collector().record_recall_phase("swr_prelude", time.perf_counter() - backend_acquire_start)
                 from .search.retrieval import resolve_temporal_constraint
 
                 async def _embed_query():
-                    if query_embedding is not None:
-                        return query_embedding
+                    if request.query_embedding is not None:
+                        return request.query_embedding
                     query_embeddings = await embedding_utils.generate_embeddings_batch(
                         self.embeddings,
-                        [query],
+                        [request.query],
                         input_type="query",
                     )
                     return query_embeddings[0]
@@ -10107,10 +10125,10 @@ class MemoryEngine(MemoryEngineInterface):
                 query_embedding, temporal_constraint = await asyncio.gather(
                     _embed_query(),
                     resolve_temporal_constraint(
-                        query,
-                        temporal_window=temporal_window,
-                        enable_temporal_retrieval=enable_temporal_retrieval,
-                        question_date=question_date,
+                        request.query,
+                        temporal_window=request.temporal_window,
+                        enable_temporal_retrieval=request.enable_temporal_retrieval,
+                        question_date=request.question_date,
                         query_analyzer=self.query_analyzer,
                     ),
                 )
@@ -10124,8 +10142,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Cancellation checkpoint: bail before the DB-heavy retrieval stage
             # if the client has gone away (issue #2122).
-            if request_context is not None:
-                request_context.raise_if_cancelled()
+            if request.request_context is not None:
+                request.request_context.raise_if_cancelled()
 
             # Step 1.5: let the store answer the whole recall, if it can and the bank asked it to.
             #
@@ -10153,28 +10171,28 @@ class MemoryEngine(MemoryEngineInterface):
             _full_start = time.perf_counter()
             _store_result = await _get_memories_for_full_recall().full_recall(
                 FullRecallRequest(
-                    bank_id=bank_id,
-                    fact_types=list(fact_type),
+                    bank_id=request.bank_id,
+                    fact_types=list(request.fact_type),
                     query_embedding=str(query_embedding),
-                    query_text=query,
-                    limit=thinking_budget,
+                    query_text=request.query,
+                    limit=request.thinking_budget,
                     # Already a `(start, end)` tuple, the type the field declares: the resolved
                     # window, so the bank's toggle and the query's dates are both in it.
                     temporal_window=temporal_constraint,
-                    tags=tags,
-                    tags_match=tags_match,
-                    tag_groups=tag_groups,
-                    created_after=created_after,
-                    created_before=created_before,
-                    min_semantic=min_scores.semantic if min_scores else None,
-                    min_keyword=min_scores.keyword if min_scores else None,
-                    enable_text_search=enable_text_search,
-                    enable_graph=enable_graph_retrieval,
-                    reranking=reranking,
+                    tags=request.tags,
+                    tags_match=request.tags_match,
+                    tag_groups=request.tag_groups,
+                    created_after=request.created_after,
+                    created_before=request.created_before,
+                    min_semantic=request.min_scores.semantic if request.min_scores else None,
+                    min_keyword=request.min_scores.keyword if request.min_scores else None,
+                    enable_text_search=request.enable_text_search,
+                    enable_graph=request.enable_graph_retrieval,
+                    reranking=request.reranking,
                     reranker_provider=getattr(self._cross_encoder_reranker.cross_encoder, "primary_provider_name", ""),
                     reranker_max_candidates=(
-                        reranker_max_candidates
-                        if reranker_max_candidates is not None
+                        request.reranker_max_candidates
+                        if request.reranker_max_candidates is not None
                         else get_config().reranker_max_candidates
                     ),
                     per_source_cap=get_config().recall_max_candidates_per_source,
@@ -10184,22 +10202,22 @@ class MemoryEngine(MemoryEngineInterface):
                     recency_decay_halflife_days=get_config().recency_decay_halflife_days,
                     # Resolved here, not in the store: `question_date` overrides "now", and two
                     # clocks would make an identical request score differently on the two paths.
-                    now=_recall_scoring_now(question_date),
-                    min_reranker=min_scores.reranker if min_scores else None,
-                    min_final=min_scores.final if min_scores else None,
-                    truncate_to=thinking_budget * 2,
-                    max_tokens=max_tokens,
+                    now=_recall_scoring_now(request.question_date),
+                    min_reranker=request.min_scores.reranker if request.min_scores else None,
+                    min_final=request.min_scores.final if request.min_scores else None,
+                    truncate_to=request.thinking_budget * 2,
+                    max_tokens=request.max_tokens,
                     tokenizer_encoding=get_config().tokenizer_encoding,
-                    include_entities=include_entities,
-                    include_chunks=include_chunks,
-                    max_chunk_tokens=max_chunk_tokens,
+                    include_entities=request.include_entities,
+                    include_chunks=request.include_chunks,
+                    max_chunk_tokens=request.max_chunk_tokens,
                     # An observation carries its source ids, so the store answers all three of
                     # these itself: the dedup, the provenance, and the chunks an observation has
                     # none of and inherits from its sources.
-                    prefer_observations=prefer_observations,
-                    include_source_facts=include_source_facts,
-                    max_source_facts_tokens=max_source_facts_tokens,
-                    max_source_facts_tokens_per_observation=max_source_facts_tokens_per_observation,
+                    prefer_observations=request.prefer_observations,
+                    include_source_facts=request.include_source_facts,
+                    max_source_facts_tokens=request.max_source_facts_tokens,
+                    max_source_facts_tokens_per_observation=request.max_source_facts_tokens_per_observation,
                 )
             )
             if _store_result is not None:
@@ -10208,7 +10226,7 @@ class MemoryEngine(MemoryEngineInterface):
                 log_buffer.append(
                     f"  [1.5] Store-answered recall: {len(_store_result.results)} results in {_full_elapsed:.3f}s"
                 )
-                if not quiet:
+                if not request.quiet:
                     logger.info("\n" + "\n".join(log_buffer))
                     get_metrics_collector().record_recall_phase("store_branch_tail", time.perf_counter() - _t0_tail)
                 # The store's own per-stage timings become this recall's phase breakdown.
@@ -10238,7 +10256,7 @@ class MemoryEngine(MemoryEngineInterface):
                 )
                 # Assembling the trace OBJECT stays behind the caller's flag: it dumps every
                 # result, which is the expensive half and the reason tracing is opt-in.
-                if enable_trace:
+                if request.enable_trace:
                     _trace = tracer.finalize([r.model_dump() for r in _store_result.results])
                     _store_result.trace = _trace.to_dict() if _trace else None
                 return _store_result
@@ -10256,38 +10274,40 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
             retrieval_span = tracer_otel.start_span("hindsight.recall_retrieval")
-            retrieval_span.set_attribute("hindsight.bank_id", bank_id)
-            retrieval_span.set_attribute("hindsight.fact_types", ",".join(fact_type))
-            retrieval_span.set_attribute("hindsight.thinking_budget", thinking_budget)
+            retrieval_span.set_attribute("hindsight.bank_id", request.bank_id)
+            retrieval_span.set_attribute("hindsight.fact_types", ",".join(request.fact_type))
+            retrieval_span.set_attribute("hindsight.thinking_budget", request.thinking_budget)
 
             try:
                 # Run optimized retrieval with connection budget
                 config = get_config()
                 effective_connection_budget = (
-                    connection_budget if connection_budget is not None else config.recall_connection_budget
+                    request.connection_budget
+                    if request.connection_budget is not None
+                    else config.recall_connection_budget
                 )
                 async with budgeted_operation(
                     max_connections=effective_connection_budget,
-                    operation_id=f"recall-{recall_id}",
+                    operation_id=f"recall-{request.recall_id}",
                 ) as op:
                     budgeted_pool = op.wrap_pool(backend)
                     parallel_start = time.perf_counter()
                     multi_result = await retrieve_all_fact_types_parallel(
                         budgeted_pool,
-                        query,
+                        request.query,
                         query_embedding_str,
-                        bank_id,
-                        fact_type,  # Pass all fact types at once
-                        thinking_budget,
-                        question_date,
+                        request.bank_id,
+                        request.fact_type,  # Pass all fact types at once
+                        request.thinking_budget,
+                        request.question_date,
                         self.query_analyzer,
-                        tags=tags,
-                        tags_match=tags_match,
-                        tag_groups=tag_groups,
-                        created_after=created_after,
-                        created_before=created_before,
-                        min_semantic=min_scores.semantic if min_scores else None,
-                        min_keyword=min_scores.keyword if min_scores else None,
+                        tags=request.tags,
+                        tags_match=request.tags_match,
+                        tag_groups=request.tag_groups,
+                        created_after=request.created_after,
+                        created_before=request.created_before,
+                        min_semantic=request.min_scores.semantic if request.min_scores else None,
+                        min_keyword=request.min_scores.keyword if request.min_scores else None,
                         # The window resolved above, so a store that declined does not cost a
                         # second date extraction.
                         temporal_window=(
@@ -10296,9 +10316,9 @@ class MemoryEngine(MemoryEngineInterface):
                             else None
                         ),
                         temporal_resolved=True,
-                        enable_text_search=enable_text_search,
-                        enable_temporal_retrieval=enable_temporal_retrieval,
-                        enable_graph_retrieval=enable_graph_retrieval,
+                        enable_text_search=request.enable_text_search,
+                        enable_temporal_retrieval=request.enable_temporal_retrieval,
+                        enable_graph_retrieval=request.enable_graph_retrieval,
                     )
                     parallel_duration = time.perf_counter() - parallel_start
             finally:
@@ -10320,14 +10340,14 @@ class MemoryEngine(MemoryEngineInterface):
 
             detected_temporal_constraint = None
             max_conn_wait = multi_result.max_conn_wait
-            for ft in fact_type:
+            for ft in request.fact_type:
                 retrieval_result = multi_result.results_by_fact_type.get(ft)
                 if not retrieval_result:
                     continue
 
                 # Log fact types in this retrieval batch
                 logger.debug(
-                    f"[RECALL {recall_id}] Fact type '{ft}': semantic={len(retrieval_result.semantic)}, bm25={len(retrieval_result.bm25)}, graph={len(retrieval_result.graph)}, temporal={len(retrieval_result.temporal) if retrieval_result.temporal else 0}"
+                    f"[RECALL {request.recall_id}] Fact type '{ft}': semantic={len(retrieval_result.semantic)}, bm25={len(retrieval_result.bm25)}, graph={len(retrieval_result.graph)}, temporal={len(retrieval_result.temporal) if retrieval_result.temporal else 0}"
                 )
 
                 semantic_results.extend(retrieval_result.semantic)
@@ -10372,7 +10392,7 @@ class MemoryEngine(MemoryEngineInterface):
                     temporal_results = cap_per_source(temporal_results, per_source_cap)
                 if pre_cap_counts != (len(semantic_results), len(bm25_results), len(graph_results)):
                     logger.debug(
-                        f"[RECALL {recall_id}] Per-source cap ({per_source_cap}) applied: "
+                        f"[RECALL {request.recall_id}] Per-source cap ({per_source_cap}) applied: "
                         f"semantic {pre_cap_counts[0]}->{len(semantic_results)}, "
                         f"bm25 {pre_cap_counts[1]}->{len(bm25_results)}, "
                         f"graph {pre_cap_counts[2]}->{len(graph_results)}"
@@ -10408,7 +10428,7 @@ class MemoryEngine(MemoryEngineInterface):
                 timing_parts.append(f"temporal={temporal_count}({aggregated_timings['temporal']:.3f}s)")
                 temporal_info = f" | temporal_range={start_dt.strftime('%Y-%m-%d')} to {end_dt.strftime('%Y-%m-%d')}"
             log_buffer.append(
-                f"  [2] Parallel retrieval ({len(fact_type)} fact_types): {', '.join(timing_parts)}"
+                f"  [2] Parallel retrieval ({len(request.fact_type)} fact_types): {', '.join(timing_parts)}"
                 f"{_store_recall_info} in {parallel_duration:.3f}s{temporal_info}"
             )
 
@@ -10452,13 +10472,9 @@ class MemoryEngine(MemoryEngineInterface):
             # `enable_trace`, NOT `if tracer`: the tracer always exists so phase timings are
             # always collected, but these payloads are built eagerly by the CALLER and then
             # dropped inside the tracer when phases_only is set -- pure waste on every recall.
-            if enable_trace:
-                # Convert RetrievalResult to old tuple format for tracer
-                def to_tuple_format(results):
-                    return [(r.id, r.__dict__) for r in results]
-
+            if request.enable_trace:
                 # Add retrieval results per fact type (to show parallel execution in UI)
-                for ft_name in fact_type:
+                for ft_name in request.fact_type:
                     rr = multi_result.results_by_fact_type.get(ft_name)
                     if not rr:
                         continue
@@ -10466,10 +10482,10 @@ class MemoryEngine(MemoryEngineInterface):
                     # Add semantic retrieval results for this fact type
                     tracer.add_retrieval_results(
                         method_name="semantic",
-                        results=to_tuple_format(rr.semantic),
+                        results=rr.semantic,
                         duration_seconds=rr.timings.get("semantic", 0.0),
                         score_field="similarity",
-                        metadata={"limit": thinking_budget},
+                        metadata={"limit": request.thinking_budget},
                         fact_type=ft_name,
                     )
 
@@ -10477,13 +10493,13 @@ class MemoryEngine(MemoryEngineInterface):
                     # text search off — then the arm was never in the SQL, and recording
                     # an empty entry would read as "ran, matched nothing" rather than
                     # "absent". Same reasoning as the graph guard below.
-                    if enable_text_search:
+                    if request.enable_text_search:
                         tracer.add_retrieval_results(
                             method_name="bm25",
-                            results=to_tuple_format(rr.bm25),
+                            results=rr.bm25,
                             duration_seconds=rr.timings.get("bm25", 0.0),
                             score_field="bm25_score",
-                            metadata={"limit": thinking_budget},
+                            metadata={"limit": request.thinking_budget},
                             fact_type=ft_name,
                         )
 
@@ -10493,20 +10509,20 @@ class MemoryEngine(MemoryEngineInterface):
                     # read as the arm being free rather than absent — the opposite of
                     # what someone comparing traces to tune latency needs to see.
                     # Mirrors the temporal guard below.
-                    if enable_graph_retrieval:
+                    if request.enable_graph_retrieval:
                         tracer.add_retrieval_results(
                             method_name="graph",
-                            results=to_tuple_format(rr.graph),
+                            results=rr.graph,
                             duration_seconds=rr.timings.get("graph", 0.0),
                             score_field="activation",
-                            metadata={"budget": thinking_budget},
+                            metadata={"budget": request.thinking_budget},
                             fact_type=ft_name,
                         )
 
                     # Add temporal retrieval results for this fact type
                     # Show temporal even with 0 results if constraint was detected
                     if rr.temporal is not None or rr.temporal_constraint is not None:
-                        temporal_metadata = {"budget": thinking_budget}
+                        temporal_metadata = {"budget": request.thinking_budget}
                         if rr.temporal_constraint:
                             start_dt, end_dt = rr.temporal_constraint
                             temporal_metadata["constraint"] = {
@@ -10515,7 +10531,7 @@ class MemoryEngine(MemoryEngineInterface):
                             }
                         tracer.add_retrieval_results(
                             method_name="temporal",
-                            results=to_tuple_format(rr.temporal or []),
+                            results=rr.temporal or [],
                             duration_seconds=rr.timings.get("temporal", 0.0),
                             score_field="temporal_score",
                             metadata=temporal_metadata,
@@ -10541,7 +10557,7 @@ class MemoryEngine(MemoryEngineInterface):
                 if _entry_points:
                     from .memories import get_memories as _get_memories_for_trace
 
-                    await _get_memories_for_trace().hydrate_results(bank_id=bank_id, results=_entry_points)
+                    await _get_memories_for_trace().hydrate_results(bank_id=request.bank_id, results=_entry_points)
                 for rank, retrieval in enumerate(_entry_points, start=1):
                     tracer.add_entry_point(retrieval.id, retrieval.text, retrieval.similarity or 0.0, rank)
 
@@ -10572,7 +10588,7 @@ class MemoryEngine(MemoryEngineInterface):
             from .search.fusion import interleave_fusion, reciprocal_rank_fusion
 
             fusion_span = tracer_otel.start_span("hindsight.recall_fusion")
-            fusion_span.set_attribute("hindsight.bank_id", bank_id)
+            fusion_span.set_attribute("hindsight.bank_id", request.bank_id)
             fusion_span.set_attribute("hindsight.semantic_count", len(semantic_results))
             fusion_span.set_attribute("hindsight.bm25_count", len(bm25_results))
             fusion_span.set_attribute("hindsight.graph_count", len(graph_results))
@@ -10583,12 +10599,12 @@ class MemoryEngine(MemoryEngineInterface):
                 result_lists = [semantic_results, bm25_results, graph_results]
                 if temporal_results:
                     result_lists.append(temporal_results)
-                fuse = interleave_fusion if reranking == "interleave" else reciprocal_rank_fusion
+                fuse = interleave_fusion if request.reranking == "interleave" else reciprocal_rank_fusion
                 merged_candidates = fuse(result_lists)
 
                 step_duration = time.perf_counter() - step_start
                 log_buffer.append(
-                    f"  [3] {'interleave' if reranking == 'interleave' else 'RRF'} merge: "
+                    f"  [3] {'interleave' if request.reranking == 'interleave' else 'RRF'} merge: "
                     f"{len(merged_candidates)} unique candidates in {step_duration:.3f}s"
                 )
             finally:
@@ -10599,13 +10615,8 @@ class MemoryEngine(MemoryEngineInterface):
             # tracer always exists so timings are always collected -- but `tracer_merged`
             # is built by the CALLER and then dropped inside the tracer when phases_only
             # is set, so building it unconditionally is pure waste on every recall.
-            if enable_trace:
-                # Convert MergedCandidate to old tuple format for tracer
-                tracer_merged = [
-                    (mc.id, mc.retrieval.__dict__, {"rrf_score": mc.rrf_score, **mc.source_ranks})
-                    for mc in merged_candidates
-                ]
-                tracer.add_rrf_merged(tracer_merged)
+            if request.enable_trace:
+                tracer.add_rrf_merged(merged_candidates)
             tracer.add_phase_metric("rrf_merge", step_duration, {"candidates_merged": len(merged_candidates)})
 
             # Step 4: Rerank using cross-encoder (MergedCandidate -> ScoredResult)
@@ -10613,7 +10624,7 @@ class MemoryEngine(MemoryEngineInterface):
             reranker_instance = self._cross_encoder_reranker
 
             rerank_span = tracer_otel.start_span("hindsight.recall_rerank")
-            rerank_span.set_attribute("hindsight.bank_id", bank_id)
+            rerank_span.set_attribute("hindsight.bank_id", request.bank_id)
             rerank_span.set_attribute("hindsight.candidates_count", len(merged_candidates))
 
             scored_results: list = []
@@ -10628,8 +10639,8 @@ class MemoryEngine(MemoryEngineInterface):
                 # The cap comes from the caller's budget-resolved value when provided
                 # (recall), else the flat global default (internal callers).
                 max_candidates = (
-                    reranker_max_candidates
-                    if reranker_max_candidates is not None
+                    request.reranker_max_candidates
+                    if request.reranker_max_candidates is not None
                     else get_config().reranker_max_candidates
                 )
                 # Sort by RRF score (boosted per-strategy if configured) and take top
@@ -10676,7 +10687,7 @@ class MemoryEngine(MemoryEngineInterface):
                 from .memories import get_memories as _get_memories_for_hydrate
 
                 await _get_memories_for_hydrate().hydrate_results(
-                    bank_id=bank_id, results=[mc.retrieval for mc in merged_candidates]
+                    bank_id=request.bank_id, results=[mc.retrieval for mc in merged_candidates]
                 )
                 tracer.add_phase_metric(
                     "hydrate_results",
@@ -10684,15 +10695,15 @@ class MemoryEngine(MemoryEngineInterface):
                     {"candidates": len(merged_candidates)},
                 )
 
-                if reranking == "cross_encoder":
+                if request.reranking == "cross_encoder":
                     # Cancellation checkpoint: the cross-encoder rerank is the
                     # single most CPU-expensive stage and runs in a worker thread
                     # that cannot be interrupted once dispatched (issue #2122).
                     # Skip it entirely if the client already disconnected during
                     # retrieval, rather than burning ~2 CPUs producing a result
                     # nobody will read.
-                    if request_context is not None:
-                        request_context.raise_if_cancelled()
+                    if request.request_context is not None:
+                        request.request_context.raise_if_cancelled()
 
                     # Ensure reranker is initialized (for lazy initialization mode)
                     await reranker_instance.ensure_initialized()
@@ -10700,18 +10711,18 @@ class MemoryEngine(MemoryEngineInterface):
                     # read while the ranking request runs, so they add no round trip: the reranker
                     # awaits them only once the ranking answers are in.
                     embeddings = None
-                    if dedup and getattr(reranker_instance.cross_encoder, "provider_name", None) == (
+                    if request.dedup and getattr(reranker_instance.cross_encoder, "provider_name", None) == (
                         DECISION_MODEL_RERANKER
                     ):
                         embeddings = asyncio.create_task(
-                            self._candidate_embeddings(bank_id, [mc.retrieval.id for mc in merged_candidates])
+                            self._candidate_embeddings(request.bank_id, [mc.retrieval.id for mc in merged_candidates])
                         )
                     reranked = await reranker_instance.rerank(
-                        query,
+                        request.query,
                         merged_candidates,
-                        now=_recall_scoring_now(question_date),
-                        prune=prune,
-                        dedup=dedup,
+                        now=_recall_scoring_now(request.question_date),
+                        prune=request.prune,
+                        dedup=request.dedup,
                         embeddings=embeddings,
                     )
                     scored_results = reranked.results
@@ -10725,7 +10736,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # was observed to demote a near-identical existing observation (the dedup
                     # "twin") far below the budget cutoff (semantic rank #1 -> reranked #37),
                     # causing the LLM to never see it and create a duplicate.
-                    rerank_kind = f"{reranking}-passthrough"
+                    rerank_kind = f"{request.reranking}-passthrough"
                     scored_results = [
                         ScoredResult(
                             candidate=mc,
@@ -10759,11 +10770,11 @@ class MemoryEngine(MemoryEngineInterface):
             # math, additive boosts and final sort would otherwise be invisible in
             # the phase metrics (issue #2361).
             scoring_start = time.perf_counter()
-            if scored_results and reranking == "cross_encoder" and served_provider == DECISION_MODEL_RERANKER:
+            if scored_results and request.reranking == "cross_encoder" and served_provider == DECISION_MODEL_RERANKER:
                 # A decision model judged every candidate in the pool; its order
                 # is final. The recency / temporal / proof-count boosts would only second-guess it.
                 log_buffer.append("  [4.6] Decision model order kept (combined scoring skipped)")
-            elif scored_results and reranking == "interleave":
+            elif scored_results and request.reranking == "interleave":
                 # Interleave order is authoritative for dedup recall: do NOT re-sort by the
                 # recency/temporal boosts — that re-sort is precisely what buried the twin
                 # under RRF. Seed weight from the interleave-position rrf_score so the order
@@ -10777,11 +10788,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # (a configured rrf provider, or the failover member that answered).
                 from .search.recall_boost import stage2_passthrough
 
-                is_passthrough = stage2_passthrough(reranking, served_provider)
+                is_passthrough = stage2_passthrough(request.reranking, served_provider)
                 scoring_config = get_config()
                 apply_combined_scoring(
                     scored_results,
-                    now=_recall_scoring_now(question_date),
+                    now=_recall_scoring_now(request.question_date),
                     is_passthrough_reranker=is_passthrough,
                     recency_decay_function=scoring_config.recency_decay_function,
                     recency_decay_linear_window_days=scoring_config.recency_decay_linear_window_days,
@@ -10811,8 +10822,8 @@ class MemoryEngine(MemoryEngineInterface):
             # threshold is a no-op. There is deliberately no default — the
             # cross-encoder's absolute scores are not calibrated for a fixed cutoff
             # (a clearly-relevant match can score ~0.001 while its *ranking* is right).
-            min_reranker = min_scores.reranker if min_scores else None
-            min_final = min_scores.final if min_scores else None
+            min_reranker = request.min_scores.reranker if request.min_scores else None
+            min_final = request.min_scores.final if request.min_scores else None
             if min_reranker is not None and served_provider in RANK_SCORE_PROVIDERS:
                 # Recall entry rejects this floor when the primary scores by rank; getting
                 # here means the chain failed over to such a member. Its scores are rank
@@ -10835,7 +10846,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Add reranked results to tracer AFTER combined scoring (so normalized values are included)
             # `enable_trace`, NOT `if tracer`: see the retrieval-results guard above.
-            if enable_trace:
+            if request.enable_trace:
                 results_dict = [sr.to_dict() for sr in scored_results]
                 tracer_merged = [
                     (mc.id, mc.retrieval.__dict__, {"rrf_score": mc.rrf_score, **mc.source_ranks})
@@ -10860,8 +10871,8 @@ class MemoryEngine(MemoryEngineInterface):
             # Cancellation checkpoint: reranking is done; skip the remaining
             # enrichment (chunk/entity/source-fact fetches, each its own DB work)
             # if the client disconnected while we were reranking (issue #2122).
-            if request_context is not None:
-                request_context.raise_if_cancelled()
+            if request.request_context is not None:
+                request.request_context.raise_if_cancelled()
 
             # Step 4.8: prefer-observations dedup. When the caller asked for observations
             # alongside raw facts, an observation supersedes the raw facts it was
@@ -10869,13 +10880,15 @@ class MemoryEngine(MemoryEngineInterface):
             # twice. Runs BEFORE the Step 5 truncation so the freed slots backfill with
             # the next-best results, keeping the result count at the budget. No-op unless
             # 'observation' and at least one raw type were both requested.
-            raw_types_requested = {"world", "experience"} & set(fact_type)
-            if prefer_observations and "observation" in fact_type and raw_types_requested:
+            raw_types_requested = {"world", "experience"} & set(request.fact_type)
+            if request.prefer_observations and "observation" in request.fact_type and raw_types_requested:
                 # "The observation list" = observations within the window we would return.
                 # Only those can supersede a raw fact; a far-down observation should not
                 # suppress a top raw fact it merely happens to reference.
                 observation_srs = [
-                    sr for sr in scored_results[: thinking_budget * 2] if sr.retrieval.fact_type == "observation"
+                    sr
+                    for sr in scored_results[: request.thinking_budget * 2]
+                    if sr.retrieval.fact_type == "observation"
                 ]
                 observation_ids = [uuid.UUID(sr.id) for sr in observation_srs]
                 if observation_ids:
@@ -10891,13 +10904,13 @@ class MemoryEngine(MemoryEngineInterface):
                     # were read into a local and discarded), so the store-owned chunk walk in Step
                     # 5.5 and the source-facts step reuse them instead of reading them a second time.
                     if not all(sr.retrieval.source_memory_ids is not None for sr in observation_srs):
-                        async with self._store_read_conn(bank_id) as dedup_conn:
+                        async with self._store_read_conn(request.bank_id) as dedup_conn:
                             obs_by_id = {
                                 m.unit_id: [str(s) for s in (m.source_memory_ids or [])]
                                 for m in await get_memories().get_memories(
                                     conn=dedup_conn,
                                     fq_table=fq_table,
-                                    bank_id=bank_id,
+                                    bank_id=request.bank_id,
                                     unit_ids=[str(o) for o in observation_ids],
                                 )
                                 if m.fact_type == "observation"
@@ -10926,7 +10939,7 @@ class MemoryEngine(MemoryEngineInterface):
                         )
 
             # Step 5: Truncate to thinking_budget * 2 for token filtering
-            rerank_limit = thinking_budget * 2
+            rerank_limit = request.thinking_budget * 2
             top_scored = scored_results[:rerank_limit]
             log_buffer.append(f"  [5] Truncated to top {len(top_scored)} results")
 
@@ -10935,14 +10948,13 @@ class MemoryEngine(MemoryEngineInterface):
             chunks_dict = None
             total_chunk_tokens = 0
             chunk_fetch_start = time.perf_counter()
-            if include_chunks and top_scored:
+            if request.include_chunks and top_scored:
                 from .response_models import ChunkInfo
 
                 # Collect chunk_ids in order of fact relevance (preserving order from top_scored).
                 # Observations have no direct chunk_id — use a placeholder so their source
                 # chunks end up at the observation's rank position, not appended at the end.
-                # ordered_items: list of ('chunk', chunk_id) | ('obs', sr.id)
-                ordered_items: list[tuple[str, str]] = []
+                ordered_items: list[_ChunkSlot] = []
                 seen_chunk_ids: set[str] = set()
                 observation_ids_ordered: list[uuid.UUID] = []
                 # The sources each observation already carries on its result, if the backend
@@ -10952,10 +10964,10 @@ class MemoryEngine(MemoryEngineInterface):
                 for sr in top_scored:
                     chunk_id = sr.retrieval.chunk_id
                     if chunk_id and chunk_id not in seen_chunk_ids:
-                        ordered_items.append(("chunk", chunk_id))
+                        ordered_items.append(_ChunkSlot(id=chunk_id, is_observation=False))
                         seen_chunk_ids.add(chunk_id)
                     elif not chunk_id and sr.retrieval.fact_type == "observation":
-                        ordered_items.append(("obs", sr.id))
+                        ordered_items.append(_ChunkSlot(id=sr.id, is_observation=True))
                         observation_ids_ordered.append(uuid.UUID(sr.id))
                         carried_sources[sr.id] = sr.retrieval.source_memory_ids
 
@@ -10970,7 +10982,7 @@ class MemoryEngine(MemoryEngineInterface):
                         backend=backend,
                         ops=self._backend.ops,
                         fq_table=fq_table,
-                        bank_id=bank_id,
+                        bank_id=request.bank_id,
                         observation_ids=observation_ids_ordered,
                         carried_sources=carried_sources,
                     )
@@ -10989,11 +11001,11 @@ class MemoryEngine(MemoryEngineInterface):
 
                 # Flatten ordered_items into chunk_ids_ordered, expanding obs placeholders
                 chunk_ids_ordered = []
-                for item_type, item_id in ordered_items:
-                    if item_type == "chunk":
-                        chunk_ids_ordered.append(item_id)
+                for slot in ordered_items:
+                    if slot.is_observation:
+                        chunk_ids_ordered.extend(obs_chunk_ids.get(slot.id, []))
                     else:
-                        chunk_ids_ordered.extend(obs_chunk_ids.get(item_id, []))
+                        chunk_ids_ordered.append(slot.id)
 
                 if chunk_ids_ordered:
                     chunks_dict = {}
@@ -11002,22 +11014,22 @@ class MemoryEngine(MemoryEngineInterface):
                     # happens in Python after the fetch — one round-trip is always faster
                     # than multiple batched round-trips when the candidate set is large.
                     chunks_lookup = await _chunk_store.recall_chunks(
-                        backend=backend, fq_table=fq_table, bank_id=bank_id, chunk_ids=chunk_ids_ordered
+                        backend=backend, fq_table=fq_table, bank_id=request.bank_id, chunk_ids=chunk_ids_ordered
                     )
-                    if chunks_lookup and tag_filter_active(tags, tags_match, tag_groups):
+                    if chunks_lookup and tag_filter_active(request.tags, request.tags_match, request.tag_groups):
                         # Source text follows its DOCUMENT's tags, not the fact's (#5030): a fact
                         # shared through a tag like ``kind:rule`` must not carry the rest of a
                         # document the reader's filter excludes. A chunk with no document fails
                         # closed — ``None`` is never among the visible ids.
-                        async with self._store_read_conn(bank_id) as conn:
+                        async with self._store_read_conn(request.bank_id) as conn:
                             _visible_docs = await visible_document_ids(
                                 conn,
                                 fq_table,
-                                bank_id,
+                                request.bank_id,
                                 (row["document_id"] for row in chunks_lookup.values()),
-                                tags=tags,
-                                tags_match=tags_match,
-                                tag_groups=tag_groups,
+                                tags=request.tags,
+                                tags_match=request.tags_match,
+                                tag_groups=request.tag_groups,
                             )
                         chunks_lookup = {
                             cid: row for cid, row in chunks_lookup.items() if row["document_id"] in _visible_docs
@@ -11032,15 +11044,15 @@ class MemoryEngine(MemoryEngineInterface):
                         chunk_text = cast(str, row["chunk_text"])
                         chunk_tokens = count_tokens(chunk_text)
 
-                        if total_chunk_tokens + chunk_tokens > max_chunk_tokens:
-                            remaining_tokens = max_chunk_tokens - total_chunk_tokens
+                        if total_chunk_tokens + chunk_tokens > request.max_chunk_tokens:
+                            remaining_tokens = request.max_chunk_tokens - total_chunk_tokens
                             if remaining_tokens > 0:
                                 # Only now are the ids needed — the fits-in-budget path above never builds them.
                                 truncated_text = truncate_to_tokens(chunk_text, remaining_tokens).text
                                 chunks_dict[chunk_id] = ChunkInfo(
                                     chunk_text=truncated_text, chunk_index=row["chunk_index"], truncated=True
                                 )
-                                total_chunk_tokens = max_chunk_tokens
+                                total_chunk_tokens = request.max_chunk_tokens
                             break
                         else:
                             chunks_dict[chunk_id] = ChunkInfo(
@@ -11050,7 +11062,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Chunk fetch involves up to two SQL round-trips plus per-chunk token
             # counting; record it only when chunks were actually requested (issue #2361).
-            if include_chunks:
+            if request.include_chunks:
                 tracer.add_phase_metric(
                     "chunk_fetch",
                     time.perf_counter() - chunk_fetch_start,
@@ -11063,7 +11075,7 @@ class MemoryEngine(MemoryEngineInterface):
             selection = select_facts_within_budget(
                 fact_ids_ordered=[sr.id for sr in top_scored],
                 text_by_id={sr.id: sr.retrieval.text for sr in top_scored},
-                max_tokens=max_tokens,
+                max_tokens=request.max_tokens,
                 count_tokens=count_tokens,
             )
             total_tokens = selection.total_tokens
@@ -11073,7 +11085,7 @@ class MemoryEngine(MemoryEngineInterface):
             step_duration = time.perf_counter() - step_start
             truncated_note = " (truncated)" if selection.truncated else ""
             log_buffer.append(
-                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{max_tokens} tokens"
+                f"  [6] Token filtering: {len(top_scored)} results, {total_tokens}/{request.max_tokens} tokens"
                 f"{truncated_note} in {step_duration:.3f}s"
             )
 
@@ -11083,7 +11095,7 @@ class MemoryEngine(MemoryEngineInterface):
                 {
                     "results_selected": len(top_scored),
                     "tokens_used": total_tokens,
-                    "max_tokens": max_tokens,
+                    "max_tokens": request.max_tokens,
                     "truncated": selection.truncated,
                 },
             )
@@ -11097,7 +11109,7 @@ class MemoryEngine(MemoryEngineInterface):
             # drops everything it is handed under `phases_only`, and the counters it keeps are read
             # by nothing but itself -- so on the ordinary path this loop walked every scored result
             # to build records that were thrown away.
-            if enable_trace:
+            if request.enable_trace:
                 entry_point_ids = {ep.node_id for ep in tracer.entry_points}
                 for sr in scored_results:
                     tracer.visit_node(
@@ -11121,27 +11133,29 @@ class MemoryEngine(MemoryEngineInterface):
 
             fact_type_summary = ", ".join([f"{ft}={count}" for ft, count in sorted(fact_type_counts.items())])
 
-            # Convert ScoredResult to dicts with ISO datetime strings
-            top_results_dicts = []
-            for sr in top_scored:
-                result_dict = sr.to_dict()
-                # Convert datetime objects to ISO strings for JSON serialization
-                if result_dict.get("occurred_start"):
-                    occurred_start = result_dict["occurred_start"]
-                    result_dict["occurred_start"] = (
-                        occurred_start.isoformat() if hasattr(occurred_start, "isoformat") else occurred_start
-                    )
-                if result_dict.get("occurred_end"):
-                    occurred_end = result_dict["occurred_end"]
-                    result_dict["occurred_end"] = (
-                        occurred_end.isoformat() if hasattr(occurred_end, "isoformat") else occurred_end
-                    )
-                if result_dict.get("mentioned_at"):
-                    mentioned_at = result_dict["mentioned_at"]
-                    result_dict["mentioned_at"] = (
-                        mentioned_at.isoformat() if hasattr(mentioned_at, "isoformat") else mentioned_at
-                    )
-                top_results_dicts.append(result_dict)
+            # Dicts with ISO datetime strings, for the trace only: it is the one consumer that wants a
+            # loose per-result payload. The response's MemoryFacts are built from the typed results.
+            top_results_dicts: list[dict[str, Any]] = []
+            if request.enable_trace:
+                for sr in top_scored:
+                    result_dict = sr.to_dict()
+                    # Convert datetime objects to ISO strings for JSON serialization
+                    if result_dict.get("occurred_start"):
+                        occurred_start = result_dict["occurred_start"]
+                        result_dict["occurred_start"] = (
+                            occurred_start.isoformat() if hasattr(occurred_start, "isoformat") else occurred_start
+                        )
+                    if result_dict.get("occurred_end"):
+                        occurred_end = result_dict["occurred_end"]
+                        result_dict["occurred_end"] = (
+                            occurred_end.isoformat() if hasattr(occurred_end, "isoformat") else occurred_end
+                        )
+                    if result_dict.get("mentioned_at"):
+                        mentioned_at = result_dict["mentioned_at"]
+                        result_dict["mentioned_at"] = (
+                            mentioned_at.isoformat() if hasattr(mentioned_at, "isoformat") else mentioned_at
+                        )
+                    top_results_dicts.append(result_dict)
 
             tracer.add_phase_metric(
                 "result_serialization",
@@ -11154,7 +11168,7 @@ class MemoryEngine(MemoryEngineInterface):
             source_fact_ids_by_obs: dict[str, list[str]] = {}  # obs_id -> [source_id, ...]
             source_facts_dict: dict[str, MemoryFact] | None = None
             source_facts_truncated = False
-            if include_source_facts:
+            if request.include_source_facts:
                 observation_srs = [sr for sr in top_scored if sr.retrieval.fact_type == "observation"]
                 observation_ids = [uuid.UUID(sr.id) for sr in observation_srs]
                 if observation_ids:
@@ -11177,7 +11191,10 @@ class MemoryEngine(MemoryEngineInterface):
                             }
                         else:
                             obs_sources = await store.recall_observation_sources(
-                                conn=sf_conn, fq_table=fq_table, bank_id=bank_id, observation_ids=observation_ids
+                                conn=sf_conn,
+                                fq_table=fq_table,
+                                bank_id=request.bank_id,
+                                observation_ids=observation_ids,
                             )
 
                         # Collect unique source IDs in order of first appearance
@@ -11194,7 +11211,7 @@ class MemoryEngine(MemoryEngineInterface):
                         # Fetch source fact content up to token budget — only the display fields.
                         if source_ids_ordered:
                             source_row_by_id = await store.recall_source_facts(
-                                conn=sf_conn, fq_table=fq_table, bank_id=bank_id, unit_ids=source_ids_ordered
+                                conn=sf_conn, fq_table=fq_table, bank_id=request.bank_id, unit_ids=source_ids_ordered
                             )
 
                             def _make_source_fact(sid: str, r: "StoredMemory") -> MemoryFact:
@@ -11216,8 +11233,8 @@ class MemoryEngine(MemoryEngineInterface):
                                 source_ids_ordered=source_ids_ordered,
                                 source_fact_ids_by_obs=source_fact_ids_by_obs,
                                 text_by_id={sid: r.text for sid, r in source_row_by_id.items()},
-                                max_total_tokens=max_source_facts_tokens,
-                                max_tokens_per_observation=max_source_facts_tokens_per_observation,
+                                max_total_tokens=request.max_source_facts_tokens,
+                                max_tokens_per_observation=request.max_source_facts_tokens_per_observation,
                                 count_tokens=count_tokens,
                             )
                             source_facts_truncated = selection.truncated
@@ -11227,7 +11244,7 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Source-fact enrichment is two SQL passes + token counting; record it
             # only when requested (issue #2361).
-            if include_source_facts:
+            if request.include_source_facts:
                 tracer.add_phase_metric(
                     "source_fact_fetch",
                     time.perf_counter() - source_fact_start,
@@ -11241,7 +11258,7 @@ class MemoryEngine(MemoryEngineInterface):
             # The store resolves both a memory's direct entity postings and an
             # observation's inherited-from-sources entities in one call.
             fact_entity_map = {}  # unit_id -> list of {entity_id, canonical_name}
-            if include_entities and top_scored:
+            if request.include_entities and top_scored:
                 unit_ids = [sr.id for sr in top_scored]
                 if unit_ids:
                     from .memories import get_memories
@@ -11266,7 +11283,7 @@ class MemoryEngine(MemoryEngineInterface):
                         if union:
                             async with acquire_with_retry(backend) as entity_conn:
                                 names = await get_memories().resolve_entity_names(
-                                    conn=entity_conn, fq_table=fq_table, bank_id=bank_id, entity_ids=list(union)
+                                    conn=entity_conn, fq_table=fq_table, bank_id=request.bank_id, entity_ids=list(union)
                                 )
                         fact_entity_map = _entity_map_from_results(ids_by_unit, names)
                     else:
@@ -11275,7 +11292,7 @@ class MemoryEngine(MemoryEngineInterface):
                             # them to names (observations inherit their sources') against
                             # its own entity registry.
                             fact_entity_map = await get_memories().entity_map_for_units(
-                                conn=entity_conn, fq_table=fq_table, bank_id=bank_id, unit_ids=unit_ids
+                                conn=entity_conn, fq_table=fq_table, bank_id=request.bank_id, unit_ids=unit_ids
                             )
 
             # Convert results to MemoryFact objects
@@ -11286,7 +11303,9 @@ class MemoryEngine(MemoryEngineInterface):
             # cross_encoder_score_normalized is then a rank-derived placeholder, not a
             # true relevance score.
             reranker_passthrough = (
-                (reranking != "cross_encoder") or served_provider == "rrf" or served_provider in RANK_SCORE_PROVIDERS
+                (request.reranking != "cross_encoder")
+                or served_provider == "rrf"
+                or served_provider in RANK_SCORE_PROVIDERS
             )
             scores_by_id: dict[str, RecallScores] = {
                 sr.id: RecallScores(
@@ -11299,59 +11318,51 @@ class MemoryEngine(MemoryEngineInterface):
             }
 
             memory_facts = []
-            for result_dict in top_results_dicts:
-                result_id = str(result_dict.get("id"))
+            for sr in top_scored:
+                r = sr.retrieval
                 # Get entity names for this fact
                 entity_names = None
-                if include_entities and result_id in fact_entity_map:
-                    entity_names = [e["canonical_name"] for e in fact_entity_map[result_id]]
+                if request.include_entities and r.id in fact_entity_map:
+                    entity_names = [e["canonical_name"] for e in fact_entity_map[r.id]]
 
                 memory_facts.append(
                     MemoryFact(
-                        id=result_id,
-                        text=cast(str, result_dict.get("text")),
-                        fact_type=result_dict.get("fact_type", "world"),
+                        id=r.id,
+                        text=r.text,
+                        fact_type=r.fact_type,
                         entities=entity_names,
-                        context=result_dict.get("context"),
-                        occurred_start=result_dict.get("occurred_start"),
-                        occurred_end=result_dict.get("occurred_end"),
-                        mentioned_at=result_dict.get("mentioned_at"),
-                        document_id=result_dict.get("document_id"),
-                        metadata=result_dict.get("metadata"),
-                        chunk_id=result_dict.get("chunk_id"),
-                        tags=result_dict.get("tags"),
-                        source_fact_ids=source_fact_ids_by_obs.get(result_id) if include_source_facts else None,
-                        scores=scores_by_id.get(result_id),
-                        attachment_ids=result_dict.get("attachment_ids"),
+                        context=r.context,
+                        occurred_start=_iso_or_passthrough(r.occurred_start),
+                        occurred_end=_iso_or_passthrough(r.occurred_end),
+                        mentioned_at=_iso_or_passthrough(r.mentioned_at),
+                        document_id=r.document_id,
+                        metadata=r.metadata,
+                        chunk_id=r.chunk_id,
+                        tags=r.tags,
+                        source_fact_ids=source_fact_ids_by_obs.get(r.id) if request.include_source_facts else None,
+                        scores=scores_by_id.get(r.id),
+                        attachment_ids=r.attachment_ids,
                     )
                 )
 
             # Fetch entity observations if requested
             entities_dict = None
             total_entity_tokens = 0
-            if include_entities and fact_entity_map:
-                # Collect unique entities in order of fact relevance (preserving order from top_scored)
-                entities_ordered = []  # list of (entity_id, entity_name) tuples
-                seen_entity_ids = set()
-
-                for sr in top_scored:
-                    unit_id = sr.id
-                    if unit_id in fact_entity_map:
-                        for entity in fact_entity_map[unit_id]:
-                            entity_id = entity["entity_id"]
-                            entity_name = entity["canonical_name"]
-                            if entity_id not in seen_entity_ids:
-                                entities_ordered.append((entity_id, entity_name))
-                                seen_entity_ids.add(entity_id)
-
-                # Return entities with empty observations (summaries now live in mental models)
+            if request.include_entities and fact_entity_map:
+                # Unique entities in order of fact relevance (preserving order from top_scored),
+                # with empty observations: their summaries now live in mental models.
                 entities_dict = {}
-                for entity_id, entity_name in entities_ordered:
-                    entities_dict[entity_name] = EntityState(
-                        entity_id=entity_id,
-                        canonical_name=entity_name,
-                        observations=[],  # Mental models provide this now
-                    )
+                seen_entity_ids: set[str] = set()
+                for sr in top_scored:
+                    for entity in fact_entity_map.get(sr.id, []):
+                        entity_id = entity["entity_id"]
+                        if entity_id not in seen_entity_ids:
+                            seen_entity_ids.add(entity_id)
+                            entities_dict[entity["canonical_name"]] = EntityState(
+                                entity_id=entity_id,
+                                canonical_name=entity["canonical_name"],
+                                observations=[],
+                            )
 
             tracer.add_phase_metric(
                 "entity_build",
@@ -11364,8 +11375,8 @@ class MemoryEngine(MemoryEngineInterface):
             # the pool waits overlap other phases (semaphore_wait precedes the
             # tracer window; connection_wait is part of parallel_retrieval), and the
             # per-method retrieval splits are children of parallel_retrieval.
-            if semaphore_wait > 0:
-                tracer.add_phase_metric("semaphore_wait", semaphore_wait, {"diagnostic": True})
+            if request.semaphore_wait > 0:
+                tracer.add_phase_metric("semaphore_wait", request.semaphore_wait, {"diagnostic": True})
             if max_conn_wait > 0:
                 tracer.add_phase_metric("connection_wait", max_conn_wait, {"diagnostic": True})
 
@@ -11376,7 +11387,7 @@ class MemoryEngine(MemoryEngineInterface):
             # `enable_trace`, NOT `if tracer`: the tracer now always exists so the phase timings
             # are always collected, but finalizing and returning the trace is still opt-in --
             # `finalize()` builds the whole candidate/visit payload, which is the expensive part.
-            if enable_trace:
+            if request.enable_trace:
                 from .search.trace import SearchPhaseMetrics
 
                 finalize_start = time.perf_counter()
@@ -11397,8 +11408,8 @@ class MemoryEngine(MemoryEngineInterface):
             num_entities = len(entities_dict) if entities_dict else 0
             # Include wait times in log if significant
             wait_parts = []
-            if semaphore_wait > 0.01:
-                wait_parts.append(f"sem={semaphore_wait:.3f}s")
+            if request.semaphore_wait > 0.01:
+                wait_parts.append(f"sem={request.semaphore_wait:.3f}s")
             if max_conn_wait > 0.01:
                 wait_parts.append(f"conn={max_conn_wait:.3f}s")
             wait_info = f" | waits: {', '.join(wait_parts)}" if wait_parts else ""
@@ -11447,9 +11458,9 @@ class MemoryEngine(MemoryEngineInterface):
                         + ", ".join(f"{n}={d * 1000:.0f}ms" for n, d in sorted(diags, key=lambda kv: -kv[1]))
                     )
             log_buffer.append(
-                f"[RECALL {recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
+                f"[RECALL {request.recall_id}] Complete: {len(top_scored)} facts ({total_tokens} tok), {num_chunks} chunks ({total_chunk_tokens} tok), {num_entities} entities ({total_entity_tokens} tok) | {fact_type_summary} | {total_time:.3f}s{wait_info}"
             )
-            if not quiet:
+            if not request.quiet:
                 logger.info("\n" + "\n".join(log_buffer))
 
             return RecallResultModel(
@@ -11458,7 +11469,7 @@ class MemoryEngine(MemoryEngineInterface):
                 entities=entities_dict,
                 chunks=chunks_dict,
                 source_facts=source_facts_dict,
-                source_facts_truncated=source_facts_truncated if include_source_facts else None,
+                source_facts_truncated=source_facts_truncated if request.include_source_facts else None,
             )
 
         except OperationCancelledError:
@@ -11470,9 +11481,9 @@ class MemoryEngine(MemoryEngineInterface):
             # Use repr(e) so exceptions with empty __str__ (e.g. raise SomeError())
             # still emit a discriminating class+args string into operations.error_message.
             log_buffer.append(
-                f"[RECALL {recall_id}] ERROR after {time.perf_counter() - recall_start:.3f}s: {type(e).__name__}: {e!r}"
+                f"[RECALL {request.recall_id}] ERROR after {time.perf_counter() - recall_start:.3f}s: {type(e).__name__}: {e!r}"
             )
-            if not quiet:
+            if not request.quiet:
                 logger.error("\n" + "\n".join(log_buffer), exc_info=True)
             raise RuntimeError(f"Failed to search memories ({type(e).__name__}): {e!r}") from e
 

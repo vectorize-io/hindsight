@@ -20,23 +20,26 @@ from hindsight_api.config import _get_raw_config
 from hindsight_api.engine import memory_engine as memory_engine_mod
 from hindsight_api.engine.response_models import Budget
 from hindsight_api.engine.search.tracer import SearchTracer
+from hindsight_api.engine.search.types import MergedCandidate, RetrievalResult
 
 
-def test_rrf_trace_preserves_flattened_source_ranks():
-    """Source ranks flattened by the recall pipeline remain visible in traces."""
+def test_rrf_trace_preserves_source_ranks():
+    """Each candidate's per-arm ranks from the fusion remain visible in traces."""
     tracer = SearchTracer(query="test", budget=10, max_tokens=100)
 
     tracer.add_rrf_merged(
         [
-            (
-                "memory-1",
-                {"text": "alpha"},
-                {"rrf_score": 0.1, "semantic_rank": 1, "bm25_rank": 2},
+            MergedCandidate(
+                retrieval=RetrievalResult(id="memory-1", text="alpha", fact_type="world"),
+                rrf_score=0.1,
+                source_ranks={"semantic_rank": 1, "bm25_rank": 2},
             )
         ]
     )
 
-    assert tracer.rrf_merged[0].source_ranks == {"semantic_rank": 1, "bm25_rank": 2}
+    merged = tracer.rrf_merged[0]
+    assert (merged.node_id, merged.text, merged.rrf_score) == ("memory-1", "alpha", 0.1)
+    assert merged.source_ranks == {"semantic_rank": 1, "bm25_rank": 2}
 
 
 def test_trace_timestamp_records_the_query_anchor():
