@@ -134,22 +134,16 @@ def forced_tool(tools: list[dict[str, Any]], tool_choice: LLMToolChoice) -> dict
 
 
 def turn_request(tools: list[dict[str, Any]], tool_choice: LLMToolChoice) -> str:
-    """The user turn that asks for this turn's call in words.
-
-    "json" is lowercase on purpose: json_object mode wants that word in a user turn, and a
-    request without it gets "Return valid json only." put in front of the turn. This request
-    is joined onto the tool result before it (see ``as_text_messages``), so the hint would
-    change the start of a message the next turn replays without it.
-    """
+    """The user turn that asks for this turn's call in words."""
     if tool_choice.mode is LLMToolChoiceMode.NAMED:
         function = _function(forced_tool(tools, tool_choice))
         purpose = (function.get("description") or "").split(". ")[0].strip().rstrip(".")
         return (
             f"Call `{function['name']}` now{f' ({purpose})' if purpose else ''}. "
-            "Reply with only its arguments, as one json object."
+            "Reply with only its arguments, as one JSON object."
         )
     return (
-        "Decide your next step: call exactly ONE of the declared functions. Reply with one json object, "
+        "Decide your next step: call exactly ONE of the declared functions. Reply with one JSON object, "
         '{"call": {"name": <function name>, "arguments": {...}}}.'
     )
 
