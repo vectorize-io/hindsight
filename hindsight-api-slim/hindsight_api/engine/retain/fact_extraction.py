@@ -32,7 +32,7 @@ from ..llm_wrapper import (
 )
 from ..operation_metadata import RetainExtractionErrors
 from ..remote_retry import status_code_of
-from ..response_models import BATCH_TERMINAL_FAILURE_STATUSES, BatchRequest, TokenUsage
+from ..response_models import BATCH_TERMINAL_FAILURE_STATUSES, BatchRequest, BatchResult, TokenUsage
 from ..stored_dates import is_placeholder_date
 from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
@@ -3116,22 +3116,43 @@ async def extract_facts_from_contents_batch_api(
     # them here so the batch path gets the same guarantee as the sync one (#3729).
     batch_results = sanitize_value(await batch_impl.retrieve_batch_results(batch_id))
 
-    # Map results by custom_id
-    results_by_id = {result.custom_id: result for result in batch_results}
-
     # Step 5: Parse results into facts (same as sync mode)
     all_facts_from_llm = []
     chunks_metadata = []
     total_usage = TokenUsage()
     extraction_errors = RetainExtractionErrors()
 
+    # Each request must come back exactly once (#6439). A repeated custom_id is
+    # ambiguous — keeping the first or the last would let result order decide which
+    # facts are stored — so the chunk fails; an id nobody sent is reported, not dropped.
+    results_for_id: dict[str, list[BatchResult]] = {}
+    for result in batch_results:
+        results_for_id.setdefault(result.custom_id, []).append(result)
+    requested_ids = {request.custom_id for request in batch_requests}
+    for custom_id, results in results_for_id.items():
+        if custom_id not in requested_ids:
+            message = f"{custom_id}: provider returned a result for a request that was never sent"
+            logger.warning(message)
+            extraction_errors.add(message)
+
     for chunk_idx, (chunk_content, content_index, chunk_index_in_content, event_date, context) in enumerate(
         all_chunks_info
     ):
         custom_id = f"chunk_{chunk_idx}"
-        result = results_by_id.get(custom_id)
+        results = results_for_id.get(custom_id, [])
 
-        if not result:
+        if len(results) > 1:
+            message = f"{custom_id}: provider returned {len(results)} results for this request"
+            logger.error(message)
+            extraction_errors.add(message)
+            chunks_metadata.append(
+                ChunkMetadata(
+                    chunk_text=chunk_content, fact_count=0, content_index=content_index, chunk_index=chunk_idx
+                )
+            )
+            continue
+
+        if not results:
             message = f"{custom_id}: missing batch result"
             logger.warning(message)
             extraction_errors.add(message)
@@ -3141,6 +3162,8 @@ async def extract_facts_from_contents_batch_api(
                 )
             )
             continue
+
+        result = results[0]
 
         # Check for errors
         if result.error:

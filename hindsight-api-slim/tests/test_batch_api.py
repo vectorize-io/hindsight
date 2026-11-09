@@ -977,3 +977,63 @@ async def test_batch_api_sanitizes_model_authored_text(mock_llm_config, hindsigh
     assert facts[0].fact_text.encode("utf-8")  # raised UnicodeEncodeError before the fix
     assert "Alex laughed" in facts[0].fact_text
     assert facts[0].entities == ["Alex"]
+
+
+def _one_fact(what: str) -> str:
+    return json.dumps({"facts": [{"what": what, "fact_type": "world", "fact_kind": "conversation"}]})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_first", [True, False])
+async def test_batch_api_rejects_duplicate_and_unexpected_custom_ids(
+    mock_llm_config, test_contents, hindsight_config, error_first
+):
+    """Issue #6439: a custom_id returned twice is ambiguous — whichever comes last must not
+    decide the chunk's facts. It, and any id nobody asked for, is an extraction error, while
+    a sibling chunk with exactly one result is still kept."""
+    duplicates = [
+        BatchResult(custom_id="chunk_0", error="server_error"),
+        BatchResult(custom_id="chunk_0", content=_one_fact("Alice visited Paris"), usage=_usage()),
+    ]
+    if not error_first:
+        duplicates.reverse()
+    mock_llm_config._provider_impl.supports_batch_api = AsyncMock(return_value=True)
+    mock_llm_config._provider_impl.submit_batch = AsyncMock(
+        return_value=BatchSubmission(batch_id="batch_dupes", status="validating")
+    )
+    mock_llm_config._provider_impl.get_batch_status = AsyncMock(return_value=_status("batch_dupes"))
+    mock_llm_config._provider_impl.retrieve_batch_results = AsyncMock(
+        return_value=[
+            *duplicates,
+            BatchResult(custom_id="chunk_1", content=_one_fact("Bob lives in Rome"), usage=_usage()),
+            BatchResult(custom_id="chunk_99", content=_one_fact("Nobody asked for this"), usage=_usage()),
+        ]
+    )
+
+    recorded = []
+
+    async def _capture(pool, operation_id, schema, errors):
+        recorded.append(errors)
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._write_batch_extraction_errors",
+        side_effect=_capture,
+    ):
+        extraction = await extract_facts_from_contents_batch_api(
+            contents=test_contents,
+            llm_config=mock_llm_config,
+            config=hindsight_config,
+            pool=None,
+            operation_id=None,
+            schema=None,
+        )
+
+    assert len(extraction.facts) == 1
+    assert "Bob" in extraction.facts[0].fact_text
+    assert extraction.chunks[0].fact_count == 0
+    assert extraction.chunks[1].fact_count == 1
+    assert len(recorded) == 1
+    assert sorted(recorded[0].sample) == [
+        "chunk_0: provider returned 2 results for this request",
+        "chunk_99: provider returned a result for a request that was never sent",
+    ]
