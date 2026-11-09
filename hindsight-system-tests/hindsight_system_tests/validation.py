@@ -79,6 +79,13 @@ def validate_chat(body: dict[str, Any]) -> None:
     for index, message in enumerate(messages):
         if not isinstance(message, dict) or "role" not in message:
             raise RequestRejected(f"messages[{index}] must be an object with a 'role'")
+        # OpenAI itself accepts two user turns in a row, but the chat templates of
+        # most OpenAI-compatible servers (vLLM, Ollama, LiteLLM to Claude) refuse
+        # them with "roles must alternate". Retaining an image in json_object mode
+        # used to append a second user turn after the image one (#6349).
+        if index and message["role"] == "user" and messages[index - 1].get("role") == "user":
+            roles = [m.get("role") for m in messages]
+            raise RequestRejected(f"messages[{index}]: consecutive user turns; roles must alternate (roles: {roles})")
 
     response_format = body.get("response_format")
     if response_format is not None:
