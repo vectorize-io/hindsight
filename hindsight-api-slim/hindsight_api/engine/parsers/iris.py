@@ -10,7 +10,7 @@ from typing import Any
 import aiohttp
 from yarl import URL
 
-from ..aiohttp_session import per_phase_timeout, proxy_env_is_set
+from ..aiohttp_session import HINDSIGHT_USER_AGENT, per_phase_timeout, proxy_env_is_set
 from .base import FileParser, UnsupportedFileTypeError
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,9 @@ class IrisParser(FileParser):
         # One session per conversion: a rare call, and the parser is built at startup
         # possibly off the serving loop, so it does not hold a long-lived one.
         async with aiohttp.ClientSession(
-            timeout=per_phase_timeout(120.0, connect=30.0), trust_env=proxy_env_is_set()
+            timeout=per_phase_timeout(120.0, connect=30.0),
+            trust_env=proxy_env_is_set(),
+            headers={"User-Agent": HINDSIGHT_USER_AGENT},
         ) as client:
             # Step 1: Request a presigned upload URL
             async with client.post(

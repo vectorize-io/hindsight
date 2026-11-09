@@ -10,7 +10,7 @@ from typing import Any
 import aiohttp
 from pydantic import BaseModel
 
-from ..aiohttp_session import per_phase_timeout, proxy_env_is_set
+from ..aiohttp_session import HINDSIGHT_USER_AGENT, per_phase_timeout, proxy_env_is_set
 from .base import FileParser, UnsupportedFileTypeError
 
 logger = logging.getLogger(__name__)
@@ -88,7 +88,9 @@ class LlamaParseParser(FileParser):
         # One session per conversion: parsers have no close hook to release a
         # long-lived one, and a conversion is a rare, multi-second polling job.
         async with aiohttp.ClientSession(
-            timeout=per_phase_timeout(120.0, connect=30.0), trust_env=proxy_env_is_set()
+            timeout=per_phase_timeout(120.0, connect=30.0),
+            trust_env=proxy_env_is_set(),
+            headers={"User-Agent": HINDSIGHT_USER_AGENT},
         ) as session:
             return await self._convert(session, file_data, filename, content_type)
 
