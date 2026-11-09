@@ -237,8 +237,9 @@ class OracleOps(DataAccessOps):
         # "parent key not found" on either unit FK drops just that link — Oracle
         # rolls back the failed statement only. A link that does land holds back a
         # concurrent DELETE of its endpoint until commit, so no window remains and
-        # no parent lock is needed. (Oracle's only row lock, FOR UPDATE, is
-        # exclusive: it queued concurrent retains behind each other and deadlocked.)
+        # no parent lock is needed. (A FOR UPDATE parent lock was tried first and
+        # dropped: Oracle's only row lock is exclusive, so concurrent retains
+        # linking to the same neighbors queued behind each other.)
         query = f"""
             INSERT INTO {table}
                 (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)

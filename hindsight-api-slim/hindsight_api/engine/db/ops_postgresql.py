@@ -322,10 +322,11 @@ class PostgreSQLOps(DataAccessOps):
         nil_entity_uuid: str,
         chunk_size: int = 5000,
     ) -> None:
-        # The memory_links → memory_units FKs are DEFERRABLE INITIALLY DEFERRED, so an INSERT takes no lock on the
-        # referenced parent rows until COMMIT — a concurrent committed DELETE in
-        # that window (consolidation pruning observations, document re-tracking)
-        # trips fk_memory_links_{to,from}_unit_id_memory_units at COMMIT (#1882),
+        # The memory_links → memory_units FKs are DEFERRABLE INITIALLY DEFERRED,
+        # so an INSERT takes no lock on the referenced parent rows until COMMIT —
+        # a concurrent committed DELETE in that window (consolidation pruning
+        # observations, document re-tracking) trips
+        # fk_memory_links_{to,from}_unit_id_memory_units at COMMIT (#1882),
         # and a WHERE EXISTS guard can't prevent it (the row passes the check,
         # then is deleted before the deferred check runs). Instead a CTE locks the
         # referenced units FOR KEY SHARE in the *same statement*: the lock blocks a
