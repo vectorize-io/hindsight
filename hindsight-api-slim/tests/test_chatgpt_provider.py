@@ -807,6 +807,32 @@ async def test_a_tool_turn_schema_is_sent_as_text_format_and_returns_the_dict(ma
     assert not {"tools", "tool_choice"} & sent.keys()
 
 
+async def test_only_the_final_answer_message_is_the_reply(make_llm):
+    """A commentary preamble and the final answer are both JSON under a strict schema;
+    the SDK's ``output_text`` joins them into "Extra data" (#6347)."""
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+
+    def message(item_id: str, phase: str, text: str) -> dict[str, Any]:
+        content = [{"type": "output_text", "text": text, "annotations": []}]
+        return {**_TEXT_ITEM, "id": item_id, "phase": phase, "content": content}
+
+    output = [message("m1", "commentary", '{"query": "draft"}'), message("m2", "final_answer", '{"query": "x"}')]
+    llm = await make_llm(_Upstream([(200, _completed(output))]))
+    result = await llm.call(
+        messages=[{"role": "user", "content": "q"}],
+        response_format=schema_format(ResponseSchema(name="recall", schema=schema)),
+        strict_schema=True,
+        skip_validation=True,
+        max_retries=0,
+    )
+    assert result.content == {"query": "x"}
+
+
 async def test_usage_limit_in_stream_defers(make_llm):
     upstream = _Upstream([(200, _failed("subscription_sharing_usage_limit_exceeded"))])
     llm = await make_llm(upstream)

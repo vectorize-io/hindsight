@@ -197,6 +197,24 @@ async def test_call_strict_schema_uses_text_format_json_schema():
 
 
 @pytest.mark.asyncio
+async def test_without_phase_labels_the_last_message_is_the_reply():
+    """Several assistant messages are not one reply: the SDK's ``output_text`` joins them (#6347)."""
+
+    def message(text: str) -> types.SimpleNamespace:
+        part = types.SimpleNamespace(type="output_text", text=text)
+        return types.SimpleNamespace(type="message", phase=None, content=[part])
+
+    output = [message('{"answer": "draft"}'), message('{"answer": "42"}')]
+    llm = _make_llm()
+    _mock_create(llm, _fake_response(output_text='{"answer": "draft"}{"answer": "42"}', output=output))
+    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
+        result = (
+            await llm.call(messages=[{"role": "user", "content": "q"}], response_format=_Answer, strict_schema=True)
+        ).content
+    assert result == _Answer(answer="42")
+
+
+@pytest.mark.asyncio
 async def test_call_soft_schema_injects_schema_and_uses_json_object():
     llm = _make_llm()
     create = _mock_create(llm, _fake_response(output_text=json.dumps({"answer": "x"})))
