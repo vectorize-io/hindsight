@@ -204,3 +204,37 @@ class TestExportsAvailable:
         assert MentalModelGetContext is not None
         assert MentalModelGetResult is not None
         assert MentalModelRefreshResult is not None
+
+
+class TestRefreshReportsTokenCounts:
+    """The refresh hook reports sizes with the engine's tokenizer, not a characters/4 guess."""
+
+    @pytest.mark.asyncio
+    async def test_refresh_sizes_are_token_counts(self, memory, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from hindsight_api.engine.memory_engine import count_tokens
+
+        # Chinese runs about one token per character, so characters/4 would report
+        # roughly a quarter of the real size.
+        query = "客户下周去东京出差有哪些安排？"
+        content = "客户下周去东京出差，记得提醒他提前预订酒店。" * 20
+
+        async def _fake_refresh(bank_id, mental_model_id, **kwargs):
+            return {"id": mental_model_id, "content": content, "source_query": query, "reflect_response": {}}
+
+        async def _skip_outcome_metadata(operation_id, refreshed_model):
+            return None
+
+        validator = MagicMock()
+        validator.on_mental_model_refresh_complete = AsyncMock()
+        monkeypatch.setattr(memory, "refresh_mental_model", _fake_refresh)
+        monkeypatch.setattr(memory, "_write_refresh_outcome_metadata", _skip_outcome_metadata)
+        monkeypatch.setattr(memory, "_operation_validator", validator)
+
+        await memory._handle_refresh_mental_model({"bank_id": "bank-1", "mental_model_id": "mm-1"})
+
+        result = validator.on_mental_model_refresh_complete.await_args.args[0]
+        assert result.query_tokens == count_tokens(query)
+        assert result.output_tokens == count_tokens(content)
+        assert result.output_tokens > 2 * (len(content) // 4)
