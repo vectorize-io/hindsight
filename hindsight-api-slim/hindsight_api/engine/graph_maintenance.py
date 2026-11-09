@@ -221,10 +221,11 @@ async def run_graph_maintenance_job(
     # --- Pass 1: relink ---
     # The store owns the whole drain loop: it is a claim → top-up → commit over
     # its own link table, so how it batches and re-probes is its business — including
-    # the #3034 serialisation (the claim takes queue rows FOR UPDATE in (bank_id,
-    # unit_id) order against a concurrent re-enqueue), which lives in the store's
-    # claim (`ops.claim_graph_maintenance_batch`). A store with no links returns an
-    # empty dict and this is a no-op.
+    # the queue protocol that keeps a concurrent re-enqueue from being lost (#3034):
+    # a short claim stamps the rows, the relink deletes only rows still carrying its
+    # stamp, and a re-enqueue clears the stamp (#6417, see
+    # `ops.claim_graph_maintenance_batch`). A store with no links returns an empty
+    # dict and this is a no-op.
     relink = await store.relink_pass(
         backend=backend, fq_table=fq_table, bank_id=bank_id, config=config, deadline=deadline
     )

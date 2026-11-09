@@ -2,10 +2,9 @@
 
 Every run of either type for a bank is interchangeable — the payload carries
 only ``bank_id`` and the job drains that bank's whole backlog — so a second
-concurrent run for one bank recomputes the first one's work. graph_maintenance
-additionally convoys on the first run's queue-row locks
-(``claim_graph_maintenance_batch`` locks ``FOR UPDATE`` with no ``SKIP
-LOCKED``); consolidation hands the same memories to the LLM twice.
+concurrent run for one bank recomputes the first one's work: graph_maintenance
+splits the bank's queue between two workers relinking overlapping neighbourhoods;
+consolidation hands the same memories to the LLM twice.
 
 ``claim_tasks`` therefore refuses to claim a row for a bank that already has one
 of that type in flight, and takes at most one per bank per batch. Excluding

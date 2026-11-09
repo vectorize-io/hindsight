@@ -1,36 +1,30 @@
-"""Concurrency tests for the ``graph_maintenance_queue`` re-enqueue race (#3034).
+"""Concurrency tests for the ``graph_maintenance_queue`` claim protocol (#3034, #6417).
 
-Before the fix the queue used ``ON CONFLICT DO NOTHING`` (PG) /
-``IGNORE_ROW_ON_DUPKEY_INDEX`` (Oracle) on enqueue. Neither locks the existing
-row, so a mutation that re-enqueued an already-queued unit could not serialise
-against a worker that concurrently claimed (deleted) that row and processed the
-unit's *pre-mutation* state. The re-enqueue signal was silently dropped and the
-unit's derived temporal/semantic links were left stale with an empty queue.
+A mutation re-queues the units it changed; a worker claims queued units, relinks
+them and deletes their rows. The re-queue signal must never be lost: if the worker
+processed a unit's pre-mutation state, the row has to stay queued for another pass.
 
-The fix makes a duplicate enqueue take the existing row's lock (PG
-``DO UPDATE`` no-op / Oracle ``MERGE ... WHEN MATCHED``) and makes the worker
-claim lock those rows ``FOR UPDATE`` in ``(bank_id, unit_id)`` order — the same
-order the enqueue takes them — so the two serialise for a given key and can
-never cycle.
+The protocol: the claim stamps ``claimed_at`` in a short transaction of its own;
+the worker deletes the rows at the end of its relink only where the stamp is still
+its own; a re-queue clears the stamp. Neither side holds queue-row locks for longer
+than one statement before its commit, so writers don't queue behind a relink
+(#6417).
 
-These run against the real Postgres test DB and drive genuinely-concurrent
-transactions (the only way to observe a *database*-level lock interleaving).
-The Oracle protocol is the same shape (MERGE + ordered per-row delete + the
-Pass-1 retry backstop); its live integration reproduction is tracked as a
-follow-up per the issue (the Python Oracle suite doesn't run in PR CI).
+These run against the real Postgres test DB with genuinely concurrent transactions.
 """
 
 from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from hindsight_api.engine.memory_engine import MemoryEngine
 
 TABLE = "graph_maintenance_queue"
+STALE = timedelta(minutes=10)
 
 # Two keys with an unambiguous sort order (low < high as UUIDs and as text).
 K_LOW = uuid.UUID("00000000-0000-4000-8000-000000000001")
@@ -45,117 +39,118 @@ async def _queue_ids(conn, bank_id: str) -> list[str]:
     return [str(r["unit_id"]) for r in rows]
 
 
-@pytest.mark.asyncio
-async def test_duplicate_enqueue_locks_row_and_blocks_claim(memory: MemoryEngine):
-    """A duplicate enqueue holds the queue row's lock until it commits, so a
-    concurrent worker claim cannot delete-and-process the stale row underneath it.
+async def _claim(
+    backend, conn, bank_id: str, limit: int = 50, now: datetime | None = None
+) -> tuple[list[str], datetime]:
+    claimed_at = now or datetime.now(UTC)
+    ids = await backend.ops.claim_graph_maintenance_batch(conn, TABLE, bank_id, limit, claimed_at, claimed_at - STALE)
+    return ids, claimed_at
 
-    This is the core #3034 guard. With the old ``DO NOTHING`` the duplicate
-    enqueue took no lock and the claim below would return immediately (deleting
-    the row while the mutation was still in flight) — so the ``TimeoutError``
-    assertion here would fail. ``DO UPDATE`` makes the claim wait for the commit.
-    """
+
+@pytest.mark.asyncio
+async def test_requeue_during_relink_survives_finish(memory: MemoryEngine):
+    """A unit re-queued while a worker relinks it stays queued after the worker
+    finishes — the worker read the pre-mutation state, so another pass is owed."""
     pool = await memory._get_pool()
     backend = await memory._get_backend()
-    bank_id = f"gmq-lock-{uuid.uuid4().hex[:8]}"
+    bank_id = f"gmq-requeue-{uuid.uuid4().hex[:8]}"
     unit = uuid.uuid4()
 
-    # Seed a committed queue row (an earlier, not-yet-drained maintenance request).
-    async with pool.acquire() as seed:
-        await backend.ops.enqueue_graph_maintenance(seed, TABLE, bank_id, [unit])
-
-    # A mutation re-enqueues the same unit inside its (uncommitted) transaction.
-    mutation = await pool.acquire()
-    try:
-        mut_tx = mutation.transaction()
-        await mut_tx.start()
-        await backend.ops.enqueue_graph_maintenance(mutation, TABLE, bank_id, [unit])
-
-        async def claim_batch() -> list[str]:
-            async with pool.acquire() as worker:
-                async with worker.transaction():
-                    return await backend.ops.claim_graph_maintenance_batch(worker, TABLE, bank_id, 50)
-
-        claim_task = asyncio.create_task(claim_batch())
-
-        # The claim must block on the row lock the mutation holds — it cannot
-        # complete while the mutation is uncommitted.
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(asyncio.shield(claim_task), timeout=1.0)
-
-        # Mutation commits; the row is still present (the SET is a no-op), so the
-        # worker now claims it and processes the committed state.
-        await mut_tx.commit()
-        claimed = await asyncio.wait_for(claim_task, timeout=10.0)
-        assert claimed == [str(unit)]
-    finally:
-        await pool.release(mutation)
-
     async with pool.acquire() as conn:
+        await backend.ops.enqueue_graph_maintenance(conn, TABLE, bank_id, [unit])
+        claimed, claimed_at = await _claim(backend, conn, bank_id)
+        assert claimed == [str(unit)]
+        # The mutation commits while the worker is still relinking.
+        await backend.ops.enqueue_graph_maintenance(conn, TABLE, bank_id, [unit])
+        await backend.ops.finish_graph_maintenance_batch(conn, TABLE, bank_id, claimed, claimed_at)
+        assert await _queue_ids(conn, bank_id) == [str(unit)]
+        # The next claim takes it again and finishing clears it.
+        claimed, claimed_at = await _claim(backend, conn, bank_id)
+        await backend.ops.finish_graph_maintenance_batch(conn, TABLE, bank_id, claimed, claimed_at)
         assert await _queue_ids(conn, bank_id) == []
 
 
 @pytest.mark.asyncio
-async def test_worker_claim_before_enqueue_reinserts_signal(memory: MemoryEngine):
-    """The other interleaving: the worker claims (deletes) the row first, then
-    the mutation's enqueue must land a *fresh* row rather than silently no-op'ing.
-
-    Under the old protocol the mutation's ``INSERT ... DO NOTHING`` could observe
-    the soon-to-be-deleted row and skip, losing the signal. ``DO UPDATE`` blocks
-    on the worker's delete lock and, once the delete commits, re-drives the insert
-    — so a new queue row survives and the follow-up drain will reprocess the unit.
-    """
+async def test_requeue_does_not_wait_for_a_running_relink(memory: MemoryEngine):
+    """The claim commits before the relink starts, so a writer re-queuing a
+    claimed unit goes straight through instead of waiting out the relink (#6417)."""
     pool = await memory._get_pool()
     backend = await memory._get_backend()
-    bank_id = f"gmq-reins-{uuid.uuid4().hex[:8]}"
+    bank_id = f"gmq-nowait-{uuid.uuid4().hex[:8]}"
     unit = uuid.uuid4()
 
-    async with pool.acquire() as seed:
-        await backend.ops.enqueue_graph_maintenance(seed, TABLE, bank_id, [unit])
+    async with pool.acquire() as conn:
+        await backend.ops.enqueue_graph_maintenance(conn, TABLE, bank_id, [unit])
+        async with conn.transaction():
+            claimed, claimed_at = await _claim(backend, conn, bank_id)
 
-    # Worker claims the row inside an uncommitted transaction (holds the delete lock).
     worker = await pool.acquire()
     try:
-        worker_tx = worker.transaction()
-        await worker_tx.start()
-        claimed = await backend.ops.claim_graph_maintenance_batch(worker, TABLE, bank_id, 50)
-        assert claimed == [str(unit)]
+        relink_tx = worker.transaction()
+        await relink_tx.start()  # the relink is running and holds no queue lock
 
-        async def enqueue_dup() -> None:
-            async with pool.acquire() as mutation:
-                async with mutation.transaction():
-                    await backend.ops.enqueue_graph_maintenance(mutation, TABLE, bank_id, [unit])
+        async with pool.acquire() as mutation:
+            async with mutation.transaction():
+                await asyncio.wait_for(
+                    backend.ops.enqueue_graph_maintenance(mutation, TABLE, bank_id, [unit]), timeout=2.0
+                )
 
-        enqueue_task = asyncio.create_task(enqueue_dup())
-
-        # The enqueue must block on the worker's (uncommitted) delete lock.
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(asyncio.shield(enqueue_task), timeout=1.0)
-
-        # Worker commits the delete; the enqueue then inserts a fresh row.
-        await worker_tx.commit()
-        await asyncio.wait_for(enqueue_task, timeout=10.0)
+        await backend.ops.finish_graph_maintenance_batch(worker, TABLE, bank_id, claimed, claimed_at)
+        await relink_tx.commit()
     finally:
         await pool.release(worker)
 
     async with pool.acquire() as conn:
-        assert await _queue_ids(conn, bank_id) == [str(unit)], (
-            "re-enqueue signal must survive the worker winning the race"
-        )
+        assert await _queue_ids(conn, bank_id) == [str(unit)]
 
 
 @pytest.mark.asyncio
-async def test_claim_picks_oldest_but_drains_cleanly(memory: MemoryEngine):
-    """The ordered-lock claim still selects the oldest batch by ``enqueued_at``
-    (the CTE only normalises *lock* order, not *selection* order) and deletes
-    exactly what it returns.
-    """
+async def test_finish_racing_requeue_keeps_the_signal(memory: MemoryEngine):
+    """The worker's finishing delete and a re-queue of the same row, concurrent:
+    whichever commits first, the row is queued afterwards."""
+    pool = await memory._get_pool()
+    backend = await memory._get_backend()
+    bank_id = f"gmq-finish-{uuid.uuid4().hex[:8]}"
+    unit = uuid.uuid4()
+
+    async with pool.acquire() as conn:
+        await backend.ops.enqueue_graph_maintenance(conn, TABLE, bank_id, [unit])
+        claimed, claimed_at = await _claim(backend, conn, bank_id)
+
+    worker = await pool.acquire()
+    try:
+        tx = worker.transaction()
+        await tx.start()
+        await backend.ops.finish_graph_maintenance_batch(worker, TABLE, bank_id, claimed, claimed_at)
+
+        async def requeue() -> None:
+            async with pool.acquire() as mutation:
+                async with mutation.transaction():
+                    await backend.ops.enqueue_graph_maintenance(mutation, TABLE, bank_id, [unit])
+
+        requeue_task = asyncio.create_task(requeue())
+        # It waits on the uncommitted delete (one statement before the worker's commit) ...
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(asyncio.shield(requeue_task), timeout=1.0)
+        await tx.commit()
+        # ... then inserts a fresh row.
+        await asyncio.wait_for(requeue_task, timeout=10.0)
+    finally:
+        await pool.release(worker)
+
+    async with pool.acquire() as conn:
+        assert await _queue_ids(conn, bank_id) == [str(unit)]
+
+
+@pytest.mark.asyncio
+async def test_claim_picks_oldest_and_skips_live_claims(memory: MemoryEngine):
+    """Selection is oldest-first by ``enqueued_at``; a row another worker holds is
+    skipped until its claim goes stale."""
     pool = await memory._get_pool()
     backend = await memory._get_backend()
     bank_id = f"gmq-oldest-{uuid.uuid4().hex[:8]}"
-    # Insert three rows with explicit, distinct enqueued_at values. The two
-    # oldest have the HIGHEST unit_ids, so a claim that confused lock order with
-    # selection order would pick the wrong rows.
+    # The two oldest have the HIGHEST unit_ids, so a claim that confused lock
+    # order with selection order would pick the wrong rows.
     oldest = (uuid.UUID("ffffffff-ffff-4fff-8fff-fffffffffff1"), datetime(2020, 1, 1, tzinfo=UTC))
     middle = (uuid.UUID("ffffffff-ffff-4fff-8fff-fffffffffff2"), datetime(2020, 1, 2, tzinfo=UTC))
     newest = (uuid.UUID("00000000-0000-4000-8000-000000000009"), datetime(2020, 1, 3, tzinfo=UTC))
@@ -167,61 +162,57 @@ async def test_claim_picks_oldest_but_drains_cleanly(memory: MemoryEngine):
                 unit,
                 ts,
             )
-        claimed = await backend.ops.claim_graph_maintenance_batch(conn, TABLE, bank_id, 2)
-        assert set(claimed) == {str(oldest[0]), str(middle[0])}
-        # Only the newest row is left behind.
-        assert await _queue_ids(conn, bank_id) == [str(newest[0])]
+        now = datetime.now(UTC)
+        first, _ = await _claim(backend, conn, bank_id, limit=2, now=now)
+        assert set(first) == {str(oldest[0]), str(middle[0])}
+        # A second worker gets only what is left.
+        second, _ = await _claim(backend, conn, bank_id, now=now + timedelta(seconds=1))
+        assert second == [str(newest[0])]
+        # Nothing claimable until the first claims are stale (their worker died).
+        assert (await _claim(backend, conn, bank_id, now=now + timedelta(seconds=2)))[0] == []
+        revived, _ = await _claim(backend, conn, bank_id, now=now + STALE + timedelta(seconds=5))
+        assert set(revived) == {str(oldest[0]), str(middle[0]), str(newest[0])}
+        # Claiming deletes nothing: rows leave only through finish.
+        assert len(await _queue_ids(conn, bank_id)) == 3
 
 
 @pytest.mark.asyncio
 async def test_concurrent_enqueue_and_claim_never_deadlock(memory: MemoryEngine):
-    """A real re-enqueue and a real worker claim of the same two units, run
-    concurrently, must never cycle.
-
-    Both the enqueue upsert and the claim are single statements, so we can't
-    pause mid-statement to force a specific interleave (the way the row-at-a-time
-    tests in ``test_graph_maintenance_deadlock.py`` do). Instead we stress the
-    overlap across many rounds. The units are seeded with ``enqueued_at`` in the
-    REVERSE of unit_id order, so the claim's oldest-first *selection* (K_HIGH,
-    K_LOW) differs from its *lock* order (K_LOW, K_HIGH) — which is exactly the
-    order the enqueue takes them. Shared lock order ⇒ no cycle. If the worker
-    ever regressed to locking in ``enqueued_at`` order, these overlapping runs
-    would deadlock against the producer.
-    """
+    """A re-enqueue and a claim of the same two units, run concurrently over many
+    rounds, must never cycle. ``enqueued_at`` is seeded in the REVERSE of unit_id
+    order, so the claim's oldest-first selection differs from its lock order —
+    which is the order the enqueue takes them."""
     pool = await memory._get_pool()
     backend = await memory._get_backend()
 
-    older = datetime(2020, 1, 1, tzinfo=UTC)  # earlier enqueued_at ...
-    newer = datetime(2020, 1, 2, tzinfo=UTC)  # ... but on the LOWER unit_id
+    older = datetime(2020, 1, 1, tzinfo=UTC)
+    newer = datetime(2020, 1, 2, tzinfo=UTC)
 
     for round_no in range(20):
         bank_id = f"gmq-dl-{round_no}-{uuid.uuid4().hex[:8]}"
         async with pool.acquire() as conn:
-            await conn.execute(
-                f"INSERT INTO {TABLE} (bank_id, unit_id, enqueued_at) VALUES ($1, $2, $3)",
-                bank_id,
-                K_HIGH,
-                older,
-            )
-            await conn.execute(
-                f"INSERT INTO {TABLE} (bank_id, unit_id, enqueued_at) VALUES ($1, $2, $3)",
-                bank_id,
-                K_LOW,
-                newer,
-            )
+            for unit, ts in ((K_HIGH, older), (K_LOW, newer)):
+                await conn.execute(
+                    f"INSERT INTO {TABLE} (bank_id, unit_id, enqueued_at) VALUES ($1, $2, $3)",
+                    bank_id,
+                    unit,
+                    ts,
+                )
 
         async def reenqueue(bid: str) -> None:
             async with pool.acquire() as conn:
                 async with conn.transaction():
                     await backend.ops.enqueue_graph_maintenance(conn, TABLE, bid, [K_LOW, K_HIGH])
 
-        async def claim(bid: str) -> list[str]:
+        async def claim_and_finish(bid: str) -> None:
             async with pool.acquire() as conn:
                 async with conn.transaction():
-                    return await backend.ops.claim_graph_maintenance_batch(conn, TABLE, bid, 50)
+                    ids, claimed_at = await _claim(backend, conn, bid)
+                async with conn.transaction():
+                    await backend.ops.finish_graph_maintenance_batch(conn, TABLE, bid, ids, claimed_at)
 
         results = await asyncio.wait_for(
-            asyncio.gather(reenqueue(bank_id), claim(bank_id), return_exceptions=True),
+            asyncio.gather(reenqueue(bank_id), claim_and_finish(bank_id), return_exceptions=True),
             timeout=20,
         )
         errors = [r for r in results if isinstance(r, BaseException)]

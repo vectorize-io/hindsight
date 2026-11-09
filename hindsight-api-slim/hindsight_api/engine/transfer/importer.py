@@ -1074,8 +1074,9 @@ async def _restore_operational_rows(
         conn, "async_operations", operations, bank_rows_json_encoding=bank_rows_json_encoding
     )
 
+    # A claim belongs to a worker on the source deployment; here the row is just queued.
     graph_rows = (
-        {**row, "unit_id": mapped}
+        {**row, "unit_id": mapped, "claimed_at": None}
         for row in _iter_data_rows(zf, "graph_maintenance_queue", bank_id)
         if (mapped := unit_id_map.get(str(row.get("unit_id"))))
     )

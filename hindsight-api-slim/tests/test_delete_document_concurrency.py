@@ -8,6 +8,7 @@ are stubbed; acquisition, transactions, cascades and observation cleanup are rea
 import asyncio
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -161,22 +162,24 @@ async def test_document_mutation_and_relink_preserve_queue(
         bank,
         units["b"],
     )
-    claimed, release = asyncio.Event(), asyncio.Event()
+    relinking, release = asyncio.Event(), asyncio.Event()
     ops_type = type(worker._backend.ops)
-    original_claim = ops_type.claim_graph_maintenance_batch
+    original_finish = ops_type.finish_graph_maintenance_batch
 
-    async def pause_claim(
-        ops: DataAccessOps, conn: DatabaseConnection, table: str, bank_id: str, limit: int
-    ) -> list[str]:
-        # Bound the first pass to one real batch. Otherwise it may consume the
-        # mutation's fresh repair before we can assert that it was re-enqueued.
-        if bank_id == bank and claimed.is_set():
-            return []
-        ids = await original_claim(ops, conn, table, bank_id, limit)
-        if bank_id == bank and ids and not claimed.is_set():
-            claimed.set()
+    async def pause_finish(
+        ops: DataAccessOps,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        unit_ids: list[str],
+        claimed_at: datetime,
+    ) -> None:
+        # Hold the worker mid-relink: its claim has committed, its relink
+        # transaction is open, and it has not deleted the claimed rows yet.
+        if bank_id == bank and not relinking.is_set():
+            relinking.set()
             await release.wait()
-        return ids
+        await original_finish(ops, conn, table, bank_id, unit_ids, claimed_at)
 
     async def mutate() -> None:
         if not replace:
@@ -196,19 +199,23 @@ async def test_document_mutation_and_relink_preserve_queue(
                     store_document_text=True,
                 )
 
-    monkeypatch.setattr(ops_type, "claim_graph_maintenance_batch", pause_claim)
+    monkeypatch.setattr(ops_type, "finish_graph_maintenance_batch", pause_finish)
     worker_task = asyncio.create_task(
         relink_pass(backend=worker._backend, fq_table=fq_store_table, bank_id=bank, config=None)
     )
     tasks = [worker_task]
     try:
-        await asyncio.wait_for(claimed.wait(), STEP_TIMEOUT)
+        await asyncio.wait_for(relinking.wait(), STEP_TIMEOUT)
+        # The mutation re-queues b while the worker relinks it. It may wait for
+        # the relink to release the links it just wrote into a's units, but never
+        # on the queue: the worker holds no queue row while it relinks (#6417).
         tasks.append(asyncio.create_task(mutate()))
-        # The mutation must block on the queue insert behind the claimed batch.
-        await wait_for_lock(race, "INSERT INTO public.graph_maintenance_queue")
+        await wait_for_lock(race)
+        assert "graph_maintenance_queue" not in await race.setup.fetchval(
+            "SELECT query FROM pg_stat_activity WHERE pid=$1", race.second_pid
+        )
         if cancel_relink:
-            # Cancellation rolls back the real claim transaction before the
-            # mutation can finish. It must not consume the queued repair.
+            # Cancellation rolls back the relink. It must not consume the queued repair.
             worker_task.cancel()
         release.set()
         results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 20)
@@ -230,7 +237,7 @@ async def test_document_mutation_and_relink_preserve_queue(
             bank,
         )
         assert [row["unit_id"] for row in queued] == [units["b"]]
-        monkeypatch.setattr(ops_type, "claim_graph_maintenance_batch", original_claim)
+        monkeypatch.setattr(ops_type, "finish_graph_maintenance_batch", original_finish)
         await relink_pass(backend=worker._backend, fq_table=fq_store_table, bank_id=bank, config=None)
         assert not await race.setup.fetchval(
             "SELECT EXISTS(SELECT 1 FROM graph_maintenance_queue WHERE bank_id=$1)",
