@@ -530,6 +530,9 @@ async def _assert_document_consistent(memory, bank_id: str, document_id: str) ->
     it was extracted from. Returns the stored body."""
     from hindsight_api.engine.retain import chunk_storage
 
+    # Raw SQL on purpose: the defect this checks is a fact left on a chunk it was not extracted
+    # from, and no engine read reports a fact's chunk (`list_memory_units` has no chunk_id) or a
+    # chunk's content hash.
     pool = await memory._get_pool()
     async with pool.acquire() as conn:
         body = await conn.fetchval(
