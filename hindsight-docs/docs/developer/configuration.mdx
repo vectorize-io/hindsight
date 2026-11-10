@@ -75,9 +75,9 @@ Always forward `**kwargs`: the pool passes the connection class it needs. Migrat
 
 #### Owning a maintenance routine
 
-The background maintenance loop finds work by calling four PostgreSQL routines —
-`mental_models_with_cron`, `banks_needing_consolidation`, `schemas_with_expired_rows` and
-`schemas_with_expired_operations`. The stock implementations scan every schema in the
+The background maintenance loop finds work by calling five PostgreSQL routines —
+`mental_models_with_cron`, `banks_needing_consolidation`, `schemas_with_expired_rows`,
+`schemas_with_expired_operations` and `banks_with_attachments_in_window`. The stock implementations scan every schema in the
 database on each tick. On a large multi-tenant install that is a serial loop over
 thousands of schemas, repeated once per tick in every process running the loop.
 

@@ -2,7 +2,7 @@
 
 The cross-schema discovery routines (``mental_models_with_cron``,
 ``banks_needing_consolidation``, ``schemas_with_expired_rows``,
-``schemas_with_expired_operations``) are installed by migrations and called by
+``schemas_with_expired_operations``, ``banks_with_attachments_in_window``) are installed by migrations and called by
 name from the maintenance loop. That late binding is deliberate: an operator can
 ``CREATE OR REPLACE`` one of them with an implementation that suits their
 installation — typically a registry table maintained by a row trigger, so

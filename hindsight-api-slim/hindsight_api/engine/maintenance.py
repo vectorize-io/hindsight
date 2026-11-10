@@ -22,6 +22,7 @@ from one place, so we don't spawn a separate ``asyncio`` task per concern:
 - **Attachment sweep** (configurable, default daily): delete the images and files
   of retains that failed after the API stored them — attachments their document
   still does not reference a day later (never created, or its update failed).
+  Discovery is one call to ``banks_with_attachments_in_window``.
   Documents are read from the memories store, so this covers banks whose
   documents live outside SQL too.
 
@@ -472,21 +473,31 @@ class MaintenanceLoop:
     async def _run_attachment_sweep(self) -> None:
         """Delete the attachments of retains that failed before writing their document.
 
-        Discovery is one catalog query for the schemas whose ``attachments`` table
-        holds anything at all, then one query in each of those for the banks that
-        stored an attachment in the window; the engine reads each of those documents
-        from the bank's memories store and drops the attachments its text does not
-        show. Safe in every process at once: the delete is idempotent, and a second
-        sweeper finds nothing left.
-
-        The catalog query is the point. Asking every schema in turn is one round trip
-        per tenant — tens of thousands on a large deployment, where only a handful have
-        ever stored an attachment. ``pg_relation_size`` reads the table's file size,
-        not its rows and not its planner stats (which can lag a table that holds a
-        few rows), so an empty table is skipped without being opened, and one that
-        has ever held a row is never missed.
+        Discovery is one cross-tenant round trip (``banks_with_attachments_in_window``)
+        returning the banks that stored an attachment in the window — a handful on a
+        large install — and the engine reads each of those banks' documents from its
+        memories store and drops the attachments the text does not show. Safe in
+        every process at once: the delete is idempotent, and a second sweeper finds
+        nothing left.
         """
         engine = self._engine
+        now = datetime.now(timezone.utc)
+        created_before = now - _ATTACHMENT_SWEEP_GRACE
+        created_after = created_before - _ATTACHMENT_SWEEP_LOOKBACK
+        try:
+            async with acquire_with_retry(engine._backend, max_retries=1) as conn:
+                rows = await conn.fetch(
+                    f"SELECT schema_name, bank_id FROM {fq_routine('banks_with_attachments_in_window')}($1, $2)",
+                    created_after,
+                    created_before,
+                )
+        except Exception as e:
+            logger.warning(f"Attachment sweep discovery failed: {e}")
+            return
+        if not rows:
+            return
+        # Only schemas the deployment serves, like operation cleanup; the routine
+        # reports every schema owning an attachments table.
         try:
             tenants = await engine._tenant_extension.list_tenants()
         except Exception as e:
@@ -494,51 +505,23 @@ class MaintenanceLoop:
             return
         tenant_by_schema = {t.schema: t for t in tenants}
         default_schema = get_config().database_schema
-        try:
-            async with acquire_with_retry(engine._backend, max_retries=1) as conn:
-                rows = await conn.fetch(
-                    "SELECT n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-                    "WHERE c.relname = 'attachments' AND c.relkind = 'r' AND pg_relation_size(c.oid) > 0"
-                )
-        except Exception as e:
-            logger.warning(f"Attachment sweep discovery failed: {e}")
-            return
-        # Only schemas the deployment serves, like operation cleanup.
-        served = {default_schema, *tenant_by_schema}
-        schemas = sorted(row["nspname"] for row in rows if row["nspname"] in served)
-        now = datetime.now(timezone.utc)
-        created_before = now - _ATTACHMENT_SWEEP_GRACE
-        created_after = created_before - _ATTACHMENT_SWEEP_LOOKBACK
 
         removed = 0
-        for schema in schemas:
+        for row in rows:
             if self._stop.is_set():
                 break
+            schema, bank_id = row["schema_name"], row["bank_id"]
             tenant = tenant_by_schema.get(schema)
+            if tenant is None and schema != default_schema:
+                continue
             token = _current_schema.set(schema)
             try:
-                async with acquire_with_retry(engine._backend, max_retries=1) as conn:
-                    bank_ids = [
-                        row["bank_id"]
-                        for row in await conn.fetch(
-                            f"SELECT DISTINCT bank_id FROM {fq_table_explicit('attachments', schema)} "
-                            f"WHERE created_at >= $1 AND created_at < $2",
-                            created_after,
-                            created_before,
-                        )
-                    ]
                 context = RequestContext(internal=True, tenant_id=tenant.tenant_id if tenant else None)
-                for bank_id in bank_ids:
-                    if self._stop.is_set():
-                        break
-                    try:
-                        removed += await engine.reclaim_unreferenced_attachments(
-                            bank_id, created_after, created_before, context
-                        )
-                    except Exception as e:
-                        logger.warning(f"Attachment sweep failed for bank {bank_id} in {schema}: {e}")
+                removed += await engine.reclaim_unreferenced_attachments(
+                    bank_id, created_after, created_before, context
+                )
             except Exception as e:
-                logger.warning(f"Attachment sweep failed for schema {schema}: {e}")
+                logger.warning(f"Attachment sweep failed for bank {bank_id} in {schema}: {e}")
             finally:
                 _current_schema.reset(token)
         if removed:

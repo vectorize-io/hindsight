@@ -151,8 +151,8 @@ async def test_a_store_owned_bank_is_answered_by_its_store(api_client, memory, r
 
 
 @pytest.mark.asyncio
-async def test_the_daily_job_finds_the_bank_through_the_catalog(api_client, memory, monkeypatch):
-    """Discovery skips every schema whose attachments table is empty, without querying it.
+async def test_the_daily_job_finds_the_bank_through_the_routine(api_client, memory, monkeypatch):
+    """One cross-tenant call finds the bank; the engine sweep then runs for it.
 
     The engine's sweep is spied rather than run: the job sees every bank in the test
     database, and other tests running alongside hold attachments mid-retain.

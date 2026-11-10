@@ -708,3 +708,52 @@ async def test_schemas_with_expired_operations(memory: MemoryEngine):
     finally:
         async with memory._pool.acquire() as conn:
             await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+@pytest.mark.asyncio
+async def test_banks_with_attachments_in_window(memory: MemoryEngine):
+    """Returns each bank once that stored an attachment in the window, and nothing else.
+
+    A schema whose attachments table never held a row is skipped unopened; one row
+    outside the window must not make its bank eligible. Throwaway schemas, since the
+    suite shares one database and ``public`` holds other tests' attachments.
+    """
+    full, empty = f"mtatt{uuid.uuid4().hex[:8]}", f"mtatt{uuid.uuid4().hex[:8]}"
+
+    async def _insert(conn, bank_id: str, document_id: str, age_hours: int) -> None:
+        digest = uuid.uuid4().hex + uuid.uuid4().hex
+        await conn.execute(
+            f'''
+            INSERT INTO "{full}".attachments
+                (bank_id, document_id, attachment_hash, short_id, media_type, byte_size, storage_key, created_at)
+            VALUES ($1, $2, $3, $4, 'image/png', 1, 'k', now() - make_interval(hours => $5))
+            ''',
+            bank_id,
+            document_id,
+            digest,
+            digest[:12],
+            age_hours,
+        )
+
+    async def _found(conn) -> set[tuple[str, str]]:
+        rows = await conn.fetch(
+            "SELECT * FROM public.banks_with_attachments_in_window(now() - interval '8 days', now() - interval '1 day')"
+        )
+        return {(r["schema_name"], r["bank_id"]) for r in rows}
+
+    try:
+        async with memory._pool.acquire() as conn:
+            for schema in (full, empty):
+                await conn.execute(f'CREATE SCHEMA "{schema}"')
+                await conn.execute(f'CREATE TABLE "{schema}".attachments (LIKE public.attachments INCLUDING DEFAULTS)')
+            await _insert(conn, "in-window", "d1", 48)
+            await _insert(conn, "in-window", "d2", 72)
+            await _insert(conn, "too-recent", "d1", 1)
+            await _insert(conn, "too-old", "d1", 24 * 30)
+
+            found = {pair for pair in await _found(conn) if pair[0] in (full, empty)}
+            assert found == {(full, "in-window")}
+    finally:
+        async with memory._pool.acquire() as conn:
+            for schema in (full, empty):
+                await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
