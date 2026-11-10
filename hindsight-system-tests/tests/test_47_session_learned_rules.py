@@ -41,7 +41,9 @@ async def shell_bank(learning_client, llm) -> AsyncIterator[str]:
     llm.on_step("extract_facts").returns(
         extracted(fact("shell.tsx keeps Files, Knowledge and Settings as floating panels", entities=["shell.tsx"]))
     )
-    llm.on_step("consolidate").answers_with(observes("shell.tsx keeps Files, Knowledge and Settings as floating panels"))
+    llm.on_step("consolidate").answers_with(
+        observes("shell.tsx keeps Files, Knowledge and Settings as floating panels")
+    )
     await learning_client.aretain(bank_id=bank, content="We decided shell.tsx keeps three floating panels.")
     await wait_until_settled(learning_client, bank)
     yield bank
@@ -116,3 +118,57 @@ async def test_a_rule_learned_from_a_wrong_note_reaches_the_next_session(learnin
         c for c in llm.calls if anchor_for("reflect_abstain_answer") in c.all_text and "Logs panel" in c.all_text
     ]
     assert RULE in answer.all_text, "the rule reached the answer"
+
+
+PRICE_RULE = "Typesafe costs $0.04 per 1M tokens: use this price in margin and COGS tables."
+
+
+async def test_a_rule_learned_from_the_users_correction_reaches_the_next_session(learning_client, llm, stubs):
+    """The user corrects the agent ("it's 4 cent, not 40"); the next session's check reads the rule.
+
+    Live, memory already held the lesson for 28 of 164 corrections in a week, and only note verdicts
+    were ever learned from."""
+    bank = f"systest-{uuid.uuid4().hex[:12]}"
+    stubs.rerank.cut_level = 5
+    stubs.rerank.pick_none = 0.1
+    llm.on_step("session_learn", contains="it's 4 cent").returns_text(
+        json.dumps(
+            {
+                "corrects": True,
+                "create": True,
+                "name": "Typesafe price",
+                "query": "What does typesafe cost per token?",
+                "content": PRICE_RULE,
+            }
+        )
+    )
+    llm.on_step("reflect_abstain_answer", contains="margin").returns_text(
+        json.dumps({"applies": True, "answer": "Before you price typesafe: it costs $0.04 per 1M tokens."})
+    )
+    try:
+        # 1. A request, the agent's wrong price, and the user's correction.
+        await _ask(learning_client, bank, "s1", "Add the typesafe cost to the COGS table")
+        for mid, role, text in (
+            ("a1", "assistant", "I priced typesafe at $0.40 per 1M tokens."),
+            ("u2", "user", "it's 4 cent, not 40"),
+        ):
+            await learning_client.sessions.append_session_events(
+                bank,
+                "s1",
+                SessionAppendRequest(messages=[SessionMessage.from_dict({"id": mid, "role": role, "content": text})]),
+            )
+
+        # 2. The correction becomes a rule; the writer read the reply and the price it corrects.
+        (learned,) = await _until(learning_client, bank, "s1", "learn")
+        assert learned.payload["outcome"] == "created" and learned.payload["source"] == "correction"
+        rule_id = learned.payload["mental_model_id"]
+        (writer,) = [c for c in llm.calls if anchor_for("session_learn") in c.all_text]
+        assert "it's 4 cent, not 40" in writer.all_text and "$0.40 per 1M" in writer.all_text
+
+        # 3. A later session's check reads it.
+        await _ask(learning_client, bank, "s2", "Recompute the margin table with the typesafe calls")
+        (check,) = await _until(learning_client, bank, "s2", "check")
+        assert check.payload["outcome"] == "note" and rule_id in check.payload["memory_ids"]
+    finally:
+        with contextlib.suppress(Exception):
+            await learning_client.banks.delete_bank(bank)

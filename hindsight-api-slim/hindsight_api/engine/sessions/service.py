@@ -35,6 +35,7 @@ import logging
 import re
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -431,6 +432,7 @@ class SessionService:
                 seen: set[str] = set()
                 feedback: dict[int, NoteFeedback] = {}
                 learned: list[int] = []
+                corrections: list[int] = []
                 for event in incoming:
                     if event.id in known or event.id in seen:
                         continue
@@ -439,6 +441,12 @@ class SessionService:
                     # event failed the whole append, and the client resent it on every append after.
                     payload = sanitize_value(event.payload)
                     if settings.live:
+                        # A user reply after the session's first request may correct the agent: it
+                        # is weighed for a rule (see learn.CORRECTION_PROMPT). Decided before the
+                        # step is read, which makes the reply the session's new request.
+                        if event.kind == "message" and payload["role"] == "user" and state.goal:
+                            if L.is_reply_to_weigh(payload["text"]) and not W._is_own_note(state, payload["text"]):
+                                corrections.append(seq)
                         step = W.step_of(event.kind, payload["role"], payload)
                         if step is not None:
                             W.read_step(state, step, seq)
@@ -512,6 +520,10 @@ class SessionService:
                     ]
                     credits, dismissed = len(new_credits), len(new_dismissed) - len(unused_then_used)
                     state.learn_pending = list(dict.fromkeys(state.learn_pending + learned))[-W.SET_ASIDE_KEPT :]
+                if corrections:
+                    state.learn_corrections = list(dict.fromkeys(state.learn_corrections + corrections))[
+                        -W.SET_ASIDE_KEPT :
+                    ]
                 # A scheduled job runs as a new session each time, with the same request word for
                 # word, so its runs kept hearing the note their earlier runs had set aside (beta:
                 # disk-guard was told six runs in a row that one folder is outside its rules).
@@ -596,7 +608,7 @@ class SessionService:
         # Only when this append brought something: the moment was queued by the append that made it.
         if rows and settings.live and state.pending is not None:
             await self._queue_check(bank_id, session_id, request_context)
-        if learned and settings.live:
+        if (learned or corrections) and settings.live:
             await self._queue(L.LEARN_TASK, "session-learn", bank_id, session_id, request_context)
         long_turn = rows and seq - 1 - int(row["saved_seq"]) >= SAVE_EVERY_EVENTS
         if settings.retain == "turns" and (turn_ended or long_turn):
@@ -812,7 +824,8 @@ class SessionService:
                     return
                 state = W.WatchState.model_validate(conn.parse_json(row["watch_state"]) or {})
                 pending, state.learn_pending = state.learn_pending, []
-                if not pending:
+                replies, state.learn_corrections = state.learn_corrections, []
+                if not pending and not replies:
                     return
                 await conn.execute(
                     f"UPDATE {fq_table('sessions')} SET watch_state = $3::jsonb WHERE bank_id = $1 AND session_id = $2",
@@ -832,22 +845,55 @@ class SessionService:
                         pending,
                     )
                 }
+                # Each reply with the agent's last message before it: what the reply answers.
+                said = await conn.fetch(
+                    f"""
+                    SELECT u.seq, u.payload->>'text' AS user_text,
+                           (SELECT a.payload->>'text' FROM {fq_table("session_events")} a
+                            WHERE a.bank_id = u.bank_id AND a.session_id = u.session_id AND a.kind = 'message'
+                              AND a.payload->>'role' = 'assistant' AND a.seq < u.seq
+                            ORDER BY a.seq DESC LIMIT 1) AS agent_text,
+                           (SELECT p.payload->>'text' FROM {fq_table("session_events")} p
+                            WHERE p.bank_id = u.bank_id AND p.session_id = u.session_id AND p.kind = 'message'
+                              AND p.payload->>'role' = 'user' AND p.seq < u.seq
+                              AND left(ltrim(p.payload->>'text'), 1) NOT IN ('<', '[')
+                            ORDER BY p.seq DESC LIMIT 1) AS asked_text
+                    FROM {fq_table("session_events")} u
+                    WHERE u.bank_id = $1 AND u.session_id = $2 AND u.kind = 'message' AND u.seq = ANY($3)
+                    ORDER BY u.seq
+                    """,
+                    bank_id,
+                    session_id,
+                    replies,
+                )
         cfg = await engine._config_resolver.get_bank_config(bank_id, rc)
-        logs = [
-            await self._learn_one(bank_id, seq, note, state.goal, state.request_file, rc)
-            if cfg.get("session_learn_rules")
-            else None
-            for seq, note in sorted(notes.items())
-        ]
-        logs = [log for log in logs if log is not None]
+        logs: list[L.LearnLog] = []
         if cfg.get("session_learn_rules"):
+            for seq, note in sorted(notes.items()):
+                log = await self._learn_one(bank_id, seq, note, state.goal, state.request_file, rc)
+                if log is not None:
+                    logs.append(log)
+            for r in said:
+                logs.append(
+                    await self._learn_correction(
+                        bank_id,
+                        int(r["seq"]),
+                        str(r["user_text"] or ""),
+                        str(r["agent_text"] or ""),
+                        str(r["asked_text"] or ""),
+                        state.request_file,
+                        rc,
+                    )
+                )
             logs += await self._retire_rejected_rules(bank_id, notes, rc)
         # A verdict the models failed on is weighed again later, not dropped: verdicts are rare, and a
         # dev gateway answering 429 "busy or still loading" skipped one for good (beta, 2026-11-08).
         # ponytail: retried every minute with no cap; cap it if a model stays down for long.
-        retry = [log.note_seq for log in logs if log.reason in L.RETRY_REASONS]
+        retry = [log.note_seq for log in logs if log.reason in L.RETRY_REASONS and log.source == "note"]
+        retry_replies = [log.note_seq for log in logs if log.reason in L.RETRY_REASONS and log.source == "correction"]
+        retry_any = retry + retry_replies
         logs = [log for log in logs if log.reason not in L.RETRY_REASONS]
-        if not logs and not retry:
+        if not logs and not retry_any:
             return
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
@@ -860,16 +906,17 @@ class SessionService:
                     return
                 for log in logs:
                     await self._log(conn, bank_id, session_id, "learn", log.model_dump(exclude_none=True))
-                if retry:
+                if retry_any:
                     later = W.WatchState.model_validate(conn.parse_json(row["watch_state"]) or {})
                     later.learn_pending = list(dict.fromkeys(retry + later.learn_pending))
+                    later.learn_corrections = list(dict.fromkeys(retry_replies + later.learn_corrections))
                     await conn.execute(
                         f"UPDATE {fq_table('sessions')} SET watch_state = $3::jsonb WHERE bank_id = $1 AND session_id = $2",
                         bank_id,
                         session_id,
                         later.model_dump_json(),
                     )
-        if retry and self._engine._task_backend.can_defer:
+        if retry_any and self._engine._task_backend.can_defer:
             raise DeferOperation(exec_date=_now() + timedelta(seconds=L.RETRY_AFTER_S), reason="a model was busy")
 
     async def _retire_rejected_rules(
@@ -939,23 +986,79 @@ class SessionService:
         score = pick.candidates[0] if pick.candidates else 0.0
         if score < L.LEARN_AT:
             return L.LearnLog(note_seq=seq, outcome="no_rule", score=round(score, 3))
+        return await self._write_rule(
+            bank_id,
+            L.LearnLog(note_seq=seq, outcome="skipped", score=round(score, 3)),
+            lambda existing: L.WRITE_PROMPT.format(
+                note=note.text if fb.verdict == "used" else L.REJECTED_NOTE,
+                verdict=fb.verdict,
+                reason=reason,
+                goal=goal or "(not known)",
+                guide=L.VERDICT_GUIDE.get(fb.verdict, L.VERDICT_GUIDE["not_needed"]),
+                existing=existing,
+            ),
+            L.RuleDraft,
+            # A rule for a note the agent rejected must not be that note again, reworded.
+            restates=note.text if fb.verdict != "used" else "",
+            restates_at=L.RESTATES_NOTE,
+            restates_reason="restated the note",
+            request_file=request_file,
+            rc=rc,
+        )
+
+    async def _learn_correction(
+        self, bank_id: str, seq: int, user: str, agent: str, asked: str, request_file: str, rc: RequestContext
+    ) -> L.LearnLog:
+        """One user reply: does it correct the agent with a lasting rule, and if so the mental model.
+
+        No decision-model step first, unlike a verdict: over 826 real replies its score did not tell
+        corrections apart (at 0.5 it kept 45 of 164 corrections and 112 of 662 other replies), so the
+        writer decides, ``corrects`` first (2026-11-10)."""
+        return await self._write_rule(
+            bank_id,
+            L.LearnLog(note_seq=seq, source="correction", outcome="skipped"),
+            lambda existing: L.CORRECTION_PROMPT.format(
+                agent=agent[:1500] or "(nothing yet)",
+                user=user,
+                goal=asked[:500] or "(not known)",
+                existing=existing,
+            ),
+            L.CorrectionDraft,
+            restates=L.CORRECTION_PROMPT,
+            restates_at=L.RESTATES_PROMPT,
+            restates_reason="restated the prompt",
+            request_file=request_file,
+            rc=rc,
+        )
+
+    async def _write_rule(
+        self,
+        bank_id: str,
+        log: L.LearnLog,
+        prompt_for: Callable[[str], str],
+        draft_type: type[L.RuleDraft] | type[L.CorrectionDraft],
+        *,
+        restates: str,
+        restates_at: float,
+        restates_reason: str,
+        request_file: str,
+        rc: RequestContext,
+    ) -> L.LearnLog:
+        """Ask the writer for a rule and keep it as a mental model, unless a guard drops it. ``log``
+        carries what the caller knows (seq, source, score); the outcome is filled in here."""
+        engine = self._engine
         existing = [
             m
             for m in (await engine.list_mental_models(bank_id, detail="content", limit=200, request_context=rc)).items
             if str(m.get("id", "")).startswith(L.RULE_ID_PREFIX)
         ][-L.MAX_EXISTING_RULES :]
-        prompt = L.WRITE_PROMPT.format(
-            note=note.text if fb.verdict == "used" else L.REJECTED_NOTE,
-            verdict=fb.verdict,
-            reason=reason,
-            goal=goal or "(not known)",
-            guide=L.VERDICT_GUIDE.get(fb.verdict, L.VERDICT_GUIDE["not_needed"]),
-            existing=L.existing_rules_text(
+        prompt = prompt_for(
+            L.existing_rules_text(
                 [
                     L.RuleSummary(id=str(m["id"]), name=str(m.get("name") or ""), content=str(m.get("content") or ""))
                     for m in existing
                 ]
-            ),
+            )
         )
         try:
             # Strict (grammar-enforced) schema: with the schema only in the prompt, Gemma answered with
@@ -963,34 +1066,33 @@ class SessionService:
             # call, and live learning worked only through the gateway's fallback model (2026-11-05).
             result = await engine._llm_config.call(
                 messages=[{"role": "user", "content": prompt}],
-                response_format=L.RuleDraft,
+                response_format=draft_type,
                 scope="session_learn",
                 strict_schema=True,
             )
             draft = (
                 result.content
-                if isinstance(result.content, L.RuleDraft)
-                else L.RuleDraft.model_validate(
+                if isinstance(result.content, draft_type)
+                else draft_type.model_validate(
                     json.loads(result.content) if isinstance(result.content, str) else result.content
                 )
             )
         except Exception as e:
             logger.warning(f"session learn: writing the rule failed for {bank_id}: {e}")
-            return L.LearnLog(note_seq=seq, outcome="skipped", score=round(score, 3), reason="writer failed")
+            return log.model_copy(update={"reason": "writer failed"})
+        if isinstance(draft, L.CorrectionDraft) and not draft.corrects:
+            return log.model_copy(update={"outcome": "no_rule"})
         if not draft.create or not draft.content.strip():
-            return L.LearnLog(note_seq=seq, outcome="covered", score=round(score, 3))
+            return log.model_copy(update={"outcome": "covered"})
         # Never a credential in a rule every later check reads (the writer is told so; this holds anyway).
         if W._SECRET.search(draft.content):
-            return L.LearnLog(note_seq=seq, outcome="skipped", score=round(score, 3), reason="carried a credential")
-        # A rule for a note the agent rejected must not be that note again, reworded.
-        if fb.verdict != "used" and W._overlap(draft.content, note.text) >= L.RESTATES_NOTE:
-            return L.LearnLog(note_seq=seq, outcome="skipped", score=round(score, 3), reason="restated the note")
+            return log.model_copy(update={"reason": "carried a credential"})
+        if restates and W._overlap(draft.content, restates) >= restates_at:
+            return log.model_copy(update={"reason": restates_reason})
         # A rule the session's own instructions file already states would come back to every run of
         # that job, telling it what it has just read (see learn.IN_REQUEST_FILE).
         if request_file and W._overlap(draft.content, request_file) >= L.IN_REQUEST_FILE:
-            return L.LearnLog(
-                note_seq=seq, outcome="skipped", score=round(score, 3), reason="the request file states it"
-            )
+            return log.model_copy(update={"reason": "the request file states it"})
         # A rule that replaces older ones (a new value, the opposite) removes them: two rules saying
         # 2 and 8 for the same limit would both reach every later check.
         replaced = [str(m["id"]) for m in existing if str(m.get("name") or "") in set(draft.replaces)]
@@ -1005,14 +1107,9 @@ class SessionService:
             mental_model_id=mm_id,
             request_context=rc,
         )
-        logger.info(f"session learn: {bank_id} rule {mm_id} '{draft.name}' from note {seq} (score {score:.2f})")
-        return L.LearnLog(
-            note_seq=seq,
-            outcome="created",
-            score=round(score, 3),
-            mental_model_id=mm_id,
-            name=draft.name,
-            replaced=replaced or None,
+        logger.info(f"session learn: {bank_id} rule {mm_id} '{draft.name}' from {log.source} {log.note_seq}")
+        return log.model_copy(
+            update={"outcome": "created", "mental_model_id": mm_id, "name": draft.name, "replaced": replaced or None}
         )
 
     async def run_check(self, task: dict[str, Any]) -> None:

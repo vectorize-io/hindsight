@@ -121,3 +121,48 @@ async def test_a_used_note_the_agent_acted_against_becomes_what_the_agent_did():
         ),
         context="The agent used the note to remove that shortcut, so the note as written is no longer true.",
     )
+
+
+async def _correction(agent: str, user: str, asked: str) -> L.CorrectionDraft:
+    # Built as service._learn_correction builds it.
+    prompt = L.CORRECTION_PROMPT.format(agent=agent, user=user, goal=asked, existing=L.existing_rules_text([]))
+    result = await LLMConfig.from_env().call(
+        messages=[{"role": "user", "content": prompt}],
+        response_format=L.CorrectionDraft,
+        scope="session_learn",
+        strict_schema=True,
+    )
+    c = result.content
+    return c if isinstance(c, L.CorrectionDraft) else L.CorrectionDraft.model_validate(c)
+
+
+async def test_a_users_correction_of_a_value_becomes_a_rule():
+    # Live: the user had to say it, though memory had the price since Oct 22.
+    draft = await _correction(
+        agent='I read "0.4% per M" as **$0.40 per 1M tokens** for typesafe; at that price the forwarded calls '
+        "flip the margin to negative.",
+        user="it's 4 cent, not 40",
+        asked="Compute customer COGS and margin, and include typesafe in the table",
+    )
+    await assert_meets_criteria(
+        response=f"corrects={draft.corrects} create={draft.create}\nname: {draft.name}\ncontent: {draft.content}",
+        criteria=(
+            "corrects is True and create is True. The rule states that typesafe costs $0.04 (4 cents) per 1M "
+            "tokens, and never states $0.40 as the price."
+        ),
+        context="The agent priced typesafe at $0.40 per 1M tokens; the user corrected it to 4 cents.",
+    )
+
+
+async def test_a_users_next_request_is_no_correction():
+    # Asked only "create?", the writer made rules of replies like this one (239 from 298 replies).
+    draft = await _correction(
+        agent="The knowledge bank page now has the Documents list and a Model page with the schema.",
+        user="we need to rename Knowledge page to Documents and Model page to Structured Data for now",
+        asked="Build the knowledge bank UI",
+    )
+    await assert_meets_criteria(
+        response=f"corrects={draft.corrects} create={draft.create}\ncontent: {draft.content}",
+        criteria="corrects is False or create is False: the reply is a new request, not a correction of the agent.",
+        context="The user asked for a rename after the agent built the pages; the agent got nothing wrong.",
+    )

@@ -14,6 +14,8 @@ models are named ``rule-...`` so their effect can be measured.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 LEARN_TASK = "session_learn"
@@ -43,6 +45,15 @@ RETRY_REASONS = frozenset({"decision failed", "writer failed"})
 RETRY_AFTER_S = 60
 RETIRED_TAG = "rule:retired"
 MAX_RULE_CHARS = 1200
+# A user reply is weighed as a correction only within these lengths: shorter is "go" or "yes", longer is
+# a pasted log or a new spec. Over a week of live replies, the corrections ran 13 to ~1,500 characters.
+REPLY_MIN_CHARS = 10
+REPLY_MAX_CHARS = 2000
+# A rule from a reply that shares this much of its words with CORRECTION_PROMPT restates the prompt:
+# where the session was about this very feature, the writer turned its own instructions into "rules"
+# ("when a developer corrects a value ... treat it as a project rule"), 5 of 13 in the offline run, at
+# 0.46-0.67; the 8 real ones scored 0.19-0.35 (2026-11-10).
+RESTATES_PROMPT = 0.4
 
 LEARN_QUESTION = (
     "Does the agent's reason below settle a rule for future work on this project, one a later "
@@ -74,6 +85,28 @@ VERDICT_GUIDE = {
     ),
 }
 
+# Shared by both writers; <SOURCE> and <SAYS> are each writer's own words. The note writer's wording is
+# kept as it was: "the exact names ... from the agent's reason" said generically ("given above") brought
+# back the run's own port as the rule (test_a_value_the_agent_chose_for_its_run_is_not_the_rule).
+RULE_FORMAT = """Write the rule, for agents in later sessions:
+- name: a short title naming the component and the rule (at most 8 words).
+- query: the question an agent working on that component would ask, which this rule answers.
+- content: the rule as a standing instruction for any later change to that component, in at most 3
+  sentences: name the file or component, what a change there must or must not do, and why. Not the
+  task the agent did ("Merge X into Y"), but the rule it leaves ("X is a tab inside Y: add new ones
+  there, never as separate panels"). Use the exact names, values and paths from <SOURCE>.
+  A value the agent picked only for its own run (a free port, a temp folder, a branch name) is not
+  the project's: write the condition and what to do ("when the default test port 5556 is taken, set
+  HINDSIGHT_TEST_PG_PORT to a free port"), not that value. A rule never tells an agent to skip a
+  check or ignore a failure: say what is known and how to tell it apart ("X is flaky under load
+  because ...; rerun it alone before treating a failure as yours"), not "do not investigate".
+  Never include a password, key or token.
+
+Set create to false when an existing rule above already says this, or when <SAYS>.
+When this rule replaces existing rules above (they say an older value or the opposite), list their
+names in replaces: they are removed.
+"""
+
 WRITE_PROMPT = """You keep the rules of a software project that coding agents must follow.
 
 A memory check told an agent this:
@@ -88,24 +121,38 @@ What the user had asked the agent: {goal}
 Rules the project already has:
 {existing}
 
-Write the rule, for agents in later sessions:
-- name: a short title naming the component and the rule (at most 8 words).
-- query: the question an agent working on that component would ask, which this rule answers.
-- content: the rule as a standing instruction for any later change to that component, in at most 3
-  sentences: name the file or component, what a change there must or must not do, and why. Not the
-  task the agent did ("Merge X into Y"), but the rule it leaves ("X is a tab inside Y: add new ones
-  there, never as separate panels"). Use the exact names, values and paths from the agent's reason.
-  A value the agent picked only for its own run (a free port, a temp folder, a branch name) is not
-  the project's: write the condition and what to do ("when the default test port 5556 is taken, set
-  HINDSIGHT_TEST_PG_PORT to a free port"), not that value. A rule never tells an agent to skip a
-  check or ignore a failure: say what is known and how to tell it apart ("X is flaky under load
-  because ...; rerun it alone before treating a failure as yours"), not "do not investigate".
-  Never include a password, key or token.
+""" + RULE_FORMAT.replace("<SOURCE>", "the agent's reason").replace("<SAYS>", "the verdict above says to")
 
-Set create to false when an existing rule above already says this, or when the verdict above says to.
-When this rule replaces existing rules above (they say an older value or the opposite), list their
-names in replaces: they are removed.
-"""
+# Rules from the user's own corrections. Measured over a week of live sessions (2026-11-10): of
+# ~830 follow-up user messages, 164 corrected the agent, and for 28 of them memory already held the
+# lesson the user had to repeat ("it's 4 cent, not 40": the price was in memory since Oct 22). Only
+# note verdicts were learned from, so none of those corrections became a rule.
+# "What the developer had asked" is the user's message before the reply, read from the log: each reply
+# becomes the session's request, so the session's own request is that reply or a later one. Without the
+# line, the writer wrote 54 rules from 829 real replies, many of them this prompt's own instructions.
+CORRECTION_PROMPT = """You keep the rules of a software project that coding agents must follow.
+
+The agent said this:
+{agent}
+
+The developer replied:
+{user}
+
+What the developer had asked the agent before: {goal}
+
+First, corrects: true only when the developer says the agent got something WRONG: a wrong value,
+fact, file, approach or assumption, or something it should have known (said before, a project
+convention). A new request or a change of plan ("now do X", "rename Y to Z", "let's also add"), a
+question, an approval, or "go on" is false: then create is false too.
+
+Then create: true only when what the developer says will still hold for later, different work on this
+project, not only for this task. The rule is what the developer says, never what the agent did that the
+developer rejected.
+
+Rules the project already has:
+{existing}
+
+""" + RULE_FORMAT.replace("<SOURCE>", "the developer's reply").replace("<SAYS>", "corrects is false")
 
 # The content is worded as a standing rule because the session check's decision model picks it by
 # that wording: the e2e rule written as the task ("Merge the Files, Knowledge, and Settings floating
@@ -141,10 +188,29 @@ class RuleDraft(BaseModel):
     replaces: list[str] = Field(default_factory=list)
 
 
-class LearnLog(BaseModel):
-    """A ``learn`` entry in the session log: what one note's verdict taught the bank."""
+class CorrectionDraft(BaseModel):
+    """The writer's answer for a user's reply: whether it corrects the agent at all, then the rule.
 
-    note_seq: int
+    ``corrects`` comes first so the writer decides it before drafting: asked only "create?", it made
+    239 rules from 298 real replies, most of them the user's next request reworded (2026-11-10).
+    Its own model, not a RuleDraft subclass: a subclass puts the new field last in the schema.
+    """
+
+    corrects: bool
+    create: bool
+    name: str = ""
+    query: str = ""
+    content: str = ""
+    replaces: list[str] = Field(default_factory=list)
+
+
+class LearnLog(BaseModel):
+    """A ``learn`` entry in the session log: what one note's verdict, or one user reply, taught the bank."""
+
+    note_seq: int = Field(description="The note's seq, or the user message's for a correction")
+    source: Literal["note", "correction"] = Field(
+        default="note", description="note (an agent's verdict) or correction (a user reply)"
+    )
     outcome: str = Field(description="created, no_rule, covered, skipped, or retired")
     score: float | None = None
     mental_model_id: str | None = None
@@ -170,3 +236,10 @@ def existing_rules_text(rules: list[RuleSummary]) -> str:
     if not rules:
         return "(none yet)"
     return "\n".join(f"- {r.name}: {r.content[:300]}" for r in rules)
+
+
+def is_reply_to_weigh(text: str) -> bool:
+    """Whether a user message is weighed as a correction: plain words of the user, not a system
+    reminder or tool notification riding in the user's turn ("<task-notification>", "[Request ...")."""
+    text = text.strip()
+    return REPLY_MIN_CHARS <= len(text) <= REPLY_MAX_CHARS and not text.startswith(("<", "["))

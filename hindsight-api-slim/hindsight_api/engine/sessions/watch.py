@@ -231,6 +231,8 @@ class WatchState(BaseModel):
     inherited: bool = False
     # Notes (by seq) whose verdict has not been weighed for a rule yet (see sessions/learn.py).
     learn_pending: list[int] = Field(default_factory=list)
+    # User replies (by seq) not weighed yet as a correction to learn from (see sessions/learn.py).
+    learn_corrections: list[int] = Field(default_factory=list)
 
 
 class Step(BaseModel):

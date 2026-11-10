@@ -1343,3 +1343,105 @@ async def test_a_rule_carrying_a_credential_is_not_written(memory, request_conte
         "> 🧠 **Thanks to Hindsight thought #{n}**, I signed in with it.",
     )
     assert [(e.payload["outcome"], e.payload.get("reason")) for e in learned] == [("skipped", "carried a credential")]
+
+
+async def _session_with_a_reply(memory, request_context, monkeypatch, bank: str, reply: str, draft):
+    """A live session: a request, the agent's answer, then the user's ``reply``. The writer returns
+    ``draft``; returns the learn log and the prompts the writer was sent."""
+    from hindsight_api.engine.response_models import LLMCallResult
+
+    prompts: list[str] = []
+
+    async def call(messages, **kw):
+        prompts.append(messages[0]["content"])
+        return LLMCallResult(content=draft)
+
+    monkeypatch.setattr(memory._llm_config, "call", call)
+    monkeypatch.setattr(memory, "reflect_async", _reflect_stub([], []))
+    s = memory.sessions
+    steps = [
+        {"id": "u1", "role": "user", "text": "Add the typesafe cost to the margin table"},
+        {"id": "a1", "role": "assistant", "text": "I priced typesafe at $0.40 per 1M tokens."},
+        {"id": "u2", "role": "user", "text": reply},
+    ]
+    for step in steps:
+        await s.append(bank, "s1", _req(step, live=True, retain="off"), request_context=request_context)
+    log = [e for e in (await s.events(bank, "s1", request_context=request_context)).items if e.kind == "learn"]
+    return log, prompts
+
+
+async def test_a_users_correction_becomes_a_rule(memory, request_context, monkeypatch):
+    """A week of live replies: memory already held the lesson for 28 of 164 corrections ("it's 4 cent,
+    not 40"), and only note verdicts were ever learned from."""
+    from hindsight_api.engine.sessions.learn import CorrectionDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    rule = "Typesafe costs $0.04 per 1M tokens: use this price in margin and COGS tables."
+    draft = CorrectionDraft(
+        corrects=True, create=True, name="Typesafe price", query="What does typesafe cost?", content=rule
+    )
+    log, prompts = await _session_with_a_reply(memory, request_context, monkeypatch, bank, "it's 4 cent, not 40", draft)
+    assert [(e.payload["outcome"], e.payload["source"]) for e in log] == [("created", "correction")]
+    # The writer read the reply and what it answers; the first request is never weighed.
+    assert len(prompts) == 1 and "it's 4 cent, not 40" in prompts[0] and "$0.40 per 1M" in prompts[0]
+    # What the user had asked comes from the message before, not the session's request (now the reply).
+    assert "Add the typesafe cost to the margin table" in prompts[0]
+    models = (await memory.list_mental_models(bank, detail="content", request_context=request_context)).items
+    assert [m["content"].strip() for m in models if m["id"] == log[0].payload["mental_model_id"]] == [rule]
+
+
+async def test_a_reply_that_corrects_nothing_writes_no_rule(memory, request_context, monkeypatch):
+    from hindsight_api.engine.sessions.learn import CorrectionDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    # Asked only "create?", the writer made rules of the user's next requests: the draft says create,
+    # but corrects is false, and that decides.
+    draft = CorrectionDraft(corrects=False, create=True, name="n", query="q", content="Rename Knowledge to Documents.")
+    log, _ = await _session_with_a_reply(
+        memory, request_context, monkeypatch, bank, "now rename Knowledge to Documents", draft
+    )
+    assert [e.payload["outcome"] for e in log] == ["no_rule"]
+    assert (await memory.list_mental_models(bank, request_context=request_context)).items == []
+
+
+async def test_a_notification_in_the_users_turn_is_not_weighed(memory, request_context, monkeypatch):
+    from hindsight_api.engine.sessions.learn import CorrectionDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    draft = CorrectionDraft(corrects=True, create=True, name="n", query="q", content="c")
+    log, prompts = await _session_with_a_reply(
+        memory,
+        request_context,
+        monkeypatch,
+        bank,
+        "<task-notification><task-id>b1</task-id></task-notification>",
+        draft,
+    )
+    assert log == [] and prompts == []
+
+
+async def test_a_correction_rule_that_restates_the_prompt_is_dropped(memory, request_context, monkeypatch):
+    """Where the session was about this feature, the writer made its own instructions a "rule"."""
+    from hindsight_api.engine.sessions.learn import CORRECTION_PROMPT, CorrectionDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    echo = CORRECTION_PROMPT.split("First, corrects:")[1][:400]
+    draft = CorrectionDraft(corrects=True, create=True, name="Corrections", query="q", content=echo)
+    log, _ = await _session_with_a_reply(
+        memory, request_context, monkeypatch, bank, "no, the rule writer must check corrections first", draft
+    )
+    assert [(e.payload["outcome"], e.payload.get("reason")) for e in log] == [("skipped", "restated the prompt")]
+
+
+async def test_a_correction_is_not_weighed_when_learning_is_off(memory, request_context, monkeypatch):
+    from hindsight_api.engine.sessions.learn import CorrectionDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch, on=False)
+    draft = CorrectionDraft(corrects=True, create=True, name="n", query="q", content="c")
+    log, prompts = await _session_with_a_reply(memory, request_context, monkeypatch, bank, "it's 4 cent, not 40", draft)
+    assert log == [] and prompts == []
