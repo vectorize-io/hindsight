@@ -170,14 +170,30 @@ class TestTheCall:
         assert [(c.name, c.arguments) for c in result.tool_calls] == [("recall", {"query": "editors"})]
 
     @pytest.mark.asyncio
-    async def test_a_required_argument_left_out_is_corrected_once(self):
-        """#6302: ``recall`` with no query reached the tool, which failed and burned a turn."""
-        result, call = await _call(
-            LLMToolChoice.named("recall"), _reply({"reason": "look"}), _reply({"query": "editors"})
-        )
+    async def test_arguments_sent_as_a_string_are_corrected_once(self):
+        """#6302: the arguments arrived as a JSON string, the tool read no query and burned a turn."""
+        stringified = {"call": {"name": "recall", "arguments": json.dumps({"query": "editors"})}}
+        wrapped = {"call": {"name": "recall", "arguments": {"query": "editors"}}}
+        result, call = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply(stringified), _reply(wrapped))
         assert call.await_count == 2
-        assert "'query' is a required property" in call.await_args.kwargs["messages"][-1]["content"]
+        assert [(c.name, c.arguments) for c in result.tool_calls] == [("recall", {"query": "editors"})]
+
+    @pytest.mark.asyncio
+    async def test_a_forced_reply_with_none_of_its_parameters_is_corrected_once(self):
+        """A forced ``done`` written in the free-turn shape with its answer beside the name (#6420)."""
+        flat = {"call": {"name": "recall", "query": "editors"}}
+        result, call = await _call(LLMToolChoice.named("recall"), _reply(flat), _reply({"query": "editors"}))
+        assert call.await_count == 2
+        correction = call.await_args.kwargs["messages"][-1]["content"]
+        assert "none of them, only call" in correction and "Call `recall` now" in correction
         assert result.tool_calls[0].arguments == {"query": "editors"}
+
+    @pytest.mark.asyncio
+    async def test_an_argument_left_out_is_left_to_the_tool(self):
+        """``required`` holds fields the agent does without (``reason``); only a broken shape is re-asked."""
+        result, call = await _call(LLMToolChoice.named("recall"), _reply({"reason": "look"}))
+        assert call.await_count == 1
+        assert result.tool_calls[0].arguments == {"reason": "look"}
 
     @pytest.mark.asyncio
     async def test_a_reply_still_wrong_after_the_correction_is_a_turn_without_a_call(self):
@@ -355,8 +371,9 @@ class TestAFlatDone:
             return schema["enum"][0] if "enum" in schema else "The user prefers ruff."
 
         async def _model(*, messages, response_format=None, **kwargs):
+            usage = TokenUsage(input_tokens=100, output_tokens=20, total_tokens=120)
             if response_format is None:
-                return _reply("The user prefers ruff.")
+                return LLMCallResult(content="The user prefers ruff.", usage=usage)
             schema = response_format.model_json_schema()
             searched = any(m["content"].startswith("Result of") for m in messages if m["role"] == "user")
             options = (
@@ -374,7 +391,7 @@ class TestAFlatDone:
             else:
                 reply = _fill(schema)
             replies.append(json.dumps(reply))
-            return _reply(reply)
+            return LLMCallResult(content=reply, usage=usage)
 
         llm = LLMProvider(provider="openai", api_key="k", base_url="http://vllm:8000/v1", model="deepseek")
         llm._provider_impl.call = AsyncMock(side_effect=_model)
