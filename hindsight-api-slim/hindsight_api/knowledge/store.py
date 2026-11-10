@@ -645,9 +645,12 @@ class PostgresKnowledgeStore(KnowledgeStore):
         if not document_ids:
             return []
         async with acquire_with_retry(await self._pool()) as conn:
+            table = fq_table("kb_documents")
+            # Locked in document_id order first, like every other batch write (see set_statuses).
             rows = await conn.fetch(
-                f"DELETE FROM {fq_table('kb_documents')} WHERE bank_id = $1 AND document_id = ANY($2::text[]) "
-                f"RETURNING {_DOC_COLUMNS}",
+                f"DELETE FROM {table} WHERE bank_id = $1 AND document_id IN ("
+                f"SELECT document_id FROM {table} WHERE bank_id = $1 AND document_id = ANY($2::text[]) "
+                f"ORDER BY document_id FOR UPDATE) RETURNING {_DOC_COLUMNS}",
                 bank_id,
                 document_ids,
             )
