@@ -260,7 +260,9 @@ class TestTheCall:
             {"role": "tool", "tool_call_id": "c2", "content": "second"},
         ]
         for messages in (history[:2], history):
-            _, call = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}), messages=messages)
+            _, call = await _call(
+                LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {"name": "answer_ready", "arguments": {}}}), messages=messages
+            )
             roles = [m["role"] for m in call.await_args.kwargs["messages"]]
             assert all(not (a == b == "user") for a, b in zip(roles, roles[1:])), roles
 
@@ -277,8 +279,12 @@ class TestTheCall:
             {"role": "assistant", "tool_calls": [{"id": "c1", "function": {"name": "recall", "arguments": "{}"}}]},
             {"role": "tool", "tool_call_id": "c1", "content": "r"},
         ]
-        _, call_1 = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}), messages=first)
-        _, call_2 = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}), messages=second)
+        _, call_1 = await _call(
+            LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {"name": "answer_ready", "arguments": {}}}), messages=first
+        )
+        _, call_2 = await _call(
+            LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {"name": "answer_ready", "arguments": {}}}), messages=second
+        )
         sent_1, sent_2 = call_1.await_args.kwargs["messages"], call_2.await_args.kwargs["messages"]
 
         assert sent_2[0] == sent_1[0]
