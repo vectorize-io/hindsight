@@ -40,7 +40,7 @@ def test_provider_defaults_with_saved_login(home, monkeypatch):
         base_url="https://inference.hindsight.vectorize.io",
         timeout=60.0,
         max_concurrent=24,
-        max_request_tokens=54_000,
+        max_request_tokens=None,
         tokenizer=None,
     )
     assert config.decision_model_config("consolidation") == expected

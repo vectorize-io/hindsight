@@ -1619,19 +1619,19 @@ class _DecisionProviderDefaults:
     #: The vocabulary the model counts its window in; None when unknown, which counts
     #: with HINDSIGHT_API_TOKENIZER_ENCODING.
     tokenizer: str | None = None
-    #: Most tokens one request may carry, sized for the model's window; None takes
-    #: DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS.
-    max_request_tokens: int | None = None
+    #: The endpoint fits each request to the window of the model serving it, so the client
+    #: does not split by tokens unless HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS is set.
+    fits_requests: bool = False
 
 
 # "none": no decision model; operations that could use one keep their LLM-only path.
 # hindsight, typesafe and cloudflare speak the System One API; openai has its own Decisions API.
 # hindsight is Hindsight Inference: its key comes from HINDSIGHT_API_DECISION_MODEL_API_KEY or,
-# when unset, from `hindsight-admin cloud login`. hs-decide-1-flash has a 64k window; the margin is
-# for counting it with o200k_base, not its own vocabulary.
+# when unset, from `hindsight-admin cloud login`. Hindsight Inference fits each request to the
+# window of the model that serves it and merges the answers, so the whole pool goes in one request.
 DECISION_MODEL_PROVIDER_DEFAULTS = {
     "hindsight": _DecisionProviderDefaults(
-        model="hs-decide-1-flash", base_url=HINDSIGHT_INFERENCE_URL, max_request_tokens=54_000
+        model="hs-decide-1-flash", base_url=HINDSIGHT_INFERENCE_URL, fits_requests=True
     ),
     "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai", tokenizer="jev"),
     "cloudflare": _DecisionProviderDefaults(model="clef", base_url=None),
@@ -3299,7 +3299,8 @@ class DecisionModelConfig:
     base_url: str
     timeout: float
     max_concurrent: int
-    max_request_tokens: int
+    #: None: the endpoint fits requests itself, so they are split only to stay under its body-size limit.
+    max_request_tokens: int | None
     #: The vocabulary ``max_request_tokens`` and the reranker's caps are counted in; None
     #: counts with HINDSIGHT_API_TOKENIZER_ENCODING.
     tokenizer: str | None = None
@@ -6079,10 +6080,8 @@ class HindsightConfig:
         if provider == "hindsight" and operation == "recall" and own_provider is None:
             return None
         defaults = DECISION_MODEL_PROVIDER_DEFAULTS[provider]
-        max_request_tokens = (
-            self.decision_model_max_request_tokens
-            or defaults.max_request_tokens
-            or DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
+        max_request_tokens = self.decision_model_max_request_tokens or (
+            None if defaults.fits_requests else DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
         )
         # Checked here, not on the first request: a ceiling no request fits, or a cap no
         # request gets through, would otherwise surface as every decision failing.
@@ -6092,7 +6091,7 @@ class HindsightConfig:
             raise ValueError(
                 f"{ENV_DECISION_MODEL_MAX_CONCURRENT} must be at least 1, not {self.decision_model_max_concurrent}"
             )
-        if max_request_tokens < MIN_DECISION_MODEL_MAX_REQUEST_TOKENS:
+        if max_request_tokens is not None and max_request_tokens < MIN_DECISION_MODEL_MAX_REQUEST_TOKENS:
             raise ValueError(
                 f"{ENV_DECISION_MODEL_MAX_REQUEST_TOKENS} must be at least {MIN_DECISION_MODEL_MAX_REQUEST_TOKENS}, "
                 f"not {max_request_tokens}"

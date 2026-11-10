@@ -1629,7 +1629,7 @@ Answers short typed questions (yes or no, pick one of these, how likely is this)
 
 Reflect and knowledge-page refresh support only `hindsight` and `typesafe` for now. With another provider they keep their LLM-only path and log a warning, while recall and consolidation still use it. To pair another provider with `hindsight` or `typesafe` for reflect, override the reflect provider (see [OpenAI Decisions](#decision-openai)).
 
-When the endpoint serves another model than the provider's default, also set `HINDSIGHT_API_DECISION_MODEL_MODEL` and `HINDSIGHT_API_DECISION_MODEL_TOKENIZER`, and set `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` to that model's context window less a margin.
+When the endpoint serves another model than the provider's default, also set `HINDSIGHT_API_DECISION_MODEL_MODEL` and `HINDSIGHT_API_DECISION_MODEL_TOKENIZER`, and set `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` to that model's context window less a margin. With `hindsight` it is not needed: Hindsight Inference fits each request to the window of the model that serves it.
 
 ### Hindsight Inference {#decision-hindsight}
 

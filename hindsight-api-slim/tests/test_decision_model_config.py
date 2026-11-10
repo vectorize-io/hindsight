@@ -9,6 +9,7 @@ from aiohttp import web
 
 from hindsight_api.config import DecisionModelConfig, HindsightConfig
 from hindsight_api.engine.decision_model import (
+    MAX_REQUEST_BYTES,
     DecisionAnswer,
     DecisionModel,
     DecisionQuestion,
@@ -403,9 +404,11 @@ class _Answering:
         return web.json_response({"answers": {key: {"noul": 0.5} for key in body["questions"]}})
 
 
-def _splitting_client(base_url: str, max_request_tokens: int = 26_000) -> DecisionModel:
+def _splitting_client(
+    base_url: str, max_request_tokens: int | None = 26_000, provider: str = "typesafe"
+) -> DecisionModel:
     return DecisionModel(
-        provider="typesafe",
+        provider=provider,
         api_key="k",
         model="jev-latest",
         base_url=base_url,
@@ -440,6 +443,35 @@ async def test_a_pool_over_the_question_cap_is_split():
     async with stub_server(upstream.handle) as base_url:
         await _splitting_client(base_url).ask_all("q", _nouls(MAX_QUESTIONS + 5, "x"), scope="decision_test")
     assert sorted(len(body["questions"]) for body in upstream.bodies) == [5, MAX_QUESTIONS]
+
+
+async def test_hindsight_sends_a_recall_pool_in_one_request():
+    """Hindsight Inference fits each request to its model's window, so the client does not
+    split by tokens: a 250-candidate pool that typesafe's ceiling splits goes out whole."""
+    questions = _nouls(250, "memory about the storage layer " * 20)
+    hindsight, typesafe = _Answering(), _Answering()
+    async with stub_server(hindsight.handle) as base_url:
+        answers = await _splitting_client(base_url, max_request_tokens=None, provider="hindsight").ask_all(
+            "q", questions, scope="decision_test"
+        )
+    async with stub_server(typesafe.handle) as base_url:
+        await _splitting_client(base_url).ask_all("q", questions, scope="decision_test")
+    assert len(hindsight.bodies) == 1
+    assert list(answers) == list(questions)
+    assert len(typesafe.bodies) > 1
+
+
+async def test_hindsight_splits_a_pool_only_to_stay_under_the_body_size_limit():
+    upstream = _Answering()
+    questions = _nouls(300, "é" * 1_500)  # sent as \u00e9: 6 bytes each, ~2.7 MB in all
+    # Hindsight Inference's gateway refuses a body over 2,000,000 bytes.
+    async with stub_server(upstream.handle, max_body_bytes=2_000_000) as base_url:
+        await _splitting_client(base_url, max_request_tokens=None, provider="hindsight").ask_all(
+            "q", questions, scope="decision_test"
+        )
+    assert len(upstream.bodies) > 1
+    assert all(len(json.dumps(body)) <= MAX_REQUEST_BYTES for body in upstream.bodies)
+    assert sorted(key for body in upstream.bodies for key in body["questions"]) == sorted(questions)
 
 
 async def test_a_rate_limited_request_is_retried():

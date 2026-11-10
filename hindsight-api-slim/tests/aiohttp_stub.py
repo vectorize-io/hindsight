@@ -21,9 +21,11 @@ Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 
 @asynccontextmanager
-async def stub_server(handler: Handler) -> AsyncIterator[str]:
-    """Serve every method and path with ``handler``; yield the base URL (no trailing slash)."""
-    app = web.Application()
+async def stub_server(handler: Handler, max_body_bytes: int = 1024**2) -> AsyncIterator[str]:
+    """Serve every method and path with ``handler``; yield the base URL (no trailing slash).
+
+    A body over ``max_body_bytes`` is refused with 413, as aiohttp does by default."""
+    app = web.Application(client_max_size=max_body_bytes)
     app.router.add_route("*", "/{tail:.*}", handler)
     server = TestServer(app)
     await server.start_server()
