@@ -1234,11 +1234,22 @@ async def test_retain_refuses_a_bank_the_store_has_closed_to_writes(restore_defa
 import inspect  # noqa: E402
 
 
+# Old page-hook names, kept only so a store written before the rename is still called; the
+# new hooks forward to them. A complete store implements the new names. Remove in 2.x.
+_DEPRECATED_ALIASES = {
+    "index_knowledge_pages",
+    "delete_knowledge_pages",
+    "search_knowledge_pages",
+    "search_knowledge_pages_semantic",
+    "list_knowledge_pages",
+}
+
+
 def _iface_methods() -> dict:
     """Every public method MemoriesExtension declares in its own body (not properties)."""
     out = {}
     for name, obj in vars(MemoriesExtension).items():
-        if name.startswith("_"):
+        if name.startswith("_") or name in _DEPRECATED_ALIASES:
             continue
         if isinstance(obj, (staticmethod, classmethod)):
             obj = obj.__func__
