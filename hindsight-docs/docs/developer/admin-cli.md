@@ -88,6 +88,7 @@ hindsight-admin repair-bank (--bank BANK_ID | --all) [OPTIONS]
 | `--all` | Repair every bank in the base schema and all discovered tenant schemas. | — |
 | `--schema`, `-s` | Limit to a single schema. | All schemas |
 | `--dry-run` | Report what would be repaired without creating, dropping or deleting anything. | Off |
+| `--attachments` | Also delete attachments their document does not reference, left by retains that failed. See below. | Off |
 
 Exactly one of `--bank` or `--all` is required. Index repair is skipped for backends that use a single global vector index (AlloyDB ScaNN); the observation cleanup below still runs. PostgreSQL only. It is idempotent — safe to re-run and safe to run while the API is serving traffic.
 
@@ -118,6 +119,8 @@ touches `memory_units`. Drop them with `DROP INDEX CONCURRENTLY` when you are re
 
 **Observation keyword index (VectorChord only).** With `HINDSIGHT_API_TEXT_SEARCH_EXTENSION=vchord`, older releases did not update an observation's keyword index when consolidation rewrote or merged its text, so keyword recall kept matching the old wording. `repair-bank` rebuilds the keyword index of every observation in the bank from its current text. A stale one cannot be told apart from an up-to-date one, so all of them are rebuilt. Other text-search backends have nothing to rebuild here. Use `--dry-run` to only count them.
 
+**Unreferenced attachments (`--attachments`).** The API stores a retain's images and files before the retain runs. When the retain then fails, the document is never written (or, for an update, keeps its old text), and those attachments stay behind and remain downloadable. A daily maintenance job (`HINDSIGHT_API_ATTACHMENT_SWEEP_INTERVAL_SECONDS`) deletes them, but it only checks the past week. `--attachments` applies the same rule to every attachment a day or more old, however old — run it once after upgrading to collect what leaked before the job existed. It reads every document that has an attachment, so it is opt-in. Documents are read through the memories store, so banks whose documents live outside SQL are covered. Use `--dry-run` to only count them.
+
 **Exit code.** `0` when every schema was reconciled. `1` when an index failed to build
 (the names are printed, and a re-run retries them), or when a schema was not fully
 reconciled — for example because the memories store could not say which banks it
@@ -142,6 +145,10 @@ hindsight-admin repair-bank --all
 
 # Repair a single bank
 hindsight-admin repair-bank --bank acme-prod
+
+# After upgrading: count, then delete, attachments failed retains left behind
+hindsight-admin repair-bank --all --attachments --dry-run
+hindsight-admin repair-bank --all --attachments
 ```
 
 ---

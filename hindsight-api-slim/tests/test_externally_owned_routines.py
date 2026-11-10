@@ -31,6 +31,7 @@ OWNABLE = (
     "banks_needing_consolidation",
     "schemas_with_expired_rows",
     "schemas_with_expired_operations",
+    "banks_with_attachments_in_window",
 )
 
 VERSIONS = Path(__file__).resolve().parents[1] / "hindsight_api" / "alembic" / "versions"

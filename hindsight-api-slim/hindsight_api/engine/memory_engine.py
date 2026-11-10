@@ -8971,6 +8971,34 @@ class MemoryEngine(MemoryEngineInterface):
         except FileNotFoundError:
             return None
 
+    async def reclaim_unreferenced_attachments(
+        self,
+        bank_id: str,
+        created_after: datetime,
+        created_before: datetime,
+        request_context: "RequestContext",
+    ) -> int:
+        """Delete the attachments, stored in this window, that their document does not show.
+
+        Returns how many attachment rows went. Run by the maintenance loop; the
+        rule itself, shared with ``hindsight-admin repair-bank --attachments``, is
+        :func:`~hindsight_api.engine.retain.attachment_store.reclaim_unreferenced_attachments`.
+        """
+        from .memories import get_memories
+        from .retain.attachment_store import reclaim_unreferenced_attachments
+
+        await self._authenticate_tenant(request_context)
+        backend = await self._get_backend()
+        async with backend.acquire() as conn:
+            return await reclaim_unreferenced_attachments(
+                conn,
+                self._file_storage,
+                get_memories(),
+                bank_id,
+                created_after=created_after,
+                created_before=created_before,
+            )
+
     async def _reclaim_orphaned_attachments(self, conn, bank_id: str, storage_keys: "Sequence[str]") -> None:
         """Delete the blobs behind ``storage_keys`` that no attachment row names any more.
 
@@ -9081,23 +9109,10 @@ class MemoryEngine(MemoryEngineInterface):
         return await self._unreferenced_attachment_blobs(conn, bank_id, [row["storage_key"] for row in keys])
 
     async def _unreferenced_attachment_blobs(self, conn, bank_id: str, storage_keys: "Sequence[str]") -> list[str]:
-        """Of these storage keys, the ones no ``attachments`` row in the bank still names.
+        """Of these storage keys, the ones no ``attachments`` row in the bank still names."""
+        from .retain.attachment_store import unreferenced_attachment_blobs
 
-        Run after the rows that owned them are deleted. Only a bank retained
-        before an attachment belonged to its document has keys shared by more than
-        one row; for everything since, every key here is unreferenced.
-        """
-        if not storage_keys:
-            return []
-        wanted = list(dict.fromkeys(storage_keys))
-        rows = await conn.fetch(
-            f"SELECT DISTINCT storage_key FROM {fq_table('attachments')} "
-            f"WHERE bank_id = $1 AND storage_key = ANY($2::text[])",
-            bank_id,
-            wanted,
-        )
-        still_named = {row["storage_key"] for row in rows}
-        return [key for key in wanted if key not in still_named]
+        return await unreferenced_attachment_blobs(conn, bank_id, storage_keys)
 
     def _require_vision_capable_retain_llm(self) -> None:
         """Refuse an image-bearing retain the configured vision LLM cannot read.

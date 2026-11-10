@@ -708,3 +708,89 @@ async def test_schemas_with_expired_operations(memory: MemoryEngine):
     finally:
         async with memory._pool.acquire() as conn:
             await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+@pytest.mark.asyncio
+async def test_banks_with_attachments_in_window(memory: MemoryEngine):
+    """Returns each bank once that stored an attachment in the window, and nothing else.
+
+    A schema whose attachments table never held a row is skipped unopened; one row
+    outside the window must not make its bank eligible. Throwaway schemas, since the
+    suite shares one database and ``public`` holds other tests' attachments.
+    """
+    full, empty = f"mtatt{uuid.uuid4().hex[:8]}", f"mtatt{uuid.uuid4().hex[:8]}"
+
+    async def _insert(conn, bank_id: str, document_id: str, age_hours: int) -> None:
+        digest = uuid.uuid4().hex + uuid.uuid4().hex
+        await conn.execute(
+            f'''
+            INSERT INTO "{full}".attachments
+                (bank_id, document_id, attachment_hash, short_id, media_type, byte_size, storage_key, created_at)
+            VALUES ($1, $2, $3, $4, 'image/png', 1, 'k', now() - make_interval(hours => $5))
+            ''',
+            bank_id,
+            document_id,
+            digest,
+            digest[:12],
+            age_hours,
+        )
+
+    async def _found(conn) -> set[tuple[str, str]]:
+        rows = await conn.fetch(
+            "SELECT * FROM public.banks_with_attachments_in_window(now() - interval '8 days', now() - interval '1 day')"
+        )
+        return {(r["schema_name"], r["bank_id"]) for r in rows}
+
+    try:
+        async with memory._pool.acquire() as conn:
+            for schema in (full, empty):
+                await conn.execute(f'CREATE SCHEMA "{schema}"')
+                await conn.execute(f'CREATE TABLE "{schema}".attachments (LIKE public.attachments INCLUDING DEFAULTS)')
+            await _insert(conn, "in-window", "d1", 48)
+            await _insert(conn, "in-window", "d2", 72)
+            await _insert(conn, "too-recent", "d1", 1)
+            await _insert(conn, "too-old", "d1", 24 * 30)
+
+            found = {pair for pair in await _found(conn) if pair[0] in (full, empty)}
+            assert found == {(full, "in-window")}
+    finally:
+        async with memory._pool.acquire() as conn:
+            for schema in (full, empty):
+                await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+def _load_attachments_window_migration():
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "hindsight_api/alembic/versions/05867433a58c_add_banks_with_attachments_in_window_routine.py"
+    )
+    spec = importlib.util.spec_from_file_location("_banks_with_attachments_in_window", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("target_schema", "configured", "expected_prefix"),
+    [
+        (None, "public", ""),
+        ("public", "public", '"public".'),
+        ("hs_tenant", "hs_tenant", '"hs_tenant".'),
+    ],
+)
+def test_attachments_window_routine_installs_in_the_configured_schema(
+    monkeypatch, target_schema, configured, expected_prefix
+):
+    """One copy, in the configured schema ``fq_routine`` calls, with the concurrent-DDL guard."""
+    migration = _load_attachments_window_migration()
+    joined = "\n".join(_capture_upgrade(migration, monkeypatch, target_schema, configured))
+
+    assert f"CREATE OR REPLACE FUNCTION {expected_prefix}banks_with_attachments_in_window" in joined
+    assert "lock_not_available" in joined
+    assert "advisory" not in joined.lower()
+
+
+def test_attachments_window_routine_tenant_runs_install_nothing(monkeypatch):
+    migration = _load_attachments_window_migration()
+    assert _capture_upgrade(migration, monkeypatch, "tenant_xyz", configured_schema="public") == []

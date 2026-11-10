@@ -1220,6 +1220,7 @@ ENV_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS = "HINDSIGHT_API_CONSOLIDATION_RECO
 ENV_MENTAL_MODEL_REFRESH_TICK_SECONDS = "HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS"
 ENV_RETENTION_SWEEP_INTERVAL_SECONDS = "HINDSIGHT_API_RETENTION_SWEEP_INTERVAL_SECONDS"
 ENV_OPERATION_CLEANUP_INTERVAL_SECONDS = "HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS"
+ENV_ATTACHMENT_SWEEP_INTERVAL_SECONDS = "HINDSIGHT_API_ATTACHMENT_SWEEP_INTERVAL_SECONDS"
 ENV_MAINTENANCE_START_JITTER_SECONDS = "HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS"
 ENV_VECTOR_INDEX_MIN_ROWS = "HINDSIGHT_API_VECTOR_INDEX_MIN_ROWS"
 ENV_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS = "HINDSIGHT_API_VECTOR_INDEX_MAINTENANCE_MIN_INTERVAL_SECONDS"
@@ -2274,6 +2275,12 @@ DEFAULT_RETENTION_SWEEP_INTERVAL_SECONDS = 3600
 # retention sweeps it deletes rows whose retention is counted in days, so a slow
 # cadence costs nothing but avoids a per-tick cross-tenant probe. 0 disables it.
 DEFAULT_OPERATION_CLEANUP_INTERVAL_SECONDS = 900
+
+# How often attachments their document does not reference are deleted — the images
+# and files of a retain that failed after the API stored them. It looks only at the
+# attachments stored in the past week, so a daily run touches each one a handful of
+# times. 0 disables it.
+DEFAULT_ATTACHMENT_SWEEP_INTERVAL_SECONDS = 86400
 
 # Upper bound on the random delay applied before a process runs its first
 # maintenance tick. Every job is due on the first tick, so without this a fleet
@@ -4121,6 +4128,7 @@ class HindsightConfig:
     # the lever a large deployment tunes. 0 disables the job.
     retention_sweep_interval_seconds: int = DEFAULT_RETENTION_SWEEP_INTERVAL_SECONDS
     operation_cleanup_interval_seconds: int = DEFAULT_OPERATION_CLEANUP_INTERVAL_SECONDS
+    attachment_sweep_interval_seconds: int = DEFAULT_ATTACHMENT_SWEEP_INTERVAL_SECONDS
     maintenance_start_jitter_seconds: int = DEFAULT_MAINTENANCE_START_JITTER_SECONDS
 
     # Retry/backoff applied to remote embedding API calls (see engine/remote_retry.py's RetryPolicy).
@@ -5968,6 +5976,11 @@ class HindsightConfig:
                 ENV_OPERATION_CLEANUP_INTERVAL_SECONDS,
                 os.getenv(ENV_OPERATION_CLEANUP_INTERVAL_SECONDS),
                 DEFAULT_OPERATION_CLEANUP_INTERVAL_SECONDS,
+            ),
+            attachment_sweep_interval_seconds=_parse_non_negative_int(
+                ENV_ATTACHMENT_SWEEP_INTERVAL_SECONDS,
+                os.getenv(ENV_ATTACHMENT_SWEEP_INTERVAL_SECONDS),
+                DEFAULT_ATTACHMENT_SWEEP_INTERVAL_SECONDS,
             ),
             maintenance_start_jitter_seconds=_parse_non_negative_int(
                 ENV_MAINTENANCE_START_JITTER_SECONDS,

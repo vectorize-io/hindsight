@@ -28,10 +28,14 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Union
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Union
 
 from ..schema import fq_table
 from .attachment_content import LoadedAttachment, RetainAttachment, short_attachment_id
+
+if TYPE_CHECKING:
+    from ..memories.base import MemoriesExtension
 
 logger = logging.getLogger(__name__)
 
@@ -336,3 +340,129 @@ class InMemoryAttachmentLoader:
 #: subclasses the other -- they present the same small `load()` surface -- so a parameter naming
 #: only the first rejects every dry-run caller. Widening only: existing callers stay valid.
 AttachmentLoader = Union[RetainAttachmentLoader, InMemoryAttachmentLoader]
+
+
+async def unreferenced_attachment_blobs(conn, bank_id: str, storage_keys: Sequence[str]) -> list[str]:
+    """Of these storage keys, the ones no ``attachments`` row in the bank still names.
+
+    Run after the rows that owned them are deleted. Only a bank retained before an
+    attachment belonged to its document has keys shared by more than one row; for
+    everything since, every key here is unreferenced.
+    """
+    if not storage_keys:
+        return []
+    wanted = list(dict.fromkeys(storage_keys))
+    rows = await conn.fetch(
+        f"SELECT DISTINCT storage_key FROM {fq_table('attachments')} "
+        f"WHERE bank_id = $1 AND storage_key = ANY($2::text[])",
+        bank_id,
+        wanted,
+    )
+    still_named = {row["storage_key"] for row in rows}
+    return [key for key in wanted if key not in still_named]
+
+
+#: How old an attachment must be before a sweep may judge it: a retain still running
+#: inline has not written its document yet, and a day is far past any retain.
+ATTACHMENT_SWEEP_GRACE = timedelta(days=1)
+#: How long before a queued retain was submitted its ingress may have stored its attachments.
+#: Seconds in practice; generous so a slow upload never counts as orphaned.
+_IN_FLIGHT_RETAIN_MARGIN = timedelta(hours=1)
+
+
+async def reclaim_unreferenced_attachments(
+    conn,
+    file_storage,
+    store: "MemoriesExtension",
+    bank_id: str,
+    *,
+    created_after: datetime,
+    created_before: datetime,
+    dry_run: bool = False,
+) -> int:
+    """Delete the attachments, stored in this window, that their document does not show.
+
+    Returns how many attachment rows went — or, with ``dry_run``, would go. Shared by
+    the daily maintenance sweep (a one-week window) and ``hindsight-admin repair-bank
+    --attachments`` (no lower bound, for what leaked before the sweep existed).
+    ``fq_table`` must already resolve to the bank's schema.
+
+    The ingress stores a retain's attachments before the retain runs, as the
+    attachments of the document it is about to write. A retain that then fails for
+    any reason — an LLM error, a dropped connection, a worker that gave up — never
+    writes it, so they are left holding on to a document that either does not exist
+    or, for an update, still has its old text that never mentions them. A document
+    write drops the rows its text stopped referencing, and document deletion drops
+    all of them, but a failed retain is neither. So the rule is stated on the data
+    rather than on each failure path: an attachment belongs to its document, and one
+    its document's text does not reference, once its retain has had time to finish,
+    belongs to nothing.
+
+    A retain still queued or running may not have written its document yet, so the
+    window ends before the oldest one this bank has in flight: its attachments were
+    stored just before it was queued. The caller's ``created_before`` leaves the same
+    room for a retain that runs inline (see :data:`ATTACHMENT_SWEEP_GRACE`).
+
+    The document is read from the memories store, so a bank whose documents live
+    outside SQL is answered by its own store. A document whose text the store does
+    not keep is left alone: what it shows cannot be told, and taking away an image it
+    still shows is worse than keeping bytes.
+    """
+    from .attachment_content import iter_placeholder_ids
+
+    oldest_in_flight = await conn.fetchval(
+        f"SELECT MIN(created_at) FROM {fq_table('async_operations')} "
+        f"WHERE bank_id = $1 AND status IN ('pending', 'processing') "
+        f"AND operation_type IN ('retain', 'batch_retain', 'file_convert_retain')",
+        bank_id,
+    )
+    if oldest_in_flight is not None:
+        created_before = min(created_before, oldest_in_flight - _IN_FLIGHT_RETAIN_MARGIN)
+    if created_before <= created_after:
+        return 0
+    candidates = [
+        row["document_id"]
+        for row in await conn.fetch(
+            f"SELECT DISTINCT document_id FROM {fq_table('attachments')} "
+            f"WHERE bank_id = $1 AND created_at >= $2 AND created_at < $3",
+            bank_id,
+            created_after,
+            created_before,
+        )
+    ]
+    # The same predicate for the count and the delete, so a dry run reports exactly
+    # what a real run removes.
+    unreferenced = (
+        f"FROM {fq_table('attachments')} "
+        f"WHERE bank_id = $1 AND document_id = $2 AND created_at >= $3 AND created_at < $4 "
+        f"AND NOT (short_id = ANY($5::text[]))"
+    )
+    removed = 0
+    for document_id in candidates:
+        # One read per document that gained an attachment in the window.
+        document = await store.read_document_base(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+        )
+        if document is not None and document.original_text is None:
+            continue
+        referenced = sorted(set(iter_placeholder_ids(document.original_text or ""))) if document else []
+        args = (bank_id, document_id, created_after, created_before, referenced)
+        if dry_run:
+            removed += await conn.fetchval(f"SELECT count(*) {unreferenced}", *args)
+            continue
+        # ponytail: a retain run inline that reuses an identical image a failed retain
+        # of the same document left days ago can lose it, if this lands between that
+        # retain's ingress and its commit. Needs the reuse to refresh the row's age if
+        # it ever shows up.
+        keys = [row["storage_key"] for row in await conn.fetch(f"DELETE {unreferenced} RETURNING storage_key", *args)]
+        removed += len(keys)
+        if not keys:
+            continue
+        for key in await unreferenced_attachment_blobs(conn, bank_id, keys):
+            try:
+                await file_storage.delete(key)
+            except Exception:
+                # The row is the authority and it is gone; a blob left behind is
+                # wasted bytes, not a correctness problem.
+                logger.warning("Could not delete stored file %s; row is gone", key, exc_info=True)
+    return removed

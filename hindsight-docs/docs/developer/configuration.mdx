@@ -75,9 +75,9 @@ Always forward `**kwargs`: the pool passes the connection class it needs. Migrat
 
 #### Owning a maintenance routine
 
-The background maintenance loop finds work by calling four PostgreSQL routines —
-`mental_models_with_cron`, `banks_needing_consolidation`, `schemas_with_expired_rows` and
-`schemas_with_expired_operations`. The stock implementations scan every schema in the
+The background maintenance loop finds work by calling five PostgreSQL routines —
+`mental_models_with_cron`, `banks_needing_consolidation`, `schemas_with_expired_rows`,
+`schemas_with_expired_operations` and `banks_with_attachments_in_window`. The stock implementations scan every schema in the
 database on each tick. On a large multi-tenant install that is a serial loop over
 thousands of schemas, repeated once per tick in every process running the loop.
 
@@ -2899,6 +2899,7 @@ a large multi-tenant deployment **the cadences are the knob that matters**.
 |----------|-------------|---------|
 | `HINDSIGHT_API_RETENTION_SWEEP_INTERVAL_SECONDS` | How often expired `audit_log` and `llm_requests` rows are deleted across all tenant schemas. Retention windows are measured in days, so this only affects how promptly expired rows disappear. `0` disables the sweeps. | `3600` |
 | `HINDSIGHT_API_OPERATION_CLEANUP_INTERVAL_SECONDS` | How often expired terminal operation rows are pruned. See [Distributed Workers](#distributed-workers) for the retention window and batch size. `0` disables the job. | `900` |
+| `HINDSIGHT_API_ATTACHMENT_SWEEP_INTERVAL_SECONDS` | How often images and files from retains that failed are deleted. The API stores a retain's attachments before running it; if the retain then fails, nothing else removes them. An attachment is removed once it is a day old and its document does not reference it — the document was never created, or the update that added it failed; only attachments stored in the past week are checked — run `hindsight-admin repair-bank --all --attachments` once to collect older ones (see the [admin CLI](./admin-cli.md)). `0` disables the job. | `86400` |
 | `HINDSIGHT_API_MAINTENANCE_START_JITTER_SECONDS` | Upper bound on a random delay applied before a process runs its **first** maintenance tick. Every job is due on that first tick, so without an offset a fleet started together — a deploy or rolling restart — runs every sweep in every process at the same instant. `0` disables the jitter for a deterministic start. | `60` |
 
 :::tip Tuning for many tenants

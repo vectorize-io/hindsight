@@ -209,6 +209,9 @@ DEFAULT_PG0_PORT = int(os.environ.get("HINDSIGHT_TEST_PG_PORT", "5556"))
 os.environ.setdefault("HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_MENTAL_MODEL_REFRESH_TICK_SECONDS", "0")
 os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
+# The attachment sweep only deletes day-old rows, so it could not race a test's own
+# fresh attachments — but left on it alone would start the loop for the suite.
+os.environ.setdefault("HINDSIGHT_API_ATTACHMENT_SWEEP_INTERVAL_SECONDS", "0")
 
 # Same reason, for the worker poller the API lifespan starts by default. Any test
 # that runs ``app.router.lifespan_context`` (the MCP routing tests, for one) would
