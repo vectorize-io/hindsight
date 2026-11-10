@@ -699,6 +699,36 @@
       "category": "tool",
       "link": "https://github.com/Nyrest/hindsight-ingestion",
       "icon": "/img/icons/hindsight-ingestion.svg"
+    },
+    {
+      "id": "hindsight-php",
+      "name": "hindsight-php",
+      "description": "PHP client for Hindsight plus memory for Laravel AI SDK agents: one middleware recalls before the agent answers and retains the exchange after, with queued, retry-safe retains and a fake for tests.",
+      "type": "community",
+      "by": "skybleak333",
+      "category": "framework",
+      "link": "https://github.com/skybleak333/hindsight-php",
+      "icon": "/img/icons/laravel.svg"
+    },
+    {
+      "id": "hindsight-livekit",
+      "name": "LiveKit",
+      "description": "Long-term memory for LiveKit voice agents across calls. Recalls what Hindsight knows about the caller at call start, saves each call as a document, and gives realtime models retain/recall/reflect tools.",
+      "type": "community",
+      "by": "namandidthis",
+      "category": "framework",
+      "link": "https://github.com/namandidthis/hindsight-livekit",
+      "icon": "/img/icons/github.png"
+    },
+    {
+      "id": "hindsight-desktop",
+      "name": "Hindsight Desktop",
+      "description": "Independent macOS app for your Hindsight server: review sources, explore memories and knowledge pages, search or ask questions, and follow processing and usage.",
+      "type": "community",
+      "by": "paabL",
+      "category": "tool",
+      "link": "https://github.com/paabL/hindsight-desktop",
+      "icon": "/img/icons/hindsight-desktop.png"
     }
   ]
 }

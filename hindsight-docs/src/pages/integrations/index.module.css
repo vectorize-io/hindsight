@@ -114,60 +114,6 @@
   padding: 2.5rem 1.5rem 5rem;
 }
 
-/* ── Toolbar (filters + count) ───────────────────────────────────────────── */
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.75rem;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.filterGroup {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.filterPill {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.82rem;
-  font-weight: 500;
-  padding: 0.3rem 0.85rem;
-  border-radius: 999px;
-  border: 1px solid var(--ifm-color-emphasis-300);
-  background: transparent;
-  color: var(--ifm-color-emphasis-700);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  font-family: inherit;
-}
-
-.filterPill:hover {
-  border-color: var(--ifm-color-primary);
-  color: var(--ifm-color-primary);
-}
-
-.filterPillActive {
-  background: var(--ifm-color-primary);
-  border-color: var(--ifm-color-primary);
-  color: #fff !important;
-}
-
-[data-theme='dark'] .filterPill {
-  border-color: rgba(255, 255, 255, 0.15);
-  color: var(--ifm-color-emphasis-600);
-}
-
-/* ── Result count ────────────────────────────────────────────────────────── */
-.resultCount {
-  font-size: 0.8rem;
-  color: var(--ifm-color-emphasis-400);
-  margin: 0;
-}
-
 /* ── Grid ────────────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .heroTitle { font-size: 2.2rem; }
