@@ -785,6 +785,16 @@ export type BankTemplateConfig = {
     [key: string]: unknown;
   } | null;
   /**
+   * Knowledge Page Default Trigger
+   *
+   * Deprecated alias of page_default_trigger. Remove in 2.x.
+   *
+   * @deprecated
+   */
+  knowledge_page_default_trigger?: {
+    [key: string]: unknown;
+  } | null;
+  /**
    * Reflect Default Options
    *
    * Default reflect options for this bank (e.g. {"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}). Applied to every reflect request in the bank (API and MCP) that leaves the option unset. Mental-model refreshes do not read it: they take these options from their own trigger, defaulted per bank by page_default_trigger.

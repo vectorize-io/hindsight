@@ -7178,6 +7178,9 @@ components:
         page_default_trigger:
           additionalProperties: {}
           nullable: true
+        knowledge_page_default_trigger:
+          additionalProperties: {}
+          nullable: true
         reflect_default_options:
           additionalProperties: {}
           nullable: true

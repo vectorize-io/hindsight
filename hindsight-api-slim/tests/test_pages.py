@@ -2154,6 +2154,28 @@ class TestDeprecatedNames:
         assert spec["/v1/default/banks/{bank_id}/pages/tree"]["get"]["operationId"] == "get_page_tree"
         assert not spec["/v1/default/banks/{bank_id}/pages/tree"]["get"].get("deprecated")
 
+    async def test_old_config_key_round_trips(self, api_client, kb_bank):
+        """A client that writes and reads the old key keeps seeing its value, in config and in templates."""
+        bank_id, ids = kb_bank
+        base = f"/v1/default/banks/{_enc(bank_id)}"
+        trigger = {"refresh_cron": "0 * * * *"}
+        resp = await api_client.patch(f"{base}/config", json={"updates": {"knowledge_page_default_trigger": trigger}})
+        assert resp.status_code == 200, resp.text
+
+        body = (await api_client.get(f"{base}/config")).json()
+        for d in (body["config"], body["overrides"]):
+            assert d["page_default_trigger"] == trigger
+            assert d["knowledge_page_default_trigger"] == trigger
+
+        exported = (await api_client.get(f"{base}/export")).json()["bank"]
+        assert exported["page_default_trigger"] == trigger
+        assert exported["knowledge_page_default_trigger"] == trigger
+
+    async def test_old_mental_model_field_still_sent(self, api_client, kb_bank):
+        bank_id, ids = kb_bank
+        items = (await api_client.get(f"/v1/default/banks/{_enc(bank_id)}/mental-models")).json()["items"]
+        assert items and all(m["is_knowledge_page"] == m["is_page"] for m in items)
+
 
 def test_old_mcp_tool_names_map_to_new():
     from hindsight_api.mcp_tools import _ALL_TOOLS, _RENAMED_TOOLS, canonical_tool_names

@@ -2251,6 +2251,20 @@ class BankConfigResponse(BaseModel):
     )
     overrides: dict[str, Any] = Field(description="Bank-specific configuration overrides only (Python field names)")
 
+    @model_validator(mode="after")
+    def _add_deprecated_page_trigger_key(self) -> "BankConfigResponse":
+        # Clients written before the rename read knowledge_page_default_trigger.
+        # Deprecated alias, remove in 2.x.
+        # Copies, so a cached resolved config is never mutated.
+        if "page_default_trigger" in self.config:
+            self.config = {**self.config, "knowledge_page_default_trigger": self.config["page_default_trigger"]}
+        if "page_default_trigger" in self.overrides:
+            self.overrides = {
+                **self.overrides,
+                "knowledge_page_default_trigger": self.overrides["page_default_trigger"],
+            }
+        return self
+
 
 class MemoryGraphNodeData(OpenRowModel):
     """The payload of one memory-unit node in the memory graph.
