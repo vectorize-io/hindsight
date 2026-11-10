@@ -10,6 +10,18 @@ For the source code, see [`hindsight-integrations/coding-agents`](https://github
 
 ← [Back to main changelog](../index.md)
 
+## [0.8.7](https://github.com/vectorize-io/hindsight/tree/integrations/coding-agents/v0.8.7)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/coding-agents/v0.8.7)
+
+**Breaking Changes**
+
+- Renames Knowledge Pages to Pages across the coding-agents integration; legacy names remain deprecated until 2.x.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/0c443ce72" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>0c443ce72</a>
+
+**Bug Fixes**
+
+- Prevents host-injected tags from being included when coding agents recall or reflect on prompts.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/7402f85cd" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>7402f85cd</a>
+
 ## [0.8.6](https://github.com/vectorize-io/hindsight/tree/integrations/coding-agents/v0.8.6)
 
 [Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/coding-agents/v0.8.6)
