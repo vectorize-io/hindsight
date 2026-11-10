@@ -259,6 +259,8 @@ class TestTheCall:
             {"role": "tool", "tool_call_id": "c1", "content": "first"},
             {"role": "tool", "tool_call_id": "c2", "content": "second"},
         ]
+        # A reply that names a function: one naming none is asked again (#6469), and these tests
+        # script a single reply, since what they check is the messages sent, not the reply.
         for messages in (history[:2], history):
             _, call = await _call(
                 LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {"name": "answer_ready", "arguments": {}}}), messages=messages
@@ -279,6 +281,7 @@ class TestTheCall:
             {"role": "assistant", "tool_calls": [{"id": "c1", "function": {"name": "recall", "arguments": "{}"}}]},
             {"role": "tool", "tool_call_id": "c1", "content": "r"},
         ]
+        # A reply that names a function, as above: one naming none is asked again (#6469).
         _, call_1 = await _call(
             LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {"name": "answer_ready", "arguments": {}}}), messages=first
         )
