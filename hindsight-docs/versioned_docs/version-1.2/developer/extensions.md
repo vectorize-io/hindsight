@@ -143,6 +143,48 @@ Things to know:
 
 ---
 
+### Custom LLM provider
+
+Your own class as the LLM, for a backend no built-in provider speaks (or speaks almost right). Name it by import path wherever a provider goes:
+
+```bash
+HINDSIGHT_API_LLM_PROVIDER=mypackage.llm:MyLLM          # every operation
+HINDSIGHT_API_RETAIN_LLM_PROVIDER=mypackage.llm:MyLLM   # or just one
+```
+
+Any value with a `:` is read as `package.module:ClassName`; it works in the global and per-operation settings, in a failover chain, and as the provider an `LLMRequestExtension` picks (which is how to choose one per bank). The class must subclass `LLMInterface` (`hindsight_api.engine.llm_interface`) and is constructed with keyword arguments: `provider`, `api_key`, `base_url`, `model`, `reasoning_effort` and `timeout` (stored by `LLMInterface.__init__`), plus `extra_body` and `default_headers`. A path that does not import, or a class that is not an `LLMInterface`, stops the server at startup.
+
+Implement:
+
+- **`call(...) -> LLMCallResult`**: one completion. With a `response_format` (a Pydantic model), return the parsed model as `content`, unless `skip_validation` is set. Tool calls also go through `call`, as a response schema, so there is nothing else to implement for reflect.
+- **`verify_connection()`**: the startup check. Raise to refuse to start.
+- **`cleanup()`**: close your clients.
+- **Batch (optional)**: return `True` from `supports_batch_api()` and implement `submit_batch(requests: list[BatchRequest]) -> BatchSubmission`, `get_batch_status(batch_id) -> BatchStatus` and `retrieve_batch_results(batch_id) -> list[BatchResult]` (models in `hindsight_api.engine.response_models`). Each `BatchRequest.body` is an OpenAI chat-completions body. With `HINDSIGHT_API_RETAIN_BATCH_ENABLED=true`, retain then goes through your batch API.
+
+To change one detail of a built-in provider, subclass it instead, and pass the parent the provider name of the wire dialect it speaks (the configured `provider` is your class path, which the built-in classes do not accept):
+
+```python
+from typing import Any
+
+from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
+
+
+class MyBatchHost(OpenAICompatibleLLM):
+    def __init__(self, **kwargs: Any) -> None:
+        kwargs["provider"] = "openai"
+        super().__init__(**kwargs)
+```
+
+An OpenAI-compatible batch host that needs a `name` on batch creation and rejects `response_format` is such a subclass, overriding `verify_connection` and `submit_batch`.
+
+No API key is required for a custom provider; check for one in `verify_connection` if yours needs it. `tests/test_custom_llm_provider.py` in the repository holds a complete, tested example (`EchoProvider`). Install the package the same way as any extension (see [Deploying Custom Extensions](#deploying-custom-extensions)).
+
+:::caution
+`LLMInterface` is an internal interface made public. It may change between minor versions; pin your Hindsight version and check the changelog when upgrading.
+:::
+
+---
+
 ## Writing Custom Extensions
 
 ### Extension Basics
@@ -377,6 +419,65 @@ edit, invalidate, or revert) has its own pair of hooks, in addition to the
   re-embeds the memory and re-consolidates the bank, so this is the figure to
   meter if curation should cost the same as ingesting that text.
 
+#### Checking a mental model's new document
+
+`validate_mental_model_candidate(ctx: MentalModelCandidateContext)` runs when a
+refresh (full or delta) has produced its new document, just before it replaces
+the stored one. `ctx.candidate_content` is the exact markdown that would be
+stored; `ctx.current_content`, `ctx.max_tokens`, `ctx.refresh_mode` and
+`ctx.candidate_structured` let you compare it with the page readers have now.
+Use it to hold a page to rules the model can't be trusted to follow, such as a
+hard length limit or "no repeated sections".
+
+- **Accept** and the document is stored as is.
+- **Reject** and the stored document, its structured view and its watermark all
+  stay as they were. The operation fails with outcome
+  `refresh_failed_candidate_rejected` and failure reason `candidate_rejected`,
+  the rejection reason is in the model's history, and automatic refreshes pause
+  until an explicit refresh succeeds.
+- By default a rejection is final: the worker does not run the refresh again,
+  because the same input tends to make the same kind of document.
+- To get another draft instead, return
+  `ValidationResult.reject(reason, retry=True)`. The refresh writes a new, full
+  document straight away, with `reason` added to the prompt so the model knows
+  what to fix, then calls the hook again. `ctx.attempt` says which draft this is
+  (0 for the first) and `ctx.previous_rejections` lists the reasons given so
+  far. After 3 redrafts a rejection is final, whatever `retry` says.
+
+If the hook raises, the document is not stored either. The dry run does not
+call this hook.
+
+#### Memory review hooks
+
+Two optional hooks let a validator see what is about to be written and drop it
+or change its tags. Each returns one `MemoryReview(keep=True, tags=None)` per
+item, in order, or `None` to keep everything as is. `tags`, when set, replaces
+the item's tags. Text can't be changed.
+
+- `filter_retain_facts(ctx: RetainFactsContext)` runs after a retain extracts
+  its memories and before they are embedded and stored. `ctx.facts` holds each
+  memory's `text`, `fact_type`, `tags` and `entities`, and `ctx.document_id`
+  names the document. A large document is extracted in batches, so one retain
+  can call the hook several times. When a document is retained again, the
+  memories of its unchanged chunks are kept without passing through the hook.
+  The extraction dry run calls no validator hook, so its preview still lists
+  the memories this hook would drop.
+- `filter_consolidation_actions(ctx: ConsolidationActionsContext)` runs after a
+  consolidation batch decides its observation writes and before they are
+  applied. Each `ReviewedConsolidationAction` is a `create` or an `update` (of
+  `observation_id`), with its `text`, `tags` and `source_memory_ids`. An update
+  adds its tags to the observation's current ones. `merge_into` is set when
+  the write will be folded into an existing near-duplicate. A fold keeps that
+  observation's tags, so new tags have no effect there, but dropping the action
+  still stops the fold. The source memories of a dropped action are still
+  marked consolidated.
+
+```python
+class DropPasswords(OperationValidatorExtension):
+    async def filter_retain_facts(self, ctx: RetainFactsContext):
+        return [MemoryReview(keep="password" not in f.text.lower()) for f in ctx.facts]
+```
+
 #### Transfer-archive import hooks
 
 Importing a transfer archive (a document import, or a whole-bank restore) brings
@@ -420,11 +521,11 @@ caller can narrow its view but never widen it:
 
 - **Filtered reads** — recall, reflect (and every tool it runs), the memory,
   document and mental-model lists, observation scopes, tag lists, the memory
-  graph, the timeseries, entities and the entity graph, and the knowledge-base
+  graph, the timeseries, entities and the entity graph, and the page
   tree, search and export — only see rows inside the scope. Entity counts are
   recounted over the visible memories.
 - **Reads and writes by id** — a memory, a document and its chunks, a mental
-  model or knowledge page — answer `404` when the item is outside the scope.
+  model or page — answer `404` when the item is outside the scope.
   A retain that names an existing document outside the scope is refused (`403`),
   since replacing or appending to it would touch someone else's text.
 - **Source text follows the document.** A memory can be visible through its own
@@ -432,7 +533,7 @@ caller can narrow its view but never widen it:
   note is not. Its chunk and document text are only returned when the
   *document's* tags pass the filter. This applies to every tag-filtered recall
   and reflect, with or without an extension.
-- **Mental models and knowledge pages** created or updated by a scoped caller
+- **Mental models and pages** created or updated by a scoped caller
   must carry tags inside the scope (`403` otherwise — the caller could not see
   what it made), and record the scope in their trigger (`scope_tag_groups`),
   which every refresh AND-s with the model's own filter, so they can never be
@@ -470,9 +571,9 @@ restricted writer cannot produce or change one. That covers:
 - **memories and documents**: editing, invalidating or clearing the observations
   of a memory; updating (including the new tags), reprocessing or deleting a
   document;
-- **mental models and knowledge pages**: creating one (its tags), updating,
+- **mental models and pages**: creating one (its tags), updating,
   refreshing, clearing or deleting one, and renaming, moving or deleting a
-  knowledge node (every page under it, and under the folder it moves into);
+  page node (every page under it, and under the folder it moves into);
 - **directives**: creating, updating or deleting one. An untagged directive
   steers everyone's reflect, so a restricted writer cannot create one.
 

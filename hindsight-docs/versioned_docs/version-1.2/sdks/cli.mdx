@@ -15,6 +15,16 @@ The Hindsight CLI provides command-line access to memory operations and bank man
 curl -fsSL https://hindsight.vectorize.io/get-cli | bash
 ```
 
+### Windows (x64)
+
+Each release ships `hindsight-windows-amd64.exe`. Download it from PowerShell, then move `hindsight.exe` to a folder on your `PATH`:
+
+```powershell
+Invoke-WebRequest https://github.com/vectorize-io/hindsight/releases/latest/download/hindsight-windows-amd64.exe -OutFile hindsight.exe
+```
+
+Configuration and profiles work the same as on Linux and macOS. `hindsight fs mount` works in the foreground; background mounts (`fs start`, `mount --detach`) are Unix-only. Windows ARM64 is not built.
+
 ## Configuration
 
 Configure the API URL:
@@ -148,9 +158,9 @@ Configure event delivery hooks for bank activity:
 
 <CodeSnippet code={cliSh} section="cli-webhooks" language="bash" />
 
-## Knowledge Base
+## Pages
 
-Manage a bank's knowledge pages — living documents organized in a folder tree. See [Knowledge Pages](../developer/api/knowledge-pages) for what they are and how they refresh.
+Manage a bank's pages — living documents organized in a folder tree. See [Pages](../developer/api/pages) for what they are and how they refresh.
 
 <CodeSnippet code={cliSh} section="cli-kb-tree" language="bash" />
 
@@ -163,7 +173,7 @@ Manage a bank's knowledge pages — living documents organized in a folder tree.
 <CodeSnippet code={cliSh} section="cli-kb-manage" language="bash" />
 
 :::tip
-`hindsight fs mount --bank <bank_id>` mirrors the same knowledge base onto disk as
+`hindsight fs mount --bank <bank_id>` mirrors the same pages onto disk as
 real markdown files, kept current by a background refresh loop — handy when you'd
 rather use `grep`, `rg`, or your editor than the commands above.
 :::

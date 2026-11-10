@@ -2,46 +2,46 @@
 sidebar_position: 5
 ---
 
-# Knowledge Pages
+# Pages
 
 Living markdown documents, organized in a folder tree, that rewrite themselves as the bank learns.
 
-A page is backed by a [mental model](./mental-models) but is configured as a document: it is built from the bank's [observations](../observations) only, it never reads other pages, and it refreshes incrementally after each consolidation. See [Knowledge Pages](../knowledge-pages) for the concepts behind the API.
+A page is backed by a [mental model](./mental-models) but is configured as a document: it is built from the bank's [observations](../observations) only, it never reads other pages, and it refreshes incrementally after each consolidation. See [Pages](../pages) for the concepts behind the API.
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import CodeSnippet from '@site/src/components/CodeSnippet';
 
 {/* Import raw source files */}
-import knowledgePagesPy from '!!raw-loader!@site/examples/api/pages.py';
-import knowledgePagesMjs from '!!raw-loader!@site/examples/api/pages.mjs';
-import knowledgePagesSh from '!!raw-loader!@site/examples/api/pages.sh';
-import knowledgePagesGo from '!!raw-loader!@site/examples/api/pages.go';
+import pagesPy from '!!raw-loader!@site/examples/api/pages.py';
+import pagesMjs from '!!raw-loader!@site/examples/api/pages.mjs';
+import pagesSh from '!!raw-loader!@site/examples/api/pages.sh';
+import pagesGo from '!!raw-loader!@site/examples/api/pages.go';
 
 All endpoints below are relative to a bank:
 
 ```
-/v1/default/banks/{bank_id}/knowledge-base
+/v1/default/banks/{bank_id}/pages
 ```
 
 ---
 
 ## Get the Tree
 
-Returns the whole knowledge base as a nested tree of folders and pages. Page bodies are **not** included — fetch a page to read its content.
+Returns all of the bank's pages as a nested tree of folders and pages. Page bodies are **not** included — fetch a page to read its content.
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={knowledgePagesPy} section="get-tree" language="python" />
+<CodeSnippet code={pagesPy} section="get-tree" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={knowledgePagesMjs} section="get-tree" language="javascript" />
+<CodeSnippet code={pagesMjs} section="get-tree" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-<CodeSnippet code={knowledgePagesSh} section="get-tree" language="bash" />
+<CodeSnippet code={pagesSh} section="get-tree" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={knowledgePagesGo} section="get-tree" language="go" />
+<CodeSnippet code={pagesGo} section="get-tree" language="go" />
 </TabItem>
 </Tabs>
 
@@ -105,16 +105,16 @@ Creating a page stores it with placeholder content and schedules the first build
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={knowledgePagesPy} section="create-page" language="python" />
+<CodeSnippet code={pagesPy} section="create-page" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={knowledgePagesMjs} section="create-page" language="javascript" />
+<CodeSnippet code={pagesMjs} section="create-page" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-<CodeSnippet code={knowledgePagesSh} section="create-page" language="bash" />
+<CodeSnippet code={pagesSh} section="create-page" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={knowledgePagesGo} section="create-page" language="go" />
+<CodeSnippet code={pagesGo} section="create-page" language="go" />
 </TabItem>
 </Tabs>
 
@@ -185,7 +185,7 @@ This makes the page a living document built from consolidated observations only,
 | Setting | Why |
 |---|---|
 | `fact_types: ["observation"]` | The page reads consolidated beliefs, not the raw conversational noise underneath them. Observations are already deduplicated and evidence-backed, so a page reads as a settled document instead of a transcript. Enforced structurally — with only `observation` in scope, the refresh agent isn't given the raw-memory recall tool at all. |
-| `exclude_mental_models: true` | A page never reflects on sibling pages. Without this, pages would cite each other and drift into a feedback loop where one wrong claim propagates across the knowledge base. |
+| `exclude_mental_models: true` | A page never reflects on sibling pages. Without this, pages would cite each other and drift into a feedback loop where one wrong claim propagates across the bank's pages. |
 | `mode: "delta"` | Each refresh edits the existing document with what is new since the last refresh instead of regenerating it, so hand-tuned structure and wording survive. See [Refresh Mode](./mental-models#refresh-mode). |
 | `refresh_after_consolidation: true` | The page rewrites itself whenever consolidation produces new knowledge in its scope — gated by the same [staleness check](./mental-models#staleness-gating) as any mental model, so unrelated bank activity doesn't trigger rebuilds. |
 
@@ -211,16 +211,16 @@ Every [mental model trigger setting](./mental-models#trigger-settings) is accept
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={knowledgePagesPy} section="create-folder" language="python" />
+<CodeSnippet code={pagesPy} section="create-folder" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={knowledgePagesMjs} section="create-folder" language="javascript" />
+<CodeSnippet code={pagesMjs} section="create-folder" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-<CodeSnippet code={knowledgePagesSh} section="create-folder" language="bash" />
+<CodeSnippet code={pagesSh} section="create-folder" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={knowledgePagesGo} section="create-folder" language="go" />
+<CodeSnippet code={pagesGo} section="create-folder" language="go" />
 </TabItem>
 </Tabs>
 
@@ -239,16 +239,16 @@ Returns the page rendered as a markdown document.
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={knowledgePagesPy} section="get-page" language="python" />
+<CodeSnippet code={pagesPy} section="get-page" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={knowledgePagesMjs} section="get-page" language="javascript" />
+<CodeSnippet code={pagesMjs} section="get-page" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-<CodeSnippet code={knowledgePagesSh} section="get-page" language="bash" />
+<CodeSnippet code={pagesSh} section="get-page" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={knowledgePagesGo} section="get-page" language="go" />
+<CodeSnippet code={pagesGo} section="get-page" language="go" />
 </TabItem>
 </Tabs>
 
@@ -267,7 +267,7 @@ Returns the page rendered as a markdown document.
 
 - `body` is the synthesized markdown body on its own.
 - `markdown` is the full document: a YAML frontmatter block (`id`, `type`, `title`, `description`, `tags`, `timestamp`) followed by the body.
-- `type` comes from a `type:<x>` tag and defaults to `knowledge-page`. The `type:` tag is removed from the returned `tags`.
+- `type` comes from a `type:<x>` tag and defaults to `page`. The `type:` tag is removed from the returned `tags`.
 
 ---
 
@@ -277,16 +277,16 @@ Document-level hybrid search: a full-text (BM25) match and a vector-similarity m
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={knowledgePagesPy} section="search-pages" language="python" />
+<CodeSnippet code={pagesPy} section="search-pages" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={knowledgePagesMjs} section="search-pages" language="javascript" />
+<CodeSnippet code={pagesMjs} section="search-pages" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-<CodeSnippet code={knowledgePagesSh} section="search-pages" language="bash" />
+<CodeSnippet code={pagesSh} section="search-pages" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={knowledgePagesGo} section="search-pages" language="go" />
+<CodeSnippet code={pagesGo} section="search-pages" language="go" />
 </TabItem>
 </Tabs>
 
@@ -324,16 +324,16 @@ As in recall, `any` and `all` also return **untagged** pages. Use `any_strict`, 
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={knowledgePagesPy} section="filter-by-tags" language="python" />
+<CodeSnippet code={pagesPy} section="filter-by-tags" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={knowledgePagesMjs} section="filter-by-tags" language="javascript" />
+<CodeSnippet code={pagesMjs} section="filter-by-tags" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-<CodeSnippet code={knowledgePagesSh} section="filter-by-tags" language="bash" />
+<CodeSnippet code={pagesSh} section="filter-by-tags" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={knowledgePagesGo} section="filter-by-tags" language="go" />
+<CodeSnippet code={pagesGo} section="filter-by-tags" language="go" />
 </TabItem>
 </Tabs>
 
@@ -345,16 +345,16 @@ One `PATCH` renames a node, moves it, and/or updates a page's options. Each fiel
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={knowledgePagesPy} section="update-node" language="python" />
+<CodeSnippet code={pagesPy} section="update-node" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={knowledgePagesMjs} section="update-node" language="javascript" />
+<CodeSnippet code={pagesMjs} section="update-node" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-<CodeSnippet code={knowledgePagesSh} section="update-node" language="bash" />
+<CodeSnippet code={pagesSh} section="update-node" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={knowledgePagesGo} section="update-node" language="go" />
+<CodeSnippet code={pagesGo} section="update-node" language="go" />
 </TabItem>
 </Tabs>
 
@@ -377,16 +377,16 @@ Deletes a folder or page **and its entire subtree**. The mental models backing t
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={knowledgePagesPy} section="delete-node" language="python" />
+<CodeSnippet code={pagesPy} section="delete-node" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={knowledgePagesMjs} section="delete-node" language="javascript" />
+<CodeSnippet code={pagesMjs} section="delete-node" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-<CodeSnippet code={knowledgePagesSh} section="delete-node" language="bash" />
+<CodeSnippet code={pagesSh} section="delete-node" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={knowledgePagesGo} section="delete-node" language="go" />
+<CodeSnippet code={pagesGo} section="delete-node" language="go" />
 </TabItem>
 </Tabs>
 
@@ -398,20 +398,20 @@ Deletes a folder or page **and its entire subtree**. The mental models backing t
 
 ## Export as a Markdown Bundle
 
-Returns the whole knowledge base as a flat set of portable markdown files: a nested `index.md`, one `<page-id>.md` per page, and a `<page-id>.log.md` refresh history for pages that have been rebuilt.
+Returns all of the bank's pages as a flat set of portable markdown files: a nested `index.md`, one `<page-id>.md` per page, and a `<page-id>.log.md` refresh history for pages that have been rebuilt.
 
 <Tabs>
 <TabItem value="python" label="Python">
-<CodeSnippet code={knowledgePagesPy} section="export" language="python" />
+<CodeSnippet code={pagesPy} section="export" language="python" />
 </TabItem>
 <TabItem value="node" label="Node.js">
-<CodeSnippet code={knowledgePagesMjs} section="export" language="javascript" />
+<CodeSnippet code={pagesMjs} section="export" language="javascript" />
 </TabItem>
 <TabItem value="cli" label="CLI">
-<CodeSnippet code={knowledgePagesSh} section="export" language="bash" />
+<CodeSnippet code={pagesSh} section="export" language="bash" />
 </TabItem>
 <TabItem value="go" label="Go">
-<CodeSnippet code={knowledgePagesGo} section="export" language="go" />
+<CodeSnippet code={pagesGo} section="export" language="go" />
 </TabItem>
 </Tabs>
 
@@ -435,7 +435,7 @@ Returns the whole knowledge base as a flat set of portable markdown files: a nes
 
 | Table | Holds |
 |---|---|
-| `knowledge_pages` | The tree: folders and pages, their names, parents, and ordering. A page row references its backing mental model; a folder row has none. |
+| `knowledge_pages` (named before the rename) | The tree: folders and pages, their names, parents, and ordering. A page row references its backing mental model; a folder row has none. |
 | `mental_models` | The content: the document body, its source query, tags, token budget, trigger, and refresh history. |
 
 The page layer owns only tree structure — everything about the content lives on the backing mental model, which is why every [mental model](./mental-models) capability applies to pages unchanged.
@@ -446,11 +446,13 @@ The page layer owns only tree structure — everything about the content lives o
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/knowledge-base/tree` | Nested folder/page tree with staleness |
-| `POST` | `/knowledge-base/folders` | Create a folder |
-| `POST` | `/knowledge-base/pages` | Create a page (async first build) |
-| `GET` | `/knowledge-base/pages/{page_id}` | Read a page as markdown |
-| `GET` | `/knowledge-base/search` | Hybrid search over pages |
-| `PATCH` | `/knowledge-base/nodes/{node_id}` | Rename, move, or reconfigure a node |
-| `DELETE` | `/knowledge-base/nodes/{node_id}` | Delete a node and its subtree |
-| `GET` | `/knowledge-base/export` | Export the whole base as markdown files |
+| `GET` | `/pages/tree` | Nested folder/page tree with staleness |
+| `POST` | `/pages/folders` | Create a folder |
+| `POST` | `/pages` | Create a page (async first build) |
+| `GET` | `/pages/{page_id}` | Read a page as markdown |
+| `GET` | `/pages/search` | Hybrid search over pages |
+| `PATCH` | `/pages/nodes/{node_id}` | Rename, move, or reconfigure a node |
+| `DELETE` | `/pages/nodes/{node_id}` | Delete a node and its subtree |
+| `GET` | `/pages/export` | Export all pages as markdown files |
+
+The old `/knowledge-base/...` paths still work but are deprecated and will be removed in 2.x.

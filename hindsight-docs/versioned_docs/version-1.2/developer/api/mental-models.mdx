@@ -73,7 +73,7 @@ Creating a mental model runs a reflect operation in the background and saves the
 |-----------|------|----------|-------------|
 | `name` | string | Yes | Human-readable name for the mental model |
 | `source_query` | string | Yes | The query to run to generate content |
-| `id` | string | No | Custom ID for the mental model (alphanumeric lowercase with hyphens). Auto-generated if omitted. |
+| `id` | string | No | Custom ID for the mental model (same rules as a bank id: at most 192 bytes of UTF-8, no '/' and no control characters). Auto-generated if omitted. |
 | `tags` | list | No | Tags that scope the model during reflect **and** filter source memories during refresh. Defaults to `all_strict` matching, so only memories carrying every listed tag are read. See [Tags and Visibility](#tags-and-visibility). |
 | `max_tokens` | int | No | Maximum tokens for the mental model content |
 | `trigger` | object | No | Trigger settings (see [Automatic Refresh](#automatic-refresh)) |
@@ -136,9 +136,11 @@ When `refresh_after_consolidation` is enabled, the mental model will be re-gener
 
 When `refresh_cron` is set, Hindsight checks the schedule on the server's mental-model refresh tick and refreshes the model only if memories in its scope have changed since the last refresh. `refresh_cron` and `refresh_after_consolidation` are mutually exclusive, so a model refreshes either after consolidation or on a fixed UTC schedule, not both.
 
-`last_refresh_failed_at` on the model (and on a page in the knowledge tree) carries when that happened, so a list view can show which models have stopped refreshing themselves without reading each one's history.
+`last_refresh_failed_at` on the model (and on a page in the page tree) carries when that happened, so a list view can show which models have stopped refreshing themselves without reading each one's history.
 
 **A failed refresh pauses the automatic ones.** A failed refresh is retried by the worker (`HINDSIGHT_API_WORKER_MAX_RETRIES`, 3 by default) and then stops. None of `refresh_after_consolidation`, `refresh_cron` or `full_refresh_cron` queues that model again until a refresh succeeds, so a refresh that cannot work (a prompt too large for the model, an empty account, a delta that will not apply) costs a few attempts instead of an LLM bill every tick. The failure shows in the model's [history](#history). Fix the cause and refresh the model yourself: a successful refresh resumes the automatic ones. A refresh cut off by `HINDSIGHT_API_REFLECT_WALL_TIMEOUT`, which bounds a whole refresh the same way it bounds a reflect, counts as a failure too.
+
+To catch a paused model without opening it, watch `paused_mental_models` on bank stats (`GET /v1/default/banks/{bank_id}/stats`): it counts the models in the bank that are paused right now, so an alert on it being above 0 tells you a page has stopped updating.
 
 ### Rate-limiting automatic refreshes
 
@@ -210,7 +212,7 @@ Both automatic triggers run the same check before spending an LLM call: **is the
 
 **Untagged writes never make a tagged model stale.** Under `tags_match: "any"` or `"all"` a refresh also *reads* untagged memories, but staleness only counts writes that carry the model's tags. Otherwise, on a bank that mixes tagged and untagged writes, every such model would read stale after nearly every write (#4857). The same goes for `tag_groups` leaves using those modes; a group that selects untagged memories explicitly (an `exact` leaf with no tags, or a `not`) still counts them. A model with no tags has the whole bank as its scope, so any write marks it stale.
 
-Every `is_stale` you can read is computed by that same rule: the flag on a single mental-model read, the one on the list, the one surfaced to the reflect agent, and the per-page flag on the [knowledge-base tree](./knowledge-pages). A model flagged stale is one a refresh would actually rewrite.
+Every `is_stale` you can read is computed by that same rule: the flag on a single mental-model read, the one on the list, the one surfaced to the reflect agent, and the per-page flag on the [page tree](./pages). A model flagged stale is one a refresh would actually rewrite.
 
 Listing does not cost one query per model — the whole page is answered together — so you do not have to approximate. If you are already holding `last_memory_write_at` from the bank stats endpoint, a model whose `last_memory_seen_at` is at or after it is provably up to date without asking at all: nothing in the bank changed, so nothing in that model's scope did.
 
@@ -259,7 +261,7 @@ Delta mode falls back to a full regeneration automatically in two cases:
 
 **A delta refresh never replaces the document with a partial one.** Because delta retrieval only reads memories newer than the last refresh, an answer written from that window covers just the recent slice of the topic — it is material for editing the document, not a replacement for it. So when the edits can't be made at all — the provider call fails, the response can't be read, or every single operation is rejected — the existing content stays exactly as it is and the refresh **fails** instead of completing. Nothing is lost, the refresh's time window is not advanced, and a retry sees the same memories again. The same holds for an empty answer: a populated document is never overwritten with an empty one. A delta refresh is never turned into a full rewrite behind your back: if a model's delta refreshes keep failing, switch its `mode` to `full`.
 
-**With a decision model, a delta refresh can skip reflect.** When a [decision model](/developer/decision-models) is set up for reflect, a delta refresh asks it which memories added since the last refresh could change the document, and sends only those to the LLM that writes the operations — none of them means no LLM call. See [Knowledge Pages](/developer/knowledge-pages#decision-model-refresh) for limits and fallbacks.
+**With a decision model, a delta refresh can skip reflect.** When a [decision model](/developer/decision-models) is set up for reflect, a delta refresh asks it which memories added since the last refresh could change the document, and sends only those to the LLM that writes the operations — none of them means no LLM call. See [Pages](../pages.mdx#decision-model-refresh) for limits and fallbacks.
 
 | Use Case | Recommended Mode | Why |
 |----------|-----------------|-----|
@@ -350,7 +352,7 @@ Enable automatic refresh for mental models that need to stay current. Disable it
 </TabItem>
 </Tabs>
 
-A [knowledge page](./knowledge-pages) keeps its content in a mental model, so the list includes the models behind pages too. Each item carries `is_knowledge_page` to tell them apart, and `exclude_knowledge_pages=true` lists standalone mental models only (both the items and `total`).
+A [page](./pages) keeps its content in a mental model, so the list includes the models behind pages too. Each item carries `is_page` to tell them apart, and `exclude_pages=true` lists standalone mental models only (both the items and `total`).
 
 ---
 
@@ -588,7 +590,7 @@ somewhere else.
 |-------|----------|
 | `effective_mode` | Whether the run ended up `full` or `delta` |
 | `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped` |
-| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed). The operation record adds two the executor cannot produce, because they happen outside a run: `refresh_failed_structured_output` and `refresh_failed_error` (a retrieval tool raised, the agent produced no answer, or something unforeseen escaped the refresh) |
+| `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed). The operation record adds three the executor cannot produce, because they happen outside a run: `refresh_failed_structured_output`, `refresh_failed_candidate_rejected` (an [operation validator](../extensions.md) rejected the new document) and `refresh_failed_error` (a retrieval tool raised, the agent produced no answer, or something unforeseen escaped the refresh) |
 | `tool_calls[]` | Per call: `tool`, the agent's `reason`, the full `input`, `result_count`, `duration_ms`, and the `iteration` it belongs to |
 | `llm_calls[]` | Per call: `scope` (`agent_1`, `agent_2`, …, `final`) and `duration_ms` |
 | `delta_operations` | The operations emitted in delta mode, `applied` and `skipped` |
@@ -778,7 +780,7 @@ The endpoint returns a list of history entries, most recent first:
 | `changed_at` | string | ISO 8601 timestamp of when the change occurred |
 | `kind` | `"refresh_failed"` \| absent | Present only on a **failure record** — a refresh that refused to write. Absent on version snapshots |
 | `outcome` | string \| absent | On a failure record: the operation outcome, e.g. `refresh_failed_error` |
-| `failure_reason` | string \| absent | On a failure record: why it refused — `retrieval_failed`, `no_answer`, `unexpected_error`, `empty_candidate`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped`, `delta_not_applied`, `structured_output_failed` |
+| `failure_reason` | string \| absent | On a failure record: why it refused — `retrieval_failed`, `no_answer`, `unexpected_error`, `empty_candidate`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped`, `delta_not_applied`, `structured_output_failed`, `candidate_rejected` |
 | `error_message` | string \| absent | On a failure record: the exception, as the operation reports it |
 
 Each version entry captures the **content before the change** and when it happened. The current content is returned by the standard [Get a Mental Model](#get-a-mental-model) endpoint.
