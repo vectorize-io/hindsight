@@ -196,6 +196,7 @@ from hindsight_api.engine.bank_templates import (
     validate_bank_template,
 )
 from hindsight_api.engine.embeddings import is_embedding_model_mismatch
+from hindsight_api.engine.llm_interface import ProviderContentPolicyError
 from hindsight_api.engine.memories.base import StoreWriteUnavailable
 from hindsight_api.engine.memory_engine import (
     KEEP_PARENT,
@@ -297,10 +298,12 @@ logger = logging.getLogger(__name__)
 def _internal_error(exc: Exception, where: str) -> HTTPException:
     """Log an unhandled handler exception with its traceback, and map it to a 500.
 
-    Three failures keep their own status instead: a validator rejection (the
+    Four failures keep their own status instead: a validator rejection (the
     validator's code — routes that forgot to catch it used to answer 500, #5448),
-    a store that shed the request (503), and client text the database cannot
-    store, such as a NUL byte (400 — every route answered 500 for it, #6231).
+    a store that shed the request (503), client text the database cannot
+    store, such as a NUL byte (400 — every route answered 500 for it, #6231),
+    and content the LLM provider refused on policy grounds (422, logged as a
+    warning: the caller's content, not a server fault).
 
     Every route's catch-all used to do this inline — 72 byte-identical copies of
     the same four lines, plus seven near-copies that logged the traceback without
@@ -325,6 +328,10 @@ def _internal_error(exc: Exception, where: str) -> HTTPException:
     unstorable = _unstorable_text(exc)
     if unstorable is not None:
         return unstorable
+    refused = _content_refused(exc)
+    if refused is not None:
+        logger.warning(f"Content refused by the LLM provider in {where}, answering 422: {exc}")
+        return refused
     logger.error(f"Error in {where}: {exc}\n\nTraceback:\n{traceback.format_exc()}")
     return HTTPException(status_code=500, detail=str(exc))
 
@@ -358,9 +365,25 @@ def _unstorable_text(exc: BaseException) -> HTTPException | None:
     return None
 
 
+def _content_refused(exc: BaseException) -> HTTPException | None:
+    """The 422 for content the LLM provider refused on policy grounds, or None if that is not what failed.
+
+    A refusal is a deterministic verdict on the content the caller sent: the same input earns the same
+    refusal on every attempt (#3690). Answering it with a 500 tells a client the server is broken and
+    invites a retry that can only fail again, and it counts toward 5xx error-rate alerting, so one
+    caller sending refused content looks like an outage.
+
+    Walks the cause/context chain because the engine wraps the provider's error before a route sees it.
+    """
+    for cur in _exception_chain(exc):
+        if isinstance(cur, ProviderContentPolicyError):
+            return HTTPException(status_code=422, detail=str(cur))
+    return None
+
+
 def _expected_failure(exc: BaseException) -> HTTPException | None:
-    """The 503 or 400 for a failure that is not a server bug, for catch-alls that build their own 500."""
-    return _store_unavailable(exc) or _unstorable_text(exc)
+    """The 503, 400 or 422 for a failure that is not a server bug, for catch-alls that build their own 500."""
+    return _store_unavailable(exc) or _unstorable_text(exc) or _content_refused(exc)
 
 
 def _store_unavailable(exc: BaseException) -> HTTPException | None:
