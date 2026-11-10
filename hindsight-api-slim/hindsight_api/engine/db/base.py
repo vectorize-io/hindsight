@@ -6,8 +6,9 @@ must implement. Business logic depends only on these interfaces.
 
 import json
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 
 # TYPE_CHECKING-only import to avoid circular import at runtime.
 # DataAccessOps lives in ops.py which imports nothing from base.py,
@@ -15,6 +16,17 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from .result import ResultRow
+
+FlushFn = Callable[["DatabaseConnection", list[Any]], Awaitable[None]]
+
+
+@dataclass
+class _HeldWrite:
+    """A write add_before_commit holds back: the statement, and the ids it will get."""
+
+    flush: FlushFn
+    ids: set[Any] = field(default_factory=set)
+
 
 if TYPE_CHECKING:
     from .ops import DataAccessOps
@@ -26,6 +38,10 @@ class DatabaseConnection(ABC):
     Provides a uniform interface over asyncpg.Connection, oracledb cursor, etc.
     Methods mirror asyncpg's connection API for minimal migration friction.
     """
+
+    def __init__(self) -> None:
+        # Keyed by the caller's key: one held write per key, flushed at commit.
+        self._before_commit: dict[str, _HeldWrite] = {}
 
     @property
     def backend_type(self) -> str:
@@ -97,6 +113,39 @@ class DatabaseConnection(ABC):
         """
         ...  # pragma: no cover
         yield  # type: ignore[misc]
+
+    def _commit_is_ahead(self) -> bool:
+        """True while a commit this wrapper runs is still ahead, so writes can wait for it."""
+        return False
+
+    async def add_before_commit(
+        self,
+        key: str,
+        ids: Iterable[Any],
+        flush: FlushFn,
+    ) -> None:
+        """Run ``flush`` with ``ids`` as the last statement before the transaction commits.
+
+        Calls with the same ``key`` merge into one ``flush`` with the sorted union of
+        their ids, and keys flush in sorted order, so every transaction takes the
+        rows these writes lock in one global order. Use it for writes whose row
+        locks must exist at commit but should not be held for the rest of a long
+        transaction (#6417). With no commit ahead it flushes right away. A savepoint
+        rolled back after the call does not drop the ids: use it only for writes
+        that are harmless to repeat.
+        """
+        if not self._commit_is_ahead():
+            await flush(self, sorted(set(ids)))
+            return
+        self._before_commit.setdefault(key, _HeldWrite(flush)).ids.update(ids)
+
+    async def _run_before_commit(self) -> None:
+        try:
+            for key in sorted(self._before_commit):
+                held = self._before_commit[key]
+                await held.flush(self, sorted(held.ids))
+        finally:
+            self._before_commit.clear()
 
     @abstractmethod
     async def execute(self, query: str, *args: Any, timeout: float | None = None) -> str:

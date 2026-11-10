@@ -554,24 +554,18 @@ class PostgreSQLOps(DataAccessOps):
         # concurrent caller the same lock order, so conflicting inserts
         # queue cleanly instead of cycling.
         sorted_unit_ids = sorted(unit_ids)
-        # DO UPDATE (not DO NOTHING) on a duplicate enqueue — #3034. The SET is a
-        # deliberate no-op that preserves enqueued_at; its only purpose is to take
-        # the existing row's lock. DO NOTHING does NOT lock the conflicting row, so
-        # a mutation that re-enqueues an already-queued unit could not block a
-        # worker from concurrently claiming (deleting) that row and processing the
-        # unit's pre-mutation state; the re-enqueue signal was then silently lost
-        # and the unit's derived links stayed stale with an empty queue. Locking
-        # the row serialises the mutation against the worker's claim for that
-        # (bank_id, unit_id): the worker either waits for the committed post-mutation
-        # state, or (if it claimed first) this INSERT lands a fresh row after the
-        # worker's delete commits. Row locks are acquired in sorted unit_id order,
-        # matching claim_graph_maintenance_batch, so the two never cycle.
+        # DO UPDATE (not DO NOTHING) on a duplicate enqueue — #3034. It keeps
+        # enqueued_at and clears claimed_at, and it takes the row's lock. A worker
+        # relinking the unit right now loses its claim, so its finishing delete
+        # leaves the row queued and the next pass sees this mutation's state.
+        # Callers run this as the last statement before commit (#6417), and claims
+        # commit before the relink starts, so these locks are only held briefly.
         await conn.execute(
             f"""
             INSERT INTO {table} (bank_id, unit_id)
             SELECT $1, v FROM unnest($2::uuid[]) AS t(v)
             ON CONFLICT (bank_id, unit_id)
-                DO UPDATE SET enqueued_at = {table}.enqueued_at
+                DO UPDATE SET claimed_at = NULL
             """,
             bank_id,
             sorted_unit_ids,
@@ -583,22 +577,19 @@ class PostgreSQLOps(DataAccessOps):
         table: str,
         bank_id: str,
         limit: int,
+        claimed_at: datetime,
+        stale_before: datetime,
     ) -> list[str]:
-        # Ordered locking (#3034). Choose the oldest batch by enqueued_at, but
-        # acquire the row locks in (bank_id, unit_id) order — the same order the
-        # enqueue upsert takes them — so a foreground mutation re-enqueueing an
-        # overlapping unit set can never cycle against a worker draining it. The
-        # `chosen` CTE is MATERIALIZED so the enqueued_at pick is fenced from the
-        # locking clause; `FOR UPDATE OF q ... ORDER BY q.unit_id` then puts
-        # LockRows above the Sort, so locks are taken ascending by unit_id (same
-        # idiom as prune_stale_cooccurrences' #2529 ordered lock). A concurrent
-        # enqueue holding one of these rows blocks this claim until it commits, at
-        # which point the worker deletes and processes the committed state.
+        # Choose the oldest claimable batch by enqueued_at, then lock it in
+        # (bank_id, unit_id) order — the order the enqueue upsert takes them — so
+        # this short claim never cycles against a concurrent enqueue. MATERIALIZED
+        # fences the enqueued_at pick from the locking clause; SKIP LOCKED leaves
+        # a row being re-queued right now to the next claim.
         rows = await conn.fetch(
             f"""
             WITH chosen AS MATERIALIZED (
                 SELECT bank_id, unit_id FROM {table}
-                WHERE bank_id = $1
+                WHERE bank_id = $1 AND (claimed_at IS NULL OR claimed_at < $4)
                 ORDER BY enqueued_at
                 LIMIT $2
             ),
@@ -606,18 +597,36 @@ class PostgreSQLOps(DataAccessOps):
                 SELECT q.bank_id, q.unit_id
                 FROM {table} q
                 JOIN chosen c ON c.bank_id = q.bank_id AND c.unit_id = q.unit_id
+                WHERE q.claimed_at IS NULL OR q.claimed_at < $4
                 ORDER BY q.unit_id
-                FOR UPDATE OF q
+                FOR UPDATE OF q SKIP LOCKED
             )
-            DELETE FROM {table} q
-            USING locked l
+            UPDATE {table} q SET claimed_at = $3
+            FROM locked l
             WHERE q.bank_id = l.bank_id AND q.unit_id = l.unit_id
             RETURNING q.unit_id
             """,
             bank_id,
             limit,
+            claimed_at,
+            stale_before,
         )
         return [str(row["unit_id"]) for row in rows]
+
+    async def finish_graph_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        unit_ids: list[str],
+        claimed_at: datetime,
+    ) -> None:
+        await conn.execute(
+            f"DELETE FROM {table} WHERE bank_id = $1 AND unit_id = ANY($2::uuid[]) AND claimed_at = $3",
+            bank_id,
+            sorted(unit_ids),
+            claimed_at,
+        )
 
     async def release_entity_postings(
         self,

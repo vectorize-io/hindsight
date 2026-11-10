@@ -101,12 +101,23 @@ class PostgresConnection(DatabaseConnection):
     __slots__ = ("_conn",)
 
     def __init__(self, conn: asyncpg.Connection) -> None:
+        super().__init__()
         self._conn = conn
+
+    def _commit_is_ahead(self) -> bool:
+        return self._conn.is_in_transaction()
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator["PostgresConnection"]:
-        async with self._conn.transaction():
-            yield self
+        outermost = not self._conn.is_in_transaction()
+        try:
+            async with self._conn.transaction():
+                yield self
+                if outermost:
+                    await self._run_before_commit()
+        finally:
+            if outermost:
+                self._before_commit.clear()
 
     async def execute(self, query: str, *args: Any, timeout: float | None = None) -> str:
         # asyncpg's stubs declare `timeout: float`; None is its documented "no timeout", and
@@ -397,8 +408,8 @@ class PostgreSQLBackend(DatabaseBackend):
             pool_stats=self._pool_stats,
             warn_threshold_s=self._acquire_warn_threshold_s,
         ) as conn:
-            async with conn.transaction():
-                yield PostgresConnection(conn)
+            async with PostgresConnection(conn).transaction() as tx:
+                yield tx
 
     def get_pool(self) -> asyncpg.Pool:
         return self._ensure_pool()

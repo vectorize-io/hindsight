@@ -531,9 +531,9 @@ async def restore_memory(*, conn, fq_table, bank_id: str, unit_id: str) -> Store
         await rematerialize_causal_links(conn, bank_id, conn.parse_json(causal_json) or [], ops=_ops_for(conn))
     # Invalidation cascaded away this unit's derived outgoing links; queue it so graph maintenance
     # rebuilds them (the drain only touches queued units — it never scans for missing adjacency).
-    await _ops_for(conn).enqueue_graph_maintenance(
-        conn, fq_table("graph_maintenance_queue"), bank_id, [uuid.UUID(str(unit_id))]
-    )
+    from .graph import enqueue_graph_maintenance_at_commit
+
+    await enqueue_graph_maintenance_at_commit(conn, fq_table, bank_id, [uuid.UUID(str(unit_id))])
     await conn.execute(f"DELETE FROM {arch} WHERE id = $1 AND bank_id = $2", str(unit_id), bank_id)
     return _archived_stored(arch_row)
 

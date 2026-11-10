@@ -378,27 +378,20 @@ class OracleOps(DataAccessOps):
         if not unit_ids:
             return
         # Locking upsert (#3034), the Oracle analogue of the PG
-        # ``ON CONFLICT DO UPDATE``. The old IGNORE_ROW_ON_DUPKEY_INDEX insert
-        # skipped duplicates WITHOUT locking the existing row, so a mutation
-        # re-enqueueing an already-queued unit could not block a worker from
-        # concurrently claiming (deleting) that row and processing the unit's
-        # pre-mutation state — the re-enqueue signal was silently lost. MERGE
-        # WHEN MATCHED takes an exclusive row lock on the existing queue row
-        # (the SET is a deliberate no-op that preserves enqueued_at); WHEN NOT
-        # MATCHED inserts a fresh row. That serialises the mutation against the
-        # worker's claim for the same (bank_id, unit_id).
+        # ``ON CONFLICT DO UPDATE``: WHEN MATCHED keeps enqueued_at, clears any
+        # claim (so a worker relinking the unit right now leaves the row queued
+        # for one more pass) and takes the row's lock; WHEN NOT MATCHED inserts.
+        # Callers run it just before commit (#6417), so the lock is brief.
         #
-        # Sort to enforce a global (bank_id, unit_id) lock-acquisition order,
-        # matching claim_graph_maintenance_batch's delete order, so overlapping
-        # mutation/worker sets acquire the shared row locks ascending and cannot
-        # cycle.
+        # Sorted, so overlapping enqueues take the shared row locks ascending —
+        # the order the claim and the finishing delete use too — and cannot cycle.
         sorted_unit_ids = sorted(unit_ids)
         await conn.executemany(
             f"""
             MERGE INTO {table} q
             USING (SELECT $1 AS bank_id, $2 AS unit_id FROM dual) s
             ON (q.bank_id = s.bank_id AND q.unit_id = s.unit_id)
-            WHEN MATCHED THEN UPDATE SET q.enqueued_at = q.enqueued_at
+            WHEN MATCHED THEN UPDATE SET q.claimed_at = NULL
             WHEN NOT MATCHED THEN INSERT (bank_id, unit_id) VALUES (s.bank_id, s.unit_id)
             """,
             [(bank_id, uid) for uid in sorted_unit_ids],
@@ -410,35 +403,53 @@ class OracleOps(DataAccessOps):
         table: str,
         bank_id: str,
         limit: int,
+        claimed_at: datetime,
+        stale_before: datetime,
     ) -> list[str]:
-        # Two-step claim: select the batch, then delete by exact keys. Oracle's
-        # DELETE ... RETURNING doesn't accept a multi-row subquery, so we can't
-        # do it in one statement like the PG version.
+        # Pick the oldest claimable batch, then stamp it one row per statement in
+        # ascending unit_id order (an Oracle multi-row UPDATE locks in no set
+        # order). The stamp re-checks claimability, so a row another worker took
+        # in between is skipped; reading back by stamp returns what we got.
         rows = await conn.fetch(
             f"""
             SELECT unit_id FROM {table}
-            WHERE bank_id = $1
+            WHERE bank_id = $1 AND (claimed_at IS NULL OR claimed_at < $3)
             ORDER BY enqueued_at
             FETCH FIRST $2 ROWS ONLY
             """,
             bank_id,
             limit,
+            stale_before,
         )
-        # Ordered locking (#3034): the per-row DELETE takes the queue rows'
-        # exclusive locks in executemany array order. Sort the claimed keys by
-        # unit_id so those locks are acquired in the same (bank_id, unit_id)
-        # order the enqueue MERGE uses — overlapping mutation/worker sets then
-        # lock the shared rows ascending and cannot cycle. (The batch is still
-        # *chosen* oldest-first by enqueued_at above; only the lock/delete order
-        # is normalised.) The Pass 1 retry wrap in run_graph_maintenance_job is
-        # the ORA-00060 backstop for any residual interleaving.
-        claimed = sorted(str(row["unit_id"]) for row in rows)
-        if claimed:
-            await conn.executemany(
-                f"DELETE FROM {table} WHERE bank_id = $1 AND unit_id = $2",
-                [(bank_id, uid) for uid in claimed],
-            )
-        return claimed
+        if not rows:
+            return []
+        await conn.executemany(
+            f"""
+            UPDATE {table} SET claimed_at = $1
+            WHERE bank_id = $2 AND unit_id = $3 AND (claimed_at IS NULL OR claimed_at < $4)
+            """,
+            [(claimed_at, bank_id, uid, stale_before) for uid in sorted(str(r["unit_id"]) for r in rows)],
+        )
+        claimed = await conn.fetch(
+            f"SELECT unit_id FROM {table} WHERE bank_id = $1 AND claimed_at = $2",
+            bank_id,
+            claimed_at,
+        )
+        return sorted(str(r["unit_id"]) for r in claimed)
+
+    async def finish_graph_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        unit_ids: list[str],
+        claimed_at: datetime,
+    ) -> None:
+        # One row per statement, ascending — the enqueue MERGE's lock order.
+        await conn.executemany(
+            f"DELETE FROM {table} WHERE bank_id = $1 AND unit_id = $2 AND claimed_at = $3",
+            [(bank_id, uid, claimed_at) for uid in sorted(unit_ids)],
+        )
 
     async def release_entity_postings(
         self,

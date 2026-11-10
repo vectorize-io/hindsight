@@ -806,8 +806,11 @@ class DataAccessOps(ABC):
         """Insert unit_ids into graph_maintenance_queue, deduplicating on the
         (bank_id, unit_id) primary key.
 
-        Called inside the triggering transaction so enqueue is atomic with
-        the mutation that caused it. Order is unspecified.
+        A unit already queued keeps its ``enqueued_at`` and loses any claim on
+        it (``claimed_at`` cleared), so a worker relinking it right now leaves
+        the row queued for one more pass over the new state. Called inside the
+        triggering transaction so enqueue is atomic with the mutation that
+        caused it.
         """
         ...
 
@@ -818,13 +821,32 @@ class DataAccessOps(ABC):
         table: str,
         bank_id: str,
         limit: int,
+        claimed_at: datetime,
+        stale_before: datetime,
     ) -> list[str]:
-        """Atomically claim a batch of rows from graph_maintenance_queue and
-        remove them from the table.
+        """Claim up to ``limit`` of the oldest queued units by stamping them
+        ``claimed_at``. Rows stay in the queue until
+        :meth:`finish_graph_maintenance_batch`; a claim older than
+        ``stale_before`` (a worker that died) can be taken again.
 
-        Returns the list of ``unit_id`` strings. Empty list when the queue
-        for ``bank_id`` is drained.
+        Run it in a transaction of its own and commit before the relink, so the
+        row locks it takes last milliseconds (#6417).
+
+        Returns the claimed ``unit_id`` strings; empty when nothing is claimable.
         """
+        ...
+
+    @abstractmethod
+    async def finish_graph_maintenance_batch(
+        self,
+        conn: DatabaseConnection,
+        table: str,
+        bank_id: str,
+        unit_ids: list[str],
+        claimed_at: datetime,
+    ) -> None:
+        """Delete the claimed rows whose claim is still ``claimed_at``. A row
+        re-queued since the claim lost it and stays queued."""
         ...
 
     @abstractmethod
