@@ -1671,7 +1671,7 @@ export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-key
 | `HINDSIGHT_API_DECISION_MODEL_BASE_URL` | API base URL. Required for `cloudflare`. | provider default |
 | `HINDSIGHT_API_DECISION_MODEL_TIMEOUT` | Request timeout in seconds. | `60` |
 | `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` | Most requests in flight at once, for each operation using the decision model. | `24` |
-| `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` | Most tokens one request may carry, counted on the whole request body. Larger asks are split across requests. Set it to the served model's context window less a margin. | `26000` |
+| `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` | Most tokens one request may carry, counted on the whole request body. Larger asks are split across requests. Set it to the served model's context window less a margin. Only for endpoints that do not fit requests themselves: on Hindsight Inference's own URL, `hindsight` fits each request to its model's window, so the whole ask goes in one request (split only to stay under the 2 MB body limit). With a custom `HINDSIGHT_API_DECISION_MODEL_BASE_URL` (the model on your own vLLM), requests are split again. | `26000`; `54000` for `hindsight` on a custom URL; unset on Hindsight Inference |
 | `HINDSIGHT_API_DECISION_MODEL_TOKENIZER` | The vocabulary the request ceiling and recall's caps (on the query, the shared context and each memory) are counted in: the served model's own, since it is the model that refuses a request past its window. `jev` (an estimate of Jev's count) and `qwen3.5` are available besides the `HINDSIGHT_API_TOKENIZER_ENCODING` ones. Set it when the endpoint serves another model than the provider's default. | `jev` for `typesafe`; else `HINDSIGHT_API_TOKENIZER_ENCODING` |
 
 Every request is retried on its own when it is rate-limited (429) or fails transiently.
@@ -1718,10 +1718,12 @@ The bank settings are also listed with their operation under [Observations](#obs
 
 - **Rate limits.** `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` caps requests in flight for
   each operation. Recall asks one question per candidate, batched into as few requests as fit
-  `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS`, so a busy recall path is where the cap bites.
+  `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` (one request on Hindsight Inference), so a busy
+  recall path is where the cap bites.
 - **Another model.** When the endpoint serves another model than the provider's default, set
   `HINDSIGHT_API_DECISION_MODEL_MODEL`, `HINDSIGHT_API_DECISION_MODEL_TOKENIZER`, and set
-  `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` to its context window less a margin.
+  `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` to its context window less a margin (not
+  needed on Hindsight Inference).
 
 **Recall pruning and dedup.** Both are off by default, and a recall request turns each on or off
 with `rerank.prune` / `rerank.dedup`; a request that omits one gets the bank's value, else the

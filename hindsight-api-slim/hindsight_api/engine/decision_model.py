@@ -22,6 +22,7 @@ provider's wire format:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import time
@@ -33,7 +34,7 @@ from .._cross_loop import CrossLoopSemaphore
 from ..config import DecisionModelConfig
 from ..tracing import get_span_recorder
 from .aiohttp_session import LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
-from .decision_rerank_interface import DecisionRerank
+from .decision_rerank_interface import MAX_REQUEST_TOKENS, DecisionRerank
 from .remote_retry import RetryPolicy, acall_with_retry
 from .token_encoding import count_tokens, truncate_to_tokens
 
@@ -206,10 +207,16 @@ def record_decision_call(
     )
 
 
+# Hindsight Inference refuses a body over 2 MB; this leaves room for the per-question counting
+# being approximate. aiohttp sends json.dumps' ASCII output, so characters are bytes.
+MAX_REQUEST_BYTES = 1_800_000
+
+
 class DecisionModel:
     # A request holds at most decision_rerank_interface.MAX_QUESTIONS questions. The token
     # ceiling is ``max_request_tokens``: it belongs to the model the endpoint serves, not to
-    # this client, so it is a setting.
+    # this client, so it is a setting. None when the endpoint fits each request to its model's
+    # window itself (Hindsight Inference): then only the body size is bounded.
     def __init__(
         self,
         provider: str,
@@ -218,7 +225,7 @@ class DecisionModel:
         base_url: str,
         timeout: float,
         max_concurrent: int,
-        max_request_tokens: int,
+        max_request_tokens: int | None,
         retry_policy: RetryPolicy | None = None,
         tokenizer: str | None = None,
     ):
@@ -313,10 +320,12 @@ class DecisionModel:
         since that is what the endpoint counts against its window, and in the model's own
         vocabulary when the config names it. The OpenAI shape carries the same text under
         other keys. A single question over the ceiling still goes out alone, and fails there.
+        With no token ceiling, the groups only keep each body under ``MAX_REQUEST_BYTES``.
         """
-        groups = self.rerank_interface().split(
-            self.model, state, {key: question.system_one() for key, question in questions.items()}
-        )
+        splitter = self.rerank_interface()
+        if self.max_request_tokens is None:
+            splitter = dataclasses.replace(splitter, count=len, max_request_tokens=MAX_REQUEST_BYTES)
+        groups = splitter.split(self.model, state, {key: question.system_one() for key, question in questions.items()})
         return [{key: questions[key] for key in group} for group in groups]
 
     def rerank_interface(self) -> DecisionRerank:
@@ -324,7 +333,9 @@ class DecisionModel:
         return DecisionRerank(
             count=lambda text: count_tokens(text, self.tokenizer),
             truncate=lambda text, max_tokens: truncate_to_tokens(text, max_tokens, self.tokenizer).text,
-            max_request_tokens=self.max_request_tokens,
+            # With no token ceiling (the endpoint fits requests), the ceiling here only sizes the caps
+            # on the query, shared context and each memory, which keep the default's.
+            max_request_tokens=self.max_request_tokens or MAX_REQUEST_TOKENS,
         )
 
     async def _ask_traced(

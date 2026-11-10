@@ -1632,16 +1632,26 @@ class _DecisionProviderDefaults:
     #: Most tokens one request may carry, sized for the model's window; None takes
     #: DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS.
     max_request_tokens: int | None = None
+    #: ``base_url`` fits each request to the window of the model serving it, so on that URL the
+    #: client does not split by tokens. Any other URL (the model served on your own vLLM) does not.
+    default_url_fits_requests: bool = False
 
 
 # "none": no decision model; operations that could use one keep their LLM-only path.
 # hindsight, typesafe and cloudflare speak the System One API; openai has its own Decisions API.
 # hindsight is Hindsight Inference: its key comes from HINDSIGHT_API_DECISION_MODEL_API_KEY or,
-# when unset, from `hindsight-admin cloud login`. hs-decide-1-flash has a 64k window; the margin is
-# for counting it with o200k_base, not its own vocabulary.
+# when unset, from `hindsight-admin cloud login`. Hindsight Inference fits each request to the
+# window of the model that serves it and merges the answers, so the whole pool goes in one request.
+# It used to split at 54k tokens there too, counted on the whole JSON body: about twice the text the
+# model reads, so pools that fit were sent as 2+ calls (#6489). The 54k still applies on a custom URL,
+# where nothing fits the request: hs-decide-1-flash has a 64k window, and the margin is for counting
+# it with o200k_base, not its own vocabulary.
 DECISION_MODEL_PROVIDER_DEFAULTS = {
     "hindsight": _DecisionProviderDefaults(
-        model="hs-decide-1-flash", base_url=HINDSIGHT_INFERENCE_URL, max_request_tokens=54_000
+        model="hs-decide-1-flash",
+        base_url=HINDSIGHT_INFERENCE_URL,
+        max_request_tokens=54_000,
+        default_url_fits_requests=True,
     ),
     "typesafe": _DecisionProviderDefaults(model="jev-latest", base_url="https://api.typesafe.ai", tokenizer="jev"),
     "cloudflare": _DecisionProviderDefaults(model="clef", base_url=None),
@@ -3315,7 +3325,8 @@ class DecisionModelConfig:
     base_url: str
     timeout: float
     max_concurrent: int
-    max_request_tokens: int
+    #: None: the endpoint fits requests itself, so they are split only to stay under its body-size limit.
+    max_request_tokens: int | None
     #: The vocabulary ``max_request_tokens`` and the reranker's caps are counted in; None
     #: counts with HINDSIGHT_API_TOKENIZER_ENCODING.
     tokenizer: str | None = None
@@ -6102,11 +6113,21 @@ class HindsightConfig:
         if provider == "hindsight" and operation == "recall" and own_provider is None:
             return None
         defaults = DECISION_MODEL_PROVIDER_DEFAULTS[provider]
-        max_request_tokens = (
-            self.decision_model_max_request_tokens
-            or defaults.max_request_tokens
-            or DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
-        )
+        inherits_global = provider == (self.decision_model_provider or "").lower()
+
+        def setting(name: str) -> str | None:
+            own = getattr(self, f"{operation}_decision_model_{name}")
+            if own is not None or not inherits_global:
+                return own
+            return getattr(self, f"decision_model_{name}")
+
+        base_url = setting("base_url") or defaults.base_url
+        if self.decision_model_max_request_tokens:
+            max_request_tokens: int | None = self.decision_model_max_request_tokens
+        elif defaults.default_url_fits_requests and (base_url or "").rstrip("/") == defaults.base_url:
+            max_request_tokens = None
+        else:
+            max_request_tokens = defaults.max_request_tokens or DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS
         # Checked here, not on the first request: a ceiling no request fits, or a cap no
         # request gets through, would otherwise surface as every decision failing.
         if self.decision_model_timeout <= 0:
@@ -6115,18 +6136,11 @@ class HindsightConfig:
             raise ValueError(
                 f"{ENV_DECISION_MODEL_MAX_CONCURRENT} must be at least 1, not {self.decision_model_max_concurrent}"
             )
-        if max_request_tokens < MIN_DECISION_MODEL_MAX_REQUEST_TOKENS:
+        if max_request_tokens is not None and max_request_tokens < MIN_DECISION_MODEL_MAX_REQUEST_TOKENS:
             raise ValueError(
                 f"{ENV_DECISION_MODEL_MAX_REQUEST_TOKENS} must be at least {MIN_DECISION_MODEL_MAX_REQUEST_TOKENS}, "
                 f"not {max_request_tokens}"
             )
-        inherits_global = provider == (self.decision_model_provider or "").lower()
-
-        def setting(name: str) -> str | None:
-            own = getattr(self, f"{operation}_decision_model_{name}")
-            if own is not None or not inherits_global:
-                return own
-            return getattr(self, f"decision_model_{name}")
 
         def required(value: str | None, env_setting: str) -> str:
             if not value:
@@ -6161,7 +6175,7 @@ class HindsightConfig:
             provider=provider,
             api_key=required(api_key, "API_KEY"),
             model=setting("model") or defaults.model,
-            base_url=required(setting("base_url") or defaults.base_url, "BASE_URL"),
+            base_url=required(base_url, "BASE_URL"),
             timeout=self.decision_model_timeout,
             max_concurrent=self.decision_model_max_concurrent,
             max_request_tokens=max_request_tokens,

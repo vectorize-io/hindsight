@@ -40,7 +40,7 @@ def test_provider_defaults_with_saved_login(home, monkeypatch):
         base_url="https://inference.hindsight.vectorize.io",
         timeout=60.0,
         max_concurrent=24,
-        max_request_tokens=54_000,
+        max_request_tokens=None,
         tokenizer=None,
     )
     assert config.decision_model_config("consolidation") == expected
@@ -54,6 +54,23 @@ def test_env_key_wins_over_saved_login(home, monkeypatch):
         {"HINDSIGHT_API_DECISION_MODEL_PROVIDER": "hindsight", "HINDSIGHT_API_DECISION_MODEL_API_KEY": "hsk_env"},
     )
     assert config.decision_model_config("reflect").api_key == "hsk_env"
+
+
+@pytest.mark.parametrize("base_url", ["http://localhost:8000", "http://vllm.internal/"])
+def test_a_custom_url_is_split_by_tokens(home, monkeypatch, base_url):
+    """hs-decide-1-flash served on your own vLLM has no gateway fitting requests to its window,
+    so the client keeps splitting them; only Hindsight Inference's own URL takes the pool whole."""
+    _save(home)
+    env = {"HINDSIGHT_API_DECISION_MODEL_PROVIDER": "hindsight"}
+    assert _config(monkeypatch, env).decision_model_config("reflect").max_request_tokens is None
+    assert (
+        _config(monkeypatch, {**env, "HINDSIGHT_API_DECISION_MODEL_BASE_URL": base_url})
+        .decision_model_config("reflect")
+        .max_request_tokens
+        == 54_000
+    )
+    explicit_default = {**env, "HINDSIGHT_API_DECISION_MODEL_BASE_URL": "https://inference.hindsight.vectorize.io/"}
+    assert _config(monkeypatch, explicit_default).decision_model_config("reflect").max_request_tokens is None
 
 
 def test_explicit_request_ceiling_wins_over_provider_default(home, monkeypatch):
