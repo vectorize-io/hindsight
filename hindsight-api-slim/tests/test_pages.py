@@ -2205,3 +2205,45 @@ def test_old_page_trigger_env_var_is_still_read(monkeypatch):
 
     monkeypatch.setenv("HINDSIGHT_API_PAGE_DEFAULT_TRIGGER", '{"refresh_cron": "5 * * * *"}')
     assert HindsightConfig.from_env().page_default_trigger == {"refresh_cron": "5 * * * *"}
+
+
+async def test_store_written_before_rename_still_serves_pages():
+    """A custom memories store that implements the old hook names keeps working."""
+    from hindsight_api.engine.memories import (
+        KnowledgePageMatch,
+        KnowledgePageRef,
+        MemoriesExtension,
+        PageMatch,
+        PageRef,
+    )
+
+    calls: list[str] = []
+
+    class _OldStore:
+        async def index_knowledge_pages(self, bank_id, entries):
+            calls.append("index")
+
+        async def delete_knowledge_pages(self, bank_id, page_ids):
+            calls.append("delete")
+
+        async def search_knowledge_pages(self, bank_id, **kw):
+            calls.append("search")
+            return []
+
+        async def search_knowledge_pages_semantic(self, bank_id, **kw):
+            calls.append("semantic")
+            return []
+
+        async def list_knowledge_pages(self, bank_id):
+            calls.append("list")
+            return []
+
+    store = _OldStore()
+    # The engine calls the new names; the base class routes them to the old overrides.
+    await MemoriesExtension.index_pages(store, "b", [])
+    await MemoriesExtension.delete_pages(store, "b", [])
+    await MemoriesExtension.search_pages(store, "b", embedding=None, text="q", limit=5)
+    await MemoriesExtension.search_pages_semantic(store, "b", embedding=[0.0], limit=5)
+    await MemoriesExtension.list_pages(store, "b")
+    assert calls == ["index", "delete", "search", "semantic", "list"]
+    assert KnowledgePageMatch is PageMatch and KnowledgePageRef is PageRef

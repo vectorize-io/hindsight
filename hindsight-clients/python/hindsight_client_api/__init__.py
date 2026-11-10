@@ -256,3 +256,13 @@ from hindsight_client_api.models.webhook_delivery_response import WebhookDeliver
 from hindsight_client_api.models.webhook_http_config import WebhookHttpConfig
 from hindsight_client_api.models.webhook_list_response import WebhookListResponse
 from hindsight_client_api.models.webhook_response import WebhookResponse
+
+# Deprecated names from before pages were renamed. Remove in 2.x.
+KnowledgeNode = PageNode
+KnowledgeTreeResponse = PageTreeResponse
+CreateKnowledgePageResponse = CreatePageResponse
+KnowledgePageResponse = PageResponse
+KnowledgePageBundleFile = PageBundleFile
+KnowledgePageBundleResponse = PageBundleResponse
+KnowledgePageSearchResult = PageSearchResult
+KnowledgePageSearchResponse = PageSearchResponse

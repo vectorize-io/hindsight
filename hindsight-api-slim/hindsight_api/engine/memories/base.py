@@ -1114,6 +1114,12 @@ class EntityResolverHandle(Protocol):
     ) -> None: ...
 
 
+# Deprecated names from before pages were renamed. Remove in 2.x.
+KnowledgePageEntry = PageEntry
+KnowledgePageRef = PageRef
+KnowledgePageMatch = PageMatch
+
+
 class MemoriesExtension(Extension, ABC):
     """Storage + retrieval for memory units and their links, behind one interface.
 
@@ -1276,12 +1282,14 @@ class MemoriesExtension(Extension, ABC):
         Replacing rather than merging is deliberate: a derived index has nothing worth preserving
         across a rewrite, and it makes re-indexing everything idempotent, which is what lets the
         reconcile pass be "put them all again"."""
-        raise NotImplementedError("this store does not index pages")
+        # Stores written before the rename implement the old name. Remove in 2.x.
+        return await self.index_knowledge_pages(bank_id, entries)
 
     async def delete_pages(self, bank_id: str, page_ids: list[str]) -> None:
         """Remove pages from the index. Deleting one the store does not hold must be a no-op, so a
         reconcile can reap an entry it believes is stale without first proving it is there."""
-        raise NotImplementedError("this store does not index pages")
+        # Stores written before the rename implement the old name. Remove in 2.x.
+        return await self.delete_knowledge_pages(bank_id, page_ids)
 
     async def search_pages(
         self,
@@ -1304,7 +1312,16 @@ class MemoriesExtension(Extension, ABC):
         Returns ids only. The caller joins them back to Postgres for name, snippet and folder — and
         that join is also what filters out ids that are not pages, so the store never needs to know
         the difference between a page and a pinned mental model."""
-        raise NotImplementedError("this store does not index pages")
+        # Stores written before the rename implement the old name. Remove in 2.x.
+        return await self.search_knowledge_pages(
+            bank_id,
+            embedding=embedding,
+            text=text,
+            limit=limit,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+        )
 
     async def search_pages_semantic(
         self,
@@ -1325,7 +1342,16 @@ class MemoriesExtension(Extension, ABC):
 
         ``exclude_ids`` drops pages from the result — a refresh must not retrieve the very page it
         is regenerating."""
-        raise NotImplementedError("this store does not index pages")
+        # Stores written before the rename implement the old name. Remove in 2.x.
+        return await self.search_knowledge_pages_semantic(
+            bank_id,
+            embedding=embedding,
+            limit=limit,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
+            exclude_ids=exclude_ids,
+        )
 
     async def list_pages(self, bank_id: str) -> list["PageRef"]:
         """Every page the store currently indexes for this bank.
@@ -1333,6 +1359,49 @@ class MemoriesExtension(Extension, ABC):
         The read half of the reconcile: diff it against the bank's `mental_models` rows to find both
         what is missing from the index and what is left over in it. Bounded by the bank's page
         count, which is a curated set rather than its corpus."""
+        # Stores written before the rename implement the old name. Remove in 2.x.
+        return await self.list_knowledge_pages(bank_id)
+
+    # Deprecated names from before pages were renamed. Remove in 2.x.
+
+    async def index_knowledge_pages(self, bank_id: str, entries: list["PageEntry"]) -> None:
+        """Deprecated name of :meth:`index_pages`, still called when a store overrides it. Remove in 2.x."""
+        raise NotImplementedError("this store does not index pages")
+
+    async def delete_knowledge_pages(self, bank_id: str, page_ids: list[str]) -> None:
+        """Deprecated name of :meth:`delete_pages`, still called when a store overrides it. Remove in 2.x."""
+        raise NotImplementedError("this store does not index pages")
+
+    async def search_knowledge_pages(
+        self,
+        bank_id: str,
+        *,
+        embedding: list[float] | None,
+        text: str,
+        limit: int,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list | None = None,
+    ) -> list["PageMatch"]:
+        """Deprecated name of :meth:`search_pages`, still called when a store overrides it. Remove in 2.x."""
+        raise NotImplementedError("this store does not index pages")
+
+    async def search_knowledge_pages_semantic(
+        self,
+        bank_id: str,
+        *,
+        embedding: list[float],
+        limit: int,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list | None = None,
+        exclude_ids: list[str] | None = None,
+    ) -> list["PageMatch"]:
+        """Deprecated name of :meth:`search_pages_semantic`, still called when a store overrides it. Remove in 2.x."""
+        raise NotImplementedError("this store does not index pages")
+
+    async def list_knowledge_pages(self, bank_id: str) -> list["PageRef"]:
+        """Deprecated name of :meth:`list_pages`, still called when a store overrides it. Remove in 2.x."""
         raise NotImplementedError("this store does not index pages")
 
     async def retain(
