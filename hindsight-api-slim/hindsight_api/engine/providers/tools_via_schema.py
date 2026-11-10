@@ -270,8 +270,14 @@ def as_text_messages(messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     """The conversation as plain role/content turns, with the functions declared in the system prompt.
 
     An earlier call is the assistant's reply as it was written (``{"call": {...}}``); its result
-    is a user turn naming the function. Turns are not merged, so the prefix of a longer
-    conversation renders to the prefix of its text.
+    is a user turn naming the function.
+
+    Back-to-back user turns are joined into one: a tool result followed by the next request,
+    the question followed by the first request, or several results of one reply. OpenAI takes
+    two user turns in a row, but the chat template of many open models (Gemma's, under
+    llama.cpp or vLLM) refuses them with "Conversation roles must alternate", so every reflect
+    failed on its first call there (#6349). A turn is only ever joined onto the end of the one
+    before it, so the prefix of a longer conversation still renders to the prefix of its text.
     """
     names: dict[str, str] = {}
     out: list[dict[str, Any]] = []
@@ -300,9 +306,33 @@ def as_text_messages(messages: list[dict[str, Any]], tools: list[dict[str, Any]]
             out.append({"role": "user", "content": f"Result of `{name}`:\n{message.get('content') or ''}"})
         else:
             out.append({k: v for k, v in message.items() if k in ("role", "content")})
+    out = _joined_user_turns(out)
     declarations = _declarations(tools)
     if out and out[0].get("role") == "system":
         out[0] = {"role": "system", "content": f"{out[0].get('content') or ''}\n\n{declarations}"}
     else:
         out.insert(0, {"role": "system", "content": declarations})
     return out
+
+
+def _joined_user_turns(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for message in messages:
+        if out and message.get("role") == "user" and out[-1].get("role") == "user":
+            out[-1] = {"role": "user", "content": _joined(out[-1].get("content"), message.get("content"))}
+        else:
+            out.append(message)
+    return out
+
+
+def _joined(first: Any, second: Any) -> Any:
+    """Two turns' content as one: text joined by a blank line, part lists (images) concatenated."""
+    if isinstance(first, str) and isinstance(second, str):
+        return f"{first}\n\n{second}"
+    return [*_as_parts(first), *_as_parts(second)]
+
+
+def _as_parts(content: Any) -> list[Any]:
+    if isinstance(content, list):
+        return content
+    return [{"type": "text", "text": content or ""}]

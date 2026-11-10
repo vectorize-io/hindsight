@@ -40,7 +40,10 @@ logger = logging.getLogger(__name__)
 
 
 #: The words Hindsight asks for a forced (named) call with (``tools_via_schema.turn_request``).
-_NAMED_TURN_RX = re.compile(r"^Call `([^`]+)` now")
+# The request closes the last user turn, after the question or the previous result
+# it is joined onto (Hindsight sends no two user turns in a row, #6349), so it is the
+# last line that opens this way.
+_NAMED_TURN_RX = re.compile(r"^Call `([^`]+)` now", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -71,9 +74,9 @@ def _schema_tool_turn(body: dict[str, Any]) -> SchemaToolTurn | None:
         return SchemaToolTurn(tools=tuple(o["properties"]["name"]["enum"][0] for o in options), named=False)
     last = (body.get("messages") or [{}])[-1]
     content = last.get("content")
-    match = _NAMED_TURN_RX.match(content) if schema and isinstance(content, str) else None
-    if match:
-        return SchemaToolTurn(tools=(match.group(1),), named=True)
+    names = _NAMED_TURN_RX.findall(content) if schema and isinstance(content, str) else []
+    if names:
+        return SchemaToolTurn(tools=(names[-1],), named=True)
     return None
 
 

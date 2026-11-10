@@ -234,8 +234,55 @@ class TestTheCall:
             "role": "assistant",
             "content": json.dumps({"call": {"name": "recall", "arguments": {"query": "tools"}}}),
         }
-        assert sent[3] == {"role": "user", "content": 'Result of `recall`:\n{"memories": []}'}
+        # The result and this turn's request are one user turn (see the next test).
+        assert sent[3]["role"] == "user"
+        assert sent[3]["content"].startswith('Result of `recall`:\n{"memories": []}\n\nDecide your next step')
         assert all(set(m) == {"role", "content"} for m in sent)
+
+    @pytest.mark.asyncio
+    async def test_no_two_user_turns_in_a_row(self):
+        """Gemma's chat template under llama.cpp/vLLM refuses them, so every reflect failed there (#6349).
+
+        The question and the first request, a result and the next request, and the results of
+        a reply that made several calls each become one user turn, in order.
+        """
+        history = [
+            {"role": "system", "content": "You are reflect."},
+            {"role": "user", "content": "What does the user prefer?"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "recall", "arguments": '{"query": "a"}'}},
+                    {"id": "c2", "type": "function", "function": {"name": "recall", "arguments": '{"query": "b"}'}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "first"},
+            {"role": "tool", "tool_call_id": "c2", "content": "second"},
+        ]
+        for messages in (history[:2], history):
+            _, call = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}), messages=messages)
+            roles = [m["role"] for m in call.await_args.kwargs["messages"]]
+            assert all(not (a == b == "user") for a, b in zip(roles, roles[1:])), roles
+
+        sent = call.await_args.kwargs["messages"]
+        assert sent[-1]["content"].index("first") < sent[-1]["content"].index("second")
+        assert sent[-1]["content"].index("second") < sent[-1]["content"].index("Decide your next step")
+
+    @pytest.mark.asyncio
+    async def test_a_later_turn_extends_the_earlier_turns_text(self):
+        """The prompt cache reads a prefix: a turn joined onto the one before keeps it."""
+        first = [{"role": "system", "content": "s"}, {"role": "user", "content": "q"}]
+        second = [
+            *first,
+            {"role": "assistant", "tool_calls": [{"id": "c1", "function": {"name": "recall", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "r"},
+        ]
+        _, call_1 = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}), messages=first)
+        _, call_2 = await _call(LLM_TOOL_CHOICE_REQUIRED, _reply({"call": {}}), messages=second)
+        sent_1, sent_2 = call_1.await_args.kwargs["messages"], call_2.await_args.kwargs["messages"]
+
+        assert sent_2[0] == sent_1[0]
+        assert sent_1[1]["content"].startswith(sent_2[1]["content"])
 
 
 def _type_lists(node: Any) -> Iterator[list[str]]:

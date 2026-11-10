@@ -1605,10 +1605,10 @@ class LLMProvider:
                 tool_choice=tool_choice,
             )
         held = tools_via_schema.response_schema(tools, tool_choice)
-        text_messages = [
-            *tools_via_schema.as_text_messages(messages, declared_tools or tools),
-            {"role": "user", "content": tools_via_schema.turn_request(tools, tool_choice)},
-        ]
+        text_messages = tools_via_schema.as_text_messages(
+            [*messages, {"role": "user", "content": tools_via_schema.turn_request(tools, tool_choice)}],
+            declared_tools or tools,
+        )
         # The model-call record is built inside ``call``: bound here, it carries the turn's calls.
         turn_token = set_schema_tool_turn(SchemaToolTurn(tools=tools, tool_choice=tool_choice))
         usage = TokenUsage()  # a correction is billed too

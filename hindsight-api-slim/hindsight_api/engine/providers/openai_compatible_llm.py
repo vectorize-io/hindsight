@@ -576,6 +576,36 @@ def batch_result_from_chat_completion(custom_id: str, body: dict[str, Any] | Non
     return BatchResult(custom_id=custom_id, content=content, usage=usage)
 
 
+_TEXT_PART_TYPES = ("text", "input_text")
+
+
+def _content_text(content: Any) -> str:
+    """The text of a message, whether its content is a string or a list of parts."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") in _TEXT_PART_TYPES)
+    return ""
+
+
+def _prepend_text(content: Any, text: str) -> Any:
+    """``text`` put in front of a message's text, keeping any image/file parts.
+
+    A part list (multimodal) gets it in its first text part, or in a new text part when
+    the message is images only.
+    """
+    if isinstance(content, str):
+        return f"{text}\n\n{content}"
+    parts = list(content)
+    for i, part in enumerate(parts):
+        if isinstance(part, dict) and part.get("type") in _TEXT_PART_TYPES:
+            parts[i] = {**part, "text": f"{text}\n\n{part.get('text', '')}"}
+            return parts
+    # Responses-API parts are typed input_*; chat parts are plain.
+    responses_shape = any(isinstance(p, dict) and str(p.get("type", "")).startswith("input_") for p in parts)
+    return [{"type": "input_text" if responses_shape else "text", "text": text}, *parts]
+
+
 def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Some OpenAI-compatible gateways require 'json' in a user message for json_object mode."""
 
@@ -583,17 +613,21 @@ def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[di
     user_indexes = [
         index
         for index, message in enumerate(normalized)
-        if message.get("role") == "user" and isinstance(message.get("content"), str)
+        # A multimodal turn (a retained image) counts too. When only string turns
+        # counted, an image-only conversation got the hint as a new user turn after the
+        # image one, and strict chat templates refuse two user turns in a row with
+        # "Conversation roles must alternate" (#6349).
+        if message.get("role") == "user" and isinstance(message.get("content"), (str, list))
     ]
     if not user_indexes:
         normalized.append({"role": "user", "content": JSON_MODE_USER_HINT})
         return normalized
 
-    if any("json" in normalized[index]["content"] for index in user_indexes):
+    if any("json" in _content_text(normalized[index]["content"]) for index in user_indexes):
         return normalized
 
     last_user = user_indexes[-1]
-    normalized[last_user]["content"] = f"{JSON_MODE_USER_HINT}\n\n{normalized[last_user]['content']}"
+    normalized[last_user]["content"] = _prepend_text(normalized[last_user]["content"], JSON_MODE_USER_HINT)
     return normalized
 
 
