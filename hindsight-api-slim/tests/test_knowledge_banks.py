@@ -979,7 +979,7 @@ async def test_the_memory_api_refuses_to_delete_a_knowledge_bank(api_client, kb)
     assert (await api_client.get(f"{KB}/{kb}")).status_code == 200
 
 
-async def test_a_knowledge_bank_cannot_take_a_memory_banks_alias(api_client):
+async def test_a_knowledge_bank_cannot_take_a_memory_banks_alias(api_client, fake_embedder):
     memory_bank, alias = f"mem-{uuid.uuid4().hex[:8]}", f"alias-{uuid.uuid4().hex[:8]}"
     assert (await api_client.put(f"/v1/default/banks/{memory_bank}", json={})).is_success
     r = await api_client.post(f"/v1/default/banks/{memory_bank}/aliases", json={"alias": alias})
@@ -1050,7 +1050,7 @@ async def test_neighbour_windows_that_grow_into_each_other_are_merged(api_client
     assert [(i.context_first, i.context_last) for i in items] == [(0, 5)]
 
 
-async def test_a_document_replaced_during_its_batch_is_not_committed(memory, kb, fake_embedder, monkeypatch):
+async def test_a_document_replaced_during_its_batch_is_not_committed(memory, kb, monkeypatch):
     from hindsight_api.knowledge.service import IngestItem
     from hindsight_api.models import RequestContext
 
@@ -1064,15 +1064,16 @@ async def test_a_document_replaced_during_its_batch_is_not_committed(memory, kb,
         return await real_store(file_data=file_data, key=key, metadata=metadata)
 
     monkeypatch.setattr(memory._file_storage, "store", store_spy)
-    real_embed = fake_embedder.embed_documents
+    real_replace = service.store.replace_passages
 
-    async def embed_then_replace(items):
-        # A newer ingest of the same document lands while this batch embeds it.
+    async def replace_after_a_newer_ingest(bank_id, items):
+        # A newer ingest of the same document lands at the last moment: after the batch embedded it,
+        # just before its passages are written.
         row = (await service.store.get_documents(kb, ["p"]))["p"]
         await service.store.put_documents(kb, [replace(row, storage_key="newer", status="pending")])
-        return await real_embed(items)
+        return await real_replace(bank_id, items)
 
-    monkeypatch.setattr(fake_embedder, "embed_documents", embed_then_replace)
+    monkeypatch.setattr(service.store, "replace_passages", replace_after_a_newer_ingest)
     png = IngestItem(data=_png((255, 0, 0)), filename="p.png", content_type="image/png", document_id="p")
     await service.ingest(kb, [png], RequestContext(), wait=True)
 

@@ -384,7 +384,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     "tags": d.tags,
                     "source_document_id": d.source_document_id,
                 }
-                for d in documents
+                # In document_id order, the order every batch write locks rows in (see set_statuses).
+                for d in sorted(documents, key=lambda d: d.document_id)
             ]
         )
         async with acquire_with_retry(await self._pool()) as conn:
@@ -463,11 +464,21 @@ class PostgresKnowledgeStore(KnowledgeStore):
         if not updates:
             return
         async with acquire_with_retry(await self._pool()) as conn:
+            table = fq_table("kb_documents")
+            # The rows are locked in document_id order first (an UPDATE ... FROM locks in join order), the
+            # order replace_passages and put_documents use, so overlapping batches cannot deadlock.
             await conn.execute(
-                f"UPDATE {fq_table('kb_documents')} d SET status = u.status, error = u.error, updated_at = now() "
-                "FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS u(document_id, status, error, key) "
-                "WHERE d.bank_id = $1 AND d.document_id = u.document_id "
-                "AND (u.key IS NULL OR d.storage_key = u.key)",
+                f"""
+                WITH locked AS (
+                    SELECT document_id FROM {table}
+                    WHERE bank_id = $1 AND document_id = ANY($2::text[]) ORDER BY document_id FOR UPDATE
+                )
+                UPDATE {table} d SET status = u.status, error = u.error, updated_at = now()
+                FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS u(document_id, status, error, key)
+                WHERE d.bank_id = $1 AND d.document_id = u.document_id
+                    AND d.document_id IN (SELECT document_id FROM locked)
+                    AND (u.key IS NULL OR d.storage_key = u.key)
+                """,
                 bank_id,
                 [u.document_id for u in updates],
                 [u.status for u in updates],
@@ -490,19 +501,19 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     r["document_id"]: r["storage_key"]
                     for r in await conn.fetch(
                         f"SELECT document_id, storage_key FROM {fq_table('kb_documents')} "
-                        # Locked in a fixed order, so two overlapping batches cannot deadlock.
+                        # Locked in document_id order, as set_statuses and put_documents take them, so two
+                        # overlapping batches cannot deadlock on each other's rows.
                         "WHERE bank_id = $1 AND document_id = ANY($2::text[]) ORDER BY document_id FOR UPDATE",
                         bank_id,
                         [i.document_id for i in items],
                     )
                 }
-                kept = [
-                    i
-                    for i in items
-                    if i.document_id in held and (i.storage_key is None or held[i.document_id] == i.storage_key)
-                ]
-                skipped = [i.document_id for i in items if i not in kept]
-                items = kept
+
+                def holds(i: PassageReplacement) -> bool:
+                    return i.document_id in held and (i.storage_key is None or held[i.document_id] == i.storage_key)
+
+                skipped = [i.document_id for i in items if not holds(i)]
+                items = [i for i in items if holds(i)]
                 if not items:
                     return PassagesReplaced(skipped_document_ids=skipped)
                 document_ids = [i.document_id for i in items]
