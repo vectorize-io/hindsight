@@ -322,7 +322,7 @@ export HINDSIGHT_API_LLM_BASE_URL=http://localhost:11434/v1
 
 ### Ollama Cloud {#llm-ollama-cloud}
 
-Hosted Ollama.
+Hosted Ollama. Ollama Cloud does not enforce a response schema ([Ollama docs](https://docs.ollama.com/capabilities/structured-outputs)), so the reply is held only by the prompt and checked afterwards: pick a model that follows a JSON schema reliably.
 
 <ProviderSetup>
 

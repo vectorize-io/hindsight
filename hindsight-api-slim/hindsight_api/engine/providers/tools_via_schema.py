@@ -175,6 +175,42 @@ def calls_from_reply(content: str | None, tools: list[dict[str, Any]], tool_choi
     return [LLMToolCall(id=f"call_{name}_{uuid.uuid4().hex[:12]}", name=name, arguments=arguments)]
 
 
+def reply_violation(content: str | None, calls: list[LLMToolCall], tools: list[dict[str, Any]]) -> str | None:
+    """How a reply fails to be a call, in words the model can correct; ``None`` if it is one.
+
+    Only the schema keeps a reply in shape, and not every endpoint enforces one (Ollama Cloud
+    does not; Gemini ignores ``additionalProperties``). Unchecked, a call whose arguments are
+    not there reached the agent as a successful call: ``done`` with its answer beside the
+    name (``{"call": {"name": "done", "answer": ...}}``, #6420) failed reflect as "no
+    answer", and arguments sent as a string (#6302) as "requires a query".
+
+    Only the call's shape is checked, not each argument against the tool's schema: a tool's
+    ``required`` holds fields the agent does without (``reason`` is a debugging note, the cited
+    ids default to none), required so an enforcing endpoint fills them. Re-asking for those cost
+    a non-enforcing endpoint a call a turn; a missing argument the agent needs is still the
+    tool's own error, which the model reads as the call's result.
+    """
+    if not calls:
+        return 'the reply names no function; reply as {"call": {"name": <function name>, "arguments": {...}}}'
+    call = calls[0]
+    tool = next((t for t in tools if _function(t).get("name") == call.name), None)
+    if tool is None:
+        return f"`{call.name}` is not one of the declared functions"
+    if set(call.arguments) == {"_raw"}:
+        try:
+            json.loads(content or "")
+        except json.JSONDecodeError:
+            return None  # JSON that does not parse: the caller's repair judges it (#5272)
+        return f'the arguments of `{call.name}` must be one JSON object, under "arguments"'
+    declared = set((_function(tool).get("parameters") or {}).get("properties") or {})
+    if declared and call.arguments and not declared & set(call.arguments):
+        return (
+            f"the arguments of `{call.name}` are its parameters ({', '.join(sorted(declared))}); "
+            f"the reply has none of them, only {', '.join(sorted(call.arguments))}"
+        )
+    return None
+
+
 def _unwrapped(reply: Any, name: str) -> Any:
     """A forced turn's arguments, from the two wrappers a model put around them.
 

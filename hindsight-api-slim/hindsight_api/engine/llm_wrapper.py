@@ -14,7 +14,7 @@ from json_repair import repair_json
 from pydantic import BaseModel
 
 from .._cross_loop import CrossLoopSemaphore
-from .response_models import LLMCallResult
+from .response_models import LLMCallResult, TokenUsage
 
 # Vertex AI credentials (for LLMProvider to pass to GeminiLLM). Only checked for
 # here; google-auth is imported where a key is actually loaded, not on every start.
@@ -1611,48 +1611,74 @@ class LLMProvider:
         ]
         # The model-call record is built inside ``call``: bound here, it carries the turn's calls.
         turn_token = set_schema_tool_turn(SchemaToolTurn(tools=tools, tool_choice=tool_choice))
+        usage = TokenUsage()  # a correction is billed too
         try:
-            for attempt in range(2):
-                try:
-                    result = await self.call(
-                        messages=text_messages,
-                        response_format=tools_via_schema.schema_format(held),
-                        max_completion_tokens=max_completion_tokens,
-                        temperature=temperature,
-                        scope=scope,
-                        max_retries=max_retries,
-                        initial_backoff=initial_backoff,
-                        max_backoff=max_backoff,
-                        skip_validation=True,
-                        strict_schema=True,
-                    )
+            for correction in range(2):
+                for attempt in range(2):
+                    try:
+                        result = await self.call(
+                            messages=text_messages,
+                            response_format=tools_via_schema.schema_format(held),
+                            max_completion_tokens=max_completion_tokens,
+                            temperature=temperature,
+                            scope=scope,
+                            max_retries=max_retries,
+                            initial_backoff=initial_backoff,
+                            max_backoff=max_backoff,
+                            skip_validation=True,
+                            strict_schema=True,
+                        )
+                        break
+                    except OutputTooLongError:
+                        # A held reply that loops (whitespace, a digit run) until the cap is a sampling
+                        # accident: one more sample came back whole in every case measured on Gemma 4.
+                        if attempt:
+                            raise
+                        logger.warning(f"[{scope}] schema reply hit the token cap; sampling once more")
+                    except json.JSONDecodeError as exc:
+                        # Prose where the schema asked for JSON, after the provider's own retries: a
+                        # model that does not follow the schema. A turn with no call, as a prose reply
+                        # always was, so the caller can say the model is the problem (reflect raises
+                        # ReflectToolCallError on a first turn) rather than fail on a parse error.
+                        logger.warning(f"[{scope}] reply did not follow the response schema: {exc}")
+                        # The prose rides as content, so the error can quote what the model said.
+                        return LLMToolCallResult(content=exc.doc or None, tool_calls=[], finish_reason="stop")
+                usage = usage + result.usage
+                reply = (
+                    result.content
+                    if isinstance(result.content, str)
+                    else json.dumps(result.content, ensure_ascii=False)
+                )
+                tool_calls = tools_via_schema.calls_from_reply(reply, tools, tool_choice)
+                violation = tools_via_schema.reply_violation(reply, tool_calls, tools)
+                if violation is None:
                     break
-                except OutputTooLongError:
-                    # A held reply that loops (whitespace, a digit run) until the cap is a sampling
-                    # accident: one more sample came back whole in every case measured on Gemma 4.
-                    if attempt:
-                        raise
-                    logger.warning(f"[{scope}] schema reply hit the token cap; sampling once more")
-                except json.JSONDecodeError as exc:
-                    # Prose where the schema asked for JSON, after the provider's own retries: a
-                    # model that does not follow the schema. A turn with no call, as a prose reply
-                    # always was, so the caller can say the model is the problem (reflect raises
-                    # ReflectToolCallError on a first turn) rather than fail on a parse error.
-                    logger.warning(f"[{scope}] reply did not follow the response schema: {exc}")
-                    # The prose rides as content, so the error can quote what the model said.
-                    return LLMToolCallResult(content=exc.doc or None, tool_calls=[], finish_reason="stop")
+                if correction:
+                    # Corrected once and still wrong: a model (or endpoint) that does not follow
+                    # the schema. A turn with no call, so the caller reports that, not a missing answer.
+                    logger.warning(f"[{scope}] reply broke the response schema after a correction: {violation}")
+                    tool_calls = []
+                    break
+                logger.warning(f"[{scope}] reply broke the response schema, asking once more: {violation}")
+                text_messages = [
+                    *text_messages,
+                    {"role": "assistant", "content": reply},
+                    {
+                        "role": "user",
+                        "content": f"That reply does not fit the required format: {violation}. "
+                        + tools_via_schema.turn_request(tools, tool_choice),
+                    },
+                ]
         finally:
             reset_schema_tool_turn(turn_token)
-        reply = result.content if isinstance(result.content, str) else json.dumps(result.content, ensure_ascii=False)
-        tool_calls = tools_via_schema.calls_from_reply(reply, tools, tool_choice)
         return LLMToolCallResult(
             content=None if tool_calls else reply,
             tool_calls=tool_calls,
             finish_reason="tool_calls" if tool_calls else "stop",
-            input_tokens=result.usage.input_tokens,
-            output_tokens=result.usage.output_tokens,
-            cached_tokens=result.usage.cached_tokens,
-            thoughts_tokens=result.usage.thoughts_tokens,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cached_tokens=usage.cached_tokens,
+            thoughts_tokens=usage.thoughts_tokens,
         )
 
     async def _call_with_tools(
