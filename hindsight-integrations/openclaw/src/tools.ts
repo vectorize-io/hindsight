@@ -28,6 +28,26 @@ export const HINDSIGHT_TOOL_NAMES = [
   "hindsight_delete_page_node",
 ];
 
+// The page tools were called "knowledge" tools before 1.3. OpenClaw lists every registered
+// tool to the model and checks tools.allow/deny itself, so the old names cannot live on as
+// hidden aliases; the plugin warns instead when the user's config still names one.
+// Remove in 2.x.
+export const RENAMED_TOOL_NAMES: Record<string, string> = {
+  hindsight_get_knowledge_base_tree: "hindsight_get_page_tree",
+  hindsight_search_knowledge_base: "hindsight_search_pages",
+  hindsight_get_knowledge_page: "hindsight_get_page",
+  hindsight_create_knowledge_folder: "hindsight_create_page_folder",
+  hindsight_create_knowledge_page: "hindsight_create_page",
+  hindsight_update_knowledge_node: "hindsight_update_page_node",
+  hindsight_delete_knowledge_node: "hindsight_delete_page_node",
+};
+
+/** Old tool names that appear anywhere in an OpenClaw config (tool allow/deny lists, agents). */
+export function oldToolNamesIn(config: unknown): string[] {
+  const raw = JSON.stringify(config ?? {});
+  return Object.keys(RENAMED_TOOL_NAMES).filter((old) => raw.includes(`"${old}"`));
+}
+
 // What a read-only (stateless) session must not get.
 const WRITE_TOOLS = new Set([
   "hindsight_retain",

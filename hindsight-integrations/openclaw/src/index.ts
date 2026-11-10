@@ -14,7 +14,12 @@ import {
 } from "@vectorize-io/hindsight-client";
 import { RetainQueue } from "./retain-queue.js";
 import { createMemoryProviderRuntime } from "./memory-provider.js";
-import { createHindsightTools, HINDSIGHT_TOOL_NAMES } from "./tools.js";
+import {
+  createHindsightTools,
+  HINDSIGHT_TOOL_NAMES,
+  oldToolNamesIn,
+  RENAMED_TOOL_NAMES,
+} from "./tools.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import { parseSessionFile } from "./session-file.js";
 import { createHash, randomUUID } from "crypto";
@@ -3436,6 +3441,12 @@ ${memoriesFormatted}
       }),
     });
 
+    // Deprecated tool names, remove in 2.x: an allow/deny list naming an old tool no longer matches.
+    for (const old of oldToolNamesIn(api.config)) {
+      log.warn(
+        `config names the tool ${old}, which is now ${RENAMED_TOOL_NAMES[old]}: rename it there`
+      );
+    }
     // Hermes's agent tools on this session's own bank. (#5635)
     api.registerTool?.(
       (toolCtx) =>

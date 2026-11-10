@@ -345,3 +345,20 @@ describe("page tools", () => {
     ]);
   });
 });
+
+describe("renamed page tools (deprecated names, remove in 2.x)", () => {
+  it("finds old tool names in OpenClaw tool lists and maps each to a real tool", async () => {
+    const { oldToolNamesIn, RENAMED_TOOL_NAMES, HINDSIGHT_TOOL_NAMES } = await import("./tools.js");
+    const config = {
+      tools: { allow: ["hindsight_search_knowledge_base", "hindsight_recall"] },
+      agents: { list: [{ tools: { deny: ["hindsight_delete_knowledge_node"] } }] },
+    };
+    expect(oldToolNamesIn(config)).toEqual([
+      "hindsight_search_knowledge_base",
+      "hindsight_delete_knowledge_node",
+    ]);
+    expect(oldToolNamesIn({ tools: { allow: ["hindsight_search_pages"] } })).toEqual([]);
+    for (const next of Object.values(RENAMED_TOOL_NAMES))
+      expect(HINDSIGHT_TOOL_NAMES).toContain(next);
+  });
+});

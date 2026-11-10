@@ -49,8 +49,8 @@ _OperationsLimit = Annotated[int, Field(ge=1, le=100)]
 # All tools available in the system (explicit list — no wildcards).
 # Defined here (shared module) to avoid circular imports with api/mcp.py.
 # Old tool names -> new, from when pages were called "knowledge pages". An allow-list
-# (env, bank config or MCPToolsConfig.tools) that names an old tool still enables it.
-# Remove in 2.x.
+# (env, bank config or MCPToolsConfig.tools) that names an old tool still enables it, and a
+# call by an old name still runs the tool (hidden: never listed). Remove in 2.x.
 _RENAMED_TOOLS: dict[str, str] = {
     "get_knowledge_base_tree": "get_page_tree",
     "search_knowledge_base": "search_pages",
@@ -888,6 +888,10 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
             return [t for t in tools if t.name in enabled_set]
 
         async def _filtered_get_tool(name, **kwargs):
+            # A call by an old tool name runs the renamed tool. list_tools only shows the new
+            # names, so agents never see the old ones; only callers that hardcode them use this.
+            # Deprecated alias, remove in 2.x.
+            name = _RENAMED_TOOLS.get(name, name)
             enabled_set = await _get_enabled_tools()
             if enabled_set is not None and name not in enabled_set:
                 return None  # FastMCP treats None as "not found" → raises NotFoundError

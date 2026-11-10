@@ -538,6 +538,8 @@ It also gives the agent Hindsight's page tools, the same ones Hindsight's MCP se
 - `hindsight_create_page_folder`, `hindsight_create_page` and `hindsight_update_page_node` organise them and create new pages, which Hindsight writes and keeps up to date from the memories.
 - `hindsight_delete_page_node` deletes a folder or page and everything under it. It cannot be undone, so it is only offered with `allowPageDelete: true`.
 
+Before the rename these were `hindsight_get_knowledge_base_tree`, `hindsight_search_knowledge_base`, `hindsight_get_knowledge_page`, `hindsight_create_knowledge_folder`, `hindsight_create_knowledge_page`, `hindsight_update_knowledge_node` and `hindsight_delete_knowledge_node`. A tool allow-list in your OpenClaw config that names an old tool needs the new name; the plugin logs a warning at startup for each old name it finds there.
+
 No tool takes a bank. Each call uses the bank this session's auto-recall and auto-retain use, so `agentBankMap` and per-agent, per-channel and per-user banks all apply, and an agent can't reach another agent's or user's memory. A session that auto-recall would skip (for example one with no stable sender when banks are keyed by user) gets an error instead of a guessed bank.
 
 The session filters apply too: a session matching `ignoreSessionPatterns` gets no tools, and one matching `statelessSessionPatterns` gets no tools while `skipStatelessSessions` is on, and only the reading tools (`hindsight_recall`, `hindsight_reflect` and the page reads) when it is off.

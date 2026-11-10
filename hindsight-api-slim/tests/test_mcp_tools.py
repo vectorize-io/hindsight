@@ -2921,3 +2921,30 @@ class TestMcpCallLogging:
         mock_memory.audit_logger.log_fire_and_forget.assert_called_once()  # not once more for the inner call (#6071)
         entry = mock_memory.audit_logger.log_fire_and_forget.call_args.args[0]
         assert (entry.action, entry.transport, entry.bank_id) == ("sync_retain", "mcp", "test-bank")
+
+
+@pytest.mark.asyncio
+class TestRenamedPageTools:
+    """Page tools used to be "knowledge" tools. A call by an old name still runs the renamed
+    tool, but the old names are never listed. Remove in 2.x."""
+
+    @pytest.fixture
+    def mock_memory(self, mock_memory):
+        mock_memory._config_resolver.get_bank_config = AsyncMock(return_value={})
+        mock_memory._operation_validator = None
+        return mock_memory
+
+    async def test_old_name_resolves_to_new_tool_and_is_not_listed(self, mock_memory):
+        from hindsight_api.mcp_tools import _RENAMED_TOOLS
+
+        mcp = _make_mcp_server(mock_memory, set(_RENAMED_TOOLS.values()), include_bank_id=True)
+        for old, new in _RENAMED_TOOLS.items():
+            tool = await mcp.get_tool(old)
+            assert tool is not None and tool.name == new
+        listed = {t.name for t in await mcp.list_tools()}
+        assert listed == set(_RENAMED_TOOLS.values())
+
+    async def test_old_name_respects_the_bank_allow_list(self, mock_memory):
+        mock_memory._config_resolver.get_bank_config = AsyncMock(return_value={"mcp_enabled_tools": ["recall"]})
+        mcp = _make_mcp_server(mock_memory, {"get_page", "recall"}, include_bank_id=True)
+        assert await mcp.get_tool("get_knowledge_page") is None

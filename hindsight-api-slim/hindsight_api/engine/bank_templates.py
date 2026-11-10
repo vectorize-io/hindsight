@@ -287,6 +287,7 @@ class BankTemplateConfig(BaseModel):
     @model_validator(mode="after")
     def _sync_deprecated_page_trigger(self) -> "BankTemplateConfig":
         # Deprecated alias, remove in 2.x: either key may come in; both go out.
+        # Through __dict__ because reading a deprecated field emits a DeprecationWarning.
         value = self.page_default_trigger or self.__dict__["knowledge_page_default_trigger"]
         self.page_default_trigger = value
         self.__dict__["knowledge_page_default_trigger"] = value
