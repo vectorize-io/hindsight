@@ -82,6 +82,10 @@ BACKUP_TABLES = [
     "async_operations",
     "webhooks",
     "file_storage",
+    # Knowledge banks: documents FK to banks, passages FK to documents.
+    "kb_documents",
+    "kb_passages",
+    "kb_passage_vectors",
     "audit_log",
     "llm_requests",
     "graph_maintenance_queue",

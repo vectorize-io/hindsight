@@ -341,6 +341,22 @@
           "description": "MCP tool allowlist for this bank (None = all tools)",
           "title": "Mcp Enabled Tools"
         },
+        "knowledge_banks": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Knowledge banks whose passages this bank's reflect reads",
+          "title": "Knowledge Banks"
+        },
         "consolidation_llm_batch_size": {
           "anyOf": [
             {

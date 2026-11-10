@@ -15,6 +15,7 @@ import { ThinkView } from "@/components/think-view";
 import { SearchDebugView } from "@/components/search-debug-view";
 import { BankProfileView } from "@/components/bank-profile-view";
 import { BankConfigView } from "@/components/bank-config-view";
+import { LinkedKnowledgeBanks } from "@/components/linked-knowledge-banks";
 import { MemoryDefenseSection } from "@/components/memory-defense-section";
 import { BankStatsView } from "@/components/bank-stats-view";
 import { BankOperationsView } from "@/components/bank-operations-view";
@@ -529,6 +530,9 @@ export default function BankPage() {
                     )}
                     {bankConfigTab === "configuration" && bankConfigEnabled && (
                       <div className="space-y-6">
+                        {bankId && features?.knowledge_banks && (
+                          <LinkedKnowledgeBanks bankId={bankId} />
+                        )}
                         <BankConfigView />
                       </div>
                     )}

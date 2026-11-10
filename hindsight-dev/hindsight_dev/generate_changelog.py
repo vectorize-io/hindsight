@@ -84,6 +84,11 @@ TABLE_VOLUME: dict[str, VolumeTier] = {
     # addressing means an image reused across an article set is stored once.
     "attachments": MEDIUM_VOLUME,
     "document_attachments": MEDIUM_VOLUME,
+    # Knowledge banks: one document row per uploaded file, but several passages per page or
+    # time window and several vectors per passage, so passages and vectors grow like facts do.
+    "kb_documents": MEDIUM_VOLUME,
+    "kb_passages": HIGH_VOLUME,
+    "kb_passage_vectors": HIGH_VOLUME,
     # Configuration-sized: a handful of rows per bank or tenant.
     "banks": LOW_VOLUME,
     "bank_aliases": LOW_VOLUME,

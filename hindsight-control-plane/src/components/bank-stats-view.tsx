@@ -127,7 +127,7 @@ type FactKey = "world" | "experience" | "observation";
 
 // Palette. Memory-type hues deliberately avoid the link-type hues (teal/blue/amber)
 // so the two distributions read as different dimensions.
-const CHART_COLORS = {
+export const CHART_COLORS = {
   primary: "var(--primary)",
   // Memory composition — modern violet / pink / indigo palette.
   // Picked to stay distinct from the link-type hues (teal/blue/amber).
@@ -162,7 +162,7 @@ const FACT_META: Record<FactKey, { label: string; color: string }> = {
   observation: { label: "Observations", color: CHART_COLORS.observation },
 };
 
-function formatCompact(n: number): string {
+export function formatCompact(n: number): string {
   if (n < 1000) return n.toString();
   if (n < 1_000_000) {
     const k = n / 1000;
@@ -191,7 +191,7 @@ type ChartTooltipProps = Partial<TooltipContentProps<number, string>> & {
   valueLabel?: string;
 };
 
-function ChartTooltip({ active, payload, label, valueLabel }: ChartTooltipProps) {
+export function ChartTooltip({ active, payload, label, valueLabel }: ChartTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
   return (
     <div className="rounded-lg border border-border/60 bg-popover/95 backdrop-blur-sm px-3 py-2 shadow-md">
@@ -255,7 +255,7 @@ function parseBucketIso(iso: string): Date {
   return new Date(/[+Z-]$/.test(iso) || /[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
 }
 
-function formatBucketLabel(iso: string, trunc: string): string {
+export function formatBucketLabel(iso: string, trunc: string): string {
   const d = parseBucketIso(iso);
   if (trunc === "day") {
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
@@ -263,7 +263,7 @@ function formatBucketLabel(iso: string, trunc: string): string {
   return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-function formatBucketTooltip(iso: string, trunc: string): string {
+export function formatBucketTooltip(iso: string, trunc: string): string {
   const d = parseBucketIso(iso);
   if (trunc === "day") {
     return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -315,7 +315,7 @@ interface DistributionItem {
   color: string;
 }
 
-function Distribution({
+export function Distribution({
   title,
   items,
   emptyLabel,
@@ -376,14 +376,20 @@ function Distribution({
   );
 }
 
-function InlineStat({
+export function InlineStat({
   icon: Icon,
   label,
   value,
+  display,
+  note,
 }: {
   icon: typeof Database;
   label: string;
   value: number;
+  /** Shown instead of the compact number (e.g. a byte size). */
+  display?: string;
+  /** A small line under the value (e.g. "2 in progress"). */
+  note?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-3 p-4">
@@ -392,10 +398,17 @@ function InlineStat({
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs text-muted-foreground font-medium">{label}</p>
-        <CompactNumber
-          value={value}
-          className="text-2xl font-semibold text-foreground leading-tight tabular-nums block"
-        />
+        {display != null ? (
+          <span className="text-2xl font-semibold text-foreground leading-tight tabular-nums block">
+            {display}
+          </span>
+        ) : (
+          <CompactNumber
+            value={value}
+            className="text-2xl font-semibold text-foreground leading-tight tabular-nums block"
+          />
+        )}
+        {note}
       </div>
     </div>
   );
@@ -881,7 +894,7 @@ function MentalModelsCard({
   );
 }
 
-const AXIS_TICK_STYLE = {
+export const AXIS_TICK_STYLE = {
   fontSize: 11,
   fill: CHART_COLORS.mutedFg,
   fontWeight: 500,

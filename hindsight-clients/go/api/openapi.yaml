@@ -7148,6 +7148,11 @@ components:
             type: string
           nullable: true
           type: array
+        knowledge_banks:
+          items:
+            type: string
+          nullable: true
+          type: array
         consolidation_llm_batch_size:
           nullable: true
           type: integer
@@ -9496,6 +9501,11 @@ components:
         document_import_api:
           description: Whether the document import endpoint is enabled
           title: Document Import Api
+          type: boolean
+        knowledge_banks:
+          default: false
+          description: Whether knowledge banks are enabled
+          title: Knowledge Banks
           type: boolean
         audit_log:
           description: Whether audit logging is enabled by default (overridable per
@@ -14249,6 +14259,7 @@ components:
           document_export_api: true
           document_import_api: true
           file_upload_api: true
+          knowledge_banks: false
           llm_trace: false
           mcp: true
           observations: false

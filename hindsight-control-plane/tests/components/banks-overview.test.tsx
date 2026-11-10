@@ -40,6 +40,13 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
+// Knowledge banks are a hidden feature: the memory/knowledge switch shows only when the
+// server reports them on.
+let knowledgeBanks = false;
+vi.mock("@/lib/features-context", () => ({
+  useFeatures: () => ({ features: { knowledge_banks: knowledgeBanks }, loading: false, error: null }),
+}));
+
 const setCurrentBank = vi.fn();
 const loadBanks = vi.fn().mockResolvedValue(undefined);
 
@@ -166,6 +173,22 @@ describe("BanksOverview bulk delete", () => {
     // A selection made on page 1 must not survive onto page 2 — those rows are no
     // longer on screen and would be deleted unseen.
     await waitFor(() => expect(screen.queryByText(/^selectedCount/)).toBeNull());
+  });
+
+  it("shows the memory/knowledge switch only when the server has knowledge banks on", async () => {
+    render(<BanksOverview />);
+    await screen.findByLabelText("selectAll");
+    expect(screen.queryByRole("group", { name: "label" })).toBeNull();
+    cleanup();
+
+    knowledgeBanks = true;
+    try {
+      render(<BanksOverview />);
+      await screen.findByLabelText("selectAll");
+      expect(screen.getByRole("group", { name: "label" })).toBeTruthy();
+    } finally {
+      knowledgeBanks = false;
+    }
   });
 
   it("greets instead of showing an empty table when the server has no banks", async () => {

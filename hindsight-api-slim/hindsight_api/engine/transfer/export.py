@@ -120,6 +120,12 @@ _SKIP_TABLES = frozenset(
         # instance, and failing the alias-vs-bank check on another. Add them to the
         # target deliberately, once it is the bank you mean to route to.
         "bank_aliases",
+        # Knowledge-bank documents, passages and vectors belong to banks of kind 'knowledge',
+        # never to a memory bank being exported; a memory bank only names the knowledge banks
+        # it links (bank config `knowledge_banks`), and that travels with its config.
+        "kb_documents",
+        "kb_passages",
+        "kb_passage_vectors",
     }
 )
 # Derived columns dropped from carried rows so the target regenerates them with

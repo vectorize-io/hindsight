@@ -121,7 +121,7 @@ async def test_missing_bank_probes_once_then_inserts_once(
     validator = TrackingValidator()
     memory._operation_validator = validator
 
-    probes = spy_on(bank_utils, "bank_exists_on_conn" if on_conn else "bank_exists", bank_id, monkeypatch)
+    probes = spy_on(bank_utils, "bank_kind_on_conn" if on_conn else "bank_kind", bank_id, monkeypatch)
     inserts = spy_on(bank_utils, "create_bank_row_on_conn", bank_id, monkeypatch)
 
     async def ensure() -> bool:
@@ -261,7 +261,7 @@ class _CreationRace:
 
         self._monkeypatch.setattr(self.memory, "_apply_default_bank_template", spy_apply)
 
-        real_probe = bank_utils.bank_exists
+        real_probe = bank_utils.bank_kind
 
         async def spy_probe(pool, b_id):
             result = await real_probe(pool, b_id)
@@ -269,7 +269,7 @@ class _CreationRace:
                 self.caller2_probed.set()
             return result
 
-        self._monkeypatch.setattr(bank_utils, "bank_exists", spy_probe)
+        self._monkeypatch.setattr(bank_utils, "bank_kind", spy_probe)
 
         race = self
 

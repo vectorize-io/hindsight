@@ -37,6 +37,8 @@ type FeaturesInfo struct {
 	DocumentExportApi bool `json:"document_export_api"`
 	// Whether the document import endpoint is enabled
 	DocumentImportApi bool `json:"document_import_api"`
+	// Whether knowledge banks are enabled
+	KnowledgeBanks *bool `json:"knowledge_banks,omitempty"`
 	// Whether audit logging is enabled by default (overridable per bank)
 	AuditLog bool `json:"audit_log"`
 	// Whether per-bank LLM request tracing is enabled
@@ -61,6 +63,8 @@ func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi boo
 	this.FileUploadApi = fileUploadApi
 	this.DocumentExportApi = documentExportApi
 	this.DocumentImportApi = documentImportApi
+	var knowledgeBanks bool = false
+	this.KnowledgeBanks = &knowledgeBanks
 	this.AuditLog = auditLog
 	this.LlmTrace = llmTrace
 	this.StoreDocumentText = storeDocumentText
@@ -72,6 +76,8 @@ func NewFeaturesInfo(observations bool, mcp bool, worker bool, bankConfigApi boo
 // but it doesn't guarantee that properties required by API are set
 func NewFeaturesInfoWithDefaults() *FeaturesInfo {
 	this := FeaturesInfo{}
+	var knowledgeBanks bool = false
+	this.KnowledgeBanks = &knowledgeBanks
 	return &this
 }
 
@@ -267,6 +273,38 @@ func (o *FeaturesInfo) SetDocumentImportApi(v bool) {
 	o.DocumentImportApi = v
 }
 
+// GetKnowledgeBanks returns the KnowledgeBanks field value if set, zero value otherwise.
+func (o *FeaturesInfo) GetKnowledgeBanks() bool {
+	if o == nil || IsNil(o.KnowledgeBanks) {
+		var ret bool
+		return ret
+	}
+	return *o.KnowledgeBanks
+}
+
+// GetKnowledgeBanksOk returns a tuple with the KnowledgeBanks field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *FeaturesInfo) GetKnowledgeBanksOk() (*bool, bool) {
+	if o == nil || IsNil(o.KnowledgeBanks) {
+		return nil, false
+	}
+	return o.KnowledgeBanks, true
+}
+
+// HasKnowledgeBanks returns a boolean if a field has been set.
+func (o *FeaturesInfo) HasKnowledgeBanks() bool {
+	if o != nil && !IsNil(o.KnowledgeBanks) {
+		return true
+	}
+
+	return false
+}
+
+// SetKnowledgeBanks gets a reference to the given bool and assigns it to the KnowledgeBanks field.
+func (o *FeaturesInfo) SetKnowledgeBanks(v bool) {
+	o.KnowledgeBanks = &v
+}
+
 // GetAuditLog returns the AuditLog field value
 func (o *FeaturesInfo) GetAuditLog() bool {
 	if o == nil {
@@ -357,6 +395,9 @@ func (o FeaturesInfo) ToMap() (map[string]interface{}, error) {
 	toSerialize["file_upload_api"] = o.FileUploadApi
 	toSerialize["document_export_api"] = o.DocumentExportApi
 	toSerialize["document_import_api"] = o.DocumentImportApi
+	if !IsNil(o.KnowledgeBanks) {
+		toSerialize["knowledge_banks"] = o.KnowledgeBanks
+	}
 	toSerialize["audit_log"] = o.AuditLog
 	toSerialize["llm_trace"] = o.LlmTrace
 	toSerialize["store_document_text"] = o.StoreDocumentText

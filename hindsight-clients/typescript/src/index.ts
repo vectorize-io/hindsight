@@ -1042,6 +1042,9 @@ export class HindsightClient {
       recallBudgetMax?: number;
       /** MCP tool names enabled for this bank. */
       mcpEnabledTools?: string[];
+      /** Knowledge banks linked to this bank: reflect also searches them and treats their
+       *  passages as authoritative. Recall is unchanged. */
+      knowledgeBanks?: string[];
       /** Gemini/VertexAI safety overrides. */
       llmGeminiSafetySettings?: { category: string; threshold: string }[];
       /** Memory-defense (prompt-injection / secret redaction) settings. */
@@ -1158,6 +1161,7 @@ export class HindsightClient {
     if (options.recallBudgetMin !== undefined) updates.recall_budget_min = options.recallBudgetMin;
     if (options.recallBudgetMax !== undefined) updates.recall_budget_max = options.recallBudgetMax;
     if (options.mcpEnabledTools !== undefined) updates.mcp_enabled_tools = options.mcpEnabledTools;
+    if (options.knowledgeBanks !== undefined) updates.knowledge_banks = options.knowledgeBanks;
     if (options.llmGeminiSafetySettings !== undefined)
       updates.llm_gemini_safety_settings = options.llmGeminiSafetySettings;
     if (options.memoryDefense !== undefined) updates.memory_defense = options.memoryDefense;

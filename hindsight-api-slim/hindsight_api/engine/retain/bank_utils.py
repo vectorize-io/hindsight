@@ -256,6 +256,16 @@ async def bank_exists_on_conn(conn: "DatabaseConnection", bank_id: str) -> bool:
     return await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id) is not None
 
 
+async def bank_kind_on_conn(conn: "DatabaseConnection", bank_id: str) -> str | None:
+    """The bank's kind ('memory' or 'knowledge'), or None when there is no such bank."""
+    return await conn.fetchval(f"SELECT kind FROM {fq_table('banks')} WHERE bank_id = $1", bank_id)
+
+
+async def bank_kind(pool, bank_id: str) -> str | None:
+    async with acquire_with_retry(pool) as conn:
+        return await bank_kind_on_conn(conn, bank_id)
+
+
 async def bank_exists(pool, bank_id: str) -> bool:
     """Dedicated-connection variant of ``bank_exists_on_conn``.
 
@@ -599,14 +609,15 @@ async def list_banks(pool, *, search_query: str | None = None) -> list:
     # Spelled out as UPPER(...) LIKE UPPER(...) rather than ILIKE: the Oracle
     # rewriter only recognizes ILIKE on an unqualified column, and these are
     # alias-qualified.
-    where_clause = ""
+    # Knowledge banks share the `banks` table but have their own list (see hindsight_api/knowledge).
+    where_clause = "WHERE b.kind = 'memory'"
     params: list[str] = []
     if search_query:
         # Aliases are matched too, so searching the id a caller actually uses finds
         # the bank it reaches. Mid-migration that is the only id someone may know:
         # without this, the new id is live in the API but invisible in the picker.
         where_clause = (
-            "WHERE (UPPER(b.bank_id) LIKE UPPER($1) OR UPPER(COALESCE(b.name, '')) LIKE UPPER($2) "
+            "WHERE b.kind = 'memory' AND (UPPER(b.bank_id) LIKE UPPER($1) OR UPPER(COALESCE(b.name, '')) LIKE UPPER($2) "
             f"OR EXISTS (SELECT 1 FROM {fq_table('bank_aliases')} a "
             "WHERE a.bank_id = b.bank_id AND UPPER(a.alias) LIKE UPPER($3)))"
         )
@@ -905,7 +916,8 @@ async def _banks_by_created(pool, want: int) -> "list[BankWriteTime]":
             # `bank_id` breaks ties: banks created in one batch share a `created_at`, and without a
             # tiebreaker Postgres may order them differently for the page-1 LIMIT than for the
             # page-2 one, which shows up as a bank on both pages or on neither.
-            f"SELECT bank_id, created_at FROM {banks_table} ORDER BY created_at DESC NULLS LAST, bank_id DESC LIMIT $1",
+            f"SELECT bank_id, created_at FROM {banks_table} WHERE kind = 'memory' "
+            "ORDER BY created_at DESC NULLS LAST, bank_id DESC LIMIT $1",
             want,
         )
     return [BankWriteTime(bank_id=r["bank_id"], last_write_at=_as_utc(r["created_at"]) or _UNIX_EPOCH) for r in rows]
@@ -914,7 +926,7 @@ async def _banks_by_created(pool, want: int) -> "list[BankWriteTime]":
 async def _count_banks(pool) -> int:
     banks_table = fq_table("banks")
     async with acquire_with_retry(pool) as conn:
-        row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {banks_table}")
+        row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {banks_table} WHERE kind = 'memory'")
     return int(row["n"]) if row else 0
 
 

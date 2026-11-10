@@ -116,13 +116,14 @@ local-ml = [
     # 5.0 is the floor: LocalSTEmbeddings calls SentenceTransformer.encode_query()
     # and .encode_document(), which only exist from 5.0 onwards. On 4.x those are
     # an AttributeError at first encode (recall/retain), not at startup.
-    "sentence-transformers>=5.0.0",
-    "transformers>=5.5.0", # ReDoS fixes; 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
-    # transformers enforces tokenizers<=0.23.0 with a runtime check, but has
+    "sentence-transformers>=6.2.0", # 6.2 loads multimodal EmbeddingGemma 2 (knowledge banks)
+    "transformers>=5.22.1", # 5.22.1 knows EmbeddingGemma 2 (knowledge banks); >=5.5.0 also clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
+    # transformers enforces its tokenizers range with a runtime check, but has
     # shipped metadata declaring a wider range than it actually enforces. Keep
-    # this cap: without it an in-place upgrade can pull tokenizers 0.23.1 and
-    # break local embeddings/reranker startup. See issue #2055.
-    "tokenizers>=0.22.0,<=0.23.0",
+    # this cap in step with the transformers floor: without it an in-place upgrade
+    # can pull a tokenizers transformers rejects and break local embeddings/reranker
+    # startup. See issue #2055.
+    "tokenizers>=0.23.1,<0.24.0",
     # >=2.6.0 for the remote-code-execution CVE fix. The 2.11.0 floor is for
     # ARMv8.0 CPUs (e.g. Cortex-A57): torch 2.10.0's aarch64 wheel bundles a
     # mimalloc whose ELF constructor runs an inline ARMv8.1 LSE atomic
@@ -130,6 +131,7 @@ local-ml = [
     # dlopen time on any CPU without LSE. 2.11.0+ keeps LSE behind the
     # runtime-dispatched outline-atomics helpers again. See issue #4142.
     "torch>=2.11.0",
+    "torchvision>=0.26.0", # EmbeddingGemma 2 image/video processors (knowledge banks)
     "einops>=0.8.2",
     "flashrank>=0.2.0",
     # Apple Silicon local inference. mlx is Apple's Metal/unified-memory
@@ -150,8 +152,8 @@ local-llm = [
 local-onnx = [
     # In-process ONNX Runtime embeddings without an Ollama/TEI sidecar
     "onnxruntime>=1.17.0",
-    "transformers>=5.5.0", # 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE)
-    "tokenizers>=0.22.0,<=0.23.0", # See issue #2055 (transformers caps tokenizers<=0.23.0)
+    "transformers>=5.22.1", # 5.5.0 clears GHSA-fgcw-684q-jj6r (LightGlue RCE); 5.22.1 matches local-ml
+    "tokenizers>=0.23.1,<0.24.0", # See issue #2055 (transformers caps tokenizers below its next minor)
     "huggingface-hub>=0.20.0",
     "numpy>=1.26.0",
 ]
@@ -297,8 +299,11 @@ url = "https://download.pytorch.org/whl/cpu"
 explicit = true
 
 [tool.uv.sources]
-# Route torch to the CPU-only PyTorch index; everything else uses PyPI
+# Route torch to the CPU-only PyTorch index; everything else uses PyPI. torchvision goes
+# with it: its compiled ops are built against one torch, and PyPI's build against the CUDA
+# torch fails on the CPU one at import ("operator torchvision::nms does not exist").
 torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
 
 [tool.ty]
 # Type checking configuration

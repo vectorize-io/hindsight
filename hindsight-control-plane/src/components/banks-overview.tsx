@@ -8,6 +8,8 @@ import { Trash2, Search, X, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { client } from "@/lib/api";
+import { BankKindSwitch } from "@/components/bank-kind-switch";
+import { useFeatures } from "@/lib/features-context";
 import { useBank, type BankInfo } from "@/lib/bank-context";
 import { bankRoute } from "@/lib/bank-url";
 import { formatRelativeTime } from "@/lib/relative-time";
@@ -87,6 +89,7 @@ export function BanksOverview() {
   const tCommon = useTranslations("common");
   const tNavBank = useTranslations("nav.bank");
   const router = useRouter();
+  const knowledgeBanksEnabled = useFeatures().features?.knowledge_banks ?? false;
   // The overview pages discretely while the header selector scrolls infinitely, so it
   // cannot share the selector's cumulative list — it fetches its own page. `loadBanks`
   // is still used to keep that selector in sync after a bulk delete.
@@ -233,6 +236,15 @@ export function BanksOverview() {
           <Spinner size="xl" variant="jump" className="mx-auto mb-4" />
           <h3 className="mb-3 text-2xl font-bold text-card-foreground">{t("welcomeTitle")}</h3>
           <p className="mb-6 text-muted-foreground">{t("welcomeBody")}</p>
+          {/* No memory banks yet, but there may be knowledge banks to go to. */}
+          {knowledgeBanksEnabled && (
+            <div className="mb-4 flex justify-center">
+              <BankKindSwitch
+                value="memory"
+                onChange={(kind) => kind === "knowledge" && router.push("/knowledge-banks")}
+              />
+            </div>
+          )}
           <Button onClick={() => window.dispatchEvent(new CustomEvent("hindsight:create-bank"))}>
             <Plus className="mr-1.5 h-4 w-4" />
             {tNavBank("create")}
@@ -244,7 +256,13 @@ export function BanksOverview() {
 
   return (
     <div className="mx-auto w-full max-w-6xl px-6 py-8">
-      <div className="mb-6 flex items-start justify-between gap-4">
+      {knowledgeBanksEnabled && (
+        <BankKindSwitch
+          value="memory"
+          onChange={(kind) => kind === "knowledge" && router.push("/knowledge-banks")}
+        />
+      )}
+      <div className="mb-6 mt-4 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground">{t("title")}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("subtitle")}</p>

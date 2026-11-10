@@ -121,6 +121,9 @@ class BankTemplateConfig(BaseModel):
     mcp_enabled_tools: list[str] | None = Field(
         default=None, description="MCP tool allowlist for this bank (None = all tools)"
     )
+    knowledge_banks: list[str] | None = Field(
+        default=None, description="Knowledge banks whose passages this bank's reflect reads"
+    )
     consolidation_llm_batch_size: int | None = Field(
         default=None, description="LLM batch size for observation consolidation"
     )

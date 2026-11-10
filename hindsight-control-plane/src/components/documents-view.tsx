@@ -271,7 +271,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function InfoCard({
+export function InfoCard({
   title,
   icon,
   children,
@@ -388,7 +388,7 @@ function DocumentRetainTraces({ bankId, documentId }: { bankId: string; document
   );
 }
 
-function MetadataRow({ label, value }: { label: string; value: React.ReactNode }) {
+export function MetadataRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <SectionLabel>{label}</SectionLabel>

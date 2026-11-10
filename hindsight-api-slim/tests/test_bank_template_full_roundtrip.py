@@ -96,6 +96,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "retain_chunk_batch_size": 7,
     "retain_max_attachments_per_chunk": 3,
     "mcp_enabled_tools": ["recall", "retain"],
+    "knowledge_banks": ["product-docs"],
     "consolidation_llm_batch_size": 11,
     "consolidation_source_facts_max_tokens": 2048,
     "consolidation_source_facts_max_tokens_per_observation": 256,
