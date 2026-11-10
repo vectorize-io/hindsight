@@ -1,6 +1,7 @@
 """Multimodal chunking: a file becomes passages that are embedded as they are, never OCR'd.
 
-* PDF   -> one rendered page image per passage (its text layer is kept for display, not embedded)
+* PDF   -> one rendered page image per passage; its text layer is kept for display and embedded
+           alongside (the page text and its units, see ``KnowledgeService._vectors_to_embed``)
 * image -> the image itself
 * audio -> fixed windows (m4a), with a small overlap
 * video -> fixed windows (mp4, picture + soundtrack), with a small overlap
@@ -316,7 +317,7 @@ def pack_lines(text: str, *, tokens: int) -> list[str]:
 def split_text(text: str, *, tokens: int) -> list[PassageDraft]:
     from .text_passages import split_into_passages
 
-    return [PassageDraft(modality="text", text=chunk.text) for chunk in split_into_passages(text, passage_size=tokens)]
+    return [PassageDraft(modality="text", text=chunk) for chunk in split_into_passages(text, passage_size=tokens)]
 
 
 # --- audio / video -----------------------------------------------------------------------------

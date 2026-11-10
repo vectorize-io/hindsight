@@ -197,6 +197,12 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         # private still fails, which is what keeps the guard under test.
         "HINDSIGHT_API_WEBHOOK_ALLOWED_HOSTS": "127.0.0.1",
         "HINDSIGHT_API_CONSOLIDATION_RECONCILE_INTERVAL_SECONDS": "5",
+        # Knowledge banks are hidden and off by default; the knowledge stories need them on. Their
+        # embedder reuses the memory banks' (the stub's lexical embeddings), so it embeds text only:
+        # texts, and PDFs through their text layer. Nothing else changes for the other stories: the
+        # flag only adds routes, and the knowledge service starts on first use.
+        "HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS": "true",
+        "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER": "text",
     }
 
 

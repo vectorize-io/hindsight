@@ -183,7 +183,8 @@ def test_text_is_split_into_token_sized_passages():
     assert len(drafts) > 3 and all(d.modality == "text" and d.text for d in drafts)
 
 
-def test_passages_follow_structure_and_keep_exact_offsets():
+def test_passages_follow_structure_and_keep_exact_order():
+    from hindsight_api.engine.token_encoding import count_tokens
     from hindsight_api.knowledge.text_passages import split_into_passages
 
     para = "The tenant pays rent monthly. Late payment accrues interest. " * 3
@@ -192,18 +193,14 @@ def test_passages_follow_structure_and_keep_exact_offsets():
         "5. TERMINATION. Either party may end the lease with notice.\n\n" + "Long clause sentence here. " * 60
     )
     chunks = split_into_passages(doc, passage_size=64)
-    # Every passage is an exact slice of the input (neighbours can be stitched back), in order.
-    assert all(doc[c.start : c.end] == c.text for c in chunks)
-    assert [c.start for c in chunks] == sorted(c.start for c in chunks)
-    assert all(c.token_count <= 64 for c in chunks)
+    # Every passage is an exact slice of the input, in order.
+    cursor = 0
+    for c in chunks:
+        cursor = doc.index(c, cursor) + len(c)
+    assert all(count_tokens(c) <= 64 for c in chunks)
     # Headings open passages: nothing merges across "ARTICLE II" or the numbered "5. TERMINATION".
-    assert any(c.text.startswith("ARTICLE II") for c in chunks)
-    assert any(c.text.startswith("5. TERMINATION") for c in chunks)
-    assert any(c.section and "ARTICLE II" in c.section for c in chunks)
-    # Repetitive text: offsets come from the split, not from re-finding the text.
-    repeated = "\n\n".join(["Same paragraph repeated."] * 20)
-    starts = [c.start for c in split_into_passages(repeated, passage_size=8)]
-    assert len(set(starts)) == len(starts)
+    assert any(c.startswith("ARTICLE II") for c in chunks)
+    assert any(c.startswith("5. TERMINATION") for c in chunks)
 
 
 @needs_ffmpeg
@@ -974,3 +971,79 @@ async def test_a_retried_batch_skips_the_documents_it_already_committed(api_clie
     assert [len(call) for call in fake_embedder.calls] == [1]  # only "c" embedded again
     assert (await service.store.list_passages(kb, ["a"]))["a"] == before
     assert (await service.store.get_documents(kb, ["c"]))["c"].status == "ready"
+
+
+async def test_the_memory_api_refuses_to_delete_a_knowledge_bank(api_client, kb):
+    r = await api_client.delete(f"/v1/default/banks/{kb}")
+    assert r.status_code == 400 and "is a knowledge bank" in r.json()["detail"], r.text
+    assert (await api_client.get(f"{KB}/{kb}")).status_code == 200
+
+
+async def test_a_knowledge_bank_cannot_take_a_memory_banks_alias(api_client):
+    memory_bank, alias = f"mem-{uuid.uuid4().hex[:8]}", f"alias-{uuid.uuid4().hex[:8]}"
+    assert (await api_client.put(f"/v1/default/banks/{memory_bank}", json={})).is_success
+    r = await api_client.post(f"/v1/default/banks/{memory_bank}/aliases", json={"alias": alias})
+    assert r.is_success, r.text
+    r = await api_client.post(KB, json={"bank_id": alias})
+    assert r.status_code == 409 and "is an alias" in r.json()["detail"], r.text
+    await api_client.delete(f"/v1/default/banks/{memory_bank}")
+
+
+async def test_an_embed_round_refused_for_one_document_fails_only_that_one(api_client, kb, fake_embedder, monkeypatch):
+    from hindsight_api.knowledge.embedders import UnsupportedModalityError
+
+    real = fake_embedder.embed_documents
+
+    async def picky(items):
+        if any("poison" in (i.text or "") for i in items):
+            raise UnsupportedModalityError("this model will not embed poison")
+        return await real(items)
+
+    monkeypatch.setattr(fake_embedder, "embed_documents", picky)
+    items = [{"document_id": d, "text": f"{d} red"} for d in ("a", "poison", "b")]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.status_code == 400 and "'poison': this model will not embed poison" in r.json()["detail"], r.text
+    statuses = {d: (await api_client.get(f"{KB}/{kb}/documents/{d}")).json()["status"] for d in ("a", "poison", "b")}
+    assert statuses == {"a": "ready", "poison": "failed", "b": "ready"}
+
+
+async def test_writes_for_a_replaced_version_leave_the_newer_one_alone(api_client, memory, kb):
+    from hindsight_api.knowledge.store import KnowledgePassage, PassageReplacement
+
+    store = get_knowledge_service(memory).store
+    for text in ("first red", "second blue"):
+        r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": text}]})
+        assert r.status_code == 200, r.text
+    newer = (await store.get_documents(kb, ["d"]))["d"]
+    # A batch still working on the first version fails it, or commits its passages, too late.
+    await store.set_statuses(kb, [StatusUpdate("d", "failed", "old version broke", storage_key="gone")])
+    stale = KnowledgePassage(index=0, modality="text", text="first red", embedding=[1.0] + [0.0] * (len(_AXES) - 1))
+    assert await store.replace_passages(kb, [PassageReplacement("d", [stale], storage_key="gone")]) == []
+    after = (await store.get_documents(kb, ["d"]))["d"]
+    assert (after.status, after.error, after.storage_key) == ("ready", None, newer.storage_key)
+    assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["second blue"]
+
+
+async def test_renaming_a_file_ingests_it_again(api_client, kb):
+    for name in ("a.md", "b.md"):
+        r = await api_client.post(
+            f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "same red", "filename": name}]}
+        )
+        assert r.status_code == 200 and r.json()["unchanged_document_ids"] == [], r.text
+    assert (await api_client.get(f"{KB}/{kb}/documents/d")).json()["filename"] == "b.md"
+
+
+async def test_neighbour_windows_that_grow_into_each_other_are_merged(api_client, memory, kb):
+    from hindsight_api.knowledge.store import SearchHit
+
+    text = "\n\n".join(f"# Part {n}\n\npassage {n} red" for n in range(8))
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "w", "text": text}]})
+    assert r.status_code == 200, r.text
+    service = get_knowledge_service(memory)
+    document = (await service.store.get_documents(kb, ["w"]))["w"]
+    passages = (await service.store.list_passages(kb, ["w"]))["w"]
+    assert len(passages) >= 6
+    # Hits at 0, then 4, then 2: windows 0-1 and 3-5, which passage 2's window 1-3 joins into one.
+    hits = [SearchHit(passages[i], document, 1.0 - i / 10) for i in (0, 4, 2)]
+    items = await service._with_context(kb, hits, 1)
+    assert [(i.context_first, i.context_last) for i in items] == [(0, 5)]

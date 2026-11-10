@@ -1,12 +1,12 @@
 """Knowledge banks: ingest files and texts, search their passages. No LLM anywhere.
 
 Knowledge banks ingest and search, as memory banks retain and recall. An ingest stores the
-original file, records the document as ``pending`` and queues one ``knowledge_ingest``
-operation per document. The worker splits the file into passages (see ``media``, or the
-ingestion strategy the item chose: ``ingest_strategy``), embeds each one with the server's
-multimodal embedder, stores each
-passage's media next to the original, and swaps the passages in at once. Search embeds
-the query into the same space and returns the nearest passages.
+original files, records the documents as ``pending`` and queues one ``knowledge_ingest``
+operation for all of them (or, sync, processes them in the request). The batch splits each file
+into passages (see ``media``, or the ingestion strategy the item chose: ``ingest_strategy``),
+embeds them with the server's multimodal embedder in rounds across documents, stores each
+passage's media next to the original, and swaps every document's passages in at once. Search
+embeds the query into the same space and returns the nearest passages.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 import weakref
@@ -107,7 +108,7 @@ class _Embedding:
 @dataclass
 class KnowledgeBankInfo:
     bank_id: str
-    created_at: Any
+    created_at: datetime | None
     stats: BankStats
 
 
@@ -415,7 +416,10 @@ class KnowledgeService:
                         CreateKnowledgeBankContext(bank_id=bank_id, request_context=request_context)
                     )
                 )
-            async with acquire_with_retry(await self._engine._get_backend()) as conn:
+            async with acquire_with_retry(await self._engine._get_backend()) as conn, conn.transaction():
+                # A bank must not be born under a name that is already an alias: resolution prefers a real
+                # bank, so the alias would silently start pointing here (see bank_utils' create path).
+                await bank_aliases.refuse_alias_as_bank_id_on_conn(conn, bank_id)
                 await conn.execute(
                     f"""
                     INSERT INTO {fq_table("banks")} (bank_id, name, disposition, mission, internal_id, kind)
@@ -608,8 +612,9 @@ class KnowledgeService:
     ) -> IngestResult:
         """Store each item and queue one operation that processes them all; an unchanged item is skipped.
 
-        ``wait`` processes them here instead and returns once all are searchable (no operation). If any
-        failed it raises, after the others committed, as with a retain."""
+        ``wait`` processes them here instead and returns once all are searchable (no operation); the
+        files a strategy splits one into are still queued, as their own operation. If any failed it
+        raises, after the others committed, as with a retain."""
         await self._open_bank(bank_id, KnowledgeBankWriteOperation.INGEST_KNOWLEDGE_BANK, request_context)
         # All-or-nothing: check every item before storing any.
         entries = [_Entry(item.document_id or str(uuid.uuid4()), item, self._check_item(item)) for item in items]
@@ -666,7 +671,15 @@ class KnowledgeService:
             item.filename = item.filename or f"{e.document_id}.md"
             content_hash = self._content_hash(item, e.plan)
             before = existing.get(e.document_id)
-            if before and before.content_hash == content_hash and before.status == "ready" and before.tags == item.tags:
+            if (
+                before
+                and before.content_hash == content_hash
+                and before.status == "ready"
+                and before.tags == item.tags
+                # The name is embedded as each passage's title, and the type decides how it is served.
+                and before.filename == item.filename
+                and before.content_type == item.content_type
+            ):
                 saved.append(None)  # unchanged: nothing to do
                 continue
             storage_key = f"{bank_storage_prefix(bank_id)}kb/files/{uuid.uuid4()}/{key_segment(item.filename)}"
@@ -837,7 +850,9 @@ class KnowledgeService:
             docs.append(_InFlight(w, row, _title_hint(row), media_prefix))
         if not docs:
             return
-        await self.store.set_statuses(bank_id, [StatusUpdate(d.work.document_id, "processing") for d in docs])
+        await self.store.set_statuses(
+            bank_id, [StatusUpdate(d.work.document_id, "processing", storage_key=d.work.storage_key) for d in docs]
+        )
         started = time.perf_counter()
         committed: set[str] = set()
         try:
@@ -848,11 +863,14 @@ class KnowledgeService:
                 except ValueError as exc:
                     doc.error = exc
                     continue
-                if drafts is None:  # split into files, each its own document now
+                if drafts is None:  # split into files, each its own document now, and itself ready
                     doc.split = True
+                    committed.add(doc.work.document_id)
                     continue
                 try:
-                    while (draft := await asyncio.to_thread(_next_draft, drafts)) is not None:
+                    # A document an embed round refused stops here: its remaining passages (a long
+                    # video's windows) would only be cut to be thrown away.
+                    while doc.error is None and (draft := await asyncio.to_thread(_next_draft, drafts)) is not None:
                         waiting.append(_Waiting(doc, draft))
                         if len(waiting) >= _EMBED_ROUND:
                             await self._embed_round(waiting)
@@ -881,12 +899,15 @@ class KnowledgeService:
                 bank_id,
                 [
                     PassageReplacement(
-                        d.work.document_id, d.passages, detect_language("\n".join(p.text or "" for p in d.passages))
+                        d.work.document_id,
+                        d.passages,
+                        detect_language("\n".join(p.text or "" for p in d.passages)),
+                        storage_key=d.work.storage_key,
                     )
                     for d in kept
                 ],
             )
-            committed = {d.work.document_id for d in kept}
+            committed |= {d.work.document_id for d in kept}
             await self._delete_keys(stale)
             # Only a document that used to be split can have split-out documents to drop now.
             was_split = [d.work.document_id for d in kept if d.work.was_split]
@@ -898,7 +919,11 @@ class KnowledgeService:
                 await self._delete_keys(d.media_keys)
             if failed:
                 await self.store.set_statuses(
-                    bank_id, [StatusUpdate(d.work.document_id, "failed", str(d.error)[:2000]) for d in failed]
+                    bank_id,
+                    [
+                        StatusUpdate(d.work.document_id, "failed", str(d.error)[:2000], d.work.storage_key)
+                        for d in failed
+                    ],
                 )
             logger.info(
                 f"Knowledge ingest {bank_id}: {len(kept)} documents, {sum(len(d.passages) for d in kept)} passages, "
@@ -914,7 +939,7 @@ class KnowledgeService:
             status: DocumentStatus = "pending" if retries_left else "failed"
             note = f"retrying after: {exc!r}" if retries_left else repr(exc)
             await self.store.set_statuses(
-                bank_id, [StatusUpdate(d.work.document_id, status, note[:2000]) for d in pending]
+                bank_id, [StatusUpdate(d.work.document_id, status, note[:2000], d.work.storage_key) for d in pending]
             )
             raise
         if failed:
@@ -964,7 +989,8 @@ class KnowledgeService:
             if len({id(w.doc) for w in live}) == 1:
                 live[0].doc.error = exc
                 return
-            for doc in dict.fromkeys(w.doc for w in live):
+            # By identity: an _InFlight is a mutable dataclass, so it has no hash to dedupe on.
+            for doc in {id(w.doc): w.doc for w in live}.values():
                 await self._embed_round([w for w in live if w.doc is doc])
             return
         cursor = 0
@@ -1092,7 +1118,7 @@ class KnowledgeService:
             raise KnowledgeBankError(f"document '{document_id}' not found", 404)
 
     async def open_file(self, bank_id: str, document_id: str, request_context: RequestContext) -> OpenedFile:
-        """The original upload: (byte stream, content type, filename)."""
+        """The original upload: its byte stream, content type and filename."""
         await self._open_bank(bank_id, KnowledgeBankReadOperation.GET_KNOWLEDGE_BANK_DOCUMENT, request_context)
         document = (await self.store.get_documents(bank_id, [document_id])).get(document_id)
         if document is None or not document.storage_key:
@@ -1177,6 +1203,16 @@ class KnowledgeService:
             if merged is not None:  # a better hit already covers (or touches) this one
                 merged.context_first = min(merged.context_first or 0, first)
                 merged.context_last = max(merged.context_last or 0, last)
+                # Grown, it may now reach another window of the document: fold that one in too, or the
+                # passages between them would come back twice.
+                for other in [w for w in same_doc if w is not merged]:
+                    if (other.context_first or 0) <= (merged.context_last or 0) + 1 and (other.context_last or 0) >= (
+                        merged.context_first or 0
+                    ) - 1:
+                        merged.context_first = min(merged.context_first or 0, other.context_first or 0)
+                        merged.context_last = max(merged.context_last or 0, other.context_last or 0)
+                        same_doc.remove(other)
+                        items.remove(other)
                 continue
             item = SearchResultItem(hit, context_first=first, context_last=last)
             same_doc.append(item)
@@ -1313,12 +1349,17 @@ def _next_draft(drafts: Iterator[media.PassageDraft]) -> media.PassageDraft | No
 _services: weakref.WeakKeyDictionary[MemoryEngine, KnowledgeService] = weakref.WeakKeyDictionary()
 
 
+# A threading lock, not an asyncio one: the map is process-wide and the critical section never awaits.
+_services_lock = threading.Lock()
+
+
 def get_knowledge_service(engine: MemoryEngine) -> KnowledgeService:
     """One service per engine (one embedder, loaded once), created on first use."""
-    service = _services.get(engine)
-    if service is None:
-        service = _services[engine] = KnowledgeService(engine)
-    return service
+    with _services_lock:
+        service = _services.get(engine)
+        if service is None:
+            service = _services[engine] = KnowledgeService(engine)
+        return service
 
 
 async def run_ingest_task(engine: MemoryEngine, task: dict[str, Any]) -> None:

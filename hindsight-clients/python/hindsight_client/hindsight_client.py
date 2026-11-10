@@ -3344,8 +3344,8 @@ class Hindsight:
             disposition_literalism: How literally to interpret information (1=flexible, 5=literal).
             disposition_empathy: How much to consider emotional context (1=detached, 5=empathetic).
             mcp_enabled_tools: List of MCP tool names to enable for this bank.
-            knowledge_banks: Knowledge banks linked to this bank: recall returns their best
-                passages as ``documents`` and reflect treats them as authoritative.
+            knowledge_banks: Knowledge banks linked to this bank: reflect also searches them and treats
+                their passages as authoritative. Recall is unchanged.
             llm_gemini_safety_settings: Gemini/VertexAI safety overrides, as a list of
                 ``{"category": ..., "threshold": ...}`` dicts (the shape the provider takes).
             memory_defense: Memory-defense (prompt-injection / secret redaction) settings.

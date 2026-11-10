@@ -1,6 +1,6 @@
 """Where knowledge-bank documents and passages live.
 
-``KnowledgeStore`` is the seam an external backend (Memlake on Hindsight Enterprise) plugs into
+``KnowledgeStore`` is the seam an external backend plugs into
 through ``HINDSIGHT_API_KNOWLEDGE_STORE_EXTENSION=module.path:ClassName``. The bank row itself
 always stays in the ``banks`` table, because async operations, audit and the delete cascade key
 off it. ``PostgresKnowledgeStore`` is the default: ``kb_documents`` + ``kb_passages`` with a
@@ -82,6 +82,9 @@ class StatusUpdate:
     document_id: str
     status: DocumentStatus
     error: str | None = None
+    #: Only while the document still holds this file: an ingest of an older version must not overwrite
+    #: the status of the newer one that replaced it meanwhile. None updates whatever is stored.
+    storage_key: str | None = None
 
 
 @dataclass
@@ -89,6 +92,8 @@ class PassageReplacement:
     document_id: str
     passages: list[KnowledgePassage]
     language: str | None = None
+    #: Only while the document still holds this file (see ``StatusUpdate``); otherwise it is skipped.
+    storage_key: str | None = None
 
 
 @dataclass
@@ -164,8 +169,9 @@ class KnowledgeStore(ABC):
 
     @abstractmethod
     async def replace_passages(self, bank_id: str, items: list[PassageReplacement]) -> list[str]:
-        """Swap each document's passages for the given ones and mark it ready. Returns the media keys of the
-        old passages no new passage reuses."""
+        """Swap each document's passages for the given ones and mark it ready; an item whose
+        ``storage_key`` the document no longer holds is skipped. Returns the media keys of the old passages
+        no new passage reuses."""
 
     @abstractmethod
     async def list_passages(self, bank_id: str, document_ids: list[str]) -> dict[str, list[KnowledgePassage]]:
@@ -451,24 +457,44 @@ class PostgresKnowledgeStore(KnowledgeStore):
         async with acquire_with_retry(await self._pool()) as conn:
             await conn.execute(
                 f"UPDATE {fq_table('kb_documents')} d SET status = u.status, error = u.error, updated_at = now() "
-                "FROM unnest($2::text[], $3::text[], $4::text[]) AS u(document_id, status, error) "
-                "WHERE d.bank_id = $1 AND d.document_id = u.document_id",
+                "FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS u(document_id, status, error, key) "
+                "WHERE d.bank_id = $1 AND d.document_id = u.document_id "
+                "AND (u.key IS NULL OR d.storage_key = u.key)",
                 bank_id,
                 [u.document_id for u in updates],
                 [u.status for u in updates],
                 [u.error for u in updates],
+                [u.storage_key for u in updates],
             )
 
     async def replace_passages(self, bank_id: str, items: list[PassageReplacement]) -> list[str]:
         if not items:
             return []
         table = fq_table("kb_passages")
-        document_ids = [i.document_id for i in items]
-        # A fixed four statements in one transaction, however many documents: the old passages must be
+        # A fixed five statements in one transaction, however many documents: the old passages must be
         # gone before the new ones (same primary keys) go in, which one statement with data-modifying
         # CTEs cannot order. The inserts are executemany, pipelined in one round trip each.
         async with acquire_with_retry(await self._pool()) as conn:
             async with conn.transaction():
+                # Locked, so an ingest of a newer version cannot swap the file between this check and the
+                # writes below; an item for a file the document no longer holds is left out.
+                held = {
+                    r["document_id"]: r["storage_key"]
+                    for r in await conn.fetch(
+                        f"SELECT document_id, storage_key FROM {fq_table('kb_documents')} "
+                        "WHERE bank_id = $1 AND document_id = ANY($2::text[]) FOR UPDATE",
+                        bank_id,
+                        [i.document_id for i in items],
+                    )
+                }
+                items = [
+                    i
+                    for i in items
+                    if i.document_id in held and (i.storage_key is None or held[i.document_id] == i.storage_key)
+                ]
+                if not items:
+                    return []
+                document_ids = [i.document_id for i in items]
                 old = await conn.fetch(
                     f"DELETE FROM {table} WHERE bank_id = $1 AND document_id = ANY($2::text[]) RETURNING media_key",
                     bank_id,

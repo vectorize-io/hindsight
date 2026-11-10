@@ -12398,6 +12398,12 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
         if not _knowledge_bank:
+            # Same id space, different API: the memory endpoint must not delete a knowledge bank, which
+            # answers to its own validator hooks and keeps files only the knowledge service removes.
+            if await bank_utils.bank_kind(await self._get_backend(), bank_id) == "knowledge":
+                raise OperationValidationError(
+                    f"'{bank_id}' is a knowledge bank; delete it through /v1/default/knowledge-banks", status_code=400
+                )
             await self._refuse_bank_wide_if_scoped(bank_id, request_context, "delete or clear the bank")
         if self._operation_validator and not _knowledge_bank:
             ctx = BankWriteContext(

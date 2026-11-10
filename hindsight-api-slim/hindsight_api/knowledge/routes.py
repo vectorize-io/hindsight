@@ -27,6 +27,7 @@ from .service import (
     IngestResult,
     KnowledgeBankError,
     KnowledgeBankInfo,
+    KnowledgeService,
     SearchRequest,
     SearchResultItem,
     get_knowledge_service,
@@ -360,7 +361,7 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
         include_in_schema=False,
     )
 
-    def service(request: Request):
+    def service(request: Request) -> KnowledgeService:
         return get_knowledge_service(request.app.state.memory)
 
     @router.get(
@@ -398,8 +399,11 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
         offset: int = Query(default=0, ge=0),
         q: str | None = Query(default=None, description="Part of the bank id, case-insensitive"),
         rc: RequestContext = Depends(get_request_context),
-    ):
-        page = await service(request).list_banks(rc, limit=limit, offset=offset, q=q)
+    ) -> KnowledgeBankListResponse:
+        try:
+            page = await service(request).list_banks(rc, limit=limit, offset=offset, q=q)
+        except Exception as exc:
+            raise _http_error(exc) from exc
         return KnowledgeBankListResponse(
             banks=[bank_response(b) for b in page.banks], total=page.total, limit=limit, offset=offset
         )
@@ -410,7 +414,9 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
         summary="Get a knowledge bank",
         operation_id="get_knowledge_bank",
     )
-    async def get_bank(bank_id: str, request: Request, rc: RequestContext = Depends(get_request_context)):
+    async def get_bank(
+        bank_id: str, request: Request, rc: RequestContext = Depends(get_request_context)
+    ) -> KnowledgeBankResponse:
         try:
             return bank_response(await service(request).get_bank(bank_id, rc))
         except Exception as exc:
@@ -422,7 +428,9 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
         summary="Delete a knowledge bank and everything in it",
         operation_id="delete_knowledge_bank",
     )
-    async def delete_bank(bank_id: str, request: Request, rc: RequestContext = Depends(get_request_context)):
+    async def delete_bank(
+        bank_id: str, request: Request, rc: RequestContext = Depends(get_request_context)
+    ) -> KnowledgeDeletedResponse:
         try:
             await service(request).delete_bank(bank_id, rc)
         except Exception as exc:
@@ -604,7 +612,7 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
     )
     async def get_file(
         bank_id: str, document_id: str, request: Request, rc: RequestContext = Depends(get_request_context)
-    ):
+    ) -> StreamingResponse:
         try:
             opened = await service(request).open_file(bank_id, document_id, rc)
         except Exception as exc:
@@ -621,7 +629,7 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
     )
     async def get_passage_media(
         bank_id: str, document_id: str, index: int, request: Request, rc: RequestContext = Depends(get_request_context)
-    ):
+    ) -> StreamingResponse:
         try:
             opened = await service(request).open_passage_media(bank_id, document_id, index, rc)
         except Exception as exc:

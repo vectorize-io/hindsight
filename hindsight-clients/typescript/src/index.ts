@@ -1042,8 +1042,8 @@ export class HindsightClient {
       recallBudgetMax?: number;
       /** MCP tool names enabled for this bank. */
       mcpEnabledTools?: string[];
-      /** Knowledge banks linked to this bank: recall returns their best passages as `documents`
-       *  and reflect treats them as authoritative. */
+      /** Knowledge banks linked to this bank: reflect also searches them and treats their
+       *  passages as authoritative. Recall is unchanged. */
       knowledgeBanks?: string[];
       /** Gemini/VertexAI safety overrides. */
       llmGeminiSafetySettings?: { category: string; threshold: string }[];

@@ -30,18 +30,6 @@ MIN_SENTENCE_TOKENS = 6
 
 
 @dataclass(frozen=True)
-class Chunk:
-    index: int
-    text: str
-    token_count: int
-    #: The heading path the passage sits under ("Article II > Section 2.1"). For display only:
-    #: embedding it gained nothing.
-    section: str | None = None
-    start: int = 0
-    end: int = 0
-
-
-@dataclass(frozen=True)
 class _Span:
     start: int
     end: int
@@ -161,51 +149,36 @@ _NUMBERED = re.compile(r"^(\(?\d+(?:\.\d+)*\)?)\.?\s+([A-Z][^.\n:]{0,80})(?:[.:]
 _JOINERS = {"of", "and", "the", "to", "in", "for", "on", "or", "a", "an", "by", "with", "&"}
 
 
-@dataclass(frozen=True)
-class _Heading:
-    level: int
-    text: str
-
-
 def _title_like(text: str) -> bool:
     words = text.split()
     return 0 < len(words) <= 8 and all(w[0].isupper() or w.lower() in _JOINERS or not w[0].isalpha() for w in words)
 
 
-def _heading(line: str) -> _Heading | None:
-    """The heading a line opens, if it opens a section."""
+def _opens_section(line: str) -> bool:
+    """Whether a line is a heading: a markdown heading, an article, a section or a numbered title, or a
+    short all-caps line."""
     s = line.strip()
     if not s:
-        return None
-    m = _MD_HEADING.match(s)
-    if m:
-        return _Heading(len(m.group(1)), re.sub(r"[*_`]+", "", m.group(2)).strip())
-    if _ARTICLE.match(s):
-        return _Heading(1, s[:80])
-    m = _SECTION.match(s)
-    if m:
-        return _Heading(2 + m.group(1).count("."), m.group(0).strip())
+        return False
+    if _MD_HEADING.match(s) or _ARTICLE.match(s) or _SECTION.match(s):
+        return True
     m = _NUMBERED.match(s)
     if m and _title_like(m.group(2)):
-        return _Heading(2 + m.group(1).count("."), m.group(0).strip().rstrip(".:"))
+        return True
     letters = [c for c in s if c.isalpha()]
-    if len(s) <= 120 and len(letters) >= 4 and all(c.isupper() for c in letters) and len(s.split()) <= 12:
-        return _Heading(2, s)
-    return None
+    return len(s) <= 120 and len(letters) >= 4 and all(c.isupper() for c in letters) and len(s.split()) <= 12
 
 
 @dataclass(frozen=True)
 class _Block:
     span: _Span
     opens_section: bool
-    path: str
 
 
 def _blocks(text: str) -> list[_Block]:
     """Paragraph blocks. Blank lines separate paragraphs; when a text has (almost) none, newlines do."""
     sep = re.compile(r"\n[ \t]*\n+") if text.count("\n\n") * 20 >= text.count("\n") else re.compile(r"\n+")
     out: list[_Block] = []
-    stack: list[_Heading] = []
     start = 0
     for m in [*sep.finditer(text), None]:
         end = m.start() if m else len(text)
@@ -213,14 +186,11 @@ def _blocks(text: str) -> list[_Block]:
         start = m.end() if m else len(text)
         if span.end <= span.start:
             continue
-        heading = _heading(text[span.start : span.end].split("\n", 1)[0])
-        if heading:
-            stack = [h for h in stack if h.level < heading.level] + [_Heading(heading.level, heading.text[:80])]
-        out.append(_Block(span, heading is not None, " > ".join(h.text for h in stack)))
+        out.append(_Block(span, _opens_section(text[span.start : span.end].split("\n", 1)[0])))
     return out
 
 
-def split_into_passages(text: str, *, passage_size: int) -> list[Chunk]:
+def split_into_passages(text: str, *, passage_size: int) -> list[str]:
     """Split a document into passages of at most ``passage_size`` tokens, structure first.
 
     A heading starts a new passage; paragraphs are merged up to ``passage_size``; a paragraph
@@ -228,15 +198,14 @@ def split_into_passages(text: str, *, passage_size: int) -> list[Chunk]:
     """
     if passage_size <= 0:
         raise ValueError("passage_size must be positive")
-    spans: list[tuple[_Span, str]] = []
+    spans: list[_Span] = []
     run: _Span | None = None
-    run_path = ""
     run_tokens = 0
 
     def flush() -> None:
         nonlocal run, run_tokens
         if run is not None:
-            spans.append((run, run_path))
+            spans.append(run)
         run, run_tokens = None, 0
 
     for block in _blocks(text):
@@ -250,29 +219,20 @@ def split_into_passages(text: str, *, passage_size: int) -> list[Chunk]:
             for sentence in _sentences(text, block.span.start, block.span.end, passage_size):
                 n = count_tokens(text[sentence.start : sentence.end])
                 if piece is not None and piece_tokens + n > passage_size:
-                    spans.append((piece, block.path))
+                    spans.append(piece)
                     piece, piece_tokens = None, 0
                 piece = _Span(piece.start if piece else sentence.start, sentence.end)
                 piece_tokens += n
             if piece is not None:
-                spans.append((piece, block.path))
+                spans.append(piece)
             continue
         if run is not None and run_tokens + tokens > passage_size:
             flush()
         if run is None:
-            run, run_path = block.span, block.path
+            run = block.span
         else:
             run = _Span(run.start, block.span.end)
         run_tokens += tokens
     flush()
-    return [
-        Chunk(
-            index=i,
-            text=text[span.start : span.end],
-            token_count=count_tokens(text[span.start : span.end]),
-            section=path or None,
-            start=span.start,
-            end=span.end,
-        )
-        for i, (span, path) in enumerate(spans)
-    ]
+    # Each passage is an exact slice of the input, in order.
+    return [text[span.start : span.end] for span in spans]
