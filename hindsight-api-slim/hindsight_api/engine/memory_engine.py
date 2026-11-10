@@ -1732,10 +1732,6 @@ def _is_foreign_key_violation(e: Exception) -> bool:
     return code == 2291
 
 
-#: How long before a queued retain was submitted its ingress may have stored its attachments.
-#: Seconds in practice; generous so a slow upload never counts as orphaned.
-_IN_FLIGHT_RETAIN_MARGIN = timedelta(hours=1)
-
 #: Tasks that write into a bank that already existed when they were queued. They run bound to
 #: that bank's life (bank_life): a delete while one runs stops it instead of letting it recreate
 #: the bank. import_bank / clone_bank are absent on purpose: they create their target bank.
@@ -8984,83 +8980,24 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> int:
         """Delete the attachments, stored in this window, that their document does not show.
 
-        Returns how many attachment rows went. Run by the maintenance loop.
-
-        The ingress stores a retain's attachments before the retain runs, as the
-        attachments of the document it is about to write. A retain that then fails for
-        any reason — an LLM error, a dropped connection, a worker that gave up — never
-        writes it, so they are left holding on to a document that either does not
-        exist or, for an update, still has its old text that never mentions them. A
-        document write drops the rows its text stopped referencing, and document
-        deletion drops all of them, but a failed retain is neither. So the rule is
-        stated on the data rather than on each failure path: an attachment belongs to
-        its document, and one its document's text does not reference, once its retain
-        has had time to finish, belongs to nothing.
-
-        A retain still queued or running may not have written its document yet, so the
-        window ends before the oldest one this bank has in flight: its attachments were
-        stored just before it was queued. The caller's ``created_before`` leaves the same
-        room for a retain that runs inline.
-
-        The document is read from the memories store, so a bank whose documents live
-        outside SQL is answered by its own store. A document whose text the store does
-        not keep is left alone: what it shows cannot be told, and taking away an image
-        it still shows is worse than keeping bytes.
+        Returns how many attachment rows went. Run by the maintenance loop; the
+        rule itself, shared with ``hindsight-admin repair-bank --attachments``, is
+        :func:`~hindsight_api.engine.retain.attachment_store.reclaim_unreferenced_attachments`.
         """
         from .memories import get_memories
-        from .retain.attachment_content import iter_placeholder_ids
+        from .retain.attachment_store import reclaim_unreferenced_attachments
 
         await self._authenticate_tenant(request_context)
         backend = await self._get_backend()
-        store = get_memories()
         async with backend.acquire() as conn:
-            oldest_in_flight = await conn.fetchval(
-                f"SELECT MIN(created_at) FROM {fq_table('async_operations')} "
-                f"WHERE bank_id = $1 AND status IN ('pending', 'processing') "
-                f"AND operation_type IN ('retain', 'batch_retain', 'file_convert_retain')",
+            return await reclaim_unreferenced_attachments(
+                conn,
+                self._file_storage,
+                get_memories(),
                 bank_id,
+                created_after=created_after,
+                created_before=created_before,
             )
-            if oldest_in_flight is not None:
-                created_before = min(created_before, oldest_in_flight - _IN_FLIGHT_RETAIN_MARGIN)
-            if created_before <= created_after:
-                return 0
-            candidates = [
-                row["document_id"]
-                for row in await conn.fetch(
-                    f"SELECT DISTINCT document_id FROM {fq_table('attachments')} "
-                    f"WHERE bank_id = $1 AND created_at >= $2 AND created_at < $3",
-                    bank_id,
-                    created_after,
-                    created_before,
-                )
-            ]
-            removed = 0
-            for document_id in candidates:
-                # One read per document that gained an attachment in the window — the
-                # lookback keeps that to about a week's worth, once a day.
-                document = await store.read_document_base(
-                    conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
-                )
-                if document is not None and document.original_text is None:
-                    continue
-                referenced = sorted(set(iter_placeholder_ids(document.original_text or ""))) if document else []
-                # ponytail: a retain run inline that reuses an identical image a failed
-                # retain of the same document left days ago can lose it, if this lands
-                # between that retain's ingress and its commit. Needs the reuse to
-                # refresh the row's age if it ever shows up.
-                keys = await conn.fetch(
-                    f"DELETE FROM {fq_table('attachments')} "
-                    f"WHERE bank_id = $1 AND document_id = $2 AND created_at >= $3 AND created_at < $4 "
-                    f"AND NOT (short_id = ANY($5::text[])) RETURNING storage_key",
-                    bank_id,
-                    document_id,
-                    created_after,
-                    created_before,
-                    referenced,
-                )
-                removed += len(keys)
-                await self._reclaim_orphaned_attachments(conn, bank_id, [row["storage_key"] for row in keys])
-        return removed
 
     async def _reclaim_orphaned_attachments(self, conn, bank_id: str, storage_keys: "Sequence[str]") -> None:
         """Delete the blobs behind ``storage_keys`` that no attachment row names any more.

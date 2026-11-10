@@ -23,6 +23,7 @@ import typer
 from ..config import DEFAULT_DATABASE_SCHEMA, HindsightConfig, load_dotenv_for_entrypoint
 from ..db_url import is_oracle_url
 from ..engine.memories import get_memories, sql_memories
+from ..engine.retain.attachment_store import ATTACHMENT_SWEEP_GRACE, reclaim_unreferenced_attachments
 from ..engine.retain.bank_utils import _vector_index_clause, bank_indexes_are_store_owned
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.storage import bank_storage_prefix, create_file_storage
@@ -721,6 +722,9 @@ class RepairSweep:
     rebuilt_search_vectors: int = 0
     # Counted apart from ``banks``, which stays empty on a backend without per-bank indexes.
     banks_scanned: int = 0
+    # Attachments their document does not reference, left by retains that failed
+    # (#6350), with --attachments; in a dry run, how many would be removed.
+    unreferenced_attachments: int = 0
 
 
 async def _run_repair_bank(
@@ -730,6 +734,7 @@ async def _run_repair_bank(
     schema: str | None,
     bank_id: str | None,
     dry_run: bool,
+    attachments: bool = False,
 ) -> RepairSweep:
     """Reconcile per-(bank, fact_type) vector index coverage, and remove orphan observations.
 
@@ -752,6 +757,12 @@ async def _run_repair_bank(
     orphan_observations = 0
     rebuilt_search_vectors = 0
     banks_scanned = 0
+    unreferenced_attachments = 0
+    # The daily sweep's rule with no lower bound, so it collects what leaked before
+    # the sweep existed. get_memories(), not the SQL store: whether an attachment is
+    # referenced is a question about the document, which a custom store may own.
+    attachments_before = datetime.now(timezone.utc) - ATTACHMENT_SWEEP_GRACE
+    attachments_after = datetime(1970, 1, 1, tzinfo=timezone.utc)
     try:
         for target_schema in schemas:
             # The whole schema is inside the guard, not just list_bank_ids. Planning a
@@ -770,6 +781,7 @@ async def _run_repair_bank(
             schema_results: list[BankIndexResult] = []
             schema_orphans = 0
             schema_rebuilt = 0
+            schema_attachments = 0
             schema_banks_done = 0
             try:
                 bank_ids = [bank_id] if bank_id else await list_bank_ids(conn, target_schema)
@@ -785,11 +797,27 @@ async def _run_repair_bank(
                     schema_rebuilt += await pg_store.admin_rebuild_observation_search_vectors(
                         conn=conn, schema=target_schema, bank_id=bid, dry_run=dry_run
                     )
+                    if attachments:
+                        # The shared rule resolves tables through fq_table.
+                        token = _current_schema.set(target_schema)
+                        try:
+                            schema_attachments += await reclaim_unreferenced_attachments(
+                                conn,
+                                _admin_file_storage(conn, target_schema),
+                                get_memories(),
+                                bid,
+                                created_after=attachments_after,
+                                created_before=attachments_before,
+                                dry_run=dry_run,
+                            )
+                        finally:
+                            _current_schema.reset(token)
                     schema_banks_done += 1
             except Exception as exc:  # noqa: BLE001 — one bad schema must not abort the sweep
                 results.extend(schema_results)
                 orphan_observations += schema_orphans
                 rebuilt_search_vectors += schema_rebuilt
+                unreferenced_attachments += schema_attachments
                 banks_scanned += schema_banks_done
                 done = f", {schema_banks_done} of {len(bank_ids)} bank(s) done" if schema_banks_done else ""
                 typer.echo(f"  schema '{target_schema}': skipped ({exc}){done}", err=True)
@@ -814,6 +842,7 @@ async def _run_repair_bank(
             results.extend(schema_results)
             orphan_observations += schema_orphans
             rebuilt_search_vectors += schema_rebuilt
+            unreferenced_attachments += schema_attachments
             banks_scanned += schema_banks_done
             # Only in --all mode: an index whose bank row is gone is unreachable
             # from every bank-scoped path, so this is the one place that can collect
@@ -849,6 +878,11 @@ async def _run_repair_bank(
                 f"{sum(r.failed for r in schema_results)} failed, "
                 f"{schema_orphans} orphan observation(s) {'to remove (dry-run)' if dry_run else 'removed'}, "
                 f"{schema_rebuilt} observation keyword index(es) {'to rebuild (dry-run)' if dry_run else 'rebuilt'}"
+                + (
+                    f", {schema_attachments} unreferenced attachment(s) {'to remove (dry-run)' if dry_run else 'removed'}"
+                    if attachments
+                    else ""
+                )
             )
         return RepairSweep(
             banks=results,
@@ -856,6 +890,7 @@ async def _run_repair_bank(
             orphan_observations=orphan_observations,
             rebuilt_search_vectors=rebuilt_search_vectors,
             banks_scanned=banks_scanned,
+            unreferenced_attachments=unreferenced_attachments,
         )
     finally:
         await conn.close()
@@ -884,6 +919,12 @@ def repair_bank(
         False,
         "--dry-run",
         help="Report what would be repaired without creating, dropping or deleting anything.",
+    ),
+    attachments: bool = typer.Option(
+        False,
+        "--attachments",
+        help="Also delete attachments their document does not reference (left by retains that failed), "
+        "however old. Reads each document that has attachments.",
     ),
 ):
     """Repair a bank's derived state: vector index coverage, orphan observations, and (under
@@ -925,6 +966,14 @@ def repair_bank(
     Reach for the command when you want convergence without waiting for a write:
     after a restore or upgrade, after a backend switch, or to shed indexes in
     bulk on a deployment recovering from lock-table exhaustion (#3485).
+    With --attachments, also deletes the images and files of retains that failed
+    after the API stored them: attachments, a day or more old, that their
+    document's text does not reference — the document was never created, or the
+    update that brought them failed. The daily maintenance sweep applies the same
+    rule to the past week only; this covers everything before it (#6350). It reads
+    every document that has an attachment, through the memories store, so it is
+    opt-in rather than part of every repair.
+
     Idempotent and safe to re-run.
     """
     if bool(bank_id) == all_banks:
@@ -959,6 +1008,7 @@ def repair_bank(
             schema=schema,
             bank_id=bank_id,
             dry_run=dry_run,
+            attachments=attachments,
         )
     )
     results = sweep.banks
@@ -978,6 +1028,12 @@ def repair_bank(
         f"{sweep.orphan_observations} orphan observation(s) {'to remove (dry-run)' if dry_run else 'removed'}, "
         f"{sweep.rebuilt_search_vectors} observation keyword index(es) "
         f"{'to rebuild (dry-run)' if dry_run else 'rebuilt'}"
+        + (
+            f", {sweep.unreferenced_attachments} unreferenced attachment(s) "
+            f"{'to remove (dry-run)' if dry_run else 'removed'}"
+            if attachments
+            else ""
+        )
     )
     # Both are reported before either exits. They are independent — a sweep can have
     # failed builds in one schema and be unable to look at another — and raising on

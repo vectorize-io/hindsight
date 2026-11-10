@@ -74,6 +74,7 @@ from ..config import ConfigLike, get_config
 from ..models import RequestContext
 from ..schema_context import _current_schema
 from .db_utils import acquire_with_retry
+from .retain.attachment_store import ATTACHMENT_SWEEP_GRACE
 from .schema import _is_oracle, fq_routine, fq_table, fq_table_explicit
 
 if TYPE_CHECKING:
@@ -121,9 +122,10 @@ _RETENTION_BATCH_PAUSE_SECONDS = 0.25
 # update to it failed — belongs to a retain that failed. Only the past
 # week is checked, so a daily run asks about each attachment about six times rather
 # than about every attachment the bank ever held.
-# ponytail: an attachment orphaned while every process was down (or its retain was
-# queued) for over a week is never swept; widen the lookback if that shows up.
-_ATTACHMENT_SWEEP_GRACE = timedelta(days=1)
+# An attachment orphaned before the job existed, or while every process was down
+# (or its retain queued) for over a week, falls out of the window: that is what
+# `hindsight-admin repair-bank --attachments` is for, the same rule with no
+# lower bound.
 _ATTACHMENT_SWEEP_LOOKBACK = timedelta(days=7)
 
 
@@ -482,7 +484,7 @@ class MaintenanceLoop:
         """
         engine = self._engine
         now = datetime.now(timezone.utc)
-        created_before = now - _ATTACHMENT_SWEEP_GRACE
+        created_before = now - ATTACHMENT_SWEEP_GRACE
         created_after = created_before - _ATTACHMENT_SWEEP_LOOKBACK
         try:
             async with acquire_with_retry(engine._backend, max_retries=1) as conn:

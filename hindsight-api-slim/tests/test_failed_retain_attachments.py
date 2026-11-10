@@ -169,8 +169,46 @@ async def test_the_daily_job_finds_the_bank_through_the_routine(api_client, memo
         visited.append(bank)
         return 0
 
-    monkeypatch.setattr(maintenance_mod, "_ATTACHMENT_SWEEP_GRACE", timedelta(seconds=-1))
+    monkeypatch.setattr(maintenance_mod, "ATTACHMENT_SWEEP_GRACE", timedelta(seconds=-1))
     monkeypatch.setattr(memory, "reclaim_unreferenced_attachments", spy)
     await MaintenanceLoop(memory)._run_attachment_sweep()
 
     assert bank_id in visited
+
+
+@pytest.mark.asyncio
+async def test_repair_bank_collects_what_leaked_before_the_daily_window(api_client, memory, monkeypatch, pg0_db_url):
+    """``repair-bank --attachments`` applies the same rule with no lower bound.
+
+    The daily sweep only looks back a week, so an image a retain leaked a month ago —
+    before the sweep existed — is never reached by it. The admin repair is how an
+    upgraded deployment collects those once.
+    """
+    from hindsight_api.admin.cli import _run_repair_bank
+
+    bank_id = f"swp-{uuid.uuid4().hex[:8]}"
+    landed = await _retain(api_client, bank_id, "kept")
+    assert landed.status_code == 200, landed.text
+    await _failed_retain(api_client, memory, monkeypatch, bank_id, "leaked")
+    backend = await memory._get_backend()
+    async with backend.acquire() as conn:
+        # Aged by hand: a month-old leak is the case under test, and no API sets created_at.
+        await conn.execute("UPDATE attachments SET created_at = now() - interval '30 days' WHERE bank_id = $1", bank_id)
+
+    dry = await _run_repair_bank(
+        pg0_db_url, base_schema="public", schema="public", bank_id=bank_id, dry_run=True, attachments=True
+    )
+    assert dry.unreferenced_attachments == 1
+    assert await _attachment_status(api_client, bank_id) == 200, "a dry run must remove nothing"
+
+    swept = await _run_repair_bank(
+        pg0_db_url, base_schema="public", schema="public", bank_id=bank_id, dry_run=False, attachments=True
+    )
+    assert swept.unreferenced_attachments == 1
+    async with backend.acquire() as conn:
+        rows = await conn.fetch("SELECT document_id FROM attachments WHERE bank_id = $1", bank_id)
+    assert [row["document_id"] for row in rows] == ["kept"]
+
+    # Without the flag the repair leaves attachments alone.
+    plain = await _run_repair_bank(pg0_db_url, base_schema="public", schema="public", bank_id=bank_id, dry_run=True)
+    assert plain.unreferenced_attachments == 0
