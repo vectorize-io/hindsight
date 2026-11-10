@@ -1629,6 +1629,8 @@ class _DecisionProviderDefaults:
 # hindsight is Hindsight Inference: its key comes from HINDSIGHT_API_DECISION_MODEL_API_KEY or,
 # when unset, from `hindsight-admin cloud login`. Hindsight Inference fits each request to the
 # window of the model that serves it and merges the answers, so the whole pool goes in one request.
+# It used to split at 54k tokens (hs-decide-1-flash's 64k window less a margin), counted on the
+# whole JSON body: about twice the text the model reads, so pools that fit were sent as 2+ calls (#6489).
 DECISION_MODEL_PROVIDER_DEFAULTS = {
     "hindsight": _DecisionProviderDefaults(
         model="hs-decide-1-flash", base_url=HINDSIGHT_INFERENCE_URL, fits_requests=True

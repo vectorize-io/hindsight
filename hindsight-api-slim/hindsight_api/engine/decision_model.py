@@ -333,6 +333,8 @@ class DecisionModel:
         return DecisionRerank(
             count=lambda text: count_tokens(text, self.tokenizer),
             truncate=lambda text, max_tokens: truncate_to_tokens(text, max_tokens, self.tokenizer).text,
+            # With no token ceiling (the endpoint fits requests), the ceiling here only sizes the caps
+            # on the query, shared context and each memory, which keep the default's.
             max_request_tokens=self.max_request_tokens or MAX_REQUEST_TOKENS,
         )
 
