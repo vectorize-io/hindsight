@@ -613,9 +613,10 @@ def _ensure_json_word_in_user_message(messages: list[dict[str, Any]]) -> list[di
     user_indexes = [
         index
         for index, message in enumerate(normalized)
-        # A multimodal turn (a retained image) counts too: skipped, it got the hint as a
-        # second user turn after it, and strict chat templates refuse two user turns in a
-        # row with "Conversation roles must alternate" (#6349).
+        # A multimodal turn (a retained image) counts too. When only string turns
+        # counted, an image-only conversation got the hint as a new user turn after the
+        # image one, and strict chat templates refuse two user turns in a row with
+        # "Conversation roles must alternate" (#6349).
         if message.get("role") == "user" and isinstance(message.get("content"), (str, list))
     ]
     if not user_indexes:
