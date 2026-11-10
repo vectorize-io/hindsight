@@ -127,6 +127,8 @@ export HINDSIGHT_API_DECISION_MODEL_API_KEY=<the server's --api-key>
 
 As with the hosted model, recall keeps its reranker unless you also set `HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER=hindsight`.
 
+Your server has no gateway to fit each request to the model's window, so Hindsight splits large asks into requests of up to 54,000 tokens, sized for `hs-decide-1-flash`'s 64k window. Set `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` if you serve it with a smaller `--max-model-len`.
+
 **Reranker and embeddings.** These are small enough to run inside the Hindsight API process, on CPU, with no extra server. They download from Hugging Face on first start:
 
 ```bash
