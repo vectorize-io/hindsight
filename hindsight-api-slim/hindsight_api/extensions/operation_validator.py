@@ -783,6 +783,62 @@ class MemoryUpdateResult:
 # =============================================================================
 
 
+# =============================================================================
+# Knowledge Bank Contexts
+# =============================================================================
+# Knowledge banks (banks of files, searched by meaning and exact text) have hooks of their own:
+# none of the memory-bank hooks above runs for them, so a validator written for memory banks
+# never applies to a knowledge bank by accident. Each hook below allows everything by default.
+
+
+class KnowledgeBankReadOperation(StrEnum):
+    """Knowledge-bank read operation names passed to validate_knowledge_bank_read."""
+
+    GET_KNOWLEDGE_BANK = "get_knowledge_bank"
+    LIST_KNOWLEDGE_BANK_DOCUMENTS = "list_knowledge_bank_documents"
+    #: A document, its original file, or a passage's page image or clip.
+    GET_KNOWLEDGE_BANK_DOCUMENT = "get_knowledge_bank_document"
+    #: Also checked, as the caller, for each knowledge bank a memory bank links when reflect reads it.
+    SEARCH_KNOWLEDGE_BANK = "search_knowledge_bank"
+
+
+class KnowledgeBankWriteOperation(StrEnum):
+    """Knowledge-bank write operation names passed to validate_knowledge_bank_write."""
+
+    INGEST_KNOWLEDGE_BANK = "ingest_knowledge_bank"
+    DELETE_KNOWLEDGE_BANK_DOCUMENT = "delete_knowledge_bank_document"
+    DELETE_KNOWLEDGE_BANK = "delete_knowledge_bank"
+
+
+@dataclass
+class KnowledgeBankReadContext:
+    bank_id: str
+    operation: KnowledgeBankReadOperation
+    request_context: "RequestContext"
+
+
+@dataclass
+class KnowledgeBankWriteContext:
+    bank_id: str
+    operation: KnowledgeBankWriteOperation
+    request_context: "RequestContext"
+
+
+@dataclass
+class CreateKnowledgeBankContext:
+    bank_id: str
+    request_context: "RequestContext"
+
+
+@dataclass
+class KnowledgeBankListContext:
+    """The knowledge banks matching a list request (post-query), newest first."""
+
+    #: Each with ``bank_id`` and ``created_at``.
+    banks: list[dict]
+    request_context: "RequestContext"
+
+
 @dataclass
 class FileConvertResult:
     """Result context for post-file-conversion hook.
@@ -1450,6 +1506,38 @@ class OperationValidatorExtension(Extension, ABC):
         Returns:
             BankListResult with the filtered list of banks.
         """
+        return BankListResult(banks=ctx.banks)
+
+    # =========================================================================
+    # Knowledge Banks - Validation hooks (optional - override to implement)
+    # =========================================================================
+
+    async def validate_knowledge_bank_read(self, ctx: KnowledgeBankReadContext) -> ValidationResult:
+        """Validate a knowledge-bank read before it runs (see KnowledgeBankReadOperation).
+
+        A reflect on a memory bank that links a knowledge bank runs SEARCH_KNOWLEDGE_BANK for it,
+        with the caller's context, and leaves out a knowledge bank this rejects instead of failing.
+        """
+        return ValidationResult.accept()
+
+    async def validate_knowledge_bank_write(self, ctx: KnowledgeBankWriteContext) -> ValidationResult:
+        """Validate a knowledge-bank write before it runs (see KnowledgeBankWriteOperation)."""
+        return ValidationResult.accept()
+
+    async def validate_create_knowledge_bank(self, ctx: CreateKnowledgeBankContext) -> ValidationResult:
+        """Validate the creation of a knowledge bank before its row is inserted."""
+        return ValidationResult.accept()
+
+    async def knowledge_bank_list_scope(self, request_context: "RequestContext") -> BankListScope | None:
+        """Which knowledge banks this request's list may show, declared before the list is read.
+
+        Same contract as bank_list_scope. The default, every knowledge bank, never calls
+        filter_knowledge_bank_list; return None to filter the full list there instead.
+        """
+        return BankListScope()
+
+    async def filter_knowledge_bank_list(self, ctx: KnowledgeBankListContext) -> BankListResult:
+        """Filter the knowledge bank list; runs only when knowledge_bank_list_scope returns None."""
         return BankListResult(banks=ctx.banks)
 
     async def filter_mcp_tools(

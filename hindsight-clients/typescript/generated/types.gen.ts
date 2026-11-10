@@ -721,6 +721,12 @@ export type BankTemplateConfig = {
    */
   mcp_enabled_tools?: Array<string> | null;
   /**
+   * Knowledge Banks
+   *
+   * Knowledge banks whose passages this bank's reflect reads
+   */
+  knowledge_banks?: Array<string> | null;
+  /**
    * Consolidation Llm Batch Size
    *
    * LLM batch size for observation consolidation
@@ -2967,6 +2973,12 @@ export type FeaturesInfo = {
    * Whether the document import endpoint is enabled
    */
   document_import_api: boolean;
+  /**
+   * Knowledge Banks
+   *
+   * Whether knowledge banks are enabled
+   */
+  knowledge_banks?: boolean;
   /**
    * Audit Log
    *

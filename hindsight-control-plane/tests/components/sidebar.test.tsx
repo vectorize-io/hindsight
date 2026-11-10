@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { Home } from "lucide-react";
 
 vi.mock("next-intl", () => ({ useTranslations: () => (key: string) => key }));
 vi.mock("@/lib/bank-context", () => ({ useBank: () => ({ currentBank: "alpha" }) }));
@@ -62,5 +63,28 @@ describe("Sidebar accessibility", () => {
     fireEvent.click(recall);
     expect(onTabChange).toHaveBeenCalledWith("recall");
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("renders another bank kind's sections with their own links", () => {
+    const onTabChange = vi.fn();
+    render(
+      <Sidebar
+        currentTab="search"
+        onTabChange={onTabChange}
+        items={[
+          { id: "home", label: "Home", icon: Home },
+          { id: "search", label: "Search", icon: Home },
+        ]}
+        hrefFor={(id) => `/knowledge-banks/kb?view=${id}`}
+      />
+    );
+    const links = screen.getAllByRole("link");
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "/knowledge-banks/kb?view=home",
+      "/knowledge-banks/kb?view=search",
+    ]);
+    expect(links[1].getAttribute("aria-current")).toBe("page");
+    fireEvent.click(links[0]);
+    expect(onTabChange).toHaveBeenCalledWith("home");
   });
 });

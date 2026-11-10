@@ -10430,6 +10430,21 @@
             "title": "Mcp Enabled Tools",
             "description": "MCP tool allowlist for this bank (None = all tools)"
           },
+          "knowledge_banks": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Banks",
+            "description": "Knowledge banks whose passages this bank's reflect reads"
+          },
           "consolidation_llm_batch_size": {
             "anyOf": [
               {
@@ -13891,6 +13906,12 @@
             "type": "boolean",
             "title": "Document Import Api",
             "description": "Whether the document import endpoint is enabled"
+          },
+          "knowledge_banks": {
+            "type": "boolean",
+            "title": "Knowledge Banks",
+            "description": "Whether knowledge banks are enabled",
+            "default": false
           },
           "audit_log": {
             "type": "boolean",
@@ -21146,6 +21167,7 @@
             "document_export_api": true,
             "document_import_api": true,
             "file_upload_api": true,
+            "knowledge_banks": false,
             "llm_trace": false,
             "mcp": true,
             "observations": false,

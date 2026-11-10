@@ -549,6 +549,9 @@ ENV_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_EMBEDDINGS_PROVIDER"
 # variable, so either side can switch provider (local on one side, remote on the other).
 EMBEDDINGS_SIDE_QUERY = "QUERY"
 EMBEDDINGS_SIDE_PASSAGE = "PASSAGE"
+# The knowledge banks' text embedder ("text" provider), when it is not the memory banks' own:
+# HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_<X> for any HINDSIGHT_API_EMBEDDINGS_<X>.
+EMBEDDINGS_SIDE_KNOWLEDGE_TEXT = "KNOWLEDGE_TEXT"
 _ENV_EMBEDDINGS_PREFIX = "HINDSIGHT_API_EMBEDDINGS_"
 # Provider-agnostic asymmetric prefixes: applied client-side by every provider that
 # is plain text-in/vector-out (tei, litellm, litellm-sdk, openai-compatible). Providers
@@ -965,6 +968,36 @@ ENV_FILE_PARSER_IRIS_ORG_ID = "HINDSIGHT_API_FILE_PARSER_IRIS_ORG_ID"
 ENV_FILE_PARSER_LLAMA_PARSE_API_KEY = "HINDSIGHT_API_FILE_PARSER_LLAMA_PARSE_API_KEY"
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE_MB = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB"
 ENV_FILE_CONVERSION_MAX_BATCH_SIZE = "HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE"
+# Knowledge banks: multimodal document search (hindsight_api/knowledge/), no LLM anywhere
+ENV_KNOWLEDGE_EMBEDDINGS_PROVIDER = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER"
+ENV_KNOWLEDGE_EMBEDDINGS_MODEL = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODEL"
+ENV_KNOWLEDGE_EMBEDDINGS_API_KEY = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_API_KEY"
+ENV_KNOWLEDGE_EMBEDDINGS_DIMENSIONS = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_DIMENSIONS"
+ENV_KNOWLEDGE_EMBEDDINGS_BASE_URL = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BASE_URL"
+ENV_KNOWLEDGE_EMBEDDINGS_MODALITIES = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODALITIES"
+ENV_KNOWLEDGE_EMBEDDINGS_DEVICE = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_DEVICE"
+ENV_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE"
+# Media types (document, image, audio, video, text) this server refuses to ingest, comma-separated,
+# whatever its embedder could embed: e.g. "video,audio" to skip the cost of decoding clips.
+ENV_KNOWLEDGE_DISABLED_MEDIA_TYPES = "HINDSIGHT_API_KNOWLEDGE_DISABLED_MEDIA_TYPES"
+ENV_KNOWLEDGE_IMAGE_TOKENS = "HINDSIGHT_API_KNOWLEDGE_IMAGE_TOKENS"
+ENV_KNOWLEDGE_MAX_FILE_MB = "HINDSIGHT_API_KNOWLEDGE_MAX_FILE_MB"
+ENV_KNOWLEDGE_MAX_MEDIA_SECONDS = "HINDSIGHT_API_KNOWLEDGE_MAX_MEDIA_SECONDS"
+ENV_KNOWLEDGE_MAX_PDF_PAGES = "HINDSIGHT_API_KNOWLEDGE_MAX_PDF_PAGES"
+ENV_KNOWLEDGE_AUDIO_WINDOW_SECONDS = "HINDSIGHT_API_KNOWLEDGE_AUDIO_WINDOW_SECONDS"
+ENV_KNOWLEDGE_VIDEO_WINDOW_SECONDS = "HINDSIGHT_API_KNOWLEDGE_VIDEO_WINDOW_SECONDS"
+ENV_KNOWLEDGE_MEDIA_OVERLAP_SECONDS = "HINDSIGHT_API_KNOWLEDGE_MEDIA_OVERLAP_SECONDS"
+ENV_KNOWLEDGE_PDF_PAGE_PIXELS = "HINDSIGHT_API_KNOWLEDGE_PDF_PAGE_PIXELS"
+ENV_KNOWLEDGE_PDF_TEXT_WEIGHT = "HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT"
+ENV_KNOWLEDGE_PDF_BANDS = "HINDSIGHT_API_KNOWLEDGE_PDF_BANDS"
+ENV_KNOWLEDGE_KEYWORD_WEIGHT = "HINDSIGHT_API_KNOWLEDGE_KEYWORD_WEIGHT"
+ENV_KNOWLEDGE_TEXT_PASSAGE_TOKENS = "HINDSIGHT_API_KNOWLEDGE_TEXT_PASSAGE_TOKENS"
+ENV_KNOWLEDGE_STORE_EXTENSION = "HINDSIGHT_API_KNOWLEDGE_STORE_EXTENSION"
+# Knowledge-bank ingestion strategies (knowledge/ingest_strategy.py): named mappings of file types to
+# the extension that pre-processes them (JSON, {name: {file_type: {"extension": "module:Class",
+# "settings": {...}}}}), and the one an ingest uses unless its item names another. Server-wide only.
+ENV_INGEST_STRATEGIES = "HINDSIGHT_API_INGEST_STRATEGIES"
+ENV_INGEST_DEFAULT_STRATEGY = "HINDSIGHT_API_INGEST_DEFAULT_STRATEGY"
 ENV_ENABLE_FILE_UPLOAD_API = "HINDSIGHT_API_ENABLE_FILE_UPLOAD_API"
 ENV_FILE_DELETE_AFTER_RETAIN = "HINDSIGHT_API_FILE_DELETE_AFTER_RETAIN"
 ENV_STORE_DOCUMENT_TEXT = "HINDSIGHT_API_STORE_DOCUMENT_TEXT"
@@ -973,6 +1006,7 @@ ENV_DEFAULT_TIMEZONE = "HINDSIGHT_API_DEFAULT_TIMEZONE"
 # Document transfer (export/import documents between banks without re-running the LLM)
 ENV_ENABLE_DOCUMENT_EXPORT_API = "HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API"
 ENV_ENABLE_DOCUMENT_IMPORT_API = "HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API"
+ENV_ENABLE_KNOWLEDGE_BANKS = "HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS"
 
 # Observations settings (consolidated knowledge from facts)
 ENV_ENABLE_OBSERVATIONS = "HINDSIGHT_API_ENABLE_OBSERVATIONS"
@@ -1506,6 +1540,30 @@ RECALL_BOOST_LEVELS = ("low", "medium", "high")
 DEFAULT_RECALL_BOOST_LEVEL = "medium"
 
 
+_KNOWLEDGE_MEDIA_TYPES = ("document", "image", "audio", "video", "text")
+
+
+def _parse_knowledge_media_types(raw: str | None) -> frozenset[str]:
+    names = frozenset(n.strip().lower() for n in (raw or "").split(",") if n.strip())
+    unknown = names - set(_KNOWLEDGE_MEDIA_TYPES)
+    if unknown:
+        raise ValueError(
+            f"{ENV_KNOWLEDGE_DISABLED_MEDIA_TYPES}: unknown media types {', '.join(sorted(unknown))} "
+            f"(expected some of {', '.join(_KNOWLEDGE_MEDIA_TYPES)})"
+        )
+    return names
+
+
+def _parse_ingest_strategies(raw: str | None) -> dict | None:
+    """HINDSIGHT_API_INGEST_STRATEGIES: a JSON object of strategy name -> its file-type mapping (an object)."""
+    if not raw:
+        return None
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict) or not all(isinstance(v, dict) for v in parsed.values()):
+        raise ValueError(f"{ENV_INGEST_STRATEGIES} must be a JSON object of strategy name -> file-type mapping")
+    return parsed
+
+
 def _parse_strategy_boosts(raw: str | None) -> dict[str, str]:
     """Parse a "strategy:level,strategy:level" string into a boost map.
 
@@ -1955,6 +2013,31 @@ DEFAULT_FILE_PARSER_MARKITDOWN_OCR_PROMPT = """You are a precise OCR transcripti
 Transcribe only the visible text in the image. Do not describe the image, summarize it, translate it, infer missing content, or add commentary. Preserve the original language, wording, numbers, punctuation, capitalization, and reading order. Reconstruct headings, lists, key-value fields, stamps, and tables as clean Markdown when the layout is clear. If text is unreadable or uncertain, write [unclear] for that span. Return only the extracted Markdown."""
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE_MB = 100  # Max total batch size in MB (all files combined)
 DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE = 10  # Max files per batch upload
+# Knowledge banks: one embedder per server, its modalities deciding which media types can be ingested
+# (knowledge/embedders.py). Multimodal: "local" (EmbeddingGemma 2 in-process), "gemini" / "vertex"
+# (Gemini Embedding 2), "voyage" (text, image, video), "cohere" (text, image), "openai" (any compatible
+# server). Text only: "text", any memory-bank embeddings provider (see EMBEDDINGS_SIDE_KNOWLEDGE_TEXT).
+DEFAULT_KNOWLEDGE_EMBEDDINGS_PROVIDER = "local"
+DEFAULT_KNOWLEDGE_EMBEDDINGS_LOCAL_MODEL = "google/embeddinggemma-2"
+DEFAULT_KNOWLEDGE_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-2"
+DEFAULT_KNOWLEDGE_EMBEDDINGS_VOYAGE_MODEL = "voyage-multimodal-3.5"
+DEFAULT_KNOWLEDGE_EMBEDDINGS_COHERE_MODEL = "embed-v4.0"
+DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE = 8
+DEFAULT_KNOWLEDGE_IMAGE_TOKENS = 280  # EmbeddingGemma 2 vision token budget per image (70..1120)
+DEFAULT_KNOWLEDGE_MAX_FILE_MB = 500
+DEFAULT_KNOWLEDGE_MAX_MEDIA_SECONDS = 7200  # 2h of audio/video per file
+DEFAULT_KNOWLEDGE_MAX_PDF_PAGES = 2000
+DEFAULT_KNOWLEDGE_AUDIO_WINDOW_SECONDS = 60
+DEFAULT_KNOWLEDGE_VIDEO_WINDOW_SECONDS = 30
+DEFAULT_KNOWLEDGE_MEDIA_OVERLAP_SECONDS = 5
+DEFAULT_KNOWLEDGE_PDF_PAGE_PIXELS = 1536  # Longest side of a rendered PDF page
+# A PDF page's score = (1 - w) * image score + w * text-layer score (PDF_GEMMA.md: 0.6 best on ViDoRe V3)
+DEFAULT_KNOWLEDGE_PDF_TEXT_WEIGHT = 0.6
+# Three sharper horizontal band crops per PDF page as extra vectors: +0.4 nDCG@10 for half the ingest speed.
+DEFAULT_KNOWLEDGE_PDF_BANDS = False
+# Keyword match weight, fused only for documents in the query's language (PDF_GEMMA.md: 0.2 best).
+DEFAULT_KNOWLEDGE_KEYWORD_WEIGHT = 0.2
+DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS = 128  # structure-aware; best on LegalBench-RAG (CHUNKING.md)
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
 DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves storage)
 DEFAULT_STORE_DOCUMENT_TEXT = True  # Persist raw source text in documents.original_text / chunks.chunk_text
@@ -1963,6 +2046,9 @@ DEFAULT_DEFAULT_TIMEZONE = "UTC"  # IANA zone a retain timestamp with no UTC off
 # Document transfer defaults (export/import enabled by default; gated independently)
 DEFAULT_ENABLE_DOCUMENT_EXPORT_API = True
 DEFAULT_ENABLE_DOCUMENT_IMPORT_API = True
+# Knowledge banks ship hidden while they are being built: off, their HTTP routes answer 404, their
+# reflect ignores linked knowledge banks and the UI hides them.
+DEFAULT_ENABLE_KNOWLEDGE_BANKS = False
 
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default
@@ -3863,6 +3949,7 @@ class HindsightConfig:
     default_timezone: str  # IANA zone for retain times that carry no UTC offset
     enable_document_export_api: bool
     enable_document_import_api: bool
+    enable_knowledge_banks: bool
 
     # Observations settings (consolidated knowledge from facts)
     enable_observations: bool
@@ -4184,6 +4271,36 @@ class HindsightConfig:
     consolidation_decision_model_api_key: str | None = None
     consolidation_decision_model_model: str | None = None
     consolidation_decision_model_base_url: str | None = None
+    # Knowledge banks (static, server-level: one embedding space per server)
+    knowledge_embeddings_provider: str = DEFAULT_KNOWLEDGE_EMBEDDINGS_PROVIDER
+    knowledge_embeddings_model: str | None = None  # None: the provider's default
+    knowledge_embeddings_api_key: str | None = None
+    knowledge_embeddings_dimensions: int | None = None  # None: the model's native size
+    knowledge_embeddings_base_url: str | None = None  # openai provider: the server's /v1 URL
+    knowledge_embeddings_modalities: str = "text,image"  # openai provider: what the remote model embeds
+    knowledge_embeddings_device: str | None = None  # None: auto (cuda, mps, cpu)
+    knowledge_embeddings_batch_size: int = DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE
+    knowledge_disabled_media_types: frozenset[str] = frozenset()
+    #: The "text" knowledge provider's own embeddings config (HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_*),
+    #: or None to use the memory banks' embedder.
+    knowledge_text_embeddings: "HindsightConfig | None" = None
+    knowledge_image_tokens: int = DEFAULT_KNOWLEDGE_IMAGE_TOKENS
+    knowledge_max_file_mb: int = DEFAULT_KNOWLEDGE_MAX_FILE_MB
+    knowledge_max_media_seconds: int = DEFAULT_KNOWLEDGE_MAX_MEDIA_SECONDS
+    knowledge_max_pdf_pages: int = DEFAULT_KNOWLEDGE_MAX_PDF_PAGES
+    knowledge_audio_window_seconds: int = DEFAULT_KNOWLEDGE_AUDIO_WINDOW_SECONDS
+    knowledge_video_window_seconds: int = DEFAULT_KNOWLEDGE_VIDEO_WINDOW_SECONDS
+    knowledge_media_overlap_seconds: int = DEFAULT_KNOWLEDGE_MEDIA_OVERLAP_SECONDS
+    knowledge_pdf_page_pixels: int = DEFAULT_KNOWLEDGE_PDF_PAGE_PIXELS
+    knowledge_pdf_text_weight: float = DEFAULT_KNOWLEDGE_PDF_TEXT_WEIGHT
+    knowledge_pdf_bands: bool = DEFAULT_KNOWLEDGE_PDF_BANDS
+    knowledge_keyword_weight: float = DEFAULT_KNOWLEDGE_KEYWORD_WEIGHT
+    knowledge_text_passage_tokens: int = DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS
+    knowledge_store_extension: str | None = None
+    ingest_strategies: dict | None = None
+    ingest_default_strategy: str | None = None
+    # Per bank: the knowledge banks a memory bank's reflect reads, as the authority
+    knowledge_banks: list[str] | None = None
 
     # Class-level sets for configuration categorization
 
@@ -4354,6 +4471,8 @@ class HindsightConfig:
         "llm_gemini_safety_settings",
         # Memory Defense policy (validated against DefensePolicy schema on write)
         "memory_defense",
+        # Knowledge banks a memory bank reads as authoritative documents
+        "knowledge_banks",
     }
 
     @property
@@ -4710,6 +4829,7 @@ class HindsightConfig:
         # embeds anything, and validate() skips its dependency checks.
         config.query_embeddings = cls._embeddings_side_from_env(EMBEDDINGS_SIDE_QUERY)
         config.passage_embeddings = cls._embeddings_side_from_env(EMBEDDINGS_SIDE_PASSAGE)
+        config.knowledge_text_embeddings = cls._embeddings_side_from_env(EMBEDDINGS_SIDE_KNOWLEDGE_TEXT)
         config.validate()
         return config
 
@@ -5634,6 +5754,53 @@ class HindsightConfig:
             file_conversion_max_batch_size=int(
                 os.getenv(ENV_FILE_CONVERSION_MAX_BATCH_SIZE, str(DEFAULT_FILE_CONVERSION_MAX_BATCH_SIZE))
             ),
+            knowledge_embeddings_provider=os.getenv(
+                ENV_KNOWLEDGE_EMBEDDINGS_PROVIDER, DEFAULT_KNOWLEDGE_EMBEDDINGS_PROVIDER
+            ).lower(),
+            knowledge_embeddings_model=os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_MODEL) or None,
+            knowledge_embeddings_api_key=os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_API_KEY) or None,
+            knowledge_embeddings_dimensions=int(os.environ[ENV_KNOWLEDGE_EMBEDDINGS_DIMENSIONS])
+            if os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_DIMENSIONS)
+            else None,
+            knowledge_embeddings_device=os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_DEVICE) or None,
+            knowledge_embeddings_base_url=os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_BASE_URL) or None,
+            knowledge_embeddings_modalities=os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_MODALITIES, "text,image").lower(),
+            knowledge_embeddings_batch_size=int(
+                os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE, str(DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE))
+            ),
+            knowledge_image_tokens=int(os.getenv(ENV_KNOWLEDGE_IMAGE_TOKENS, str(DEFAULT_KNOWLEDGE_IMAGE_TOKENS))),
+            knowledge_disabled_media_types=_parse_knowledge_media_types(os.getenv(ENV_KNOWLEDGE_DISABLED_MEDIA_TYPES)),
+            knowledge_max_file_mb=int(os.getenv(ENV_KNOWLEDGE_MAX_FILE_MB, str(DEFAULT_KNOWLEDGE_MAX_FILE_MB))),
+            knowledge_max_media_seconds=int(
+                os.getenv(ENV_KNOWLEDGE_MAX_MEDIA_SECONDS, str(DEFAULT_KNOWLEDGE_MAX_MEDIA_SECONDS))
+            ),
+            knowledge_max_pdf_pages=int(os.getenv(ENV_KNOWLEDGE_MAX_PDF_PAGES, str(DEFAULT_KNOWLEDGE_MAX_PDF_PAGES))),
+            knowledge_audio_window_seconds=int(
+                os.getenv(ENV_KNOWLEDGE_AUDIO_WINDOW_SECONDS, str(DEFAULT_KNOWLEDGE_AUDIO_WINDOW_SECONDS))
+            ),
+            knowledge_video_window_seconds=int(
+                os.getenv(ENV_KNOWLEDGE_VIDEO_WINDOW_SECONDS, str(DEFAULT_KNOWLEDGE_VIDEO_WINDOW_SECONDS))
+            ),
+            knowledge_media_overlap_seconds=int(
+                os.getenv(ENV_KNOWLEDGE_MEDIA_OVERLAP_SECONDS, str(DEFAULT_KNOWLEDGE_MEDIA_OVERLAP_SECONDS))
+            ),
+            knowledge_pdf_page_pixels=int(
+                os.getenv(ENV_KNOWLEDGE_PDF_PAGE_PIXELS, str(DEFAULT_KNOWLEDGE_PDF_PAGE_PIXELS))
+            ),
+            knowledge_keyword_weight=float(
+                os.getenv(ENV_KNOWLEDGE_KEYWORD_WEIGHT, str(DEFAULT_KNOWLEDGE_KEYWORD_WEIGHT))
+            ),
+            knowledge_pdf_bands=os.getenv(ENV_KNOWLEDGE_PDF_BANDS, str(DEFAULT_KNOWLEDGE_PDF_BANDS)).lower() == "true",
+            knowledge_pdf_text_weight=float(
+                os.getenv(ENV_KNOWLEDGE_PDF_TEXT_WEIGHT, str(DEFAULT_KNOWLEDGE_PDF_TEXT_WEIGHT))
+            ),
+            knowledge_text_passage_tokens=int(
+                os.getenv(ENV_KNOWLEDGE_TEXT_PASSAGE_TOKENS, str(DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS))
+            ),
+            knowledge_store_extension=os.getenv(ENV_KNOWLEDGE_STORE_EXTENSION) or None,
+            ingest_strategies=_parse_ingest_strategies(os.getenv(ENV_INGEST_STRATEGIES)),
+            ingest_default_strategy=os.getenv(ENV_INGEST_DEFAULT_STRATEGY) or None,
+            knowledge_banks=None,  # per bank only (bank config); no server-wide default
             enable_file_upload_api=os.getenv(ENV_ENABLE_FILE_UPLOAD_API, str(DEFAULT_ENABLE_FILE_UPLOAD_API)).lower()
             == "true",
             file_delete_after_retain=os.getenv(
@@ -5649,6 +5816,8 @@ class HindsightConfig:
             enable_document_import_api=os.getenv(
                 ENV_ENABLE_DOCUMENT_IMPORT_API, str(DEFAULT_ENABLE_DOCUMENT_IMPORT_API)
             ).lower()
+            == "true",
+            enable_knowledge_banks=os.getenv(ENV_ENABLE_KNOWLEDGE_BANKS, str(DEFAULT_ENABLE_KNOWLEDGE_BANKS)).lower()
             == "true",
             # Observations settings (consolidated knowledge from facts)
             enable_observations=os.getenv(ENV_ENABLE_OBSERVATIONS, str(DEFAULT_ENABLE_OBSERVATIONS)).lower() == "true",

@@ -5243,6 +5243,10 @@ class MemoryEngine(MemoryEngineInterface):
                     await self._handle_vector_index_maintenance(task_dict)
                 elif task_type == "refresh_mental_model":
                     await self._handle_refresh_mental_model(task_dict)
+                elif task_type == "knowledge_ingest":
+                    from ..knowledge.service import run_ingest_task
+
+                    await run_ingest_task(self, task_dict)
                 elif task_type == "webhook_delivery":
                     await self._handle_webhook_delivery(task_dict)
                 else:
@@ -5311,9 +5315,12 @@ class MemoryEngine(MemoryEngineInterface):
 
                 error_traceback = traceback.format_exc()
 
-                if task_type == "file_convert_retain":
+                if task_type == "file_convert_retain" or (
+                    task_type == "knowledge_ingest" and isinstance(e, ValueError)
+                ):
                     # Non-retryable: mark as failed immediately.
-                    # Conversion failures won't improve on retry (missing OCR, corrupted file, etc.)
+                    # Conversion failures won't improve on retry (missing OCR, corrupted file, etc.),
+                    # and neither does a knowledge file that cannot be split (MediaError is a ValueError).
                     logger.error(f"Not retrying task {task_type} (non-retryable), marking as failed")
                     if operation_id:
                         await self._mark_operation_failed(operation_id, error_message, error_traceback)
@@ -9583,6 +9590,11 @@ class MemoryEngine(MemoryEngineInterface):
         # exact text: a stored document vector differs on asymmetric models.
         _query_embedding: list[float] | None = None,
         reranking: RecallReranking = "cross_encoder",
+        # Also search the knowledge banks this bank links (config `knowledge_banks`) and return
+        # their passages as `documents`. Only reflect's recall tool turns it on, and not while it
+        # refreshes a mental model: consolidation and mental models must never read documents
+        # (they would fold the docs into memories). The HTTP recall leaves it off.
+        include_documents: bool = False,
     ) -> RecallResultModel:
         """
         Recall memories using N*4-way parallel retrieval (N fact types × 4 retrieval methods).
@@ -9985,6 +9997,11 @@ class MemoryEngine(MemoryEngineInterface):
 
                 if not get_memories().store_owned_for(bank_id):
                     await self._raise_if_bank_deleted(bank_id)
+
+            if include_documents and result is not None:
+                from ..knowledge.service import documents_for_memory_bank
+
+                result.documents = await documents_for_memory_bank(self, bank_id, query, request_context)
 
             # Call post-operation hook for success
             if self._operation_validator and result is not None:
@@ -12355,6 +12372,9 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         delete_bank_profile: bool = True,
         request_context: "RequestContext",
+        # A knowledge bank is deleted through here for its rows, but it answers to the validator's
+        # knowledge-bank hooks (run by the knowledge service), never to the memory-bank ones.
+        _knowledge_bank: bool = False,
     ) -> dict[str, int]:
         """
         Delete all data for a specific agent (multi-tenant cleanup).
@@ -12377,8 +12397,9 @@ class MemoryEngine(MemoryEngineInterface):
             Dictionary with counts of deleted items
         """
         await self._authenticate_tenant(request_context)
-        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "delete or clear the bank")
-        if self._operation_validator:
+        if not _knowledge_bank:
+            await self._refuse_bank_wide_if_scoped(bank_id, request_context, "delete or clear the bank")
+        if self._operation_validator and not _knowledge_bank:
             ctx = BankWriteContext(
                 bank_id=bank_id, operation=BankWriteOperation.DELETE_BANK, request_context=request_context
             )
@@ -15236,9 +15257,13 @@ class MemoryEngine(MemoryEngineInterface):
             else:
                 await assert_job_bank_alive_on_pool(backend, bank_id)
         if conn is not None:
-            exists = await bank_utils.bank_exists_on_conn(conn, bank_id)
+            kind = await bank_utils.bank_kind_on_conn(conn, bank_id)
         else:
-            exists = await bank_utils.bank_exists(backend, bank_id)
+            kind = await bank_utils.bank_kind(backend, bank_id)
+        if kind == "knowledge":
+            # Same id space, different API: a memory write must not land in a knowledge bank.
+            raise ValueError(f"'{bank_id}' is a knowledge bank; write to it through /v1/default/knowledge-banks")
+        exists = kind is not None
         if exists:
             # Storage is ensured even when the ROW already exists: `created` is false for a bank
             # that predates this call or whose storage was removed out of band, and those are
@@ -16400,6 +16425,9 @@ class MemoryEngine(MemoryEngineInterface):
                 include_chunks=effective_recall_include_chunks,
                 created_after=created_after,
                 created_before=created_before,
+                # Linked knowledge banks are read by an interactive reflect only: a mental model
+                # refresh would fold the documents into the bank's own knowledge.
+                include_documents=not is_refresh,
             )
 
         async def expand_fn(memory_ids: list[str], depth: str) -> dict[str, Any]:

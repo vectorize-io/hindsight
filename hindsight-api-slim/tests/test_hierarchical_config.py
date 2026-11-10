@@ -159,9 +159,10 @@ async def test_hierarchical_fields_categorization():
     assert "mental_model_min_refresh_interval_seconds" in configurable
     assert "page_default_trigger" in configurable
     assert "reflect_default_options" in configurable
+    assert "knowledge_banks" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 60
+    assert len(configurable) == 61
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials

@@ -171,6 +171,26 @@ async def _seed_bank(conn: asyncpg.Connection, bank_id: str) -> list[uuid.UUID]:
     )
     await conn.execute("INSERT INTO graph_maintenance_queue (bank_id, unit_id) VALUES ($1, $2)", bank_id, unit_a)
     await conn.execute("INSERT INTO entity_maintenance_queue (bank_id, entity_id) VALUES ($1, $2)", bank_id, entity_a)
+    # Knowledge-bank rows hang off `banks` too (a bank of kind 'knowledge' in real use); seeded
+    # here so the cascade from the bank row is checked for them as well. The embedding columns
+    # are sized on first use, so a vector of whatever width they hold now.
+    await conn.execute(
+        "INSERT INTO kb_documents (bank_id, document_id, content_type, media_type, content_hash) "
+        "VALUES ($1, 'kb-doc', 'text/plain', 'text', 'h')",
+        bank_id,
+    )
+    for table, insert in (
+        (
+            "kb_passages",
+            "(bank_id, document_id, idx, modality, text, embedding) VALUES ($1, 'kb-doc', 0, 'text', 't', ",
+        ),
+        ("kb_passage_vectors", "(bank_id, document_id, idx, role, n, embedding) VALUES ($1, 'kb-doc', 0, 'unit', 0, "),
+    ):
+        width = await conn.fetchval(
+            "SELECT atttypmod FROM pg_attribute WHERE attrelid = $1::regclass AND attname = 'embedding'", table
+        )
+        vector = "[" + ",".join(["0.1"] * (width if width and width > 0 else 3)) + "]"
+        await conn.execute(f"INSERT INTO {table} {insert}$2::vector)", bank_id, vector)
     return [unit_a, unit_b, entity_a, entity_b]
 
 

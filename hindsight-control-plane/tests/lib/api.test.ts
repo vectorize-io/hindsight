@@ -107,6 +107,45 @@ describe("ControlPlaneClient error handling", () => {
       })
     );
   });
+
+  it("reads every knowledge bank page by page until the total", async () => {
+    const bank = (id: string) => ({ bank_id: id });
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ banks: [bank("a"), bank("b")], total: 3, limit: 100, offset: 0 }))
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ banks: [bank("c")], total: 3, limit: 100, offset: 2 }))
+      );
+
+    const banks = await client.listAllKnowledgeBanks();
+
+    expect(banks.map((b) => b.bank_id)).toEqual(["a", "b", "c"]);
+    expect(String(fetchSpy.mock.calls[1][0])).toContain("offset=2");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("hands a knowledge search its 503 reason, without a toast", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: "knowledge embedder unavailable" }), { status: 503 })
+    );
+
+    await expect(
+      client.searchKnowledgeBank("docs", { query: "q", top_k: 5 })
+    ).rejects.toMatchObject({ message: "knowledge embedder unavailable", status: 503 });
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  it("still hides a knowledge search's 500 details", async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: "Traceback ..." }), { status: 500 })
+    );
+
+    await expect(
+      client.searchKnowledgeBank("docs", { query: "q", top_k: 5 })
+    ).rejects.toMatchObject({ message: "HTTP 500", status: 500 });
+  });
 });
 
 describe("ControlPlaneClient.cloneBank", () => {

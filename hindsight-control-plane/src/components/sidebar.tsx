@@ -18,6 +18,7 @@ import {
   Settings,
   Menu,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -33,9 +34,25 @@ type NavItem =
   | "pages"
   | "profile";
 
-interface SidebarProps {
-  currentTab: NavItem;
-  onTabChange: (tab: NavItem) => void;
+export interface SidebarItem<T extends string> {
+  id: T;
+  label: string;
+  icon: LucideIcon;
+}
+
+interface SidebarProps<T extends string> {
+  currentTab: T;
+  onTabChange: (tab: T) => void;
+  /**
+   * Another kind of bank's sections (a knowledge bank). Without it the rail shows the
+   * memory-bank sections for the selected memory bank.
+   */
+  items?: SidebarItem<T>[];
+  /** Link target of each item, for middle-click / open in new tab. Required with `items`. */
+  hrefFor?: (id: T) => string;
+  /** Drawer heading and its screen-reader description, with `items`. */
+  title?: string;
+  description?: string;
 }
 
 // The header's menu button (phones only) opens the drawer through this event, so
@@ -58,7 +75,14 @@ export function SidebarMenuButton() {
   );
 }
 
-export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
+export function Sidebar<T extends string = NavItem>({
+  currentTab,
+  onTabChange,
+  items,
+  hrefFor,
+  title,
+  description,
+}: SidebarProps<T>) {
   const t = useTranslations("bank.sidebar");
   const tBank = useTranslations("bank");
   const tCommon = useTranslations("common");
@@ -80,11 +104,11 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     return () => window.removeEventListener(OPEN_NAV_EVENT, open);
   }, []);
 
-  if (!currentBank) {
+  if (!currentBank && !items) {
     return null;
   }
 
-  const navItems = [
+  const memoryItems: SidebarItem<NavItem>[] = [
     { id: "home" as NavItem, label: t("home"), icon: Home },
     { id: "data" as NavItem, label: t("memories"), icon: Database },
     { id: "pages" as NavItem, label: t("pages"), icon: Network },
@@ -94,6 +118,9 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
     { id: "entities" as NavItem, label: t("entities"), icon: Users },
     { id: "profile" as NavItem, label: tBank("bankConfiguration"), icon: Settings },
   ];
+  // Without `items`, T is NavItem (the default), so the memory list fits it.
+  const navItems = items ?? (memoryItems as unknown as SidebarItem<T>[]);
+  const linkFor = (id: T) => (hrefFor ? hrefFor(id) : bankRoute(currentBank ?? "", `?view=${id}`));
 
   const renderNav = (collapsed: boolean, id?: string) => (
     <nav id={id} className="flex-1 p-3 pt-4 overflow-y-auto">
@@ -101,7 +128,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = currentTab === item.id;
-          const href = bankRoute(currentBank, `?view=${item.id}`);
+          const href = linkFor(item.id);
 
           return (
             <li key={item.id}>
@@ -210,7 +237,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
           <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col bg-card border-r border-border shadow-xl pb-[env(safe-area-inset-bottom)] md:hidden animate-drawer-in">
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <DialogPrimitive.Title className="truncate text-sm font-semibold">
-                {currentBankName || currentBank}
+                {title ?? (currentBankName || currentBank)}
               </DialogPrimitive.Title>
               <DialogPrimitive.Close
                 className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -220,7 +247,7 @@ export function Sidebar({ currentTab, onTabChange }: SidebarProps) {
               </DialogPrimitive.Close>
             </div>
             <DialogPrimitive.Description className="sr-only">
-              {t("memoryBank")}
+              {description ?? t("memoryBank")}
             </DialogPrimitive.Description>
             {renderNav(false)}
             {apiVersion && (

@@ -44,6 +44,7 @@ type BankTemplateConfig struct {
 	RetainChunkBatchSize NullableInt32 `json:"retain_chunk_batch_size,omitempty"`
 	RetainMaxAttachmentsPerChunk NullableInt32 `json:"retain_max_attachments_per_chunk,omitempty"`
 	McpEnabledTools []string `json:"mcp_enabled_tools,omitempty"`
+	KnowledgeBanks []string `json:"knowledge_banks,omitempty"`
 	ConsolidationLlmBatchSize NullableInt32 `json:"consolidation_llm_batch_size,omitempty"`
 	ConsolidationSourceFactsMaxTokens NullableInt32 `json:"consolidation_source_facts_max_tokens,omitempty"`
 	ConsolidationSourceFactsMaxTokensPerObservation NullableInt32 `json:"consolidation_source_facts_max_tokens_per_observation,omitempty"`
@@ -1120,6 +1121,39 @@ func (o *BankTemplateConfig) HasMcpEnabledTools() bool {
 // SetMcpEnabledTools gets a reference to the given []string and assigns it to the McpEnabledTools field.
 func (o *BankTemplateConfig) SetMcpEnabledTools(v []string) {
 	o.McpEnabledTools = v
+}
+
+// GetKnowledgeBanks returns the KnowledgeBanks field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetKnowledgeBanks() []string {
+	if o == nil {
+		var ret []string
+		return ret
+	}
+	return o.KnowledgeBanks
+}
+
+// GetKnowledgeBanksOk returns a tuple with the KnowledgeBanks field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetKnowledgeBanksOk() ([]string, bool) {
+	if o == nil || IsNil(o.KnowledgeBanks) {
+		return nil, false
+	}
+	return o.KnowledgeBanks, true
+}
+
+// HasKnowledgeBanks returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasKnowledgeBanks() bool {
+	if o != nil && !IsNil(o.KnowledgeBanks) {
+		return true
+	}
+
+	return false
+}
+
+// SetKnowledgeBanks gets a reference to the given []string and assigns it to the KnowledgeBanks field.
+func (o *BankTemplateConfig) SetKnowledgeBanks(v []string) {
+	o.KnowledgeBanks = v
 }
 
 // GetConsolidationLlmBatchSize returns the ConsolidationLlmBatchSize field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2655,6 +2689,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.McpEnabledTools != nil {
 		toSerialize["mcp_enabled_tools"] = o.McpEnabledTools
+	}
+	if o.KnowledgeBanks != nil {
+		toSerialize["knowledge_banks"] = o.KnowledgeBanks
 	}
 	if o.ConsolidationLlmBatchSize.IsSet() {
 		toSerialize["consolidation_llm_batch_size"] = o.ConsolidationLlmBatchSize.Get()

@@ -12,6 +12,7 @@ interface Features {
   access_key_auth: boolean;
   document_export_api: boolean;
   document_import_api: boolean;
+  knowledge_banks: boolean;
   audit_log: boolean;
   llm_trace: boolean;
   store_document_text: boolean;
@@ -32,6 +33,7 @@ const defaultFeatures: Features = {
   access_key_auth: false,
   document_export_api: false,
   document_import_api: false,
+  knowledge_banks: false,
   audit_log: false,
   llm_trace: false,
   // Default to true so the "text not stored" warning only appears when the
