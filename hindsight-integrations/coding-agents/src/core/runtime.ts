@@ -32,6 +32,7 @@ import { buildRetainStamp } from "./retain-stamp";
 import { buildSessionStartContext } from "./session-start";
 import { syncCompanionSkill } from "./skill-sync";
 import { buildHookOutput } from "./hook";
+import { stripInjectedMemory } from "./transcript-util";
 import { sessionCacheFile, writeSessionCache } from "./session-cache";
 
 const HARNESS = "opencode";
@@ -164,12 +165,15 @@ export class RuntimeCore {
    * intentionally replaces the old in-memory reflect/page state, keeping lifecycle behavior
    * identical across hosts while this adapter retains only delivery-specific state.
    */
-  async onPrompt(sessionId: string | undefined, prompt: string): Promise<void> {
+  async onPrompt(sessionId: string | undefined, rawPrompt: string): Promise<void> {
     if (process.env.HINDSIGHT_DISABLE_HOOKS) return; // anti-recursion (see seedIfCold)
     if (!sessionId) return;
+    // Same cleaning as the hook harnesses' runHook: a host's tagged block ahead of the user's
+    // words would otherwise become the reflect goal and the length-capped recall query (#6488).
+    const prompt = stripInjectedMemory(rawPrompt).trim();
     // No prompt text means no recall, so no block for this turn either: the previous turn's block
     // must not be handed out again, since every host now persists it into the user message.
-    if (!prompt.trim()) {
+    if (!prompt) {
       this.injection.delete(sessionId);
       return;
     }

@@ -72,6 +72,29 @@ describe("RuntimeCore", () => {
     expect(runtime.getInjection(a)).toBeUndefined();
   });
 
+  it("drops a host's injected tags from the prompt before reflecting on it (#6488)", async () => {
+    const client = {
+      listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+      listPages: vi.fn(async () => ({ items: [] })),
+      reflect: vi.fn(async () => "a memory"),
+    } as unknown as HindsightClient;
+    const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+    const reflect = vi.mocked(client.reflect);
+
+    const a = `session-a-${randomUUID()}`;
+    await runtime.onPrompt(a, "<system-reminder>host text</system-reminder>");
+    expect(reflect).not.toHaveBeenCalled();
+    expect(runtime.getInjection(a)).toBeUndefined();
+
+    await runtime.onPrompt(
+      a,
+      "<system-reminder>\nhost text\n</system-reminder>\n\nwhy does upload retry fail?"
+    );
+    expect(reflect).toHaveBeenCalledTimes(1);
+    expect(reflect.mock.calls[0][0]).not.toContain("system-reminder");
+    expect(reflect.mock.calls[0][0]).toContain("why does upload retry fail?");
+  });
+
   it("shows the recall toast as plain text, without the terminal's color codes (#6257)", async () => {
     const client = {
       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
