@@ -472,10 +472,19 @@ class MaintenanceLoop:
     async def _run_attachment_sweep(self) -> None:
         """Delete the attachments of retains that failed before writing their document.
 
-        Discovery is one query per served schema for the banks that stored an
-        attachment in the window; the engine then reads each of those documents from
-        the bank's memories store and drops the attachments its text does not show. Safe in every process at once: the delete is
-        idempotent, and a second sweeper finds nothing left.
+        Discovery is one catalog query for the schemas whose ``attachments`` table
+        holds anything at all, then one query in each of those for the banks that
+        stored an attachment in the window; the engine reads each of those documents
+        from the bank's memories store and drops the attachments its text does not
+        show. Safe in every process at once: the delete is idempotent, and a second
+        sweeper finds nothing left.
+
+        The catalog query is the point. Asking every schema in turn is one round trip
+        per tenant — tens of thousands on a large deployment, where only a handful have
+        ever stored an attachment. ``pg_relation_size`` reads the table's file size,
+        not its rows and not its planner stats (which can lag a table that holds a
+        few rows), so an empty table is skipped without being opened, and one that
+        has ever held a row is never missed.
         """
         engine = self._engine
         try:
@@ -485,12 +494,24 @@ class MaintenanceLoop:
             return
         tenant_by_schema = {t.schema: t for t in tenants}
         default_schema = get_config().database_schema
+        try:
+            async with acquire_with_retry(engine._backend, max_retries=1) as conn:
+                rows = await conn.fetch(
+                    "SELECT n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE c.relname = 'attachments' AND c.relkind = 'r' AND pg_relation_size(c.oid) > 0"
+                )
+        except Exception as e:
+            logger.warning(f"Attachment sweep discovery failed: {e}")
+            return
+        # Only schemas the deployment serves, like operation cleanup.
+        served = {default_schema, *tenant_by_schema}
+        schemas = sorted(row["nspname"] for row in rows if row["nspname"] in served)
         now = datetime.now(timezone.utc)
         created_before = now - _ATTACHMENT_SWEEP_GRACE
         created_after = created_before - _ATTACHMENT_SWEEP_LOOKBACK
 
         removed = 0
-        for schema in {default_schema, *tenant_by_schema}:
+        for schema in schemas:
             if self._stop.is_set():
                 break
             tenant = tenant_by_schema.get(schema)

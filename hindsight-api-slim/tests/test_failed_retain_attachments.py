@@ -148,3 +148,29 @@ async def test_a_store_owned_bank_is_answered_by_its_store(api_client, memory, r
         assert [row["document_id"] for row in rows] == ["landed"]
     finally:
         set_memories(None)
+
+
+@pytest.mark.asyncio
+async def test_the_daily_job_finds_the_bank_through_the_catalog(api_client, memory, monkeypatch):
+    """Discovery skips every schema whose attachments table is empty, without querying it.
+
+    The engine's sweep is spied rather than run: the job sees every bank in the test
+    database, and other tests running alongside hold attachments mid-retain.
+    """
+    import hindsight_api.engine.maintenance as maintenance_mod
+    from hindsight_api.engine.maintenance import MaintenanceLoop
+
+    bank_id = f"swp-{uuid.uuid4().hex[:8]}"
+    await _failed_retain(api_client, memory, monkeypatch, bank_id, "d1")
+
+    visited: list[str] = []
+
+    async def spy(bank, created_after, created_before, request_context):
+        visited.append(bank)
+        return 0
+
+    monkeypatch.setattr(maintenance_mod, "_ATTACHMENT_SWEEP_GRACE", timedelta(seconds=-1))
+    monkeypatch.setattr(memory, "reclaim_unreferenced_attachments", spy)
+    await MaintenanceLoop(memory)._run_attachment_sweep()
+
+    assert bank_id in visited
