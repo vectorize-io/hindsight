@@ -15,7 +15,6 @@ skips the unchanged chunks.
 """
 
 import asyncio
-import contextlib
 import re
 from datetime import datetime, timezone
 
@@ -468,7 +467,7 @@ async def test_recovering_partially_written_oversized_document_resumes_slice_by_
 # extracted the append plus every chunk the crash left unwritten in one step that commits only at
 # the end. A timeout there lost all of it, every time.
 @pytest.mark.asyncio
-async def test_append_to_partially_written_document_resumes_slice_by_slice(memory, request_context, monkeypatch):
+async def test_append_to_partially_written_document_saves_batch_by_batch(memory, request_context, monkeypatch):
     bank_id = f"test_6394_append_{_ts()}"
     document_id = "doc-6394"
     body = _body()
@@ -492,7 +491,7 @@ async def test_append_to_partially_written_document_resumes_slice_by_slice(memor
         # The append is interrupted too, after two extraction calls: what it extracted must stay.
         append = _CrashAfter(2)
         append.install(monkeypatch)
-        with contextlib.suppress(RuntimeError):
+        with pytest.raises(RuntimeError, match="simulated worker crash"):
             await memory.retain_batch_async(
                 bank_id=bank_id,
                 contents=[{"content": "\n\n" + _section(100), "context": "notes", "update_mode": "append"}],
@@ -564,7 +563,7 @@ async def _assert_document_consistent(memory, bank_id: str, document_id: str) ->
     return body
 
 
-def _sections(*, edited: set[int] = frozenset()) -> str:
+def _sections(*, edited: frozenset[int] = frozenset()) -> str:
     return "\n\n".join(_section(i, edited=i in edited) for i in range(_BASE_SECTIONS))
 
 
@@ -575,7 +574,7 @@ def _sections(*, edited: set[int] = frozenset()) -> str:
 async def test_interrupted_large_edit_keeps_its_saved_batches(memory, request_context, monkeypatch):
     bank_id = f"test_6394_edit_{_ts()}"
     document_id = "doc-6394-edit"
-    edited = _sections(edited={2, 5, 8})
+    edited = _sections(edited=frozenset({2, 5, 8}))
     try:
         await memory.retain_async(
             bank_id=bank_id,

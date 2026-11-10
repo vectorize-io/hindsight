@@ -4181,11 +4181,12 @@ async def _try_delta_retain(
     chunks_to_process = changed_indices + new_indices
 
     # The stored document already carries THIS body's hash, yet some of its chunks differ: a sliced
-    # retain of this exact body was interrupted part-way and this is its retry (#5485). Delta would
-    # extract every unwritten chunk of the whole document in one step that commits only at the end,
-    # so the retry floods the LLM queue and loses everything if it is interrupted too. The streaming
-    # path resumes the same work slice by slice instead: its recovery probe matches this same hash
-    # and skips the committed chunks.
+    # retain of this exact body was interrupted part-way and this is its retry (#5485). Delta used to
+    # extract every unwritten chunk of the whole document in one step that committed only at the
+    # end, so the retry flooded the LLM queue and lost everything if it was interrupted too. Delta
+    # now commits in batches (#6394), but this retry still goes to the streaming path: its recovery
+    # probe matches this same hash and skips the committed chunks, resuming the interrupted retain
+    # slice by slice on the very path that wrote the partial copy.
     if chunks_to_process and document_body_hash is not None and doc_hash_at_load == document_body_hash:
         log_buffer.append(
             f"[delta] Document {effective_doc_id} is a partially written copy of this body — "
