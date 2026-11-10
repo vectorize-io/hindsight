@@ -1,4 +1,4 @@
-"""Reflect's own time limit excludes queue time for a knowledge-page refresh only (#6140).
+"""Reflect's own time limit excludes queue time for a page refresh only (#6140).
 
 A burst of refreshes shares a small per-operation LLM cap, so most of each one's time
 can be spent queued behind the others. Charging that to the limit cancelled refreshes

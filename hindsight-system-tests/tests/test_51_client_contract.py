@@ -48,7 +48,7 @@ async def test_every_convenience_method_has_an_async_variant():
         context (`async def`, event loops, frameworks like
         FastAPI/LangGraph/CrewAI)."
 
-    27 of them did not, until #4221 — which put mental models, knowledge pages,
+    27 of them did not, until #4221 — which put mental models, pages,
     directives and bank config out of reach of every async caller.
     """
     missing = [name for name in _convenience_methods() if not hasattr(Hindsight, f"a{name}")]

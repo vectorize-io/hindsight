@@ -3,7 +3,7 @@
 ``reflect_async`` hands the agent the decision model's sufficiency check (which is what makes a
 reflect decision-orchestrated) only when one is set up for reflect and the bank keeps the switch
 for that operation on: ``reflect_use_decision_model`` for a reflect, and
-``mental_model_refresh_use_decision_model`` for the reflect behind a knowledge-page refresh. A
+``mental_model_refresh_use_decision_model`` for the reflect behind a page refresh. A
 misread field name would silently send every refresh down the wrong path, so each pairing is
 pinned here.
 """

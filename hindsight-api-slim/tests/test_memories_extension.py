@@ -100,7 +100,7 @@ class InMemoryMemories(MemoriesExtension):
         # The document store: one record per document, each carrying its extracted text and the
         # ordered chunk texts — the bodies a store that owns them keeps out of Postgres.
         self.documents: dict[str, dict] = {}
-        # The knowledge-page index, per bank. Unlike the dicts above this one is DERIVED — the
+        # The page index, per bank. Unlike the dicts above this one is DERIVED — the
         # page's row lives in Postgres either way, so this holds only what a search needs.
         self.knowledge_pages: dict[str, dict] = {}
         # Proof the engine went through the interface rather than around it.
@@ -789,7 +789,7 @@ class InMemoryMemories(MemoriesExtension):
             "offset": offset,
         }
 
-    # -- the knowledge-page index -------------------------------------------
+    # -- the page index -------------------------------------------
     #
     # Kept as a dict beside the memory rows, so the engine's routing is exercised end to end
     # rather than mocked. The ranking is deliberately crude — substring for text, ordering by the
@@ -801,23 +801,21 @@ class InMemoryMemories(MemoriesExtension):
     def _pages(self, bank_id):
         return self.knowledge_pages.setdefault(bank_id, {})
 
-    async def index_knowledge_pages(self, bank_id, entries):
-        self.calls.append("index_knowledge_pages")
+    async def index_pages(self, bank_id, entries):
+        self.calls.append("index_pages")
         pages = self._pages(bank_id)
         for e in entries:
             pages[e.page_id] = e
 
-    async def delete_knowledge_pages(self, bank_id, page_ids):
-        self.calls.append("delete_knowledge_pages")
+    async def delete_pages(self, bank_id, page_ids):
+        self.calls.append("delete_pages")
         pages = self._pages(bank_id)
         for pid in page_ids:
             pages.pop(pid, None)
 
-    async def search_knowledge_pages(
-        self, bank_id, *, embedding, text, limit, tags=None, tags_match="any", tag_groups=None
-    ):
-        self.calls.append("search_knowledge_pages")
-        from hindsight_api.engine.memories.base import KnowledgePageMatch
+    async def search_pages(self, bank_id, *, embedding, text, limit, tags=None, tags_match="any", tag_groups=None):
+        self.calls.append("search_pages")
+        from hindsight_api.engine.memories.base import PageMatch
 
         needle = (text or "").lower()
         hits = [
@@ -825,9 +823,9 @@ class InMemoryMemories(MemoriesExtension):
             for e in self._pages(bank_id).values()
             if (not needle or needle in e.index_text.lower()) and (not tags or set(tags) & set(e.tags))
         ]
-        return [KnowledgePageMatch(page_id=e.page_id, score=1.0) for e in hits][:limit]
+        return [PageMatch(page_id=e.page_id, score=1.0) for e in hits][:limit]
 
-    async def search_knowledge_pages_semantic(
+    async def search_pages_semantic(
         self,
         bank_id,
         *,
@@ -838,8 +836,8 @@ class InMemoryMemories(MemoriesExtension):
         tag_groups=None,
         exclude_ids=None,
     ):
-        self.calls.append("search_knowledge_pages_semantic")
-        from hindsight_api.engine.memories.base import KnowledgePageMatch
+        self.calls.append("search_pages_semantic")
+        from hindsight_api.engine.memories.base import PageMatch
 
         excluded = set(exclude_ids or ())
         hits = [
@@ -847,13 +845,13 @@ class InMemoryMemories(MemoriesExtension):
             for e in self._pages(bank_id).values()
             if e.page_id not in excluded and (not tags or set(tags) & set(e.tags))
         ]
-        return [KnowledgePageMatch(page_id=e.page_id, score=0.9) for e in hits][:limit]
+        return [PageMatch(page_id=e.page_id, score=0.9) for e in hits][:limit]
 
-    async def list_knowledge_pages(self, bank_id):
-        self.calls.append("list_knowledge_pages")
-        from hindsight_api.engine.memories.base import KnowledgePageRef
+    async def list_pages(self, bank_id):
+        self.calls.append("list_pages")
+        from hindsight_api.engine.memories.base import PageRef
 
-        return [KnowledgePageRef(page_id=e.page_id, updated_at=e.updated_at) for e in self._pages(bank_id).values()]
+        return [PageRef(page_id=e.page_id, updated_at=e.updated_at) for e in self._pages(bank_id).values()]
 
     # -- transfer (#4969): the archive and document provenance an export/import carries ----------
 
@@ -1236,11 +1234,22 @@ async def test_retain_refuses_a_bank_the_store_has_closed_to_writes(restore_defa
 import inspect  # noqa: E402
 
 
+# Old page-hook names, kept only so a store written before the rename is still called; the
+# new hooks forward to them. A complete store implements the new names. Remove in 2.x.
+_DEPRECATED_ALIASES = {
+    "index_knowledge_pages",
+    "delete_knowledge_pages",
+    "search_knowledge_pages",
+    "search_knowledge_pages_semantic",
+    "list_knowledge_pages",
+}
+
+
 def _iface_methods() -> dict:
     """Every public method MemoriesExtension declares in its own body (not properties)."""
     out = {}
     for name, obj in vars(MemoriesExtension).items():
-        if name.startswith("_"):
+        if name.startswith("_") or name in _DEPRECATED_ALIASES:
             continue
         if isinstance(obj, (staticmethod, classmethod)):
             obj = obj.__func__
@@ -2233,7 +2242,7 @@ async def test_store_owned_bank_stops_writing_the_postgres_page_search_columns(
     set_memories(store)
     bank = "seam-kp-bank"
     try:
-        page = await memory.create_knowledge_page(
+        page = await memory.create_page(
             bank,
             name="Quarterly revenue",
             source_query="revenue",
@@ -2241,7 +2250,7 @@ async def test_store_owned_bank_stops_writing_the_postgres_page_search_columns(
             request_context=request_context,
         )
         # It reached the store's index -- otherwise "not in Postgres" would just mean "lost".
-        assert "index_knowledge_pages" in store.calls
+        assert "index_pages" in store.calls
         assert store.knowledge_pages.get(bank), "the page must be searchable in the store"
 
         backend = await memory._get_backend()

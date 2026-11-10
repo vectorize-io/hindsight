@@ -12,7 +12,7 @@ from pathlib import Path
 
 from hindsight_system_evals.coding_agents.metric import read_usage_stats, transcript_credits
 
-SEARCH = "hindsight_search_knowledge_pages"
+SEARCH = "hindsight_search_pages"
 WRITE = "hindsight_ingest_document"
 
 
@@ -42,6 +42,17 @@ def test_rate_counts_every_turn_not_just_the_ones_that_called(tmp_path: Path) ->
     assert stats.turns_with_any_call == 3
     assert stats.turns_with_retrieval == 2
     assert stats.credit_rate == 0.5
+
+
+def test_the_pre_rename_search_tool_still_counts(tmp_path: Path) -> None:
+    usage = _write(
+        tmp_path / "usage.jsonl",
+        [{"session": "a", "turn": 1, "calls": ["hindsight_search_knowledge_pages"], "credited": True}],
+    )
+    stats = read_usage_stats(usage)
+
+    assert stats.searches == 1
+    assert stats.turns_with_retrieval == 1
 
 
 def test_replayed_turns_are_deduped_and_other_runs_excluded(tmp_path: Path) -> None:

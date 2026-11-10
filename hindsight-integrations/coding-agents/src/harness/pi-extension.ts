@@ -6,7 +6,7 @@
  * `~/.prime/agent/settings.json`. Both call an extension's default export with their `pi` API, and
  * both expose the identical surface this adapter needs: `before_agent_start` (recall +
  * user-turn injection), `agent_end` (transcript write-back), and `registerTool` for the native
- * `hindsight_*` knowledge tools. So neither host needs an adapter of its own — they differ only in
+ * `hindsight_*` page tools. So neither host needs an adapter of its own — they differ only in
  * which harness name they report, which selects the `harnesses.<name>` config section, feeds
  * `{harness}` bank templating, and keeps their sessions attributable in diagnostics separately.
  *
@@ -16,7 +16,7 @@
 import { z } from "zod";
 import { resolveHostMemory } from "../core/host-client";
 import { diag } from "../core/diag";
-import type { ToolSpec } from "../core/knowledge-tools";
+import type { ToolSpec } from "../core/page-tools";
 import { RuntimeCore } from "../core/runtime";
 import { type PiEntry, type PiMessage, readPiEntries, readPiMessages } from "../core/transcript-pi";
 

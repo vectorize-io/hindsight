@@ -1,6 +1,6 @@
 """Ask reflect a corpus question over a fully seeded bank, and keep what it did.
 
-The knowledge-page suite measures what a page converges to across waves. This
+The page suite measures what a page converges to across waves. This
 one measures the one-shot answer: the whole corpus is in the bank, reflect gets
 the question, and the judge reads what it wrote.
 

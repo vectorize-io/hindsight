@@ -126,16 +126,16 @@ export interface RawConfig {
   reflectBudget?: "low" | "mid" | "high";
   /** What to inject on the session's first prompt (default "reflect"):
    *    "reflect" — one low-budget reflect synthesis (falls back to pages, then recall, on timeout/5xx)
-   *    "pages"   — the knowledge pages matching the prompt by search (retrieval only, no LLM)
+   *    "pages"   — the pages matching the prompt by search (retrieval only, no LLM)
    *    "recall"  — the bank's memories recalled for the prompt (`recallOptions`; no LLM)
    *    "none"    — nothing; the tool guide routes new goals through pages before optional reflection */
   autoInject?: AutoInject;
   /** @deprecated Use `autoInject`. Still honoured: false = `autoInject: "none"`, true = "reflect";
    *  ignored when `autoInject` is set. Setting it logs a deprecation warning. */
   autoReflect?: boolean;
-  /** Knowledge pages ONE search returns (default 3). Applies wherever the bank is searched: the
+  /** Pages ONE search returns (default 3). Applies wherever the bank is searched: the
    *  `autoInject: "pages"` injection, the reflect fallback, and the agent's
-   *  `hindsight_search_knowledge_pages` tool — the limit lives on the client so they can't drift. */
+   *  `hindsight_search_pages` tool — the limit lives on the client so they can't drift. */
   pageSearchLimit?: number;
   /** Recall-request overrides, merged key-by-key into the body every recall sends (the
    *  `autoInject: "recall"` source and the reflect fallback) — `{"types": ["world",
@@ -150,11 +150,11 @@ export interface RawConfig {
   recallOptions?: Record<string, unknown>;
   /** Your own guidance for how the agent should treat memory, added AFTER the built-in tool guide
    *  (SessionStart and every refresh) and after the crediting note that comes back with
-   *  `hindsight_search_knowledge_pages` results. It adds to the built-in text, never replaces it,
+   *  `hindsight_search_pages` results. It adds to the built-in text, never replaces it,
    *  so the plugin's call triggers and crediting rule keep up with releases (#4791). */
   toolGuideExtra?: string;
-  pageRefreshEveryTurns?: number; // knowledge-page refresh cadence in user turns (default 1; 0 also means 1)
-  /** What it COSTS to keep this project's knowledge pages current — the trigger stamped on every
+  pageRefreshEveryTurns?: number; // page refresh cadence in user turns (default 1; 0 also means 1)
+  /** What it COSTS to keep this project's pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
    *    "cron" (default)         — refresh on `pageTriggerCron` only, and only when actually stale
    *    "auto-refresh"           — refresh after every consolidation that produced new material
@@ -170,7 +170,7 @@ export interface RawConfig {
    *  bank + page name, so pages spread across the period instead of all firing on the one minute
    *  this shared setting names. See `expandCronHash` in core/missions.ts. */
   pageTriggerCron?: string;
-  /** Per-page configuration for the seeded knowledge pages, keyed by page name (case-insensitive):
+  /** Per-page configuration for the seeded pages, keyed by page name (case-insensitive):
    *    "Component map": false                                   — don't seed this page at all
    *    "Key decisions and rationale": {"source_query": "..."}   — seed it, asking your question
    *  Omitted (the default) seeds every taxonomy page with its built-in query.
@@ -187,7 +187,7 @@ export interface RawConfig {
    *  File-only, like `recallOptions` — a nested object does not flatten into an env var. In a
    *  `banks.<id>` section it REPLACES the global map rather than merging into it. */
   pages?: PagesConfig;
-  /** Knowledge pages of your OWN, seeded alongside the taxonomy and keyed by the name they get:
+  /** Pages of your OWN, seeded alongside the taxonomy and keyed by the name they get:
    *    "Security posture": {"source_query": "...", "tags": ["knowledge:decision"]}
    *  `source_query` is the question the page answers. `tags` picks which facts feed it and is
    *  optional — the trigger matches tags with `all`, so omitting them means no tag constraint and
@@ -248,7 +248,7 @@ export interface RawConfig {
    *  (`git`, `gitlog`, `conversation`, `document`, `survey`): the server does not reject a retain
    *  naming a strategy the bank lacks, it logs a warning and extracts with the bank's own config
    *  instead — so a diff, a transcript and a survey marker all get the same generic treatment.
-   *  Knowledge pages are seeded either way (see `pageTriggerType`). */
+   *  Pages are seeded either way (see `pageTriggerType`). */
   manageBankConfig?: boolean;
   /** How the server extracts memories from what this plugin retains — sessions, commits, documents
    *  (default "concise"). One of "concise", "verbose", "verbatim", "chunks" (store the text with no

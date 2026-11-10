@@ -97,7 +97,7 @@ export function triggerFormFromTrigger(trigger?: Partial<MentalModelTrigger> | n
  *
  * The schedule, fact types and exclude flag are sent explicitly (null/false)
  * rather than omitted: the server MERGES a trigger over the stored one (and over
- * the knowledge-page default), so an omitted field keeps its old value — which
+ * the page default), so an omitted field keeps its old value — which
  * made it impossible to switch a model off a cron, clear its fact types, or
  * untick "exclude mental models".
  */
@@ -269,7 +269,7 @@ export function TriggerSummary({ form }: { form: TriggerForm }) {
 /**
  * The trigger options of a mental model: when it refreshes, how it rewrites,
  * what it reads, plus an Advanced panel. Shared by the create/update dialogs and
- * the bank's knowledge-page default so the three can never drift apart.
+ * the bank's page default so the three can never drift apart.
  *
  * ``tagsField`` renders at the top of "What it reads": a model's own tags are
  * not part of the trigger, but belong next to how they match.

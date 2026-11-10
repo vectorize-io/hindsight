@@ -42,18 +42,20 @@ func (r ApiCreateKnowledgeFolderRequest) Authorization(authorization string) Api
 	return r
 }
 
-func (r ApiCreateKnowledgeFolderRequest) Execute() (*KnowledgeNode, *http.Response, error) {
+func (r ApiCreateKnowledgeFolderRequest) Execute() (*PageNode, *http.Response, error) {
 	return r.ApiService.CreateKnowledgeFolderExecute(r)
 }
 
 /*
-CreateKnowledgeFolder Create a knowledge-base folder
+CreateKnowledgeFolder Create a folder (deprecated path)
 
-Create a folder, optionally nested under a parent folder.
+Deprecated alias of `POST /v1/default/banks/{bank_id}/pages/folders`; same request and response. Removed in 2.x.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @return ApiCreateKnowledgeFolderRequest
+
+Deprecated
 */
 func (a *KnowledgeBaseAPIService) CreateKnowledgeFolder(ctx context.Context, bankId string) ApiCreateKnowledgeFolderRequest {
 	return ApiCreateKnowledgeFolderRequest{
@@ -64,13 +66,14 @@ func (a *KnowledgeBaseAPIService) CreateKnowledgeFolder(ctx context.Context, ban
 }
 
 // Execute executes the request
-//  @return KnowledgeNode
-func (a *KnowledgeBaseAPIService) CreateKnowledgeFolderExecute(r ApiCreateKnowledgeFolderRequest) (*KnowledgeNode, *http.Response, error) {
+//  @return PageNode
+// Deprecated
+func (a *KnowledgeBaseAPIService) CreateKnowledgeFolderExecute(r ApiCreateKnowledgeFolderRequest) (*PageNode, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodPost
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  *KnowledgeNode
+		localVarReturnValue  *PageNode
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBaseAPIService.CreateKnowledgeFolder")
@@ -175,18 +178,20 @@ func (r ApiCreateKnowledgePageRequest) Authorization(authorization string) ApiCr
 	return r
 }
 
-func (r ApiCreateKnowledgePageRequest) Execute() (*CreateKnowledgePageResponse, *http.Response, error) {
+func (r ApiCreateKnowledgePageRequest) Execute() (*CreatePageResponse, *http.Response, error) {
 	return r.ApiService.CreateKnowledgePageExecute(r)
 }
 
 /*
-CreateKnowledgePage Create a knowledge-base page
+CreateKnowledgePage Create a page (deprecated path)
 
-Create a page (a mental model + tree node). Content is generated asynchronously; use the returned operation_id to track completion.
+Deprecated alias of `POST /v1/default/banks/{bank_id}/pages`; same request and response. Removed in 2.x.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @return ApiCreateKnowledgePageRequest
+
+Deprecated
 */
 func (a *KnowledgeBaseAPIService) CreateKnowledgePage(ctx context.Context, bankId string) ApiCreateKnowledgePageRequest {
 	return ApiCreateKnowledgePageRequest{
@@ -197,13 +202,14 @@ func (a *KnowledgeBaseAPIService) CreateKnowledgePage(ctx context.Context, bankI
 }
 
 // Execute executes the request
-//  @return CreateKnowledgePageResponse
-func (a *KnowledgeBaseAPIService) CreateKnowledgePageExecute(r ApiCreateKnowledgePageRequest) (*CreateKnowledgePageResponse, *http.Response, error) {
+//  @return CreatePageResponse
+// Deprecated
+func (a *KnowledgeBaseAPIService) CreateKnowledgePageExecute(r ApiCreateKnowledgePageRequest) (*CreatePageResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodPost
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  *CreateKnowledgePageResponse
+		localVarReturnValue  *CreatePageResponse
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBaseAPIService.CreateKnowledgePage")
@@ -308,14 +314,16 @@ func (r ApiDeleteKnowledgeNodeRequest) Execute() (interface{}, *http.Response, e
 }
 
 /*
-DeleteKnowledgeNode Delete a knowledge-base node
+DeleteKnowledgeNode Delete a page node (deprecated path)
 
-Delete a folder or page and its whole subtree (pages' mental models are removed too).
+Deprecated alias of `DELETE /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @param nodeId
  @return ApiDeleteKnowledgeNodeRequest
+
+Deprecated
 */
 func (a *KnowledgeBaseAPIService) DeleteKnowledgeNode(ctx context.Context, bankId string, nodeId string) ApiDeleteKnowledgeNodeRequest {
 	return ApiDeleteKnowledgeNodeRequest{
@@ -328,6 +336,7 @@ func (a *KnowledgeBaseAPIService) DeleteKnowledgeNode(ctx context.Context, bankI
 
 // Execute executes the request
 //  @return interface{}
+// Deprecated
 func (a *KnowledgeBaseAPIService) DeleteKnowledgeNodeExecute(r ApiDeleteKnowledgeNodeRequest) (interface{}, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodDelete
@@ -428,18 +437,20 @@ func (r ApiExportKnowledgeBaseRequest) Authorization(authorization string) ApiEx
 	return r
 }
 
-func (r ApiExportKnowledgeBaseRequest) Execute() (*KnowledgePageBundleResponse, *http.Response, error) {
+func (r ApiExportKnowledgeBaseRequest) Execute() (*PageBundleResponse, *http.Response, error) {
 	return r.ApiService.ExportKnowledgeBaseExecute(r)
 }
 
 /*
-ExportKnowledgeBase Export the knowledge base as a markdown bundle
+ExportKnowledgeBase Export the pages as a markdown bundle (deprecated path)
 
-Return a portable markdown bundle: a nested index.md, one <id>.md per page, and history logs.
+Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/export`; same request and response. Removed in 2.x.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @return ApiExportKnowledgeBaseRequest
+
+Deprecated
 */
 func (a *KnowledgeBaseAPIService) ExportKnowledgeBase(ctx context.Context, bankId string) ApiExportKnowledgeBaseRequest {
 	return ApiExportKnowledgeBaseRequest{
@@ -450,13 +461,14 @@ func (a *KnowledgeBaseAPIService) ExportKnowledgeBase(ctx context.Context, bankI
 }
 
 // Execute executes the request
-//  @return KnowledgePageBundleResponse
-func (a *KnowledgeBaseAPIService) ExportKnowledgeBaseExecute(r ApiExportKnowledgeBaseRequest) (*KnowledgePageBundleResponse, *http.Response, error) {
+//  @return PageBundleResponse
+// Deprecated
+func (a *KnowledgeBaseAPIService) ExportKnowledgeBaseExecute(r ApiExportKnowledgeBaseRequest) (*PageBundleResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodGet
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  *KnowledgePageBundleResponse
+		localVarReturnValue  *PageBundleResponse
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBaseAPIService.ExportKnowledgeBase")
@@ -571,18 +583,20 @@ func (r ApiGetKnowledgeBaseTreeRequest) Authorization(authorization string) ApiG
 	return r
 }
 
-func (r ApiGetKnowledgeBaseTreeRequest) Execute() (*KnowledgeTreeResponse, *http.Response, error) {
+func (r ApiGetKnowledgeBaseTreeRequest) Execute() (*PageTreeResponse, *http.Response, error) {
 	return r.ApiService.GetKnowledgeBaseTreeExecute(r)
 }
 
 /*
-GetKnowledgeBaseTree Get the knowledge-base tree
+GetKnowledgeBaseTree Get the page tree (deprecated path)
 
-Return the knowledge base as a nested tree of folders and pages.
+Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/tree`; same request and response. Removed in 2.x.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @return ApiGetKnowledgeBaseTreeRequest
+
+Deprecated
 */
 func (a *KnowledgeBaseAPIService) GetKnowledgeBaseTree(ctx context.Context, bankId string) ApiGetKnowledgeBaseTreeRequest {
 	return ApiGetKnowledgeBaseTreeRequest{
@@ -593,13 +607,14 @@ func (a *KnowledgeBaseAPIService) GetKnowledgeBaseTree(ctx context.Context, bank
 }
 
 // Execute executes the request
-//  @return KnowledgeTreeResponse
-func (a *KnowledgeBaseAPIService) GetKnowledgeBaseTreeExecute(r ApiGetKnowledgeBaseTreeRequest) (*KnowledgeTreeResponse, *http.Response, error) {
+//  @return PageTreeResponse
+// Deprecated
+func (a *KnowledgeBaseAPIService) GetKnowledgeBaseTreeExecute(r ApiGetKnowledgeBaseTreeRequest) (*PageTreeResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodGet
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  *KnowledgeTreeResponse
+		localVarReturnValue  *PageTreeResponse
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBaseAPIService.GetKnowledgeBaseTree")
@@ -714,19 +729,21 @@ func (r ApiGetKnowledgePageRequest) Authorization(authorization string) ApiGetKn
 	return r
 }
 
-func (r ApiGetKnowledgePageRequest) Execute() (*KnowledgePageResponse, *http.Response, error) {
+func (r ApiGetKnowledgePageRequest) Execute() (*PageResponse, *http.Response, error) {
 	return r.ApiService.GetKnowledgePageExecute(r)
 }
 
 /*
-GetKnowledgePage Get a knowledge-base page
+GetKnowledgePage Get a page (deprecated path)
 
-Return a single page as a markdown document (frontmatter + markdown body).
+Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/{page_id}`; same request and response. Removed in 2.x.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @param pageId
  @return ApiGetKnowledgePageRequest
+
+Deprecated
 */
 func (a *KnowledgeBaseAPIService) GetKnowledgePage(ctx context.Context, bankId string, pageId string) ApiGetKnowledgePageRequest {
 	return ApiGetKnowledgePageRequest{
@@ -738,13 +755,14 @@ func (a *KnowledgeBaseAPIService) GetKnowledgePage(ctx context.Context, bankId s
 }
 
 // Execute executes the request
-//  @return KnowledgePageResponse
-func (a *KnowledgeBaseAPIService) GetKnowledgePageExecute(r ApiGetKnowledgePageRequest) (*KnowledgePageResponse, *http.Response, error) {
+//  @return PageResponse
+// Deprecated
+func (a *KnowledgeBaseAPIService) GetKnowledgePageExecute(r ApiGetKnowledgePageRequest) (*PageResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodGet
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  *KnowledgePageResponse
+		localVarReturnValue  *PageResponse
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBaseAPIService.GetKnowledgePage")
@@ -874,18 +892,20 @@ func (r ApiSearchKnowledgeBaseRequest) Authorization(authorization string) ApiSe
 	return r
 }
 
-func (r ApiSearchKnowledgeBaseRequest) Execute() (*KnowledgePageSearchResponse, *http.Response, error) {
+func (r ApiSearchKnowledgeBaseRequest) Execute() (*PageSearchResponse, *http.Response, error) {
 	return r.ApiService.SearchKnowledgeBaseExecute(r)
 }
 
 /*
-SearchKnowledgeBase Hybrid search over knowledge pages (BM25 + vector)
+SearchKnowledgeBase Hybrid search over pages (BM25 + vector) (deprecated path)
 
-Doc-level hybrid search across a bank's knowledge pages: a full-text (BM25) match and a vector-similarity match, Reciprocal-Rank-Fusion fused. No reranker — tuned for latency.
+Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/search`; same request and response. Removed in 2.x.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @return ApiSearchKnowledgeBaseRequest
+
+Deprecated
 */
 func (a *KnowledgeBaseAPIService) SearchKnowledgeBase(ctx context.Context, bankId string) ApiSearchKnowledgeBaseRequest {
 	return ApiSearchKnowledgeBaseRequest{
@@ -896,13 +916,14 @@ func (a *KnowledgeBaseAPIService) SearchKnowledgeBase(ctx context.Context, bankI
 }
 
 // Execute executes the request
-//  @return KnowledgePageSearchResponse
-func (a *KnowledgeBaseAPIService) SearchKnowledgeBaseExecute(r ApiSearchKnowledgeBaseRequest) (*KnowledgePageSearchResponse, *http.Response, error) {
+//  @return PageSearchResponse
+// Deprecated
+func (a *KnowledgeBaseAPIService) SearchKnowledgeBaseExecute(r ApiSearchKnowledgeBaseRequest) (*PageSearchResponse, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodGet
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  *KnowledgePageSearchResponse
+		localVarReturnValue  *PageSearchResponse
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBaseAPIService.SearchKnowledgeBase")
@@ -1036,19 +1057,21 @@ func (r ApiUpdateKnowledgeNodeRequest) Authorization(authorization string) ApiUp
 	return r
 }
 
-func (r ApiUpdateKnowledgeNodeRequest) Execute() (*KnowledgeNode, *http.Response, error) {
+func (r ApiUpdateKnowledgeNodeRequest) Execute() (*PageNode, *http.Response, error) {
 	return r.ApiService.UpdateKnowledgeNodeExecute(r)
 }
 
 /*
-UpdateKnowledgeNode Rename/move a knowledge-base node or update a page's options
+UpdateKnowledgeNode Rename/move a page node or update a page's options (deprecated path)
 
-Rename a node (set `name`), move it under another folder (set `parent_id`, null for the root), and/or update a page's options (`source_query`, `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async refresh so the page rebuilds against the new question. `trigger` is applied as a patch: the fields you send are updated and the rest keep the page's current values.
+Deprecated alias of `PATCH /v1/default/banks/{bank_id}/pages/nodes/{node_id}`; same request and response. Removed in 2.x.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
  @param nodeId
  @return ApiUpdateKnowledgeNodeRequest
+
+Deprecated
 */
 func (a *KnowledgeBaseAPIService) UpdateKnowledgeNode(ctx context.Context, bankId string, nodeId string) ApiUpdateKnowledgeNodeRequest {
 	return ApiUpdateKnowledgeNodeRequest{
@@ -1060,13 +1083,14 @@ func (a *KnowledgeBaseAPIService) UpdateKnowledgeNode(ctx context.Context, bankI
 }
 
 // Execute executes the request
-//  @return KnowledgeNode
-func (a *KnowledgeBaseAPIService) UpdateKnowledgeNodeExecute(r ApiUpdateKnowledgeNodeRequest) (*KnowledgeNode, *http.Response, error) {
+//  @return PageNode
+// Deprecated
+func (a *KnowledgeBaseAPIService) UpdateKnowledgeNodeExecute(r ApiUpdateKnowledgeNodeRequest) (*PageNode, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodPatch
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  *KnowledgeNode
+		localVarReturnValue  *PageNode
 	)
 
 	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBaseAPIService.UpdateKnowledgeNode")

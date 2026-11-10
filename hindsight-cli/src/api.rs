@@ -143,16 +143,16 @@ pub struct FileRetainResult {
     pub operation_ids: Vec<String>,
 }
 
-/// Tag filter for the knowledge-base tree and search, with recall's semantics.
+/// Tag filter for the page tree and page search, with recall's semantics.
 #[derive(Debug, Default)]
-pub struct KnowledgeTagFilter {
+pub struct PageTagFilter {
     pub tags: Vec<String>,
     pub tags_match: Option<types::TagsMatch>,
     /// JSON-encoded `tag_groups`, passed through as the query param the server parses.
     pub tag_groups: Option<String>,
 }
 
-impl KnowledgeTagFilter {
+impl PageTagFilter {
     fn tags(&self) -> Option<&Vec<String>> {
         (!self.tags.is_empty()).then_some(&self.tags)
     }
@@ -971,7 +971,17 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .list_mental_models(bank_id, Some(detail), None, None, None, None, None, None)
+                .list_mental_models(
+                    bank_id,
+                    Some(detail),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
                 .humanized()
                 .await?;
             Ok(response.into_inner())
@@ -1096,18 +1106,18 @@ impl ApiClient {
         })
     }
 
-    // --- Knowledge Base Methods ---
+    // --- Pages Methods ---
 
-    pub fn get_knowledge_base_tree(
+    pub fn get_page_tree(
         &self,
         bank_id: &str,
-        filter: &KnowledgeTagFilter,
+        filter: &PageTagFilter,
         _verbose: bool,
-    ) -> Result<types::KnowledgeTreeResponse> {
+    ) -> Result<types::PageTreeResponse> {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .get_knowledge_base_tree(
+                .get_page_tree(
                     bank_id,
                     filter.tag_groups.as_deref(),
                     filter.tags(),
@@ -1120,66 +1130,66 @@ impl ApiClient {
         })
     }
 
-    pub fn create_knowledge_folder(
+    pub fn create_page_folder(
         &self,
         bank_id: &str,
         request: &types::CreateFolderRequest,
         _verbose: bool,
-    ) -> Result<types::KnowledgeNode> {
+    ) -> Result<types::PageNode> {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .create_knowledge_folder(bank_id, None, request)
+                .create_page_folder(bank_id, None, request)
                 .humanized()
                 .await?;
             Ok(response.into_inner())
         })
     }
 
-    pub fn create_knowledge_page(
+    pub fn create_page(
         &self,
         bank_id: &str,
         request: &types::CreatePageRequest,
         _verbose: bool,
-    ) -> Result<types::CreateKnowledgePageResponse> {
+    ) -> Result<types::CreatePageResponse> {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .create_knowledge_page(bank_id, None, request)
+                .create_page(bank_id, None, request)
                 .humanized()
                 .await?;
             Ok(response.into_inner())
         })
     }
 
-    pub fn get_knowledge_page(
+    pub fn get_page(
         &self,
         bank_id: &str,
         page_id: &str,
         _verbose: bool,
-    ) -> Result<types::KnowledgePageResponse> {
+    ) -> Result<types::PageResponse> {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .get_knowledge_page(bank_id, page_id, None)
+                .get_page(bank_id, page_id, None)
                 .humanized()
                 .await?;
             Ok(response.into_inner())
         })
     }
 
-    pub fn search_knowledge_base(
+    pub fn search_pages(
         &self,
         bank_id: &str,
         query: &types::Q,
         limit: Option<std::num::NonZeroU64>,
-        filter: &KnowledgeTagFilter,
+        filter: &PageTagFilter,
         _verbose: bool,
-    ) -> Result<types::KnowledgePageSearchResponse> {
+    ) -> Result<types::PageSearchResponse> {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .search_knowledge_base(
+                .search_pages(
                     bank_id,
                     limit,
                     query,
@@ -1194,24 +1204,24 @@ impl ApiClient {
         })
     }
 
-    pub fn update_knowledge_node(
+    pub fn update_page_node(
         &self,
         bank_id: &str,
         node_id: &str,
         request: &types::UpdateNodeRequest,
         _verbose: bool,
-    ) -> Result<types::KnowledgeNode> {
+    ) -> Result<types::PageNode> {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .update_knowledge_node(bank_id, node_id, None, request)
+                .update_page_node(bank_id, node_id, None, request)
                 .humanized()
                 .await?;
             Ok(response.into_inner())
         })
     }
 
-    pub fn delete_knowledge_node(
+    pub fn delete_page_node(
         &self,
         bank_id: &str,
         node_id: &str,
@@ -1220,24 +1230,16 @@ impl ApiClient {
         self.runtime.block_on(async {
             let response = self
                 .client
-                .delete_knowledge_node(bank_id, node_id, None)
+                .delete_page_node(bank_id, node_id, None)
                 .humanized()
                 .await?;
             Ok(response.into_inner())
         })
     }
 
-    pub fn export_knowledge_base(
-        &self,
-        bank_id: &str,
-        _verbose: bool,
-    ) -> Result<types::KnowledgePageBundleResponse> {
+    pub fn export_pages(&self, bank_id: &str, _verbose: bool) -> Result<types::PageBundleResponse> {
         self.runtime.block_on(async {
-            let response = self
-                .client
-                .export_knowledge_base(bank_id, None)
-                .humanized()
-                .await?;
+            let response = self.client.export_pages(bank_id, None).humanized().await?;
             Ok(response.into_inner())
         })
     }

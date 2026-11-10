@@ -1,4 +1,4 @@
-/** Download a knowledge page or mental model, all in the browser. */
+/** Download a page or mental model, all in the browser. */
 import { CompactMarkdown } from "@/components/compact-markdown";
 import type { MentalModel } from "@/lib/api";
 import { formatAbsoluteDateTime } from "@/lib/relative-time";

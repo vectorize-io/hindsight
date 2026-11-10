@@ -52,7 +52,7 @@ facts and then builds on them:
 - **Observation** — a belief consolidated from many facts, with its evidence and
   its history. *"User was a React enthusiast, has now switched to Vue."*
 - **Mental model** — a curated summary you write for a question you ask often.
-- **Knowledge page** — a living document the bank writes about itself.
+- **Page** — a living document the bank writes about itself.
 
 Facts are not a list. Each is linked to the entities it mentions and to the other
 facts that share them, which is what makes "where does Alice work?" answerable
@@ -86,9 +86,9 @@ A background worker keeps turning raw facts into durable beliefs:
 - **Refined, not overwritten** — new evidence updates an observation and its history is kept, so you can see a belief change
 - **Freshness-aware** — when memories have landed but not yet been consolidated, `reflect` treats the affected observations as stale and checks them against raw facts before trusting them
 
-### Knowledge Pages
+### Pages
 
-Observations answer one question at a time. A **knowledge page** is a living
+Observations answer one question at a time. A **page** is a living
 document the bank writes about itself — "What are the components here?", "What's
 our error-handling convention?" — rewritten incrementally as consolidation
 produces new knowledge in its scope:
@@ -98,7 +98,7 @@ produces new knowledge in its scope:
 - **Never self-citing** — a page never reads another page, so they cannot cite each other into a feedback loop
 - **Real files when you want them** — `hindsight fs mount` projects the tree onto disk as ordinary markdown, so `grep`, an editor or an agent's file tools all work with no SDK
 
-See [Knowledge Pages](knowledge-pages.md) for the full model.
+See [Pages](./pages.md) for the full model.
 
 ### Reflect
 
@@ -106,7 +106,7 @@ See [Knowledge Pages](knowledge-pages.md) for the full model.
 agentic loop over the bank rather than a single query:
 
 - **It gathers its own evidence** — the agent decides what it needs and calls its own tools, up to ten rounds, and cannot answer before it has retrieved something
-- **It checks sources in priority order** — mental models and knowledge pages first, then observations, and only then raw facts, so it reads the distilled answer before the transcript
+- **It checks sources in priority order** — mental models and pages first, then observations, and only then raw facts, so it reads the distilled answer before the transcript
 - **It cites what it used** — and only IDs it actually retrieved can be cited
 
 What makes two banks answer the same question differently is their configuration:
@@ -121,7 +121,7 @@ See [Reflect](reflect.md) for the loop in detail.
 
 ### Decision Models
 
-Optionally, a [decision model](decision-models.md) takes over the small judgment calls inside recall, consolidation, reflect and knowledge-page refresh — *would this memory help?*, *does this fact say something new?*, *is this enough to answer?* — and answers them in well under a second. The LLM is kept for writing, so the same work takes fewer LLM calls.
+Optionally, a [decision model](decision-models.md) takes over the small judgment calls inside recall, consolidation, reflect and page refresh — *would this memory help?*, *does this fact say something new?*, *is this enough to answer?* — and answers them in well under a second. The LLM is kept for writing, so the same work takes fewer LLM calls.
 
 ## Architecture Deep Dive
 
@@ -149,7 +149,7 @@ behind them. Play it, or step through it at your own pace.
   4. The agent gets ranked memories it can put straight into its prompt.
 - **reflect()**
   1. reflect() answers a question by reasoning over everything in the bank.
-  2. An agent loop decides what to look up. It starts with the most refined knowledge: mental models and knowledge pages.
+  2. An agent loop decides what to look up. It starts with the most refined knowledge: mental models and pages.
   3. Then observations, searched through the same indexes as recall. If new facts are still waiting to be consolidated, they are marked stale.
   4. Then raw facts through recall, for the details the summaries leave out.
   5. When it needs the exact wording, it opens the chunk or document a fact came from.

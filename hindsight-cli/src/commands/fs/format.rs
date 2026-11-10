@@ -1,10 +1,10 @@
-//! Turn a knowledge-base snapshot (folder/page tree + page contents) into a
+//! Turn a pages snapshot (folder/page tree + page contents) into a
 //! concrete on-disk mirror plan: which directories to create (folders) and
 //! which `.md` files to write (pages), at their nested paths.
 
 use std::collections::HashSet;
 
-use super::client::{KnowledgeNode, KnowledgeSnapshot};
+use super::client::{PageNode, PageSnapshot};
 
 const PAGE_PLACEHOLDER: &str = "_This page has not been generated yet._";
 
@@ -169,7 +169,7 @@ pub struct MirrorPlan {
     pub page_count: usize,
 }
 
-fn page_content(node: &KnowledgeNode, snapshot: &KnowledgeSnapshot) -> String {
+fn page_content(node: &PageNode, snapshot: &PageSnapshot) -> String {
     if let Some(doc) = snapshot.content.get(&node.id) {
         if !doc.trim().is_empty() {
             return if doc.ends_with('\n') {
@@ -182,7 +182,7 @@ fn page_content(node: &KnowledgeNode, snapshot: &KnowledgeSnapshot) -> String {
     // Fallback placeholder doc when the page body hasn't synthesized yet.
     let fm = stringify_frontmatter(&[
         ("id", FmValue::Str(node.id.clone())),
-        ("type", FmValue::Str("knowledge-page".to_string())),
+        ("type", FmValue::Str("page".to_string())),
         ("title", FmValue::Str(node.name.clone())),
         ("tags", FmValue::List(node.tags.clone())),
         (
@@ -196,14 +196,14 @@ fn page_content(node: &KnowledgeNode, snapshot: &KnowledgeSnapshot) -> String {
     format!("{}\n\n{}\n", fm, PAGE_PLACEHOLDER)
 }
 
-fn sorted_by_name(nodes: &[KnowledgeNode]) -> Vec<&KnowledgeNode> {
-    let mut ordered: Vec<&KnowledgeNode> = nodes.iter().collect();
+fn sorted_by_name(nodes: &[PageNode]) -> Vec<&PageNode> {
+    let mut ordered: Vec<&PageNode> = nodes.iter().collect();
     ordered.sort_by(|a, b| a.name.cmp(&b.name));
     ordered
 }
 
 /// Walk the tree into a flat list of directories + page files at nested paths.
-pub fn plan_mirror(snapshot: &KnowledgeSnapshot) -> MirrorPlan {
+pub fn plan_mirror(snapshot: &PageSnapshot) -> MirrorPlan {
     let mut plan = MirrorPlan {
         dirs: Vec::new(),
         files: Vec::new(),
@@ -214,12 +214,7 @@ pub fn plan_mirror(snapshot: &KnowledgeSnapshot) -> MirrorPlan {
     plan
 }
 
-fn walk_plan(
-    nodes: &[KnowledgeNode],
-    parent_dir: &str,
-    snapshot: &KnowledgeSnapshot,
-    plan: &mut MirrorPlan,
-) {
+fn walk_plan(nodes: &[PageNode], parent_dir: &str, snapshot: &PageSnapshot, plan: &mut MirrorPlan) {
     let mut used = HashSet::new();
     for node in sorted_by_name(nodes) {
         let seg = unique_segment(&slug(&node.name), &node.id, &mut used);
@@ -243,7 +238,7 @@ fn walk_plan(
 }
 
 /// Build the `index.md` overview written into the control directory.
-pub fn render_index(snapshot: &KnowledgeSnapshot, bank_id: &str, api_url: &str) -> String {
+pub fn render_index(snapshot: &PageSnapshot, bank_id: &str, api_url: &str) -> String {
     let plan = plan_mirror(snapshot);
     let fm = stringify_frontmatter(&[
         ("bank", FmValue::Str(bank_id.to_string())),
@@ -255,14 +250,14 @@ pub fn render_index(snapshot: &KnowledgeSnapshot, bank_id: &str, api_url: &str) 
     let mut lines: Vec<String> = Vec::new();
     walk_index(&snapshot.roots, 0, "", &mut lines);
     let body = if lines.is_empty() {
-        "_This bank has no knowledge base yet._".to_string()
+        "_This bank has no pages yet._".to_string()
     } else {
         lines.join("\n")
     };
-    format!("{}\n\n# Knowledge base — `{}`\n\n{}\n", fm, bank_id, body)
+    format!("{}\n\n# Pages — `{}`\n\n{}\n", fm, bank_id, body)
 }
 
-fn walk_index(nodes: &[KnowledgeNode], depth: usize, parent_dir: &str, lines: &mut Vec<String>) {
+fn walk_index(nodes: &[PageNode], depth: usize, parent_dir: &str, lines: &mut Vec<String>) {
     let mut used = HashSet::new();
     for node in sorted_by_name(nodes) {
         let seg = unique_segment(&slug(&node.name), &node.id, &mut used);
@@ -296,8 +291,8 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    fn page(id: &str, name: &str) -> KnowledgeNode {
-        KnowledgeNode {
+    fn page(id: &str, name: &str) -> PageNode {
+        PageNode {
             id: id.to_string(),
             kind: "page".to_string(),
             name: name.to_string(),
@@ -309,8 +304,8 @@ mod tests {
         }
     }
 
-    fn folder(id: &str, name: &str, children: Vec<KnowledgeNode>) -> KnowledgeNode {
-        KnowledgeNode {
+    fn folder(id: &str, name: &str, children: Vec<PageNode>) -> PageNode {
+        PageNode {
             id: id.to_string(),
             kind: "folder".to_string(),
             name: name.to_string(),
@@ -366,7 +361,7 @@ mod tests {
 
     #[test]
     fn plan_mirror_nests_and_sorts() {
-        let snapshot = KnowledgeSnapshot {
+        let snapshot = PageSnapshot {
             roots: vec![
                 folder("f1", "Policies", vec![page("p1", "Billing")]),
                 page("p2", "Overview"),
@@ -388,7 +383,7 @@ mod tests {
 
     #[test]
     fn plan_mirror_disambiguates_colliding_names() {
-        let snapshot = KnowledgeSnapshot {
+        let snapshot = PageSnapshot {
             roots: vec![page("aaaaaa", "Same"), page("bbbbbb", "Same")],
             content: HashMap::new(),
         };
@@ -403,13 +398,13 @@ mod tests {
 
     #[test]
     fn missing_page_body_falls_back_to_placeholder_doc() {
-        let snapshot = KnowledgeSnapshot {
+        let snapshot = PageSnapshot {
             roots: vec![page("p1", "Empty Page")],
             content: HashMap::new(),
         };
         let plan = plan_mirror(&snapshot);
         let doc = &plan.files[0].content;
-        assert!(doc.contains("type: knowledge-page"));
+        assert!(doc.contains("type: page"));
         assert!(doc.contains("title: Empty Page"));
         assert!(doc.contains(PAGE_PLACEHOLDER));
     }

@@ -2,9 +2,9 @@
  * Codebase survey (Option C): on a cold repo, `session-start.ts` (hook harnesses) or
  * `runtime.ts`'s `seedIfCold` (opencode) spawns a DETACHED headless coding agent alongside the
  * git-history backfill (core/seed.ts) to explore the repo's structure and ingest what it finds as
- * memories, via the `hindsight_ingest_document` MCP tool (core/knowledge-tools.ts).
+ * memories, via the `hindsight_ingest_document` MCP tool (core/page-tools.ts).
  *
- * A Hindsight knowledge page's body is synthesized server-side from the bank's MEMORIES via its
+ * A Hindsight page's body is synthesized server-side from the bank's MEMORIES via its
  * `source_query` — it can't be authored directly. So this survey doesn't write pages itself; it
  * ingests structural findings as documents, and the existing pages (missions.ts PAGES) synthesize
  * from them on the next consolidation, same as git history and chat transcripts do.

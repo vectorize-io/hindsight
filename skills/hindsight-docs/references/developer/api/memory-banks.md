@@ -371,7 +371,7 @@ An allowlist of MCP tool names that are enabled for this bank. When set, only th
 ["recall", "reflect"]
 ```
 
-Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`, `get_knowledge_base_tree`, `search_knowledge_base`, `get_knowledge_page`, `create_knowledge_folder`, `create_knowledge_page`, `update_knowledge_node`, `delete_knowledge_node`.
+Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`, `get_page_tree`, `search_pages`, `get_page`, `create_page_folder`, `create_page`, `update_page_node`, `delete_page_node`.
 
 ### llm_gemini_safety_settings
 
@@ -921,11 +921,11 @@ Move a bank — or just its documents — between banks and instances **without 
 
 | Flag | Default | What it carries |
 |------|---------|-----------------|
-| `include_data` | `true` | Documents, raw chunks, extracted facts, consolidated observations, entities and links, attachments **and their bytes**, the curation archive of invalidated facts, the operations log, the maintenance queues — and what the bank synthesized from all of it: mental models, their refresh history, and the knowledge-page tree over them. |
+| `include_data` | `true` | Documents, raw chunks, extracted facts, consolidated observations, entities and links, attachments **and their bytes**, the curation archive of invalidated facts, the operations log, the maintenance queues — and what the bank synthesized from all of it: mental models, their refresh history, and the page tree over them. |
 | `include_bank_config` | `true` | How the bank is set up: its config overrides, directives, and webhooks. |
 | `include_history` | `false` | `audit_log` and `llm_requests`. |
 
-Mental models and knowledge pages count as **data**, not configuration. A mental model is a reading of the bank's facts and cites them by id in its `based_on` evidence, so carrying it without them would restore a synthesis whose grounding resolves to nothing. Their refresh history follows them for the same reason.
+Mental models and pages count as **data**, not configuration. A mental model is a reading of the bank's facts and cites them by id in its `based_on` evidence, so carrying it without them would restore a synthesis whose grounding resolves to nothing. Their refresh history follows them for the same reason.
 
 Embeddings and database ids are never carried: facts are re-embedded with the *target* bank's model and entities are re-resolved against it, so an archive moves cleanly to an instance configured with a different embedding model, vector extension, or text-search backend.
 
@@ -1328,7 +1328,7 @@ status, _, err = client.OperationsAPI.GetOperationStatus(ctx, "transfer-go", clo
 | Query param | Default | Description |
 |-------------|---------|-------------|
 | `target_bank_id` | — | Required. The bank to create; it must not already exist. |
-| `include_data` | `true` | Copy the memories, everything backing them, and the mental models and knowledge pages synthesized from them. |
+| `include_data` | `true` | Copy the memories, everything backing them, and the mental models and pages synthesized from them. |
 | `include_bank_config` | `true` | Copy the bank's config overrides, directives and webhooks. |
 | `include_history` | `false` | Copy `audit_log` and `llm_requests`. |
 
@@ -1533,7 +1533,7 @@ of the steps below.
 | Documents, raw chunks | Yes |
 | Extracted facts, entity names, causal links | Yes |
 | Consolidated observations | **No** — the target re-consolidates from the imported facts |
-| Mental models, knowledge pages | **No** — recreate them on the target |
+| Mental models, pages | **No** — recreate them on the target |
 | Bank config, directives, webhooks | **No** — passing `include_bank_config` with `document_id` is a `400` |
 | `audit_log`, `llm_requests` | **No** — passing `include_history` with `document_id` is a `400` |
 
@@ -1658,7 +1658,7 @@ which is exactly why this step gets skipped — but it answers from raw facts on
 bank looks shallower than the source for no apparent reason.
 
 Then recreate the bank-level synthesis by hand: mental models, their directives, and the
-knowledge-page tree do not travel with a subset.
+page tree do not travel with a subset.
 
 **7. Purge the moved documents from the source.**
 

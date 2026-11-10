@@ -2,7 +2,7 @@
 
 Two problems this fixes, both measured rather than guessed:
 
-1. **The pages were empty.** The plugin seeds five knowledge pages at
+1. **The pages were empty.** The plugin seeds five pages at
    SessionStart and refreshes them on a ``H * * * *`` cron, so inside a session
    that never fires: the roster injected into the model listed pages whose
    content was the literal string ``Generating content...``. The first thing the
@@ -70,7 +70,7 @@ class PriorSession:
 
 @dataclass(frozen=True)
 class PageNode:
-    """One page in the knowledge tree, flattened out of its folder structure."""
+    """One page in the page tree, flattened out of its folder structure."""
 
     id: str
     name: str
@@ -210,7 +210,7 @@ PRIOR_SESSIONS: list[PriorSession] = [
 #:
 #: There are a dozen of them for a measured reason. With three pages the roster
 #: injected at SessionStart *is* the index: the model reads the titles, picks the
-#: obviously relevant one and calls hindsight_read_knowledge_page with its id —
+#: obviously relevant one and calls hindsight_read_page with its id —
 #: measured at 5/5 on the one turn whose answer lived in memory, with zero
 #: searches. Searching to find one of three titles you can already see would be a
 #: wasted call, and the model is right not to make it. A roster the size of a
@@ -296,7 +296,7 @@ async def drop_placeholder_pages(client: Hindsight, bank_id: str) -> list[str]:
         if content.strip() and PLACEHOLDER not in content:
             continue
         with contextlib.suppress(Exception):
-            await client.adelete_knowledge_node(bank_id=bank_id, node_id=node.id)
+            await client.adelete_page_node(bank_id=bank_id, node_id=node.id)
             dropped.append(node.name)
     return dropped
 
@@ -311,7 +311,7 @@ async def create_seed_pages(client: Hindsight, bank_id: str) -> list[str]:
     """
     created = []
     for page in SEED_PAGES:
-        response = await client.acreate_knowledge_page(
+        response = await client.acreate_page(
             bank_id=bank_id,
             name=page.name,
             source_query=page.source_query,
@@ -335,8 +335,8 @@ async def placeholder_pages(client: Hindsight, bank_id: str) -> list[str]:
 
 
 async def _page_nodes(client: Hindsight, bank_id: str) -> list[PageNode]:
-    """Every page in the knowledge tree, flattened."""
-    tree = await client.aget_knowledge_base_tree(bank_id=bank_id)
+    """Every page in the page tree, flattened."""
+    tree = await client.aget_page_tree(bank_id=bank_id)
     out: list[PageNode] = []
 
     def walk(nodes) -> None:

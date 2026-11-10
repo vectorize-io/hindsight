@@ -20,8 +20,8 @@
       }
     },
     {
-      "id": "knowledge-base",
-      "name": "Knowledge Base",
+      "id": "findings",
+      "name": "Findings & Open Questions",
       "source_query": "What has the user already learned or concluded on their topics of interest? What are the durable findings and open questions in their second brain?",
       "max_tokens": 2048,
       "trigger": {

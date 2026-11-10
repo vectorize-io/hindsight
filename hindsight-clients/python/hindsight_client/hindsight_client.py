@@ -55,11 +55,12 @@ from hindsight_client_api.api import (
     documents_api,
     entities_api,
     files_api,
-    knowledge_base_api,
+    knowledge_base_api,  # deprecated alias, remove in 2.x
     memory_api,
     mental_models_api,
     monitoring_api,
     operations_api,
+    pages_api,
     webhooks_api,
 )
 from hindsight_client_api.models import (
@@ -93,6 +94,21 @@ def _run_async(coro):
         asyncio.set_event_loop(loop)
 
     return loop.run_until_complete(coro)
+
+
+def _warn_renamed(old: str, new: str) -> None:
+    """Warn that ``old`` was renamed to ``new`` (pages used to be "knowledge pages")."""
+    warnings.warn(
+        f"{old} is deprecated, use {new}; it will be removed in Hindsight 2.x.", DeprecationWarning, stacklevel=3
+    )
+
+
+def _renamed_arg(new_value: Any, old_value: Any, old: str, new: str) -> Any:
+    """Return ``new_value``, falling back to the deprecated ``old_value`` with a warning."""
+    if old_value is None:
+        return new_value
+    _warn_renamed(old, new)
+    return new_value if new_value is not None else old_value
 
 
 def _warn_if_operation_id_dropped(retain_async: bool, operation_id: str | None) -> None:
@@ -307,6 +323,8 @@ class Hindsight:
         self._memory_api = memory_api.MemoryApi(self._api_client)
         self._banks_api = banks_api.BanksApi(self._api_client)
         self._mental_models_api = mental_models_api.MentalModelsApi(self._api_client)
+        self._pages_api = pages_api.PagesApi(self._api_client)
+        # Deprecated alias (old paths), backs the `knowledge_base` property. Remove in 2.x.
         self._knowledge_base_api = knowledge_base_api.KnowledgeBaseApi(self._api_client)
         self._directives_api = directives_api.DirectivesApi(self._api_client)
         self._files_api = files_api.FilesApi(self._api_client)
@@ -384,8 +402,14 @@ class Hindsight:
         return self._mental_models_api
 
     @property
+    def pages(self) -> pages_api.PagesApi:
+        """Low-level Pages API — folder/page tree, page CRUD, search, export."""
+        return self._pages_api
+
+    @property
     def knowledge_base(self) -> knowledge_base_api.KnowledgeBaseApi:
-        """Low-level Knowledge Base API — folder/page tree, page CRUD, search, export."""
+        """Deprecated: use :attr:`pages`. Calls the old, deprecated paths. Remove in 2.x."""
+        _warn_renamed("knowledge_base", "pages")
         return self._knowledge_base_api
 
     @property
@@ -1674,7 +1698,8 @@ class Hindsight:
         detail: Literal["metadata", "content", "full"] | None = None,
         limit: int | None = None,
         offset: int | None = None,
-        exclude_knowledge_pages: bool | None = None,
+        exclude_knowledge_pages: bool | None = None,  # deprecated alias, remove in 2.x
+        exclude_pages: bool | None = None,
     ):
         """
         List all mental models in a bank (sync wrapper — prefer :meth:`alist_mental_models` in async code).
@@ -1689,7 +1714,8 @@ class Hindsight:
                 detail=detail,
                 limit=limit,
                 offset=offset,
-                exclude_knowledge_pages=exclude_knowledge_pages,
+                exclude_pages=exclude_pages,
+                exclude_knowledge_pages=exclude_knowledge_pages,  # deprecated alias, remove in 2.x
             )
         )
 
@@ -1701,7 +1727,8 @@ class Hindsight:
         detail: Literal["metadata", "content", "full"] | None = None,
         limit: int | None = None,
         offset: int | None = None,
-        exclude_knowledge_pages: bool | None = None,
+        exclude_knowledge_pages: bool | None = None,  # deprecated alias, remove in 2.x
+        exclude_pages: bool | None = None,
     ):
         """
         List all mental models in a bank (async — preferred over :meth:`list_mental_models`).
@@ -1717,8 +1744,9 @@ class Hindsight:
                 text, or read a single model with get_mental_model.
             limit: Maximum number of mental models to return
             offset: Number of mental models to skip (for pagination)
-            exclude_knowledge_pages: Leave out the models that hold knowledge page
-                content, listing standalone mental models only (server default: false)
+            exclude_pages: Leave out the models that hold page content, listing
+                standalone mental models only (server default: false)
+            exclude_knowledge_pages: Deprecated spelling of ``exclude_pages``.
 
         Returns:
             ListMentalModelsResponse with items
@@ -1730,7 +1758,10 @@ class Hindsight:
             detail=detail,
             limit=limit,
             offset=offset,
-            exclude_knowledge_pages=exclude_knowledge_pages,
+            # exclude_knowledge_pages: deprecated alias, remove in 2.x.
+            exclude_pages=_renamed_arg(
+                exclude_pages, exclude_knowledge_pages, "exclude_knowledge_pages", "exclude_pages"
+            ),
             _request_timeout=self._timeout,
         )
 
@@ -1963,9 +1994,9 @@ class Hindsight:
             bank_id, mental_model_id, _request_timeout=self._timeout
         )
 
-    # Knowledge base methods
+    # Page methods
 
-    def get_knowledge_base_tree(
+    def get_page_tree(
         self,
         bank_id: str,
         tags: list[str] | None = None,
@@ -1973,15 +2004,13 @@ class Hindsight:
         tag_groups: list[dict[str, Any]] | None = None,
     ):
         """
-        Get the knowledge base as a nested folder/page tree (sync wrapper — prefer :meth:`aget_knowledge_base_tree` in async code).
+        Get the bank's pages as a nested folder/page tree (sync wrapper — prefer :meth:`aget_page_tree` in async code).
 
-        See :meth:`aget_knowledge_base_tree` for the full argument and return documentation.
+        See :meth:`aget_page_tree` for the full argument and return documentation.
         """
-        return _run_async(
-            self.aget_knowledge_base_tree(bank_id=bank_id, tags=tags, tags_match=tags_match, tag_groups=tag_groups)
-        )
+        return _run_async(self.aget_page_tree(bank_id=bank_id, tags=tags, tags_match=tags_match, tag_groups=tag_groups))
 
-    async def aget_knowledge_base_tree(
+    async def aget_page_tree(
         self,
         bank_id: str,
         tags: list[str] | None = None,
@@ -1989,9 +2018,9 @@ class Hindsight:
         tag_groups: list[dict[str, Any]] | None = None,
     ):
         """
-        Get the knowledge base as a nested folder/page tree (async — preferred over :meth:`get_knowledge_base_tree`).
+        Get the bank's pages as a nested folder/page tree (async — preferred over :meth:`get_page_tree`).
 
-        Page bodies are not included; fetch a page with :meth:`get_knowledge_page`.
+        Page bodies are not included; fetch a page with :meth:`get_page`.
 
         Args:
             bank_id: The memory bank ID
@@ -2002,9 +2031,9 @@ class Hindsight:
             tag_groups: Compound boolean tag filter, same shape as recall's ``tag_groups``
 
         Returns:
-            KnowledgeTreeResponse with roots
+            PageTreeResponse with roots
         """
-        return await self._knowledge_base_api.get_knowledge_base_tree(
+        return await self._pages_api.get_page_tree(
             bank_id,
             tags=tags,
             tags_match=tags_match,
@@ -2013,17 +2042,17 @@ class Hindsight:
             _request_timeout=self._timeout,
         )
 
-    def create_knowledge_folder(self, bank_id: str, name: str, parent_id: str | None = None):
+    def create_page_folder(self, bank_id: str, name: str, parent_id: str | None = None):
         """
-        Create a knowledge-base folder (sync wrapper — prefer :meth:`acreate_knowledge_folder` in async code).
+        Create a folder (sync wrapper — prefer :meth:`acreate_page_folder` in async code).
 
-        See :meth:`acreate_knowledge_folder` for the full argument and return documentation.
+        See :meth:`acreate_page_folder` for the full argument and return documentation.
         """
-        return _run_async(self.acreate_knowledge_folder(bank_id=bank_id, name=name, parent_id=parent_id))
+        return _run_async(self.acreate_page_folder(bank_id=bank_id, name=name, parent_id=parent_id))
 
-    async def acreate_knowledge_folder(self, bank_id: str, name: str, parent_id: str | None = None):
+    async def acreate_page_folder(self, bank_id: str, name: str, parent_id: str | None = None):
         """
-        Create a knowledge-base folder (async — preferred over :meth:`create_knowledge_folder`).
+        Create a folder (async — preferred over :meth:`create_page_folder`).
 
         Args:
             bank_id: The memory bank ID
@@ -2031,17 +2060,15 @@ class Hindsight:
             parent_id: Optional parent folder ID (None creates it at the root)
 
         Returns:
-            KnowledgeNode
+            PageNode
         """
         from hindsight_client_api.models import create_folder_request
 
         request_obj = create_folder_request.CreateFolderRequest(name=name, parent_id=parent_id)
 
-        return await self._knowledge_base_api.create_knowledge_folder(
-            bank_id, request_obj, _request_timeout=self._timeout
-        )
+        return await self._pages_api.create_page_folder(bank_id, request_obj, _request_timeout=self._timeout)
 
-    def create_knowledge_page(
+    def create_page(
         self,
         bank_id: str,
         name: str,
@@ -2052,12 +2079,12 @@ class Hindsight:
         trigger: dict[str, Any] | None = None,
     ):
         """
-        Create a knowledge-base page (sync wrapper — prefer :meth:`acreate_knowledge_page` in async code).
+        Create a page (sync wrapper — prefer :meth:`acreate_page` in async code).
 
-        See :meth:`acreate_knowledge_page` for the full argument and return documentation.
+        See :meth:`acreate_page` for the full argument and return documentation.
         """
         return _run_async(
-            self.acreate_knowledge_page(
+            self.acreate_page(
                 bank_id=bank_id,
                 name=name,
                 source_query=source_query,
@@ -2068,7 +2095,7 @@ class Hindsight:
             )
         )
 
-    async def acreate_knowledge_page(
+    async def acreate_page(
         self,
         bank_id: str,
         name: str,
@@ -2079,7 +2106,7 @@ class Hindsight:
         trigger: dict[str, Any] | None = None,
     ):
         """
-        Create a knowledge-base page (async — preferred over :meth:`create_knowledge_page`).
+        Create a page (async — preferred over :meth:`create_page`).
 
         Content is generated asynchronously; poll the returned ``operation_id``
         to know when the first build has finished.
@@ -2103,7 +2130,7 @@ class Hindsight:
                 you leave out keep their defaults.
 
         Returns:
-            CreateKnowledgePageResponse with page_id, mental_model_id and operation_id
+            CreatePageResponse with page_id, mental_model_id and operation_id
         """
         from hindsight_client_api.models import create_page_request
 
@@ -2118,32 +2145,30 @@ class Hindsight:
             trigger=trigger_obj,
         )
 
-        return await self._knowledge_base_api.create_knowledge_page(
-            bank_id, request_obj, _request_timeout=self._timeout
-        )
+        return await self._pages_api.create_page(bank_id, request_obj, _request_timeout=self._timeout)
 
-    def get_knowledge_page(self, bank_id: str, page_id: str):
+    def get_page(self, bank_id: str, page_id: str):
         """
-        Get a knowledge page rendered as a markdown document (sync wrapper — prefer :meth:`aget_knowledge_page` in async code).
+        Get a page rendered as a markdown document (sync wrapper — prefer :meth:`aget_page` in async code).
 
-        See :meth:`aget_knowledge_page` for the full argument and return documentation.
+        See :meth:`aget_page` for the full argument and return documentation.
         """
-        return _run_async(self.aget_knowledge_page(bank_id=bank_id, page_id=page_id))
+        return _run_async(self.aget_page(bank_id=bank_id, page_id=page_id))
 
-    async def aget_knowledge_page(self, bank_id: str, page_id: str):
+    async def aget_page(self, bank_id: str, page_id: str):
         """
-        Get a knowledge page rendered as a markdown document (async — preferred over :meth:`get_knowledge_page`).
+        Get a page rendered as a markdown document (async — preferred over :meth:`get_page`).
 
         Args:
             bank_id: The memory bank ID
             page_id: The page ID
 
         Returns:
-            KnowledgePageResponse with body and full markdown (frontmatter + body)
+            PageResponse with body and full markdown (frontmatter + body)
         """
-        return await self._knowledge_base_api.get_knowledge_page(bank_id, page_id, _request_timeout=self._timeout)
+        return await self._pages_api.get_page(bank_id, page_id, _request_timeout=self._timeout)
 
-    def search_knowledge_base(
+    def search_pages(
         self,
         bank_id: str,
         q: str,
@@ -2153,17 +2178,17 @@ class Hindsight:
         tag_groups: list[dict[str, Any]] | None = None,
     ):
         """
-        Hybrid search over knowledge pages (sync wrapper — prefer :meth:`asearch_knowledge_base` in async code).
+        Hybrid search over pages (sync wrapper — prefer :meth:`asearch_pages` in async code).
 
-        See :meth:`asearch_knowledge_base` for the full argument and return documentation.
+        See :meth:`asearch_pages` for the full argument and return documentation.
         """
         return _run_async(
-            self.asearch_knowledge_base(
+            self.asearch_pages(
                 bank_id=bank_id, q=q, limit=limit, tags=tags, tags_match=tags_match, tag_groups=tag_groups
             )
         )
 
-    async def asearch_knowledge_base(
+    async def asearch_pages(
         self,
         bank_id: str,
         q: str,
@@ -2173,7 +2198,7 @@ class Hindsight:
         tag_groups: list[dict[str, Any]] | None = None,
     ):
         """
-        Hybrid search over knowledge pages (async — preferred over :meth:`search_knowledge_base`).
+        Hybrid search over pages (async — preferred over :meth:`search_pages`).
 
         Args:
             bank_id: The memory bank ID
@@ -2185,9 +2210,9 @@ class Hindsight:
             tag_groups: Compound boolean tag filter, same shape as recall's ``tag_groups``
 
         Returns:
-            KnowledgePageSearchResponse with ranked results
+            PageSearchResponse with ranked results
         """
-        return await self._knowledge_base_api.search_knowledge_base(
+        return await self._pages_api.search_pages(
             bank_id,
             q,
             limit=limit,
@@ -2197,7 +2222,7 @@ class Hindsight:
             _request_timeout=self._timeout,
         )
 
-    def update_knowledge_node(
+    def update_page_node(
         self,
         bank_id: str,
         node_id: str,
@@ -2209,12 +2234,12 @@ class Hindsight:
         trigger: dict[str, Any] | None = None,
     ):
         """
-        Rename/move a knowledge node and/or update a page's options (sync wrapper — prefer :meth:`aupdate_knowledge_node` in async code).
+        Rename/move a page node and/or update a page's options (sync wrapper — prefer :meth:`aupdate_page_node` in async code).
 
-        See :meth:`aupdate_knowledge_node` for the full argument and return documentation.
+        See :meth:`aupdate_page_node` for the full argument and return documentation.
         """
         return _run_async(
-            self.aupdate_knowledge_node(
+            self.aupdate_page_node(
                 bank_id=bank_id,
                 node_id=node_id,
                 name=name,
@@ -2226,7 +2251,7 @@ class Hindsight:
             )
         )
 
-    async def aupdate_knowledge_node(
+    async def aupdate_page_node(
         self,
         bank_id: str,
         node_id: str,
@@ -2238,7 +2263,7 @@ class Hindsight:
         trigger: dict[str, Any] | None = None,
     ):
         """
-        Rename/move a knowledge node and/or update a page's options (async — preferred over :meth:`update_knowledge_node`).
+        Rename/move a page node and/or update a page's options (async — preferred over :meth:`update_page_node`).
 
         Only the fields you pass are applied. ``parent_id`` is only sent when
         provided, so passing ``None`` explicitly moves the node to the root.
@@ -2255,7 +2280,7 @@ class Hindsight:
                 keys you pass are updated and the rest keep the page's current values
 
         Returns:
-            KnowledgeNode
+            PageNode
         """
         from hindsight_client_api.models import update_node_request
 
@@ -2282,47 +2307,127 @@ class Hindsight:
 
         request_obj = update_node_request.UpdateNodeRequest(**fields)
 
-        return await self._knowledge_base_api.update_knowledge_node(
-            bank_id, node_id, request_obj, _request_timeout=self._timeout
-        )
+        return await self._pages_api.update_page_node(bank_id, node_id, request_obj, _request_timeout=self._timeout)
 
-    def delete_knowledge_node(self, bank_id: str, node_id: str):
+    def delete_page_node(self, bank_id: str, node_id: str):
         """
-        Delete a knowledge folder or page and its whole subtree (sync wrapper — prefer :meth:`adelete_knowledge_node` in async code).
+        Delete a folder or page and its whole subtree (sync wrapper — prefer :meth:`adelete_page_node` in async code).
 
-        See :meth:`adelete_knowledge_node` for the full argument and return documentation.
+        See :meth:`adelete_page_node` for the full argument and return documentation.
         """
-        return _run_async(self.adelete_knowledge_node(bank_id=bank_id, node_id=node_id))
+        return _run_async(self.adelete_page_node(bank_id=bank_id, node_id=node_id))
 
-    async def adelete_knowledge_node(self, bank_id: str, node_id: str):
+    async def adelete_page_node(self, bank_id: str, node_id: str):
         """
-        Delete a knowledge folder or page and its whole subtree (async — preferred over :meth:`delete_knowledge_node`).
+        Delete a folder or page and its whole subtree (async — preferred over :meth:`delete_page_node`).
 
         Args:
             bank_id: The memory bank ID
             node_id: The folder or page ID
         """
-        return await self._knowledge_base_api.delete_knowledge_node(bank_id, node_id, _request_timeout=self._timeout)
+        return await self._pages_api.delete_page_node(bank_id, node_id, _request_timeout=self._timeout)
 
-    def export_knowledge_base(self, bank_id: str):
+    def export_pages(self, bank_id: str):
         """
-        Export the knowledge base as a portable markdown bundle (sync wrapper — prefer :meth:`aexport_knowledge_base` in async code).
+        Export the bank's pages as a portable markdown bundle (sync wrapper — prefer :meth:`aexport_pages` in async code).
 
-        See :meth:`aexport_knowledge_base` for the full argument and return documentation.
+        See :meth:`aexport_pages` for the full argument and return documentation.
         """
-        return _run_async(self.aexport_knowledge_base(bank_id=bank_id))
+        return _run_async(self.aexport_pages(bank_id=bank_id))
 
-    async def aexport_knowledge_base(self, bank_id: str):
+    async def aexport_pages(self, bank_id: str):
         """
-        Export the knowledge base as a portable markdown bundle (async — preferred over :meth:`export_knowledge_base`).
+        Export the bank's pages as a portable markdown bundle (async — preferred over :meth:`export_pages`).
 
         Args:
             bank_id: The memory bank ID
 
         Returns:
-            KnowledgePageBundleResponse with files (index.md, one file per page, history logs)
+            PageBundleResponse with files (index.md, one file per page, history logs)
         """
-        return await self._knowledge_base_api.export_knowledge_base(bank_id, _request_timeout=self._timeout)
+        return await self._pages_api.export_pages(bank_id, _request_timeout=self._timeout)
+
+    # Deprecated names from when pages were called "knowledge pages". Remove in 2.x.
+
+    def get_knowledge_base_tree(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`get_page_tree`."""
+        _warn_renamed("get_knowledge_base_tree", "get_page_tree")
+        return self.get_page_tree(*args, **kwargs)
+
+    async def aget_knowledge_base_tree(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`aget_page_tree`."""
+        _warn_renamed("aget_knowledge_base_tree", "aget_page_tree")
+        return await self.aget_page_tree(*args, **kwargs)
+
+    def create_knowledge_folder(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`create_page_folder`."""
+        _warn_renamed("create_knowledge_folder", "create_page_folder")
+        return self.create_page_folder(*args, **kwargs)
+
+    async def acreate_knowledge_folder(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`acreate_page_folder`."""
+        _warn_renamed("acreate_knowledge_folder", "acreate_page_folder")
+        return await self.acreate_page_folder(*args, **kwargs)
+
+    def create_knowledge_page(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`create_page`."""
+        _warn_renamed("create_knowledge_page", "create_page")
+        return self.create_page(*args, **kwargs)
+
+    async def acreate_knowledge_page(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`acreate_page`."""
+        _warn_renamed("acreate_knowledge_page", "acreate_page")
+        return await self.acreate_page(*args, **kwargs)
+
+    def get_knowledge_page(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`get_page`."""
+        _warn_renamed("get_knowledge_page", "get_page")
+        return self.get_page(*args, **kwargs)
+
+    async def aget_knowledge_page(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`aget_page`."""
+        _warn_renamed("aget_knowledge_page", "aget_page")
+        return await self.aget_page(*args, **kwargs)
+
+    def search_knowledge_base(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`search_pages`."""
+        _warn_renamed("search_knowledge_base", "search_pages")
+        return self.search_pages(*args, **kwargs)
+
+    async def asearch_knowledge_base(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`asearch_pages`."""
+        _warn_renamed("asearch_knowledge_base", "asearch_pages")
+        return await self.asearch_pages(*args, **kwargs)
+
+    def update_knowledge_node(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`update_page_node`."""
+        _warn_renamed("update_knowledge_node", "update_page_node")
+        return self.update_page_node(*args, **kwargs)
+
+    async def aupdate_knowledge_node(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`aupdate_page_node`."""
+        _warn_renamed("aupdate_knowledge_node", "aupdate_page_node")
+        return await self.aupdate_page_node(*args, **kwargs)
+
+    def delete_knowledge_node(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`delete_page_node`."""
+        _warn_renamed("delete_knowledge_node", "delete_page_node")
+        return self.delete_page_node(*args, **kwargs)
+
+    async def adelete_knowledge_node(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`adelete_page_node`."""
+        _warn_renamed("adelete_knowledge_node", "adelete_page_node")
+        return await self.adelete_page_node(*args, **kwargs)
+
+    def export_knowledge_base(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`export_pages`."""
+        _warn_renamed("export_knowledge_base", "export_pages")
+        return self.export_pages(*args, **kwargs)
+
+    async def aexport_knowledge_base(self, *args: Any, **kwargs: Any) -> Any:
+        """Deprecated: use :meth:`aexport_pages`."""
+        _warn_renamed("aexport_knowledge_base", "aexport_pages")
+        return await self.aexport_pages(*args, **kwargs)
 
     # Document transfer (export / import between banks — no LLM re-extraction)
 
@@ -2353,7 +2458,7 @@ class Hindsight:
             bank_id: Source bank.
             document_ids: Specific document ids to export; omit for the whole bank.
             include_observations: Also export consolidated observations (whole-bank only).
-            include_knowledge_base: Also export Mental Models and Knowledge Pages (whole-bank only).
+            include_knowledge_base: Also export Mental Models and Pages (whole-bank only).
             poll_interval: Seconds between operation-status polls.
             timeout: Maximum seconds to wait for the export to finish.
 
@@ -2443,7 +2548,7 @@ class Hindsight:
         memories and everything backing them (documents, facts, observations,
         attachments and their bytes, the curation archive, the operations log and
         the maintenance queues); ``include_bank_config`` the bank's own config,
-        mental models and their history, knowledge pages, directives and webhooks;
+        mental models and their history, pages, directives and webhooks;
         ``include_history`` the audit and LLM-request logs.
 
         Embeddings never travel — the importing instance regenerates them with its
@@ -2958,7 +3063,8 @@ class Hindsight:
         consolidation_llm_parallelism: int | None = None,
         consolidation_max_memories_per_round: int | None = None,
         mental_model_min_refresh_interval_seconds: int | None = None,
-        knowledge_page_default_trigger: dict[str, Any] | None = None,
+        page_default_trigger: dict[str, Any] | None = None,
+        knowledge_page_default_trigger: dict[str, Any] | None = None,  # deprecated alias, remove in 2.x
         reflect_default_options: dict[str, Any] | None = None,
         reflect_use_decision_model: bool | None = None,
         mental_model_refresh_use_decision_model: bool | None = None,
@@ -3032,7 +3138,8 @@ class Hindsight:
                 consolidation_llm_parallelism=consolidation_llm_parallelism,
                 consolidation_max_memories_per_round=consolidation_max_memories_per_round,
                 mental_model_min_refresh_interval_seconds=mental_model_min_refresh_interval_seconds,
-                knowledge_page_default_trigger=knowledge_page_default_trigger,
+                page_default_trigger=page_default_trigger,
+                knowledge_page_default_trigger=knowledge_page_default_trigger,  # deprecated alias, remove in 2.x
                 reflect_default_options=reflect_default_options,
                 reflect_use_decision_model=reflect_use_decision_model,
                 mental_model_refresh_use_decision_model=mental_model_refresh_use_decision_model,
@@ -3103,7 +3210,8 @@ class Hindsight:
         consolidation_llm_parallelism: int | None = None,
         consolidation_max_memories_per_round: int | None = None,
         mental_model_min_refresh_interval_seconds: int | None = None,
-        knowledge_page_default_trigger: dict[str, Any] | None = None,
+        page_default_trigger: dict[str, Any] | None = None,
+        knowledge_page_default_trigger: dict[str, Any] | None = None,  # deprecated alias, remove in 2.x
         reflect_default_options: dict[str, Any] | None = None,
         reflect_use_decision_model: bool | None = None,
         mental_model_refresh_use_decision_model: bool | None = None,
@@ -3193,12 +3301,13 @@ class Hindsight:
                 reflect_search_mental_models_max_tokens.
             reflect_use_decision_model: When the server has a decision model, reflect lets it
                 prune the evidence and decide when to stop (fewer LLM calls). False keeps agent turns.
-            mental_model_refresh_use_decision_model: The same, for knowledge-page refreshes.
+            mental_model_refresh_use_decision_model: The same, for page refreshes.
             mental_model_delta_use_decision_model: When the server has a decision model, a delta
-                knowledge-page refresh asks it which new memories could change the page instead
+                page refresh asks it which new memories could change the page instead
                 of running reflect. False keeps reflect.
-            knowledge_page_default_trigger: Trigger fields merged over the built-in default for new
-                knowledge pages, e.g. {"refresh_cron": "0 * * * *"}.
+            page_default_trigger: Trigger fields merged over the built-in default for new
+                pages, e.g. {"refresh_cron": "0 * * * *"}.
+            knowledge_page_default_trigger: Deprecated spelling of ``page_default_trigger``.
             enable_observations: Toggle automatic observation consolidation after retain().
             observations_mission: Controls what gets synthesised into observations.
             enable_text_search: Run the keyword (BM25) retrieval arm during recall. False
@@ -3267,7 +3376,12 @@ class Hindsight:
                 "consolidation_llm_parallelism": consolidation_llm_parallelism,
                 "consolidation_max_memories_per_round": consolidation_max_memories_per_round,
                 "mental_model_min_refresh_interval_seconds": mental_model_min_refresh_interval_seconds,
-                "knowledge_page_default_trigger": knowledge_page_default_trigger,
+                "page_default_trigger": _renamed_arg(
+                    page_default_trigger,
+                    knowledge_page_default_trigger,  # deprecated alias, remove in 2.x
+                    "knowledge_page_default_trigger",  # deprecated alias, remove in 2.x
+                    "page_default_trigger",
+                ),
                 "reflect_default_options": reflect_default_options,
                 "reflect_use_decision_model": reflect_use_decision_model,
                 "mental_model_refresh_use_decision_model": mental_model_refresh_use_decision_model,

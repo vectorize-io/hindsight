@@ -1,5 +1,5 @@
 /**
- * Harness-agnostic Hindsight missions, retain strategies, and knowledge-page taxonomy.
+ * Harness-agnostic Hindsight missions, retain strategies, and page taxonomy.
  *
  * These describe HOW a coding project's memory is extracted and reasoned over. They are independent
  * of which agent harness produced the sessions, so they live in the shared core and are reused by
@@ -125,7 +125,7 @@ export const RETAIN_STRATEGIES = {
 // ── passive tier tagging (entity_labels) ───────────────────────────────────────
 // A single hierarchical bank-config group set by `configureBank` at seed time. `tag: true` makes the
 // extractor copy each selected `knowledge:<value>` onto the fact's tags (via `_inject_label_tags`),
-// giving every durable fact a knowledge-tier routing tag the server-side knowledge base (and any
+// giving every durable fact a knowledge-tier routing tag the server-side pages (and any
 // tag-filtered query) can select on. The vocabulary is FIXED (not per-feature) because tag matching
 // is exact set-ops with no wildcards.
 export interface EntityLabelValue {
@@ -142,13 +142,13 @@ export interface EntityLabelGroup {
   values: EntityLabelValue[];
 }
 
-export const KNOWLEDGE_LABELS: EntityLabelGroup = {
+export const PAGE_LABELS: EntityLabelGroup = {
   key: "knowledge",
   type: "multi-values", // 0, 1, or several — empty is normal
   optional: true,
   tag: true, // emits knowledge:<value> onto the fact's tags
   description:
-    "Routing labels for this project's Hindsight KNOWLEDGE PAGES — curated, human-readable summaries " +
+    "Routing labels for this project's Hindsight PAGES — curated, human-readable summaries " +
     "of the repo's DURABLE engineering knowledge (architecture, key decisions, conventions, ongoing " +
     "initiatives), each page rebuilt automatically from the facts labeled for it. Mark a fact only when " +
     "it is durable, reusable knowledge a developer would still want surfaced in future sessions. " +
@@ -189,15 +189,15 @@ export const KNOWLEDGE_LABELS: EntityLabelGroup = {
   ],
 };
 
-// Knowledge PAGES (OKF pages = mental models) = a developer's durable mental model of the codebase,
+// PAGES (OKF pages = mental models) = a developer's durable mental model of the codebase,
 // CONSOLIDATED from the ingested MEMORY (commit history + past conversations) — NOT mirrored from the
 // current source (which would need constant re-sync). A universal 5-page taxonomy that generalizes to
 // any repo; the curator populates each from history+chats and can spawn per-component sub-pages.
 // A seeded page is a tag-scoped synthesis view: `tags` pins it to one `knowledge:<tier>` label so
 // its synthesis draws from the facts the extractor routed to that tier (exact set-ops — see
-// KNOWLEDGE_LABELS above; names/tiers mirror the label vocabulary). The tiers say what KIND of
+// PAGE_LABELS above; names/tiers mirror the label vocabulary). The tiers say what KIND of
 // knowledge a fact is, never WHOSE — `pageScopeRule` below carries that half.
-export interface KnowledgePage {
+export interface PageSpec {
   name: string;
   source_query: string;
   tags: string[];
@@ -251,7 +251,7 @@ export function pageScopeRule(project?: string): string {
 }
 
 /** The taxonomy before scoping — never seeded directly; `pagesFor` binds it to a repository. */
-const PAGE_TAXONOMY: readonly KnowledgePage[] = [
+const PAGE_TAXONOMY: readonly PageSpec[] = [
   {
     name: "Component map",
     source_query:
@@ -338,14 +338,14 @@ export function pagesFor(
   project: string | undefined,
   pages: PagesConfig = {},
   customPages: CustomPagesConfig = {}
-): KnowledgePage[] {
+): PageSpec[] {
   const scope = pageScopeRule(project);
   // Matched case-insensitively on the same key `seedPages` matches live pages by, so a config
   // entry and the page it names can't disagree about which page that is.
   const byName = new Map(
     Object.entries(pages).map(([name, override]) => [name.trim().toLowerCase(), override])
   );
-  const out: KnowledgePage[] = [];
+  const out: PageSpec[] = [];
   for (const page of PAGE_TAXONOMY) {
     const override = byName.get(page.name.toLowerCase());
     if (override === false) continue;
@@ -399,7 +399,7 @@ export const PAGE_FACT_TYPES = ["world", "experience", "observation"];
 /**
  * The default schedule: once an hour, each page on its own hashed minute (see `H` below).
  *
- * Hourly rather than daily because a knowledge page a coding agent reads at the start of a session
+ * Hourly rather than daily because a page a coding agent reads at the start of a session
  * is worth little if it lags a day behind the repo; hourly rather than per-consolidation because a
  * refresh costs one LLM synthesis per page, and a repo under active work consolidates far more
  * often than once an hour. The server skips a tick that has nothing new to fold in, so an idle
@@ -546,8 +546,8 @@ export function pageTriggerFor(trigger: PageTrigger, bank: string, page: string)
  * page is a mental model like any other, so the scheduler picks it up either way
  * (`mental_models_with_cron()` filters on nothing but a non-empty `refresh_cron`).
  *
- * HOW a page refreshes is deliberately NOT stated here. `create_knowledge_page` owns that
- * (`KNOWLEDGE_PAGE_DEFAULT_TRIGGER`: delta refresh, no sibling pages in the reflect loop) and
+ * HOW a page refreshes is deliberately NOT stated here. `create_page` owns that
+ * (`PAGE_DEFAULT_TRIGGER`: delta refresh, no sibling pages in the reflect loop) and
  * merges a client's fields over it, so this sends only what it actually means and inherits the
  * rest. Restating the server's own defaults here would just freeze a copy of them that drifts the
  * next time they change.
@@ -618,9 +618,9 @@ export function pageTriggerPatch(desired: PageTrigger): PageTrigger {
 // engine can apply it every run. Replaces the old configureBank PUT+PATCH.
 //
 // The seeded pages are NOT part of this manifest: the template's `mental_models` key creates bare
-// mental models with no knowledge-base node, which leaves them invisible to page search (it joins
+// mental models with no page node, which leaves them invisible to page search (it joins
 // through `knowledge_pages`) and unreadable by node id. Pages are seeded separately, through the
-// knowledge-base API, by `HindsightClient.seedPages()`.
+// pages API, by `HindsightClient.seedPages()`.
 export const CODING_BANK_TEMPLATE = {
   version: "1",
   bank: {
@@ -631,7 +631,7 @@ export const CODING_BANK_TEMPLATE = {
     retain_extraction_mode: DEFAULT_RETAIN_EXTRACTION_MODE,
     retain_default_strategy: "git",
     retain_strategies: RETAIN_STRATEGIES,
-    entity_labels: [KNOWLEDGE_LABELS],
+    entity_labels: [PAGE_LABELS],
     entities_allow_free_form: true,
   },
 } as const;

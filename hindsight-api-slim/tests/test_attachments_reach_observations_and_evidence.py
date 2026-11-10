@@ -1,6 +1,6 @@
 """An observation, and the evidence behind a reflect answer, carry the attachments behind them.
 
-Two gaps, one symptom: a knowledge-base article's screenshot stopped reaching the client
+Two gaps, one symptom: a pages article's screenshot stopped reaching the client
 once the answer came from somewhere other than the raw fact extracted from it.
 
 * An observation is extracted from no attachment, so it had none — yet reflect prefers

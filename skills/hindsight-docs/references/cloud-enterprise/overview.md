@@ -6,7 +6,7 @@ description: Run open-source Hindsight yourself, use the managed Hindsight Cloud
 
 # Ways to run Hindsight
 
-Hindsight runs three ways. All of them use the same memory engine: the same retain, recall and reflect, the same mental models and knowledge pages, and the same API and SDKs. You can start on one and move to another later.
+Hindsight runs three ways. All of them use the same memory engine: the same retain, recall and reflect, the same mental models and pages, and the same API and SDKs. You can start on one and move to another later.
 
 | | Self-hosted (open source) | Hindsight Cloud | Hindsight Enterprise |
 |---|---|---|---|

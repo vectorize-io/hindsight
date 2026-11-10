@@ -310,7 +310,7 @@
       "content": [
         {
           "type": "title",
-          "text": "Knowledge Pages"
+          "text": "Pages"
         }
       ]
     },
@@ -1110,7 +1110,7 @@
               }
             ]
           },
-          "say": "An agent loop decides what to look up. It starts with the most refined knowledge: mental models and knowledge pages.",
+          "say": "An agent loop decides what to look up. It starts with the most refined knowledge: mental models and pages.",
           "ms": 3000
         },
         {

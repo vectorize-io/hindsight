@@ -1,6 +1,6 @@
 """A page and its model stay in step, and a retraction reaches both.
 
-A knowledge page is a name and a place in a tree over a mental model that does
+A page is a name and a place in a tree over a mental model that does
 the work. Two things have to hold as the bank changes underneath them.
 
 **A rename reaches the model.** They are separate rows, so renaming the page and
@@ -44,15 +44,13 @@ async def page(client, llm, bank_id, settled):
     await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
     await settled(bank_id)
 
-    created = await client.knowledge_base.create_knowledge_page(
-        bank_id, {"name": "Housing", "source_query": "Where does Alice live?"}
-    )
+    created = await client.pages.create_page(bank_id, {"name": "Housing", "source_query": "Where does Alice live?"})
     await settled(bank_id)
     return created
 
 
 async def test_the_page_starts_with_the_answer_it_was_written_from(client, bank_id, page):
-    read = await client.knowledge_base.get_knowledge_page(bank_id, page.page_id)
+    read = await client.pages.get_page(bank_id, page.page_id)
 
     assert read.name == "Housing"
     assert read.body.strip() == ORIGINAL_ANSWER
@@ -61,12 +59,12 @@ async def test_the_page_starts_with_the_answer_it_was_written_from(client, bank_
 async def test_renaming_a_page_renames_its_model(client, bank_id, page):
     """Otherwise one thing has two names, and which you see depends on whether
     you arrived via the tree or via the model id."""
-    await client.knowledge_base.update_knowledge_node(bank_id, page.page_id, {"name": "Where Alice lives"})
+    await client.pages.update_page_node(bank_id, page.page_id, {"name": "Where Alice lives"})
 
     model = await client.mental_models.get_mental_model(bank_id, page.mental_model_id, detail="metadata")
     assert model.name == "Where Alice lives"
 
-    tree = await client.knowledge_base.get_knowledge_base_tree(bank_id)
+    tree = await client.pages.get_page_tree(bank_id)
     assert [node.name for node in tree.roots] == ["Where Alice lives"]
 
 
@@ -117,5 +115,5 @@ async def test_the_scheduled_refresh_completes_cleanly(client, llm, bank_id, pag
     failed = await client.operations.list_operations(bank_id, status="failed", limit=100)
     assert failed.operations == [], "the refresh triggered by the retraction failed"
 
-    read = await client.knowledge_base.get_knowledge_page(bank_id, page.page_id)
+    read = await client.pages.get_page(bank_id, page.page_id)
     assert read.body.strip(), "the page was left empty by the refresh"

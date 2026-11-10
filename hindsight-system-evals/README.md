@@ -90,7 +90,7 @@ stays out of the category counts.
 | refresh_pages | stability | 3 | a wave with nothing for the page leaves it intact; no page collapses across waves; a history re-recorded every wave is not re-added |
 | refresh_pages | consistency | 2 | a changed value changes everywhere the page restates it (English, Chinese) |
 
-The knowledge-page and reflect evals share one corpus and grade twice per question: **correct** (meets
+The page and reflect evals share one corpus and grade twice per question: **correct** (meets
 its criteria — can fail on an incomplete answer) and **trap** (asserts the
 specific baited falsehood — the one that matters). The trap is asserted first.
 The retain evals bring their own inputs, because they grade ingestion rather than
@@ -557,7 +557,7 @@ reporter's); `HINDSIGHT_EVAL_CONSISTENCY_REPEATS` (default 1) repeats each on
 fresh pages, which is how to read a rate.
 
 **Benchmark: refresh cost** (`test_refresh_pages_benchmark_cost`). Not a quality grade: a baseline of what a
-knowledge-page refresh spends. Every LLM call the refresh makes is read back from
+page refresh spends. Every LLM call the refresh makes is read back from
 `/llm-requests` — input, cached and output tokens, and the prompt — for a full
 rebuild and for a delta after a small wave of new facts. Behind it: on real
 project banks a refresh sent 30–90k-token synthesis prompts, because a tool's
@@ -761,7 +761,7 @@ Each assertion prints the bank id, the page id (or the reflect queries and
 whether the gold evidence arrived), and what the page or answer actually reads.
 The bank is left in place, so it can be opened in the control plane.
 
-For a knowledge page that goes wrong, two tools, both through the public API:
+For a page that goes wrong, two tools, both through the public API:
 
 ```bash
 # 1. Where does it go wrong? Builds wave 1, then dry-runs the second refresh N

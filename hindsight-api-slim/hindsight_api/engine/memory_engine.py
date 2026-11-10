@@ -151,7 +151,7 @@ from .operation_metadata import (
     RetainOutcomeMetadata,
 )
 from .sql import SQLDialect, create_sql_dialect
-from .sql.postgresql import knowledge_bm25_arm
+from .sql.postgresql import page_bm25_arm
 
 
 @dataclass
@@ -173,11 +173,11 @@ _bank_template_import_authorization: contextvars.ContextVar[_BankTemplateImportA
     contextvars.ContextVar("bank_template_import_authorization", default=None)
 )
 
-# Set by a knowledge-base engine method that has already run its own validator
+# Set by a pages engine method that has already run its own validator
 # gate, so the nested bank read/write and mental-model hooks it triggers are not
-# invoked a second time. Keeps each knowledge-base route to exactly one validator
-# hook: create_knowledge_page validates once, then creates its backing mental
-# model; export_knowledge_base validates once, then reads every page.
+# invoked a second time. Keeps each pages route to exactly one validator
+# hook: create_page validates once, then creates its backing mental
+# model; export_pages validates once, then reads every page.
 _nested_operation_authorized: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "nested_operation_authorized", default=False
 )
@@ -191,15 +191,15 @@ _tag_scopes_suspended: contextvars.ContextVar[bool] = contextvars.ContextVar("ta
 # How long a retain waits when it stopped because the embeddings backend is down (#5999).
 _EMBEDDINGS_DOWN_DEFER_SECONDS = 60
 
-# Reciprocal Rank Fusion constant for knowledge-page search, and the factor that
+# Reciprocal Rank Fusion constant for page search, and the factor that
 # maps a single arm's raw RRF term (1/(K+rank), max 1/61 at rank 1) onto 0..1.
-# Every arm of search_knowledge_pages scales by this so the `score` it returns is
+# Every arm of search_pages scales by this so the `score` it returns is
 # comparable across backends: the raw terms top out around 0.016 and read as "no
 # match" to anyone who assumes a 0..1 relevance scale, and the store-owned path
 # used a different formula again — the same field meant 0.016 or 1.0 for the same
 # top hit depending on which store answered.
-_KNOWLEDGE_RRF_K = 60
-_KNOWLEDGE_RRF_NORM = float(_KNOWLEDGE_RRF_K + 1)
+_PAGE_RRF_K = 60
+_PAGE_RRF_NORM = float(_PAGE_RRF_K + 1)
 
 
 @contextmanager
@@ -241,11 +241,11 @@ def _is_unwritten_body(content: str | None) -> bool:
     return not content or content.strip() in ("", _LEGACY_PENDING_PLACEHOLDER)
 
 
-#: Characters of page body a knowledge-page search hit shows.
-KNOWLEDGE_SNIPPET_CHARS = 280
+#: Characters of page body a page search hit shows.
+PAGE_SNIPPET_CHARS = 280
 
 
-def _knowledge_snippet(content: str | None) -> str:
+def _page_snippet(content: str | None) -> str:
     """The snippet a search result shows, including when the page has no body.
 
     An empty body is a real state a searcher has to act on, and the empty string
@@ -270,7 +270,7 @@ def _knowledge_snippet(content: str | None) -> str:
     """
     # Cut in Python, not SQL: on a SQL_ASCII database Postgres' LEFT() counts bytes and
     # splits a multibyte character, which fails the whole query (#5986).
-    return (content or "")[:KNOWLEDGE_SNIPPET_CHARS].strip() or EMPTY_PAGE_NOTICE
+    return (content or "")[:PAGE_SNIPPET_CHARS].strip() or EMPTY_PAGE_NOTICE
 
 
 # ``mental_model_history`` holds two kinds of row in one JSONB blob: the version
@@ -2019,8 +2019,8 @@ class RefreshTagFiltering:
 
 
 @dataclass(frozen=True)
-class KnowledgeTagFilter:
-    """Which knowledge pages a tree or search read may return, by their tags.
+class PageTagFilter:
+    """Which pages a tree or search read may return, by their tags.
 
     Same semantics as recall's ``tags``/``tags_match``/``tag_groups``, applied to the
     page's mental-model tags. The default (no tags, no groups) filters nothing.
@@ -2175,8 +2175,8 @@ def _refuse_tags_outside_scope(tags: list[str] | None, tag_scope: list[TagGroup]
         raise OperationValidationError(f"Tags {sorted(tags or [])} are outside your tag scope", status_code=403)
 
 
-def _knowledge_rows_in_tag_scope(rows: list[Any], tag_scope: list[TagGroup]) -> list[Any]:
-    """The knowledge-tree rows a caller confined to ``tag_scope`` may see.
+def _page_rows_in_tag_scope(rows: list[Any], tag_scope: list[TagGroup]) -> list[Any]:
+    """The page-tree rows a caller confined to ``tag_scope`` may see.
 
     A page is visible when its mental model's tags satisfy the scope. A folder carries no
     tags of its own, so it is hidden exactly when it holds pages and none of them are
@@ -2209,7 +2209,7 @@ def _knowledge_rows_in_tag_scope(rows: list[Any], tag_scope: list[TagGroup]) -> 
     return [r for r in rows if r["id"] in keep]
 
 
-def _prune_knowledge_rows(rows: list[Any], tag_filter: KnowledgeTagFilter) -> list[Any]:
+def _prune_page_rows(rows: list[Any], tag_filter: PageTagFilter) -> list[Any]:
     """Keep the pages ``tag_filter`` matches and the folders above them."""
     parent = {r["id"]: r["parent_id"] for r in rows}
     keep: set[str] = set()
@@ -2222,7 +2222,7 @@ def _prune_knowledge_rows(rows: list[Any], tag_filter: KnowledgeTagFilter) -> li
     return [r for r in rows if r["id"] in keep]
 
 
-def _knowledge_tree_sort_key(row: Any) -> tuple[bool, int, str]:
+def _page_tree_sort_key(row: Any) -> tuple[bool, int, str]:
     """ORDER BY sort_order, name (PostgreSQL ASC: NULL sort_order last), in Python."""
     sort_order = row["sort_order"]
     return (sort_order is None, sort_order or 0, row["name"] or "")
@@ -2243,12 +2243,12 @@ def _mental_model_stale_scope(
     that without a query.
 
     Every staleness surface resolves its scope here — the single-model read, the
-    knowledge tree, the mental-model list, reflect's ``search_mental_models`` — so
+    page tree, the mental-model list, reflect's ``search_mental_models`` — so
     all of them ask the question the refresh gate asks. Splitting the scope out
     from the query is what lets one caller ask about one model and another ask
     about a hundred in a single round-trip.
 
-    Takes the four columns rather than a row because the knowledge tree reads them
+    Takes the four columns rather than a row because the page tree reads them
     under ``mm_``-prefixed aliases from its join; :func:`_mental_model_stale_scope_from_row`
     is the adapter for callers that do hold a plain ``mental_models`` row.
     """
@@ -2310,8 +2310,8 @@ def _mm_row_field(mm_row: Any, field: str) -> Any:
         return None
 
 
-def _backs_knowledge_page_sql() -> str:
-    """SQL test: the ``mm`` mental_models row holds a knowledge page's content."""
+def _backs_page_sql() -> str:
+    """SQL test: the ``mm`` mental_models row holds a page's content."""
     return (
         f"EXISTS (SELECT 1 FROM {fq_table('knowledge_pages')} kp"
         " WHERE kp.bank_id = mm.bank_id AND kp.mental_model_id = mm.id)"
@@ -2611,8 +2611,8 @@ class _MemoryRevertPlan:
 
 
 @dataclass
-class KnowledgeBaseExportPage:
-    """A single page's rendered inputs for a knowledge-base export bundle."""
+class PagesExportPage:
+    """A single page's rendered inputs for a pages export bundle."""
 
     node_id: str
     page: dict[str, Any]  # node merged with its mental model's content
@@ -2621,7 +2621,7 @@ class KnowledgeBaseExportPage:
 
 
 @dataclass
-class KnowledgeBaseExport:
+class PagesExport:
     """Everything needed to render an export bundle, gathered under a single gate.
 
     ``nodes`` is every folder/page node (for the index); ``pages`` carries each
@@ -2629,7 +2629,7 @@ class KnowledgeBaseExport:
     """
 
     nodes: list[dict[str, Any]]
-    pages: list[KnowledgeBaseExportPage]
+    pages: list[PagesExportPage]
 
 
 class KeepParentSentinel:
@@ -2637,7 +2637,7 @@ class KeepParentSentinel:
 
 
 KEEP_PARENT = KeepParentSentinel()
-""""Leave the parent alone" for :meth:`MemoryEngine.update_knowledge_node`.
+""""Leave the parent alone" for :meth:`MemoryEngine.update_page_node`.
 
 Every other field of that patch reads ``None`` as "not supplied", but a null
 ``parent_id`` is a real destination — the tree root — so it needs a value
@@ -3938,18 +3938,18 @@ class MemoryEngine(MemoryEngineInterface):
                 if literal or len(literal) == len(scope_tags):
                     self._refuse_unwritable(literal, write_scope, "observations")
 
-    async def _visible_knowledge_node_ids(self, conn: Any, bank_id: str, tag_scope: list[TagGroup]) -> set[str]:
-        """Ids of the knowledge-tree nodes a caller confined to ``tag_scope`` may see."""
+    async def _visible_page_node_ids(self, conn: Any, bank_id: str, tag_scope: list[TagGroup]) -> set[str]:
+        """Ids of the page-tree nodes a caller confined to ``tag_scope`` may see."""
         rows = await conn.fetch(
             f"SELECT {self._KP_PAGE_SELECT} FROM {self._kp_join()} WHERE kp.bank_id = $1",
             bank_id,
         )
-        return {r["id"] for r in _knowledge_rows_in_tag_scope(list(rows), tag_scope)}
+        return {r["id"] for r in _page_rows_in_tag_scope(list(rows), tag_scope)}
 
-    async def _require_knowledge_nodes_in_tag_scope(
+    async def _require_page_nodes_in_tag_scope(
         self, bank_id: str, request_context: "RequestContext", node_ids: list[str | None]
     ) -> None:
-        """Refuse (404) a knowledge-tree write that names a node outside the caller's tag scope.
+        """Refuse (404) a page-tree write that names a node outside the caller's tag scope.
 
         ``None`` entries (the tree root) are always allowed. A no-op without a scope.
         """
@@ -3959,24 +3959,24 @@ class MemoryEngine(MemoryEngineInterface):
             return
 
         async with acquire_with_retry(await self._get_backend()) as conn:
-            visible = await self._visible_knowledge_node_ids(conn, bank_id, tag_scope)
+            visible = await self._visible_page_node_ids(conn, bank_id, tag_scope)
         for node_id in wanted:
             if node_id not in visible:
-                raise OperationValidationError(f"Knowledge node '{node_id}' not found", status_code=404)
+                raise OperationValidationError(f"Page node '{node_id}' not found", status_code=404)
 
-    async def _visible_knowledge_ids_or_all(self, bank_id: str, request_context: "RequestContext") -> set[str]:
-        """The knowledge node ids the caller can read: every id without a read scope."""
+    async def _visible_page_ids_or_all(self, bank_id: str, request_context: "RequestContext") -> set[str]:
+        """The page node ids the caller can read: every id without a read scope."""
         tag_scope = await self._tag_scope(bank_id, request_context)
         async with acquire_with_retry(await self._get_backend()) as conn:
             if tag_scope:
-                return await self._visible_knowledge_node_ids(conn, bank_id, tag_scope)
+                return await self._visible_page_node_ids(conn, bank_id, tag_scope)
             rows = await conn.fetch(f"SELECT id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1", bank_id)
         return {r["id"] for r in rows}
 
-    async def _require_knowledge_subtree_writable(
+    async def _require_page_subtree_writable(
         self, bank_id: str, request_context: "RequestContext", node_id: str
     ) -> None:
-        """Refuse (403) changing a knowledge node unless the caller may write every page under it.
+        """Refuse (403) changing a page node unless the caller may write every page under it.
 
         A page is its mental model, so it carries that model's tags; a folder has none of its
         own and is as writable as the pages it holds. A no-op without a write scope.
@@ -4005,7 +4005,7 @@ class MemoryEngine(MemoryEngineInterface):
                 if child["kind"] == "page":
                     pages.append(child)
         for page in pages:
-            self._refuse_unwritable(page["mm_tags"], write_scope, f"knowledge page '{page['name']}'")
+            self._refuse_unwritable(page["mm_tags"], write_scope, f"page '{page['name']}'")
 
     async def _refuse_bank_wide_if_scoped(self, bank_id: str, request_context: "RequestContext", what: str) -> None:
         """Refuse (403) a whole-bank operation to a caller confined to a tag scope.
@@ -15532,7 +15532,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         Shared by every endpoint that hands a model's content to a caller, so
         "which reads are gated" is a property of this method rather than
-        something each call site has to remember. A knowledge page is a second
+        something each call site has to remember. A page is a second
         view over a mental model and reaches this by the same route.
         """
         if not self._operation_validator:
@@ -16203,7 +16203,7 @@ class MemoryEngine(MemoryEngineInterface):
         max_context_tokens = config.reflect_max_context_tokens
         wall_timeout = config.reflect_wall_timeout
         # Decision-orchestrated when a decision model is set up for reflect and the bank keeps
-        # it on: for an interactive reflect and a knowledge-page refresh, each its own switch.
+        # it on: for an interactive reflect and a page refresh, each its own switch.
         is_refresh = _operation_label.endswith("refresh_mental_model")
         use_decision_model = (
             resolved_reflect_config.mental_model_refresh_use_decision_model
@@ -16454,7 +16454,7 @@ class MemoryEngine(MemoryEngineInterface):
         reflect_trace_token = set_trace_context(reflect_trace) if reflect_trace is not None else None
         try:
             try:
-                # A knowledge-page refresh queues its LLM calls behind every other
+                # A page refresh queues its LLM calls behind every other
                 # refresh under the per-operation cap; that queue is not this reflect's
                 # work, and counting it timed out healthy refreshes (#6140). asyncio.timeout
                 # replaced asyncio.wait_for here because the deadline has to move while queued.
@@ -17088,7 +17088,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         Internal readers that only want one derived value out of the payload (the
         write watermark) go through here so they share the endpoint's cached row
-        instead of paying for their own aggregate — and so a knowledge-tree poll
+        instead of paying for their own aggregate — and so a page-tree poll
         is not metered as a stats read.
         """
         return await self._bank_stats_cache.get_or_load(
@@ -17471,7 +17471,7 @@ class MemoryEngine(MemoryEngineInterface):
         limit: int | None = 100,
         offset: int = 0,
         with_staleness: bool = False,
-        exclude_knowledge_pages: bool = False,
+        exclude_pages: bool = False,
         request_context: "RequestContext",
     ) -> MentalModelPage:
         """List pinned mental models for a bank.
@@ -17491,7 +17491,7 @@ class MemoryEngine(MemoryEngineInterface):
                 extra query for the whole page, scoped per model. Off for internal
                 callers (bank-template export/import) that only move rows around
                 and would pay for an answer nobody reads.
-            exclude_knowledge_pages: Leave out the models that hold a knowledge
+            exclude_pages: Leave out the models that hold a knowledge
                 page's content, so only standalone mental models are listed.
             request_context: Request context for authentication
 
@@ -17520,8 +17520,8 @@ class MemoryEngine(MemoryEngineInterface):
             scope_clause = build_tag_groups_where_clause(tag_scope, len(filter_params) + 1)
             tag_filter += f" {scope_clause.sql}"
             filter_params.extend(scope_clause.params)
-            if exclude_knowledge_pages:
-                tag_filter += f" AND NOT {_backs_knowledge_page_sql()}"
+            if exclude_pages:
+                tag_filter += f" AND NOT {_backs_page_sql()}"
 
             total = await conn.fetchval(
                 f"""
@@ -17550,7 +17550,7 @@ class MemoryEngine(MemoryEngineInterface):
                 SELECT id, bank_id, name, source_query, content, tags,
                        last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
                        max_tokens, trigger, structured_content,
-                       CASE WHEN {_backs_knowledge_page_sql()} THEN 1 ELSE 0 END AS is_knowledge_page
+                       CASE WHEN {_backs_page_sql()} THEN 1 ELSE 0 END AS is_page
                 FROM {fq_table("mental_models")} mm
                 WHERE bank_id = $1 {tag_filter}
                 ORDER BY last_refreshed_at DESC, id DESC
@@ -17578,9 +17578,9 @@ class MemoryEngine(MemoryEngineInterface):
         # ``config``) leaves nothing to report, and the per-item check below sees
         # that directly rather than re-deriving it from the detail string.
         #
-        # This matters most for knowledge pages: a page is a mental_models
+        # This matters most for pages: a page is a mental_models
         # row and is listed here unless the caller passes
-        # ``exclude_knowledge_pages`` (off by default), so an unreported list
+        # ``exclude_pages`` (off by default), so an unreported list
         # hands back every page in a bank while a single-page read is
         # reported. The narrow door should not be the only one watched.
         #
@@ -17626,7 +17626,7 @@ class MemoryEngine(MemoryEngineInterface):
                 SELECT id, bank_id, name, source_query, content, tags,
                        last_refreshed_at, last_memory_seen_at, last_refresh_failed_at, last_full_refreshed_at, created_at, reflect_response,
                        max_tokens, trigger, structured_content,
-                       CASE WHEN {_backs_knowledge_page_sql()} THEN 1 ELSE 0 END AS is_knowledge_page
+                       CASE WHEN {_backs_page_sql()} THEN 1 ELSE 0 END AS is_page
                 FROM {fq_table("mental_models")} mm
                 WHERE bank_id = $1 AND id = $2
                 """,
@@ -17667,7 +17667,7 @@ class MemoryEngine(MemoryEngineInterface):
         read ``kind`` to tell them apart.
         """
         await self._authenticate_tenant(request_context)
-        # Suppressed under _authorize_nested_operations: export_knowledge_base reads
+        # Suppressed under _authorize_nested_operations: export_pages reads
         # every page's history under its own single EXPORT_KNOWLEDGE_BASE gate, and
         # must not bill one read per page on top of it.
         if self._operation_validator and not _nested_operation_authorized.get():
@@ -17733,14 +17733,14 @@ class MemoryEngine(MemoryEngineInterface):
             embedding = await embedding_utils.generate_embeddings_batch(self.embeddings, [f"{name} {content}"])
         return list(embedding[0]) if embedding and embedding[0] else None
 
-    # -- the knowledge-page index -------------------------------------------
+    # -- the page index -------------------------------------------
     #
     # A store that indexes pages holds a DERIVED copy: the row in `mental_models` is written first
     # and stays the authority. So these run AFTER the row is committed, and a failure here leaves a
-    # row that is not yet searchable — which `reconcile_knowledge_index` repairs. The reverse order
+    # row that is not yet searchable — which `reconcile_page_index` repairs. The reverse order
     # would leave the index describing a row that does not exist.
 
-    def _knowledge_index_store(self, bank_id: str):
+    def _page_index_store(self, bank_id: str):
         """The store to index this bank's pages into, or None when Postgres still searches them."""
         from .memories import get_memories
 
@@ -17774,16 +17774,16 @@ class MemoryEngine(MemoryEngineInterface):
         if the deployment later moves back to Postgres.
 
         The columns go NULL for pages written from here on. Nothing reads them for a store-owned
-        bank, and the store's own index is rebuilt by ``reconcile_knowledge_index``, which
+        bank, and the store's own index is rebuilt by ``reconcile_page_index``, which
         re-embeds from name+content rather than reading this column -- so it is not a source of
         truth for anything. A bank moved BACK to Postgres needs those columns backfilled; see the
-        note in :meth:`reconcile_knowledge_index`.
+        note in :meth:`reconcile_page_index`.
         """
         from .memories import get_memories
 
         return not get_memories().store_owned_for(bank_id)
 
-    async def _index_knowledge_page(
+    async def _index_page(
         self,
         conn,
         bank_id: str,
@@ -17798,7 +17798,7 @@ class MemoryEngine(MemoryEngineInterface):
         index disagreeing with the row it is derived from. The embedding is passed in because the
         caller has just computed it and Postgres is not required to be storing it.
         """
-        store = self._knowledge_index_store(bank_id)
+        store = self._page_index_store(bank_id)
         if store is None:
             return
         row = await conn.fetchrow(
@@ -17809,12 +17809,12 @@ class MemoryEngine(MemoryEngineInterface):
         )
         if row is None:
             return
-        from .memories import KnowledgePageEntry
+        from .memories import PageEntry
 
-        await store.index_knowledge_pages(
+        await store.index_pages(
             bank_id,
             [
-                KnowledgePageEntry(
+                PageEntry(
                     page_id=mental_model_id,
                     # The same document the native tsvector column generates, so the two backends
                     # match on more than intent.
@@ -17826,14 +17826,14 @@ class MemoryEngine(MemoryEngineInterface):
             ],
         )
 
-    async def _deindex_knowledge_pages(self, bank_id: str, mental_model_ids: list[str]) -> None:
+    async def _deindex_pages(self, bank_id: str, mental_model_ids: list[str]) -> None:
         """Drop pages from the store's index. Safe for ids the store never held."""
-        store = self._knowledge_index_store(bank_id)
+        store = self._page_index_store(bank_id)
         if store is None or not mental_model_ids:
             return
-        await store.delete_knowledge_pages(bank_id, mental_model_ids)
+        await store.delete_pages(bank_id, mental_model_ids)
 
-    async def reconcile_knowledge_index(self, bank_id: str, *, force: bool = False) -> dict[str, int]:
+    async def reconcile_page_index(self, bank_id: str, *, force: bool = False) -> dict[str, int]:
         """Make the store's page index agree with this bank's `mental_models` rows.
 
         The index is derived and the write is not transactional, so it can disagree with Postgres in
@@ -17852,11 +17852,11 @@ class MemoryEngine(MemoryEngineInterface):
         current ``last_refreshed_at``. Needed after an embedding-model change, where every vector is
         wrong but no timestamp moved.
         """
-        store = self._knowledge_index_store(bank_id)
+        store = self._page_index_store(bank_id)
         if store is None:
             return {"indexed": 0, "removed": 0, "unchanged": 0}
 
-        from .memories import KnowledgePageEntry
+        from .memories import PageEntry
 
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -17865,7 +17865,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "WHERE bank_id = $1",
                 bank_id,
             )
-        indexed = {r.page_id: r.updated_at for r in await store.list_knowledge_pages(bank_id)}
+        indexed = {r.page_id: r.updated_at for r in await store.list_pages(bank_id)}
 
         stale: list = []
         unchanged = 0
@@ -17881,10 +17881,10 @@ class MemoryEngine(MemoryEngineInterface):
 
         for row in stale:
             vec = await self._mental_model_embedding_vector(bank_id, row["name"] or "", row["content"] or "")
-            await store.index_knowledge_pages(
+            await store.index_pages(
                 bank_id,
                 [
-                    KnowledgePageEntry(
+                    PageEntry(
                         page_id=str(row["id"]),
                         index_text=f"{row['name'] or ''} {row['content'] or ''}",
                         embedding=vec,
@@ -17897,7 +17897,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Whatever is left in `indexed` had no row: the store holds it and Postgres does not.
         leftovers = list(indexed)
         if leftovers:
-            await store.delete_knowledge_pages(bank_id, leftovers)
+            await store.delete_pages(bank_id, leftovers)
 
         return {"indexed": len(stale), "removed": len(leftovers), "unchanged": unchanged}
 
@@ -17936,7 +17936,7 @@ class MemoryEngine(MemoryEngineInterface):
         # the column assignment pins the parameter to text; VARCHAR accepts a text
         # value on assignment. Every write that feeds mental_models.name into
         # pg_search_vector_expr needs the same cast (see update_mental_model,
-        # which is now the only other one — the knowledge-base rename goes through
+        # which is now the only other one — the pages rename goes through
         # it rather than writing mental_models itself).
         #
         # Both search columns go unwritten once the store owns this bank's index — see
@@ -18069,7 +18069,7 @@ class MemoryEngine(MemoryEngineInterface):
             # exist, and indexing inside the transaction would publish a page a rollback then
             # un-creates.
             async with acquire_with_retry(backend) as conn:
-                await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
+                await self._index_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
         except asyncpg.UniqueViolationError as exc:
             # mental_models_pkey is the table's only unique constraint, so a violation naming
             # this table is the caller's id colliding with a model that already exists. Anything
@@ -18330,9 +18330,9 @@ class MemoryEngine(MemoryEngineInterface):
         """
         if has_content and has_read_memories:
             return False
-        tag_clause = KnowledgeTagFilter(
-            tags=scope.tags, tags_match=scope.tags_match, tag_groups=scope.tag_groups
-        ).clause(param_offset=4)
+        tag_clause = PageTagFilter(tags=scope.tags, tags_match=scope.tags_match, tag_groups=scope.tag_groups).clause(
+            param_offset=4
+        )
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             other_documents = await conn.fetchval(
@@ -18398,7 +18398,7 @@ class MemoryEngine(MemoryEngineInterface):
         # fill in, because reflect would fill them from the bank's
         # ``reflect_default_options`` — which is tuned for answering a question, not for
         # writing a document. The trigger (and, merged into it at creation time, the
-        # bank's ``knowledge_page_default_trigger``) is the whole story for a refresh, so
+        # bank's ``page_default_trigger``) is the whole story for a refresh, so
         # the shipped fallbacks live here and reflect is handed explicit values.
         reflect_search_observations_max_tokens_override = trigger_data.get("reflect_search_observations_max_tokens")
         if reflect_search_observations_max_tokens_override is None:
@@ -18570,7 +18570,7 @@ class MemoryEngine(MemoryEngineInterface):
         # one there is (#3875). The forced retrieval turns all come back empty, and
         # the agent's evidence guardrail then refuses every ``done`` call, because
         # evidence is exactly what it cannot gather; the loop runs to its iteration
-        # limit and pays a forced synthesis on top. A bank's default knowledge pages
+        # limit and pays a forced synthesis on top. A bank's default pages
         # each enqueue a refresh the moment they are created, so a fresh bank spent
         # its whole LLM budget on five worst-case reflects over an empty graph — the
         # budget it needed to ingest the content those pages were waiting for.
@@ -19693,7 +19693,7 @@ class MemoryEngine(MemoryEngineInterface):
                 comes due against.
             conn: Run on this connection instead of acquiring one, so the write joins
                 the caller's open transaction and rolls back with it. Used by the
-                knowledge-base patch, where the backing model and its node row have to
+                pages patch, where the backing model and its node row have to
                 move together.
             request_context: Request context for authentication
 
@@ -20001,7 +20001,7 @@ class MemoryEngine(MemoryEngineInterface):
             # any document change and not only for a content one — so `new_embedding_vec` is set
             # exactly when this runs.
             if row is not None and document_changed:
-                await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=new_embedding_vec)
+                await self._index_page(conn, bank_id, mental_model_id, embedding=new_embedding_vec)
 
             return self._row_to_mental_model(row) if row else None
 
@@ -20235,8 +20235,8 @@ class MemoryEngine(MemoryEngineInterface):
             # findable by title, rather than leaving the index describing content that no longer
             # exists.
             if row is not None:
-                vec = embedding_vec if self._knowledge_index_store(bank_id) is not None else None
-                await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=vec)
+                vec = embedding_vec if self._page_index_store(bank_id) is not None else None
+                await self._index_page(conn, bank_id, mental_model_id, embedding=vec)
 
         return self._row_to_mental_model(row) if row else None
 
@@ -20293,23 +20293,23 @@ class MemoryEngine(MemoryEngineInterface):
             # After the row is gone: an index entry outliving its row is a search hit that hydrates
             # to nothing, which the caller silently drops — so it looks like missing results rather
             # than a stale index.
-            await self._deindex_knowledge_pages(bank_id, [mental_model_id])
+            await self._deindex_pages(bank_id, [mental_model_id])
         return deleted
 
     # =====================================================================
-    # KNOWLEDGE BASE (folders + pages over mental models)
+    # PAGES (folders + pages over mental models)
     # =====================================================================
-    # The knowledge base is a tree of folders and pages stored in
+    # The pages is a tree of folders and pages stored in
     # ``knowledge_pages``. A page references the mental model holding its content
     # (``mental_model_id``); a folder is a container (``mental_model_id`` NULL).
     # Content lives in ``mental_models`` — this layer owns only tree structure.
 
-    # Default trigger for a knowledge page: a living document synthesized from the
+    # Default trigger for a page: a living document synthesized from the
     # bank's consolidated **observations** (not raw facts), refreshed incrementally
     # (delta) after each consolidation, and excluding other mental models so a page
     # never reflects on sibling pages. A client's own ``trigger`` MERGES over these
     # (see ``_merge_trigger``), so overriding one field keeps the rest.
-    KNOWLEDGE_PAGE_DEFAULT_TRIGGER = {
+    PAGE_DEFAULT_TRIGGER = {
         "mode": "delta",
         "fact_types": ["observation"],
         "exclude_mental_models": True,
@@ -20319,7 +20319,7 @@ class MemoryEngine(MemoryEngineInterface):
     def _merge_trigger(self, trigger: dict[str, Any] | None, base: dict[str, Any] | None = None) -> dict[str, Any]:
         """Layer the fields a client actually set over ``base``, so a trigger patches.
 
-        ``base`` is what the unstated fields keep: ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``
+        ``base`` is what the unstated fields keep: ``PAGE_DEFAULT_TRIGGER``
         when omitted (page creation), otherwise the model's CURRENT trigger.
 
         Both used to be all-or-nothing — a supplied trigger REPLACED whatever was
@@ -20352,7 +20352,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "refresh_after_consolidation and refresh_cron are mutually exclusive: "
                 "a mental model refreshes either after consolidation or on a cron schedule, not both."
             )
-        merged = {**(self.KNOWLEDGE_PAGE_DEFAULT_TRIGGER if base is None else base), **supplied}
+        merged = {**(self.PAGE_DEFAULT_TRIGGER if base is None else base), **supplied}
         if supplied.get("refresh_cron") and "refresh_after_consolidation" not in supplied:
             merged.pop("refresh_after_consolidation", None)
         if supplied.get("refresh_after_consolidation") and "refresh_cron" not in supplied:
@@ -20369,13 +20369,13 @@ class MemoryEngine(MemoryEngineInterface):
                 return {}
         return value if isinstance(value, dict) else {}
 
-    # Knowledge pages default to a larger budget than a plain mental model (2048)
+    # Pages default to a larger budget than a plain mental model (2048)
     # since they're meant to read as full documents. Applied when the client
     # doesn't pass ``max_tokens`` on create.
-    KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS = 4096
+    PAGE_DEFAULT_MAX_TOKENS = 4096
 
     @staticmethod
-    def _row_to_knowledge_node(row) -> dict[str, Any]:
+    def _row_to_page_node(row) -> dict[str, Any]:
         """Project a knowledge_pages row (optionally joined to its mental model)."""
         node: dict[str, Any] = {
             "id": row["id"],
@@ -20401,7 +20401,7 @@ class MemoryEngine(MemoryEngineInterface):
             node["last_refresh_failed_at"] = failed_at.isoformat() if failed_at else None
             # Carried on the read so a client can see WHEN a page refreshes and how much that
             # costs, and can tell whether its own settings still apply, without walking to the
-            # mental-models API for every page (the knowledge base is the only surface some
+            # mental-models API for every page (the pages is the only surface some
             # clients speak). None when the page has no trigger at all.
             node["trigger"] = MemoryEngine._stored_trigger(row["mm_trigger"]) or None
         return node
@@ -20439,7 +20439,7 @@ class MemoryEngine(MemoryEngineInterface):
             raise ValueError(f"Parent '{parent_id}' is not a folder")
 
     async def _kp_lock_bank(self, conn, bank_id: str) -> None:
-        """Serialize structural knowledge-tree writers on the bank row.
+        """Serialize structural page-tree writers on the bank row.
 
         FOR NO KEY UPDATE conflicts with other tree writers but not with the
         FOR KEY SHARE locks taken by inserts into tables that reference banks.
@@ -20459,7 +20459,7 @@ class MemoryEngine(MemoryEngineInterface):
             bank_id,
         )
 
-    async def create_knowledge_folder(
+    async def create_page_folder(
         self,
         bank_id: str,
         name: str,
@@ -20468,9 +20468,9 @@ class MemoryEngine(MemoryEngineInterface):
         managed: bool = False,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
-        """Create a folder (a container node) in the knowledge base.
+        """Create a folder (a container node) in the pages.
 
-        The knowledge base is managed by clients (CRUD over folders/pages);
+        The pages is managed by clients (CRUD over folders/pages);
         ``managed`` lets a client tag a node as system-owned vs. hand-authored.
         """
         await self._authenticate_tenant(request_context)
@@ -20481,7 +20481,7 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._require_knowledge_nodes_in_tag_scope(bank_id, request_context, [parent_id])
+        await self._require_page_nodes_in_tag_scope(bank_id, request_context, [parent_id])
         backend = await self._get_backend()
         folder_id = f"kf-{uuid.uuid4().hex}"
 
@@ -20506,9 +20506,9 @@ class MemoryEngine(MemoryEngineInterface):
                         managed,
                     )
 
-        return self._row_to_knowledge_node(await retry_with_backoff(_write))
+        return self._row_to_page_node(await retry_with_backoff(_write))
 
-    async def create_knowledge_page(
+    async def create_page(
         self,
         bank_id: str,
         name: str,
@@ -20526,9 +20526,9 @@ class MemoryEngine(MemoryEngineInterface):
         """Create a page: a backing mental model plus the tree node that refs it.
 
         ``managed`` lets a client tag the page as system-owned vs. hand-authored.
-        When ``trigger`` is omitted the page uses ``KNOWLEDGE_PAGE_DEFAULT_TRIGGER``
-        (observation-only, delta, auto-refresh) so a knowledge page is a living
-        document by default, with the hierarchical ``knowledge_page_default_trigger``
+        When ``trigger`` is omitted the page uses ``PAGE_DEFAULT_TRIGGER``
+        (observation-only, delta, auto-refresh) so a page is a living
+        document by default, with the hierarchical ``page_default_trigger``
         config merged over it.
 
         Returns ``None`` when a page with the same name already exists in the same
@@ -20543,19 +20543,19 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
-        await self._require_knowledge_nodes_in_tag_scope(bank_id, request_context, [parent_id])
+        await self._require_page_nodes_in_tag_scope(bank_id, request_context, [parent_id])
         mental_model_id = mental_model_id or f"mm-{uuid.uuid4().hex}"
         embedding_vec = await self._mental_model_embedding_vector(bank_id, name, content)
         embedding = str(embedding_vec) if embedding_vec else None
-        effective_max_tokens = max_tokens if max_tokens is not None else self.KNOWLEDGE_PAGE_DEFAULT_MAX_TOKENS
-        # Built-in default <- bank/tenant/global knowledge_page_default_trigger <- request.
+        effective_max_tokens = max_tokens if max_tokens is not None else self.PAGE_DEFAULT_MAX_TOKENS
+        # Built-in default <- bank/tenant/global page_default_trigger <- request.
         bank_config = await self._config_resolver.get_bank_config(bank_id, request_context)
-        page_default = self._merge_trigger(bank_config.get("knowledge_page_default_trigger"))
+        page_default = self._merge_trigger(bank_config.get("page_default_trigger"))
         effective_trigger = self._merge_trigger(trigger, base=page_default)
         # A page is a mental model: it can only ever be built from what its creator could read.
         page_scope = await self._tag_scope(bank_id, request_context)
         _refuse_tags_outside_scope(tags, page_scope)
-        self._refuse_unwritable(tags, await self._write_tag_scope(bank_id, request_context), "a knowledge page")
+        self._refuse_unwritable(tags, await self._write_tag_scope(bank_id, request_context), "a page")
         effective_trigger = _scope_mental_model_trigger(effective_trigger, page_scope)
         backend = await self._get_backend()
         page_id = f"kp-{uuid.uuid4().hex}"
@@ -20604,7 +20604,7 @@ class MemoryEngine(MemoryEngineInterface):
         try:
             await retry_with_backoff(_write)
             async with acquire_with_retry(backend) as conn:
-                await self._index_knowledge_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
+                await self._index_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
         except asyncpg.UniqueViolationError as exc:
             if getattr(exc, "constraint_name", None) != "uq_kp_folder_pagename":
                 raise
@@ -20617,7 +20617,7 @@ class MemoryEngine(MemoryEngineInterface):
             await self._apply_default_bank_template(bank_id, request_context)
         logger.info(f"[MENTAL_MODELS] Created pinned mental model '{name}' for bank {bank_id}")
         mm = self._row_to_mental_model(mm_row)
-        node = self._row_to_knowledge_node(row)
+        node = self._row_to_page_node(row)
         # Surface the mental-model metadata so the caller can render markdown or
         # schedule a content refresh without a second fetch.
         node["tags"] = list(mm.get("tags") or [])
@@ -20625,14 +20625,14 @@ class MemoryEngine(MemoryEngineInterface):
         node["last_refreshed_at"] = mm.get("last_refreshed_at")
         return node
 
-    async def _knowledge_read_filter(
+    async def _page_read_filter(
         self,
         bank_id: str,
         operation: "BankReadOperation",
-        tag_filter: KnowledgeTagFilter,
+        tag_filter: PageTagFilter,
         request_context: "RequestContext",
-    ) -> KnowledgeTagFilter:
-        """Validate a knowledge-base read and return the tag filter it runs with.
+    ) -> PageTagFilter:
+        """Validate a pages read and return the tag filter it runs with.
 
         The validator sees the caller's filter and may replace any part of it (the
         same ``accept_with`` enrichment recall honours), which is how an extension
@@ -20651,7 +20651,7 @@ class MemoryEngine(MemoryEngineInterface):
             )
             result = await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
             if result:
-                tag_filter = KnowledgeTagFilter(
+                tag_filter = PageTagFilter(
                     tags=result.tags if result.tags is not None else tag_filter.tags,
                     tags_match=result.tags_match if result.tags_match is not None else tag_filter.tags_match,
                     tag_groups=result.tag_groups if result.tag_groups is not None else tag_filter.tag_groups,
@@ -20662,12 +20662,12 @@ class MemoryEngine(MemoryEngineInterface):
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_filter.tag_groups)
         return replace(tag_filter, tag_groups=tag_groups)
 
-    async def list_knowledge_nodes(
+    async def list_page_nodes(
         self,
         bank_id: str,
         *,
         with_staleness: bool = False,
-        tag_filter: KnowledgeTagFilter | None = None,
+        tag_filter: PageTagFilter | None = None,
         request_context: "RequestContext",
     ) -> list[dict[str, Any]]:
         """Return every folder/page node in the bank (flat; caller builds the tree).
@@ -20694,8 +20694,8 @@ class MemoryEngine(MemoryEngineInterface):
         can say as much as the pages under it.
         """
 
-        tag_filter = await self._knowledge_read_filter(
-            bank_id, BankReadOperation.GET_KNOWLEDGE_BASE_TREE, tag_filter or KnowledgeTagFilter(), request_context
+        tag_filter = await self._page_read_filter(
+            bank_id, BankReadOperation.GET_KNOWLEDGE_BASE_TREE, tag_filter or PageTagFilter(), request_context
         )
         # The caller's tag scope is applied on its own rather than folded into ``tag_filter``:
         # a filter hides folders it leaves empty, but a scoped caller must still see an empty
@@ -20713,12 +20713,12 @@ class MemoryEngine(MemoryEngineInterface):
             )
             # Sorted here, not in SQL: knowledge_pages.name is a CLOB on Oracle and
             # ORDER BY on a CLOB raises ORA-22848.
-            rows = sorted(rows, key=_knowledge_tree_sort_key)
+            rows = sorted(rows, key=_page_tree_sort_key)
             if tag_filter.active:
-                rows = _prune_knowledge_rows(rows, tag_filter)
+                rows = _prune_page_rows(rows, tag_filter)
             if tag_scope:
-                rows = _knowledge_rows_in_tag_scope(rows, tag_scope)
-            nodes = [self._row_to_knowledge_node(r) for r in rows]
+                rows = _page_rows_in_tag_scope(rows, tag_scope)
+            nodes = [self._row_to_page_node(r) for r in rows]
             if with_staleness:
                 by_id = {n["id"]: n for n in nodes}
                 # Folders have no mental model and so no staleness; only pages ask.
@@ -20738,9 +20738,7 @@ class MemoryEngine(MemoryEngineInterface):
                     by_id[page_id]["is_stale"] = is_stale
         return nodes
 
-    async def get_knowledge_page(
-        self, bank_id: str, page_id: str, *, request_context: "RequestContext"
-    ) -> dict[str, Any] | None:
+    async def get_page(self, bank_id: str, page_id: str, *, request_context: "RequestContext") -> dict[str, Any] | None:
         """Return a page node merged with its mental model's content (for markdown rendering)."""
         await self._authenticate_tenant(request_context)
         if self._operation_validator and not _nested_operation_authorized.get():
@@ -20782,7 +20780,7 @@ class MemoryEngine(MemoryEngineInterface):
         if meter:
             await self._gate_mental_model_read(bank_id, mental_model_id, request_context=request_context)
 
-        node = self._row_to_knowledge_node(row)
+        node = self._row_to_page_node(row)
         node["content"] = row["mm_content"]
 
         if meter:
@@ -20791,16 +20789,16 @@ class MemoryEngine(MemoryEngineInterface):
             )
         return node
 
-    async def search_knowledge_pages(
+    async def search_pages(
         self,
         bank_id: str,
         query: str,
         *,
         limit: int = 10,
-        tag_filter: KnowledgeTagFilter | None = None,
+        tag_filter: PageTagFilter | None = None,
         request_context: "RequestContext",
     ) -> list[dict[str, Any]]:
-        """Doc-level hybrid search over a bank's knowledge pages.
+        """Doc-level hybrid search over a bank's pages.
 
         Fuses a full-text (BM25) match over the page name + content with vector
         similarity (``mm.embedding``) using Reciprocal Rank Fusion, in a single
@@ -20817,7 +20815,7 @@ class MemoryEngine(MemoryEngineInterface):
         contributes nothing.
 
         The BM25 arm is dispatched on the configured text-search backend
-        (:func:`knowledge_bm25_arm`); backends whose ``mental_models`` BM25 index
+        (:func:`page_bm25_arm`); backends whose ``mental_models`` BM25 index
         is unpopulated (``vchord``) degrade to a vector-only search rather than
         erroring. ``enable_text_search=false`` drops that arm outright, leaving a
         vector-only ranking.
@@ -20833,8 +20831,8 @@ class MemoryEngine(MemoryEngineInterface):
         ranking, so a filtered search still fills ``limit`` from the matching pages.
         """
 
-        tag_filter = await self._knowledge_read_filter(
-            bank_id, BankReadOperation.SEARCH_KNOWLEDGE_BASE, tag_filter or KnowledgeTagFilter(), request_context
+        tag_filter = await self._page_read_filter(
+            bank_id, BankReadOperation.SEARCH_KNOWLEDGE_BASE, tag_filter or PageTagFilter(), request_context
         )
         # Search returns pages only, so the caller's tag scope simply joins the filter.
         tag_scope = await self._tag_scope(bank_id, request_context)
@@ -20865,7 +20863,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         store = get_memories()
         if store.store_owned_for(bank_id):
-            matches = await store.search_knowledge_pages(
+            matches = await store.search_pages(
                 bank_id,
                 embedding=list(emb[0]) if emb and emb[0] else None,
                 text=query,
@@ -20900,10 +20898,10 @@ class MemoryEngine(MemoryEngineInterface):
                     "name": r["name"],
                     "mental_model_id": r["mental_model_id"],
                     "source_query": r["source_query"],
-                    "snippet": _knowledge_snippet(r["content"]),
+                    "snippet": _page_snippet(r["content"]),
                     # Same normalized single-arm RRF curve as the SQL paths below, so a
                     # store-owned bank's scores mean what a Postgres-ranked bank's do.
-                    "score": _KNOWLEDGE_RRF_NORM / (_KNOWLEDGE_RRF_K + 1 + order[r["mental_model_id"]]),
+                    "score": _PAGE_RRF_NORM / (_PAGE_RRF_K + 1 + order[r["mental_model_id"]]),
                     "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
                 }
                 for r in rows
@@ -20913,7 +20911,7 @@ class MemoryEngine(MemoryEngineInterface):
             return out[:limit]
 
         # BM25 clauses for the configured text-search backend (same per-backend
-        # dispatch the memory-recall BM25 arm uses — see knowledge_bm25_arm).
+        # dispatch the memory-recall BM25 arm uses — see page_bm25_arm).
         cfg = get_config()
         text_search_extension = cfg.text_search_extension
         pg_search_function_schema = cfg.text_search_extension_pg_search_function_schema
@@ -20945,7 +20943,7 @@ class MemoryEngine(MemoryEngineInterface):
                 sql = f"""
                     SELECT kp.id, kp.name, kp.mental_model_id,
                            mm.content, mm.source_query, mm.last_refreshed_at AS updated_at,
-                           {_KNOWLEDGE_RRF_NORM} / ({_KNOWLEDGE_RRF_K} + ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector)) AS score
+                           {_PAGE_RRF_NORM} / ({_PAGE_RRF_K} + ROW_NUMBER() OVER (ORDER BY mm.embedding <=> $1::vector)) AS score
                     FROM {join}
                     WHERE kp.bank_id = $2 AND kp.kind = 'page' AND mm.embedding IS NOT NULL
                           {tags_clause.sql}
@@ -20955,7 +20953,7 @@ class MemoryEngine(MemoryEngineInterface):
                 rows = await conn.fetch(sql, emb_str, bank_id, *tags_clause.params)
             else:
                 # Same builder the memory-recall BM25 arm uses, so the two paths cannot
-                # drift apart on query shape again — knowledge search used to bind the
+                # drift apart on query shape again — page search used to bind the
                 # raw query to a conjunctive websearch_to_tsquery here, which returned
                 # no candidates at all for ordinary multi-word questions.
                 # The dialect is built from the connection, as recall builds its own.
@@ -20975,7 +20973,7 @@ class MemoryEngine(MemoryEngineInterface):
                 )
 
                 if emb_str is not None:
-                    bm25 = knowledge_bm25_arm(
+                    bm25 = page_bm25_arm(
                         text_search_extension,
                         table_alias="mm",
                         text_param="$3",
@@ -21008,8 +21006,8 @@ class MemoryEngine(MemoryEngineInterface):
                         ),
                         fused AS (
                             SELECT COALESCE(vec.page_id, bm.page_id) AS page_id,
-                                   ({_KNOWLEDGE_RRF_NORM} / 2) * (COALESCE(1.0 / ({_KNOWLEDGE_RRF_K} + vec.rnk), 0)
-                                                                + COALESCE(1.0 / ({_KNOWLEDGE_RRF_K} + bm.rnk), 0)) AS score
+                                   ({_PAGE_RRF_NORM} / 2) * (COALESCE(1.0 / ({_PAGE_RRF_K} + vec.rnk), 0)
+                                                                + COALESCE(1.0 / ({_PAGE_RRF_K} + bm.rnk), 0)) AS score
                             FROM vec FULL OUTER JOIN bm ON vec.page_id = bm.page_id
                         )
                         SELECT kp.id, kp.name, kp.mental_model_id,
@@ -21023,7 +21021,7 @@ class MemoryEngine(MemoryEngineInterface):
                     rows = await conn.fetch(sql, emb_str, bank_id, bm25_text, *tags_clause.params)
                 else:
                     # Embedding unavailable → BM25-only fallback (still useful).
-                    bm25 = knowledge_bm25_arm(
+                    bm25 = page_bm25_arm(
                         text_search_extension,
                         table_alias="mm",
                         text_param="$2",
@@ -21039,7 +21037,7 @@ class MemoryEngine(MemoryEngineInterface):
                     sql = f"""
                         SELECT kp.id, kp.name, kp.mental_model_id,
                                mm.content, mm.source_query, mm.last_refreshed_at AS updated_at,
-                               {_KNOWLEDGE_RRF_NORM} / ({_KNOWLEDGE_RRF_K} + ROW_NUMBER() OVER (ORDER BY {bm25.order_by})) AS score
+                               {_PAGE_RRF_NORM} / ({_PAGE_RRF_K} + ROW_NUMBER() OVER (ORDER BY {bm25.order_by})) AS score
                         FROM {join}
                         WHERE kp.bank_id = $1 AND kp.kind = 'page'
                               {bm25.match_filter}
@@ -21055,14 +21053,14 @@ class MemoryEngine(MemoryEngineInterface):
                 "name": r["name"],
                 "mental_model_id": r["mental_model_id"],
                 "source_query": r["source_query"],
-                "snippet": _knowledge_snippet(r["content"]),
+                "snippet": _page_snippet(r["content"]),
                 "score": float(r["score"]) if r["score"] is not None else 0.0,
                 "updated_at": r["updated_at"].isoformat() if r["updated_at"] else None,
             }
             for r in rows
         ]
 
-    async def update_knowledge_node(
+    async def update_page_node(
         self,
         bank_id: str,
         node_id: str,
@@ -21128,13 +21126,11 @@ class MemoryEngine(MemoryEngineInterface):
                 await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         if moving and new_parent == node_id:
             raise ValueError("A node cannot be its own parent")
-        await self._require_knowledge_nodes_in_tag_scope(
-            bank_id, request_context, [node_id, new_parent if moving else None]
-        )
-        await self._require_knowledge_subtree_writable(bank_id, request_context, node_id)
+        await self._require_page_nodes_in_tag_scope(bank_id, request_context, [node_id, new_parent if moving else None])
+        await self._require_page_subtree_writable(bank_id, request_context, node_id)
         if moving and new_parent:
             # Moving a node into a folder changes that folder too: its pages must be writable.
-            await self._require_knowledge_subtree_writable(bank_id, request_context, new_parent)
+            await self._require_page_subtree_writable(bank_id, request_context, new_parent)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
             async with conn.transaction():
@@ -21182,7 +21178,7 @@ class MemoryEngine(MemoryEngineInterface):
                             if cursor == node_id:
                                 raise ValueError("Cannot move a node into its own subtree")
                             if cursor in seen:
-                                raise ValueError(f"Knowledge tree for bank '{bank_id}' contains a parent cycle")
+                                raise ValueError(f"Page tree for bank '{bank_id}' contains a parent cycle")
                             seen.add(cursor)
                             cursor = parents.get(cursor)
 
@@ -21234,9 +21230,9 @@ class MemoryEngine(MemoryEngineInterface):
                     bank_id,
                     node_id,
                 )
-        return self._row_to_knowledge_node(node_row) if node_row else None
+        return self._row_to_page_node(node_row) if node_row else None
 
-    async def delete_knowledge_node(self, bank_id: str, node_id: str, *, request_context: "RequestContext") -> bool:
+    async def delete_page_node(self, bank_id: str, node_id: str, *, request_context: "RequestContext") -> bool:
         """Delete a node and its whole subtree, including each page's mental model.
 
         Deleting the mental models cascades their page rows away (FK ON DELETE
@@ -21254,9 +21250,9 @@ class MemoryEngine(MemoryEngineInterface):
         # Readable-but-unwritable is refused before anything is touched; an unreadable node
         # reads as missing below.
         if await self._write_tag_scope(bank_id, request_context) is not None and node_id in (
-            await self._visible_knowledge_ids_or_all(bank_id, request_context)
+            await self._visible_page_ids_or_all(bank_id, request_context)
         ):
-            await self._require_knowledge_subtree_writable(bank_id, request_context, node_id)
+            await self._require_page_subtree_writable(bank_id, request_context, node_id)
         tag_scope = await self._tag_scope(bank_id, request_context)
         backend = await self._get_backend()
         async with acquire_with_retry(backend) as conn:
@@ -21295,12 +21291,12 @@ class MemoryEngine(MemoryEngineInterface):
                     # A scoped caller deletes only what it can see. A folder that also holds
                     # pages it cannot see is refused whole rather than half-deleted: taking
                     # someone else's pages down with it is exactly what the scope prevents.
-                    visible = await self._visible_knowledge_node_ids(conn, bank_id, tag_scope)
+                    visible = await self._visible_page_node_ids(conn, bank_id, tag_scope)
                     if node_id not in visible:
                         return False
                     if not visited <= visible:
                         raise OperationValidationError(
-                            f"Knowledge node '{node_id}' holds pages outside your tag scope", status_code=403
+                            f"Page node '{node_id}' holds pages outside your tag scope", status_code=403
                         )
                 # Delete each backing mental model individually (the subtree is
                 # small) to keep the SQL dialect-neutral — no PG array casts.
@@ -21317,13 +21313,13 @@ class MemoryEngine(MemoryEngineInterface):
                 )
         # Deleting a folder takes its whole subtree, so every backing model in it leaves the index
         # too — a single-page delete is just the one-element case.
-        await self._deindex_knowledge_pages(bank_id, mm_ids)
+        await self._deindex_pages(bank_id, mm_ids)
         return True
 
-    async def export_knowledge_base(self, bank_id: str, *, request_context: "RequestContext") -> KnowledgeBaseExport:
+    async def export_pages(self, bank_id: str, *, request_context: "RequestContext") -> PagesExport:
         """Gather every node, page content, and refresh history for an export bundle.
 
-        Validated once as a single knowledge-base export read — the per-page reads
+        Validated once as a single pages export read — the per-page reads
         it performs run under that authorization so the whole export costs exactly
         one validator hook and leaks no content when the caller is denied. The API
         layer renders the returned data into a markdown bundle.
@@ -21347,14 +21343,12 @@ class MemoryEngine(MemoryEngineInterface):
         await self._require_bank_exists(bank_id)
 
         with _authorize_nested_operations():
-            nodes = await self.list_knowledge_nodes(bank_id=bank_id, request_context=request_context)
-            pages: list[KnowledgeBaseExportPage] = []
+            nodes = await self.list_page_nodes(bank_id=bank_id, request_context=request_context)
+            pages: list[PagesExportPage] = []
             for node in nodes:
                 if node.get("kind") != "page":
                     continue
-                page = await self.get_knowledge_page(
-                    bank_id=bank_id, page_id=node["id"], request_context=request_context
-                )
+                page = await self.get_page(bank_id=bank_id, page_id=node["id"], request_context=request_context)
                 if page is None:
                     continue
                 mental_model_id = node.get("mental_model_id")
@@ -21369,14 +21363,14 @@ class MemoryEngine(MemoryEngineInterface):
                         or []
                     )
                 pages.append(
-                    KnowledgeBaseExportPage(
+                    PagesExportPage(
                         node_id=node["id"],
                         page=page,
                         mental_model_id=mental_model_id,
                         history=history,
                     )
                 )
-        return KnowledgeBaseExport(nodes=nodes, pages=pages)
+        return PagesExport(nodes=nodes, pages=pages)
 
     async def _bank_write_watermark(self, conn, bank_id: str) -> datetime | None:
         """The bank's newest memory write, read live, for the staleness shortcut.
@@ -21589,7 +21583,7 @@ class MemoryEngine(MemoryEngineInterface):
         read the memories at or past it cannot be stale whatever its scope. That is
         read here (:meth:`_bank_write_watermark`, one index probe) rather than left
         to the caller, so every surface gets it — the mental-model list, the
-        knowledge tree and its MCP twin used to ask the scoped question for every
+        page tree and its MCP twin used to ask the scoped question for every
         model on every poll, and the scoped question is only cheap when the model
         *is* stale: a scope whose own tags have been quiet pays a walk of every
         memory written since its watermark (#4169).
@@ -21659,9 +21653,11 @@ class MemoryEngine(MemoryEngineInterface):
             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         }
         # Only the list and get queries select it; other paths leave it unset.
-        is_knowledge_page = row.get("is_knowledge_page")
-        if is_knowledge_page is not None:
-            result["is_knowledge_page"] = bool(is_knowledge_page)
+        is_page = row.get("is_page")
+        if is_page is not None:
+            result["is_page"] = bool(is_page)
+            # deprecated-name: old spelling, kept on the wire until 2.x.
+            result["is_knowledge_page"] = result["is_page"]
         if detail == "metadata":
             return result
 

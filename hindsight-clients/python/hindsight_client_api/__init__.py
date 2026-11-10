@@ -32,6 +32,7 @@ from hindsight_client_api.api.memory_api import MemoryApi
 from hindsight_client_api.api.mental_models_api import MentalModelsApi
 from hindsight_client_api.api.monitoring_api import MonitoringApi
 from hindsight_client_api.api.operations_api import OperationsApi
+from hindsight_client_api.api.pages_api import PagesApi
 from hindsight_client_api.api.webhooks_api import WebhooksApi
 
 # import ApiClient
@@ -90,10 +91,10 @@ from hindsight_client_api.models.create_bank_alias_request import CreateBankAlia
 from hindsight_client_api.models.create_bank_request import CreateBankRequest
 from hindsight_client_api.models.create_directive_request import CreateDirectiveRequest
 from hindsight_client_api.models.create_folder_request import CreateFolderRequest
-from hindsight_client_api.models.create_knowledge_page_response import CreateKnowledgePageResponse
 from hindsight_client_api.models.create_mental_model_request import CreateMentalModelRequest
 from hindsight_client_api.models.create_mental_model_response import CreateMentalModelResponse
 from hindsight_client_api.models.create_page_request import CreatePageRequest
+from hindsight_client_api.models.create_page_response import CreatePageResponse
 from hindsight_client_api.models.create_webhook_request import CreateWebhookRequest
 from hindsight_client_api.models.default_observation_scopes import DefaultObservationScopes
 from hindsight_client_api.models.default_scopes_preview import DefaultScopesPreview
@@ -134,13 +135,6 @@ from hindsight_client_api.models.graph_data_response import GraphDataResponse
 from hindsight_client_api.models.http_validation_error import HTTPValidationError
 from hindsight_client_api.models.image_content_block import ImageContentBlock
 from hindsight_client_api.models.include_options import IncludeOptions
-from hindsight_client_api.models.knowledge_node import KnowledgeNode
-from hindsight_client_api.models.knowledge_page_bundle_file import KnowledgePageBundleFile
-from hindsight_client_api.models.knowledge_page_bundle_response import KnowledgePageBundleResponse
-from hindsight_client_api.models.knowledge_page_response import KnowledgePageResponse
-from hindsight_client_api.models.knowledge_page_search_response import KnowledgePageSearchResponse
-from hindsight_client_api.models.knowledge_page_search_result import KnowledgePageSearchResult
-from hindsight_client_api.models.knowledge_tree_response import KnowledgeTreeResponse
 from hindsight_client_api.models.llm_call_trace import LLMCallTrace
 from hindsight_client_api.models.llm_request_entry import LLMRequestEntry
 from hindsight_client_api.models.llm_request_list_response import LLMRequestListResponse
@@ -193,6 +187,13 @@ from hindsight_client_api.models.operation_progress import OperationProgress
 from hindsight_client_api.models.operation_response import OperationResponse
 from hindsight_client_api.models.operation_status_response import OperationStatusResponse
 from hindsight_client_api.models.operations_list_response import OperationsListResponse
+from hindsight_client_api.models.page_bundle_file import PageBundleFile
+from hindsight_client_api.models.page_bundle_response import PageBundleResponse
+from hindsight_client_api.models.page_node import PageNode
+from hindsight_client_api.models.page_response import PageResponse
+from hindsight_client_api.models.page_search_response import PageSearchResponse
+from hindsight_client_api.models.page_search_result import PageSearchResult
+from hindsight_client_api.models.page_tree_response import PageTreeResponse
 from hindsight_client_api.models.prompt_block_model import PromptBlockModel
 from hindsight_client_api.models.prompt_message_model import PromptMessageModel
 from hindsight_client_api.models.prompt_preview_request import PromptPreviewRequest
@@ -255,3 +256,13 @@ from hindsight_client_api.models.webhook_delivery_response import WebhookDeliver
 from hindsight_client_api.models.webhook_http_config import WebhookHttpConfig
 from hindsight_client_api.models.webhook_list_response import WebhookListResponse
 from hindsight_client_api.models.webhook_response import WebhookResponse
+
+# Deprecated names from before pages were renamed. Remove in 2.x.
+KnowledgeNode = PageNode
+KnowledgeTreeResponse = PageTreeResponse
+CreateKnowledgePageResponse = CreatePageResponse
+KnowledgePageResponse = PageResponse
+KnowledgePageBundleFile = PageBundleFile
+KnowledgePageBundleResponse = PageBundleResponse
+KnowledgePageSearchResult = PageSearchResult
+KnowledgePageSearchResponse = PageSearchResponse

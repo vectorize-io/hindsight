@@ -14,7 +14,12 @@ import {
 } from "@vectorize-io/hindsight-client";
 import { RetainQueue } from "./retain-queue.js";
 import { createMemoryProviderRuntime } from "./memory-provider.js";
-import { createHindsightTools, HINDSIGHT_TOOL_NAMES } from "./tools.js";
+import {
+  createHindsightTools,
+  HINDSIGHT_TOOL_NAMES,
+  oldToolNamesIn,
+  RENAMED_TOOL_NAMES,
+} from "./tools.js";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import { parseSessionFile } from "./session-file.js";
 import { createHash, randomUUID } from "crypto";
@@ -2191,7 +2196,8 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
       config.memoryMode === "context" || config.memoryMode === "tools"
         ? config.memoryMode
         : "hybrid",
-    allowKnowledgeDelete: config.allowKnowledgeDelete === true,
+    // allowKnowledgeDelete is the deprecated old name, read as a fallback. Remove in 2.x.
+    allowPageDelete: (config.allowPageDelete ?? config.allowKnowledgeDelete) === true,
     dynamicBankGranularity: Array.isArray(config.dynamicBankGranularity)
       ? config.dynamicBankGranularity
       : DEFAULT_DYNAMIC_BANK_GRANULARITY,
@@ -3435,6 +3441,12 @@ ${memoriesFormatted}
       }),
     });
 
+    // Deprecated tool names, remove in 2.x: an allow/deny list naming an old tool no longer matches.
+    for (const old of oldToolNamesIn(api.config)) {
+      log.warn(
+        `config names the tool ${old}, which is now ${RENAMED_TOOL_NAMES[old]}: rename it there`
+      );
+    }
     // Hermes's agent tools on this session's own bank. (#5635)
     api.registerTool?.(
       (toolCtx) =>

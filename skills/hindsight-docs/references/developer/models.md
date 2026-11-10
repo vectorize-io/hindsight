@@ -5,10 +5,10 @@ Hindsight uses four kinds of model. Only the LLM needs setting up: the embedding
 
 | Model | What it does | Default |
 |---|---|---|
-| [**LLM**](#llm) | Extracts facts on retain, consolidates observations, writes reflect answers and knowledge pages | `openai` provider, `gpt-4o-mini` |
+| [**LLM**](#llm) | Extracts facts on retain, consolidates observations, writes reflect answers and pages | `openai` provider, `gpt-4o-mini` |
 | [**Embedding model**](#embedding-model) | Turns text into vectors for semantic search | `BAAI/bge-small-en-v1.5`, local |
 | [**Reranker**](#cross-encoder-reranker) | Orders recall candidates by relevance | `hindsight-ai/hs-rerank-1`, local |
-| [**Decision model**](#decision-model) | Answers quick typed judgments so recall, consolidation, reflect and knowledge pages skip LLM calls | Off. See [Decision Models](./decision-models.md) |
+| [**Decision model**](#decision-model) | Answers quick typed judgments so recall, consolidation, reflect and pages skip LLM calls | Off. See [Decision Models](./decision-models.md) |
 
 Local models download from Hugging Face on first run. Every setting is listed in [Configuration](./configuration.md#llm-provider); this page covers what each provider needs.
 
@@ -1600,7 +1600,7 @@ export HINDSIGHT_API_RERANKER_PROVIDER=rrf
 
 ### TypeSafe (deprecated) {#reranker-typesafe}
 
-Deprecated: set up the [decision model](#decision-model) with the `typesafe` provider instead. Recall uses it in place of the reranker, and consolidation, reflect and knowledge pages get it too.
+Deprecated: set up the [decision model](#decision-model) with the `typesafe` provider instead. Recall uses it in place of the reranker, and consolidation, reflect and pages get it too.
 
 <ProviderSetup>
 
@@ -1616,13 +1616,13 @@ Answers short typed questions (yes or no, pick one of these, how likely is this)
 
 <ModelProviderSearch only="decision" />
 
-Reflect and knowledge-page refresh support only `hindsight` and `typesafe` for now. With another provider they keep their LLM-only path and log a warning, while recall and consolidation still use it. To pair another provider with `hindsight` or `typesafe` for reflect, override the reflect provider (see [OpenAI Decisions](#decision-openai)).
+Reflect and page refresh support only `hindsight` and `typesafe` for now. With another provider they keep their LLM-only path and log a warning, while recall and consolidation still use it. To pair another provider with `hindsight` or `typesafe` for reflect, override the reflect provider (see [OpenAI Decisions](#decision-openai)).
 
 When the endpoint serves another model than the provider's default, also set `HINDSIGHT_API_DECISION_MODEL_MODEL` and `HINDSIGHT_API_DECISION_MODEL_TOKENIZER`, and set `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` to that model's context window less a margin.
 
 ### Hindsight Inference {#decision-hindsight}
 
-`hs-decide-1-flash` on the [Hindsight Inference](https://inference.hindsight.vectorize.io) Decisions API. Used by consolidation, reflect and knowledge pages, and by recall when you turn it on.
+`hs-decide-1-flash` on the [Hindsight Inference](https://inference.hindsight.vectorize.io) Decisions API. Used by consolidation, reflect and pages, and by recall when you turn it on.
 
 <ProviderSetup>
 
@@ -1639,7 +1639,7 @@ export HINDSIGHT_API_DECISION_MODEL_PROVIDER=hindsight
 
 ### TypeSafe (Jev) {#decision-typesafe}
 
-`jev-latest` on [TypeSafe](https://typesafe.ai)'s System One API. Used by recall, consolidation, reflect and knowledge pages.
+`jev-latest` on [TypeSafe](https://typesafe.ai)'s System One API. Used by recall, consolidation, reflect and pages.
 
 <ProviderSetup>
 

@@ -1,5 +1,5 @@
 {
-  "title": "Knowledge Page Refresh with a Decision Model",
+  "title": "Page Refresh with a Decision Model",
   "speed": 2200,
   "elements": [
     {
@@ -72,7 +72,7 @@
       "content": [
         {
           "type": "title",
-          "text": "Knowledge page"
+          "text": "Page"
         },
         {
           "type": "subtitle",

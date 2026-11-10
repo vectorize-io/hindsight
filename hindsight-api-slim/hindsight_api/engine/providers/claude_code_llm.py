@@ -200,7 +200,7 @@ def _result_error(message: Any) -> Exception:
 
     A subscription limit with a reset time becomes the engine's defer signal, so
     the worker parks the task until the limit lifts instead of failing it — a
-    failed knowledge-page refresh used to pause that page for good (#5394).
+    failed page refresh used to pause that page for good (#5394).
     """
     text = _result_error_detail(message)
     if _POLICY_REFUSAL_MARKER in text.lower():

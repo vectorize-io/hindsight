@@ -1,4 +1,4 @@
-"""What one knowledge-page refresh costs, measured in the LLM calls it makes.
+"""What one page refresh costs, measured in the LLM calls it makes.
 
 The quality evals ask whether a refresh writes the right page. This asks what it
 paid to write it: every LLM call the refresh made, with its input, cached and
@@ -608,7 +608,7 @@ async def build_bank(
 
     pages = []
     for name, query in PAGES.items():
-        await client.knowledge_base.create_knowledge_page(
+        await client.pages.create_page(
             bank_id,
             {"name": name, "source_query": query, "max_tokens": PAGE_MAX_TOKENS, "trigger": page_trigger()},
         )

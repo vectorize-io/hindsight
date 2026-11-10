@@ -16,6 +16,7 @@ hindsight_client_api/api/memory_api.py
 hindsight_client_api/api/mental_models_api.py
 hindsight_client_api/api/monitoring_api.py
 hindsight_client_api/api/operations_api.py
+hindsight_client_api/api/pages_api.py
 hindsight_client_api/api/webhooks_api.py
 hindsight_client_api/api_client.py
 hindsight_client_api/api_response.py
@@ -66,10 +67,10 @@ hindsight_client_api/models/create_bank_alias_request.py
 hindsight_client_api/models/create_bank_request.py
 hindsight_client_api/models/create_directive_request.py
 hindsight_client_api/models/create_folder_request.py
-hindsight_client_api/models/create_knowledge_page_response.py
 hindsight_client_api/models/create_mental_model_request.py
 hindsight_client_api/models/create_mental_model_response.py
 hindsight_client_api/models/create_page_request.py
+hindsight_client_api/models/create_page_response.py
 hindsight_client_api/models/create_webhook_request.py
 hindsight_client_api/models/default_observation_scopes.py
 hindsight_client_api/models/default_scopes_preview.py
@@ -110,13 +111,6 @@ hindsight_client_api/models/graph_data_response.py
 hindsight_client_api/models/http_validation_error.py
 hindsight_client_api/models/image_content_block.py
 hindsight_client_api/models/include_options.py
-hindsight_client_api/models/knowledge_node.py
-hindsight_client_api/models/knowledge_page_bundle_file.py
-hindsight_client_api/models/knowledge_page_bundle_response.py
-hindsight_client_api/models/knowledge_page_response.py
-hindsight_client_api/models/knowledge_page_search_response.py
-hindsight_client_api/models/knowledge_page_search_result.py
-hindsight_client_api/models/knowledge_tree_response.py
 hindsight_client_api/models/label_group_input.py
 hindsight_client_api/models/label_group_output.py
 hindsight_client_api/models/label_value.py
@@ -169,6 +163,13 @@ hindsight_client_api/models/operation_progress.py
 hindsight_client_api/models/operation_response.py
 hindsight_client_api/models/operation_status_response.py
 hindsight_client_api/models/operations_list_response.py
+hindsight_client_api/models/page_bundle_file.py
+hindsight_client_api/models/page_bundle_response.py
+hindsight_client_api/models/page_node.py
+hindsight_client_api/models/page_response.py
+hindsight_client_api/models/page_search_response.py
+hindsight_client_api/models/page_search_result.py
+hindsight_client_api/models/page_tree_response.py
 hindsight_client_api/models/prompt_block_model.py
 hindsight_client_api/models/prompt_message_model.py
 hindsight_client_api/models/prompt_preview_request.py

@@ -211,9 +211,9 @@ describe("ZCode prompt hook", () => {
       await runHook(zcode.prompt, () => ({
         reflect: async () => "",
         listPages: async () => ({ items: [] }),
-        searchKnowledgePages: async () => [],
+        searchPages: async () => [],
         recallObservations: async () => [],
-        knowledgePagesSupported: false,
+        pagesSupported: false,
       }));
     } finally {
       write.mockRestore();
@@ -293,9 +293,9 @@ describe.each(Object.keys(JOURNAL_REPLY_FIELD))("%s: prompt hook -> Stop hook", 
       await runHook(spec.prompt, () => ({
         reflect: async () => "",
         listPages: async () => ({ items: [] }),
-        searchKnowledgePages: async () => [],
+        searchPages: async () => [],
         recallObservations: async () => [],
-        knowledgePagesSupported: false,
+        pagesSupported: false,
       }));
     } finally {
       write.mockRestore();

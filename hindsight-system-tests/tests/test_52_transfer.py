@@ -13,7 +13,7 @@ do not exist here, a mental model whose evidence resolves to nothing. That is
 the shape of the bug that has been fixed twice on this path, which is why the
 assertions below chase the references rather than the counts.
 
-Also pinned: the derived layers are *opt-in*. Observations and knowledge pages
+Also pinned: the derived layers are *opt-in*. Observations and pages
 are expensive to carry and reconstructible from the facts, so a plain export
 leaves them out — and a caller who did not ask must not silently pay for them.
 """
@@ -53,9 +53,7 @@ async def source_bank(client, llm, bank_id, settled) -> str:
         bank_id=bank_id, content="Alice moved to Berlin. Alice renewed her Berlin lease.", document_id="d1"
     )
     await settled(bank_id)
-    await client.knowledge_base.create_knowledge_page(
-        bank_id, {"name": PAGE_NAME, "source_query": "Where does Alice live?"}
-    )
+    await client.pages.create_page(bank_id, {"name": PAGE_NAME, "source_query": "Where does Alice live?"})
     await settled(bank_id)
     return bank_id
 
@@ -107,7 +105,7 @@ async def test_the_derived_layers_are_left_behind_unless_asked_for(client, llm, 
     await settled(destination)
 
     assert [m for m in await _memories(client, destination) if m.fact_type == "observation"] == []
-    assert (await client.knowledge_base.get_knowledge_base_tree(destination)).roots == []
+    assert (await client.pages.get_page_tree(destination)).roots == []
 
 
 async def test_observations_come_across_when_requested(client, llm, source_bank, destination, settled):
@@ -142,14 +140,14 @@ async def test_an_imported_observation_still_points_at_its_evidence(client, llm,
         assert by_id[source_id].fact_type != "observation"
 
 
-async def test_knowledge_pages_come_across_when_requested(client, llm, source_bank, destination, settled):
+async def test_pages_come_across_when_requested(client, llm, source_bank, destination, settled):
     archive = await client.aexport_documents(
         bank_id=source_bank, include_observations=True, include_knowledge_base=True
     )
     await _import(client, llm, destination, archive)
     await settled(destination)
 
-    tree = await client.knowledge_base.get_knowledge_base_tree(destination)
+    tree = await client.pages.get_page_tree(destination)
     assert [node.name for node in tree.roots] == [PAGE_NAME]
 
     # And the page's backing model exists *here*, rather than naming one that was

@@ -100,6 +100,17 @@ get_bank_attachment = "Streams attachment bytes for the control plane/API, not t
 get_liveness = "Liveness probe for orchestrators; `hindsight health` covers the human-facing check"
 get_readiness = "Alias of /health, which `hindsight health` already calls"
 
+# Deprecated /knowledge-base/... routes, renamed to /pages/... (removed in 2.x).
+# The `pages` subcommand calls the new operations.
+get_knowledge_base_tree = "Deprecated alias of get_page_tree; `pages tree` calls the new route"
+create_knowledge_folder = "Deprecated alias of create_page_folder; `pages create-folder` calls the new route"
+create_knowledge_page = "Deprecated alias of create_page; `pages create-page` calls the new route"
+export_knowledge_base = "Deprecated alias of export_pages; `pages export` calls the new route"
+search_knowledge_base = "Deprecated alias of search_pages; `pages search` calls the new route"
+get_knowledge_page = "Deprecated alias of get_page; `pages get-page` calls the new route"
+update_knowledge_node = "Deprecated alias of update_page_node; `pages update` calls the new route"
+delete_knowledge_node = "Deprecated alias of delete_page_node; `pages delete` calls the new route"
+
 # ---------------------------------------------------------------------------
 # Per-operation parameter skips
 # ---------------------------------------------------------------------------
@@ -180,11 +191,11 @@ reflect_search_mental_models_max_tokens = "Per-call override of the bank's refle
 [fields.retain_memories]
 items = "Constructed from the single positional content argument on `memory retain`."
 
-[fields.create_knowledge_page]
-trigger = "Exposed as --mode / --fact-types on `knowledge-base create-page`; the remaining nested trigger fields (tag_groups, refresh_cron, recall_* budgets) are page-level tuning best done via the API."
+[fields.create_page]
+trigger = "Exposed as --mode / --fact-types on `pages create-page`; the remaining nested trigger fields (tag_groups, refresh_cron, recall_* budgets) are page-level tuning best done via the API."
 
-[fields.update_knowledge_node]
-trigger = "Changing an existing page's refresh policy (cron vs after-consolidation) is page-level tuning done via the API, SDKs, or control plane; `knowledge-base update-node` leaves the page's current trigger alone."
+[fields.update_page_node]
+trigger = "Changing an existing page's refresh policy (cron vs after-consolidation) is page-level tuning done via the API, SDKs, or control plane; `pages update` leaves the page's current trigger alone."
 
 [fields.create_mental_model]
 trigger = "Exposed as --trigger-mode, --trigger-refresh-after-consolidation and --tags-match on `mental-model create` (other nested trigger fields like fact_types/tag_groups are not exposed yet)."

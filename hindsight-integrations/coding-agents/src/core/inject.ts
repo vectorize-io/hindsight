@@ -33,13 +33,13 @@ export function buildReflectQuery(prompt: string): string {
 }
 
 const PAGE_FALLBACK_LEAD =
-  "(Hindsight's synthesis was unavailable this turn; these knowledge pages matched the goal by " +
-  "search. Read one with hindsight_read_knowledge_page(<id>) if it looks relevant.)";
+  "(Hindsight's synthesis was unavailable this turn; these pages matched the goal by " +
+  "search. Read one with hindsight_read_page(<id>) if it looks relevant.)";
 export const PAGE_INJECT_LEAD =
-  "(These knowledge pages matched the goal by search. Read one with " +
-  "hindsight_read_knowledge_page(<id>) if it looks relevant.)";
+  "(These pages matched the goal by search. Read one with " +
+  "hindsight_read_page(<id>) if it looks relevant.)";
 
-/** The memory body injected from knowledge-page search: after a failed reflect (default lead), or
+/** The memory body injected from page search: after a failed reflect (default lead), or
  *  as the configured `autoInject: "pages"` source. */
 export function formatPageFallback(
   hits: { id: string; name: string; snippet: string }[],

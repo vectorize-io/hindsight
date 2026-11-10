@@ -755,7 +755,7 @@ export function DocumentsView() {
   const [importing, setImporting] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportIncludeObservations, setExportIncludeObservations] = useState(false);
-  const [exportIncludeKnowledgeBase, setExportIncludeKnowledgeBase] = useState(false);
+  const [exportIncludePages, setExportIncludePages] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importOnConflict, setImportOnConflict] = useState<"skip" | "replace" | "new-id">("skip");
@@ -1275,7 +1275,7 @@ export function DocumentsView() {
   const exportDocuments = async (
     documentIds?: string[],
     includeObservations = false,
-    includeKnowledgeBase = false
+    includePages = false
   ) => {
     if (!currentBank || exporting) return;
     setExporting(true);
@@ -1284,7 +1284,7 @@ export function DocumentsView() {
         currentBank,
         documentIds,
         includeObservations,
-        includeKnowledgeBase
+        includePages
       );
       const suffix = documentIds && documentIds.length === 1 ? `-${documentIds[0]}` : "-documents";
       triggerDownload(blob, `${currentBank}${suffix}.zip`);
@@ -1410,15 +1410,13 @@ export function DocumentsView() {
           </div>
           <div className="flex items-start gap-2 py-2">
             <Checkbox
-              id="export-include-knowledge-base"
-              checked={exportIncludeKnowledgeBase}
-              onCheckedChange={(v) => setExportIncludeKnowledgeBase(v === true)}
+              id="export-include-pages"
+              checked={exportIncludePages}
+              onCheckedChange={(v) => setExportIncludePages(v === true)}
             />
             <div className="grid gap-1 leading-none">
-              <Label htmlFor="export-include-knowledge-base">
-                {t("exportIncludeKnowledgeBaseLabel")}
-              </Label>
-              <p className="text-xs text-muted-foreground">{t("exportIncludeKnowledgeBaseHint")}</p>
+              <Label htmlFor="export-include-pages">{t("exportIncludePagesLabel")}</Label>
+              <p className="text-xs text-muted-foreground">{t("exportIncludePagesHint")}</p>
             </div>
           </div>
           <DialogFooter>
@@ -1433,7 +1431,7 @@ export function DocumentsView() {
             <Button
               size="sm"
               onClick={() =>
-                exportDocuments(undefined, exportIncludeObservations, exportIncludeKnowledgeBase)
+                exportDocuments(undefined, exportIncludeObservations, exportIncludePages)
               }
               disabled={exporting}
             >

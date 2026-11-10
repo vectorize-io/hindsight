@@ -12,15 +12,15 @@ Hindsight Cloud is Hindsight run for you. Sign up, create a memory bank and conn
 ## What you get
 
 - **Nothing to run.** No servers, databases or upgrades. The LLM, embedding and reranking models are included.
-- **The same API.** Retain, recall, reflect, mental models and knowledge pages, through the same [Python](../sdks/python.md), [TypeScript](../sdks/nodejs.md) and [Go](../sdks/go.md) clients, the [CLI](../sdks/cli.md) and the MCP server. Point them at your Cloud API URL and key.
+- **The same API.** Retain, recall, reflect, mental models and pages, through the same [Python](../sdks/python.md), [TypeScript](../sdks/nodejs.md) and [Go](../sdks/go.md) clients, the [CLI](../sdks/cli.md) and the MCP server. Point them at your Cloud API URL and key.
 - **Integrations.** Pre-built integrations with agent frameworks, coding agents and AI tools.
-- **A console.** Browse banks, memories, mental models and knowledge pages, and see how a bank is learning.
+- **A console.** Browse banks, memories, mental models and pages, and see how a bank is learning.
 - **Teams.** Invite your team with role-based access, and manage API keys.
 - **Usage analytics.** Dashboards for what each bank uses.
 
 ## Pricing
 
-You pay for what you use, from a prepaid credit balance: per token for retain and recall, per call for reflect and for creating or refreshing mental models and knowledge pages, and for storage of memories kept longer than 30 days. See [Billing](https://docs.hindsight.vectorize.io/cloud/billing) for current rates.
+You pay for what you use, from a prepaid credit balance: per token for retain and recall, per call for reflect and for creating or refreshing mental models and pages, and for storage of memories kept longer than 30 days. See [Billing](https://docs.hindsight.vectorize.io/cloud/billing) for current rates.
 
 ## Enterprise features on Cloud
 

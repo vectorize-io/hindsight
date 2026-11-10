@@ -116,7 +116,7 @@ class TestReservedFiles:
         assert 'type: "index"' in index
 
     def test_index_empty(self):
-        assert "No knowledge pages yet" in page_markdown.render_index([])
+        assert "No pages yet" in page_markdown.render_index([])
 
     def test_index_nests_folders(self):
         nodes = [

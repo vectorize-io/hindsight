@@ -17,7 +17,7 @@ import (
 // checks if the MentalModelTriggerOutput type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &MentalModelTriggerOutput{}
 
-// MentalModelTriggerOutput Trigger settings for a mental model.  A refresh is not an ad-hoc reflect with different arguments: it synthesizes a whole document, so it wants its own retrieval and iteration settings. This trigger is therefore the only source for them — a bank's ``reflect_default_options`` deliberately does not reach a refresh. The per-bank default for these fields is ``knowledge_page_default_trigger``, which is merged over this same shape when a page is created.
+// MentalModelTriggerOutput Trigger settings for a mental model.  A refresh is not an ad-hoc reflect with different arguments: it synthesizes a whole document, so it wants its own retrieval and iteration settings. This trigger is therefore the only source for them — a bank's ``reflect_default_options`` deliberately does not reach a refresh. The per-bank default for these fields is ``page_default_trigger``, which is merged over this same shape when a page is created.
 type MentalModelTriggerOutput struct {
 	Budget NullableBudget `json:"budget,omitempty"`
 	// Refresh mode. 'full' (default) regenerates the mental model content from scratch on each refresh. 'delta' performs surgical edits against the existing content: unchanged sections are preserved byte-for-byte, stale content is removed, new content is added. If the mental model has no existing content, or if the source_query has changed since the last refresh, delta mode falls back to a full regeneration automatically.

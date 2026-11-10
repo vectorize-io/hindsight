@@ -9,7 +9,7 @@ import { resolveConfig } from "./core/config";
 import type { HindsightClient } from "./core/hindsight";
 
 // Plain stub — no SDK, no network. selectTools only needs a client reference to hand to
-// buildKnowledgeTools when enabled; it never calls any client method itself.
+// buildPageTools when enabled; it never calls any client method itself.
 const stubClient = {} as HindsightClient;
 
 describe("selectTools", () => {
@@ -25,9 +25,9 @@ describe("selectTools", () => {
       [
         "hindsight_sync_status",
         "hindsight_diagnose",
-        "hindsight_search_knowledge_pages",
-        "hindsight_list_knowledge_pages",
-        "hindsight_read_knowledge_page",
+        "hindsight_search_pages",
+        "hindsight_list_pages",
+        "hindsight_read_page",
         "hindsight_reflect",
         "hindsight_capture_initiative",
         "hindsight_ingest_document",
@@ -200,7 +200,7 @@ describe("buildMcpServer", () => {
   /**
    * Dcode computes an "is this tool coherently read-only" verdict from the MCP annotations and,
    * in headless mode, REJECTS every call that fails it; Codex Auto-review reads the same metadata
-   * to tell a safe knowledge read from a write. So the annotations are a functional requirement,
+   * to tell a safe page read from a write. So the annotations are a functional requirement,
    * not documentation. Assert them over the wire (what a client actually sees), not on the specs.
    */
   it("publishes explicit safety annotations for every enabled tool", async () => {
@@ -220,9 +220,9 @@ describe("buildMcpServer", () => {
     const expected = {
       hindsight_sync_status: readOnly,
       hindsight_diagnose: readOnly,
-      hindsight_search_knowledge_pages: readOnly,
-      hindsight_list_knowledge_pages: readOnly,
-      hindsight_read_knowledge_page: readOnly,
+      hindsight_search_pages: readOnly,
+      hindsight_list_pages: readOnly,
+      hindsight_read_page: readOnly,
       hindsight_reflect: readOnly,
       hindsight_capture_initiative: nonDestructiveWrite,
       hindsight_ingest_document: nonDestructiveWrite,

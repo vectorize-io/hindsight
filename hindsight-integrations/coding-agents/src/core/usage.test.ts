@@ -38,21 +38,21 @@ describe("summarizeTurns", () => {
     const usage = summarizeTurns([
       t("system", "REF-ID: x"), // before the first user turn: belongs to no turn
       t("user", "how do we round?"),
-      t("action", "mcp__hindsight__hindsight_search_knowledge_pages rounding"),
+      t("action", "mcp__hindsight__hindsight_search_pages rounding"),
       t("action", "Read src/round.ts"),
       t("action", "hindsight.hindsight_reflect why half-up"),
       t("assistant", "> 🧠 **From Hindsight memory (Conventions)** — half up"),
       t("user", "thanks"),
-      t("action", "hindsight_read_knowledge_page kp-1"),
+      t("action", "hindsight_read_page kp-1"),
       t("assistant", "done"),
     ]);
     expect(usage).toEqual([
       {
         turn: 1,
-        calls: ["hindsight_search_knowledge_pages", "hindsight_reflect"],
+        calls: ["hindsight_search_pages", "hindsight_reflect"],
         credited: true,
       },
-      { turn: 2, calls: ["hindsight_read_knowledge_page"], credited: false },
+      { turn: 2, calls: ["hindsight_read_page"], credited: false },
     ]);
   });
 
@@ -95,7 +95,7 @@ describe("recordUsage", () => {
 
   it("re-reads the previous turn on the next Stop, so a late credit line is not lost", () => {
     const cursors = memoryUsageCursorStore();
-    const search = t("action", "hindsight_search_knowledge_pages q");
+    const search = t("action", "hindsight_search_pages q");
     // Stop fires before the host flushed the reply — and that reply is where the
     // credit blockquote lives, so turn 1 is written uncredited.
     recordUsage({
@@ -181,7 +181,7 @@ describe("readUsage", () => {
           harness: "codex",
           session: "b",
           turn: 1,
-          calls: ["hindsight_reflect", "hindsight_search_knowledge_pages"],
+          calls: ["hindsight_reflect", "hindsight_search_pages"],
           credited: false,
         }) +
         "not json\n"
@@ -198,7 +198,7 @@ describe("readUsage", () => {
         creditedTurnsWithRetrieval: 1,
         byTool: {
           hindsight_reflect: 2,
-          hindsight_search_knowledge_pages: 1,
+          hindsight_search_pages: 1,
           hindsight_ingest_document: 1,
         },
       },

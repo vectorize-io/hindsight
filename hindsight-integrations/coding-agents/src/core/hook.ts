@@ -4,11 +4,11 @@
  * The ONE runtime path (see docs/superpowers/specs/2026-07-27-reflect-pages-runtime.md):
  *   - AUTO-INJECT once per session, on the first prompt, from the source `cfg.autoInject` names:
  *     "reflect" (default) is an agentic synthesis over the bank returning the root-cause decision
- *     with exact values; "pages" is a knowledge-page search and "recall" a raw memory recall, both
+ *     with exact values; "pages" is a page search and "recall" a raw memory recall, both
  *     retrieval-only and far cheaper; "none" injects nothing and leaves it to the tools. Cached
  *     per session, injected on the turn it ran. A failed or empty attempt is retried on a later
  *     prompt within a small budget (see `resolveInjection`).
- *   - KNOWLEDGE PAGES every turn: the page set is fetched on a cadence and matched LOCALLY against
+ *   - PAGES every turn: the page set is fetched on a cadence and matched LOCALLY against
  *     the prompt (section-level lexical scoring — no server/LLM call); the top sections are
  *     injected with provenance. Fast like recall, organized like reflect.
  *   - The tool-guide/page-roster block re-injects on the same cadence.
@@ -39,8 +39,8 @@ import {
   PAGE_INJECT_LEAD,
   RECALL_INJECT_LEAD,
 } from "./inject";
-import type { PageRef } from "./knowledge-injection";
-import { buildRosterRefresh, parsePageList } from "./knowledge-injection";
+import type { PageRef } from "./page-injection";
+import { buildRosterRefresh, parsePageList } from "./page-injection";
 import {
   readSessionCache,
   sessionCacheFile,
@@ -89,12 +89,12 @@ export interface HookSpec {
 interface HookClient {
   reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
   listPages(): Promise<unknown>;
-  searchKnowledgePages(
+  searchPages(
     query: string,
     opts?: { limit?: number; timeoutMs?: number }
   ): Promise<{ id: string; name: string; snippet: string }[]>;
   recallObservations(query: string, opts: { timeoutMs: number }): Promise<string[]>;
-  knowledgePagesSupported?: boolean;
+  pagesSupported?: boolean;
   /** Recorded on reflect failures so the diag trail says which bank to look at server-side. */
   readonly bank?: string;
 }
@@ -141,7 +141,7 @@ function boundRecallQuery(prompt: string): string {
   return prompt.slice(0, end);
 }
 
-/** Knowledge-page search for the prompt, formatted for injection. `null` = it ran and nothing
+/** Page search for the prompt, formatted for injection. `null` = it ran and nothing
  *  matched (an answer); `undefined` = it FAILED (recorded as `${event}_failed`) and is worth
  *  retrying. The two used to be one value, which cached a transient failure as "this session has
  *  no memory" for every remaining turn (#4607). Never throws. */
@@ -157,7 +157,7 @@ async function injectPages(
   try {
     // The search query rides in a GET query string; the goal's opening carries its keywords.
     // How MANY pages come back is the client's `pageSearchLimit`, shared with the MCP tool.
-    const hits = await client.searchKnowledgePages(prompt.slice(0, 500), { timeoutMs });
+    const hits = await client.searchPages(prompt.slice(0, 500), { timeoutMs });
     diag(harness, event, { ms: Date.now() - t0, count: hits.length });
     return hits.length ? formatPageFallback(hits, lead) : null;
   } catch (e) {
@@ -190,7 +190,7 @@ async function injectRecall(
 
 /**
  * Reflect timed out or 5xx'd: the synthesis path broke, but retrieval may still answer. Try the
- * curated knowledge pages first (search), and only when none match fall back to a raw recall
+ * curated pages first (search), and only when none match fall back to a raw recall
  * over the bank's memories. Returns the memory body to inject, or a nullish value when both came
  * back empty or failed — the caller only asks whether there IS a body, so the sources' tri-state
  * is passed through rather than flattened. Never throws.
@@ -218,7 +218,7 @@ export interface HookOutput {
   context?: string;
   /** User-facing line(s) — set only on the reflect turn (its goal + result preview). */
   notice?: string;
-  /** This session's knowledge-page roster, from the shared per-session cache. The SINGLE source
+  /** This session's page roster, from the shared per-session cache. The SINGLE source
    *  of truth for every page-derived block in a turn: the persistent-plugin runtime rebuilds its
    *  SessionStart preamble from this too, so a turn can no longer be told both "no pages yet" and
    *  a list of pages in the same context (#4607). Empty also signals a bank the engine never built. */
@@ -226,7 +226,7 @@ export interface HookOutput {
 }
 
 /**
- * Pure hook logic: reflect once per session (cached); knowledge-page sections + roster on every
+ * Pure hook logic: reflect once per session (cached); page sections + roster on every
  * turn. Returns the injection plus a per-turn user-facing notice.
  */
 export async function buildHookOutput(args: {
@@ -242,9 +242,9 @@ export async function buildHookOutput(args: {
   const turns = (cached.turns ?? 0) + 1;
 
   // ── auto-inject: once per session, on the first prompt ────────────────────────
-  // cfg.autoInject picks the source: a reflect synthesis, a knowledge-page search, or a recall of
+  // cfg.autoInject picks the source: a reflect synthesis, a page search, or a recall of
   // observations. "none" = tool-only mode: the roster's tool guide instead sends new goals through
-  // knowledge pages first and reserves reflection for gaps. Whatever the source, its body is
+  // pages first and reserves reflection for gaps. Whatever the source, its body is
   // cached as `reflectAnswer` (the field name predates the other sources).
   let reflectAnswer = cached.reflectAnswer;
   let reflectAttempts = cached.reflectAttempts ?? 0;
@@ -345,7 +345,7 @@ export async function buildHookOutput(args: {
     }
   }
 
-  // ── knowledge-page roster (ids + titles only): refreshed on the cadence ────────
+  // ── page roster (ids + titles only): refreshed on the cadence ────────
   const cadence = cfg.pageRefreshEveryTurns;
   const stale = !cached.pages || (cadence > 0 && turns - cached.pages.atTurn >= cadence);
   let pages = cached.pages?.list ?? [];
@@ -355,14 +355,10 @@ export async function buildHookOutput(args: {
       pages = parsePageList(await client.listPages());
       diag(harness, "pages_ok", { ms: Date.now() - t0, count: pages.length });
     } catch (e) {
-      diag(
-        harness,
-        client.knowledgePagesSupported === false ? "knowledge_pages_unavailable" : "pages_failed",
-        {
-          ms: Date.now() - t0,
-          error: describeError(e),
-        }
-      );
+      diag(harness, client.pagesSupported === false ? "pages_unavailable" : "pages_failed", {
+        ms: Date.now() - t0,
+        error: describeError(e),
+      });
     }
   }
 
@@ -380,8 +376,8 @@ export async function buildHookOutput(args: {
   // as random noise once the session drifts, and the agent holds hindsight_reflect for a FRESH
   // pass if compaction or drift makes it need memory again.
   if (reflectAnswer && reflectRanThisTurn) blocks.push(buildSystemInjection(reflectAnswer));
-  // Knowledge pages are NOT auto-injected: the agent pulls them through
-  // hindsight_search_knowledge_pages when a question warrants it — an unprompted injection on
+  // Pages are NOT auto-injected: the agent pulls them through
+  // hindsight_search_pages when a question warrants it — an unprompted injection on
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
   if (cadence > 0 && turns % cadence === 0) {
@@ -396,7 +392,7 @@ export async function buildHookOutput(args: {
 
   // User-facing notice ONLY on a turn that actually ran a source (reflect, pages or recall),
   // showing its assigned goal and a preview of what came back. Ordinary turns stay silent — page
-  // knowledge is pulled via the hindsight_search_knowledge_pages tool, a visible tool call.
+  // content is pulled via the hindsight_search_pages tool, a visible tool call.
   let notice: string | undefined;
   if (fallback) {
     // Silent: the session still got memory, just not a synthesis. The notice used to say which
@@ -498,11 +494,7 @@ export async function runHook(
   // Mid-session heal: a bank with ZERO pages means the engine never built it (e.g. the session
   // predates the install, so no SessionStart and the first-prompt net already passed). Fire the
   // idempotent engine — the per-bank lock makes repeats free while it builds.
-  if (
-    cfg.autoSeed !== false &&
-    client.knowledgePagesSupported !== false &&
-    output.pages.length === 0
-  ) {
+  if (cfg.autoSeed !== false && client.pagesSupported !== false && output.pages.length === 0) {
     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }
   let context = output.context;

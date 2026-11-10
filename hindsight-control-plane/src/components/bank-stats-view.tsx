@@ -87,7 +87,7 @@ export interface BankStats {
  * It also took the two refresh timestamps back when it derived staleness itself. */
 type MentalModelSummary = Pick<
   MentalModel,
-  "is_stale" | "is_knowledge_page" | "last_refreshed_at" | "last_refresh_failed_at"
+  "is_stale" | "is_page" | "last_refreshed_at" | "last_refresh_failed_at"
 >;
 
 type Period = "1h" | "12h" | "1d" | "7d" | "30d" | "90d";
@@ -760,7 +760,7 @@ function FailedConsolidationsDialog({
   );
 }
 
-/** Freshness of a set of mental models — used for standalone models and for knowledge pages. */
+/** Freshness of a set of mental models — used for standalone models and for pages. */
 function MentalModelsCard({
   models,
   title,
@@ -1234,9 +1234,9 @@ export function BankStatsView() {
         <MemoryStoreCard stats={stats} observationsEnabled={observationsEnabled} />
       </section>
 
-      {/* KNOWLEDGE — consolidation, mental models, knowledge pages */}
+      {/* SYNTHESIS — consolidation, mental models, pages */}
       <section>
-        <SectionHeading>{t("knowledgeSection")}</SectionHeading>
+        <SectionHeading>{t("synthesisSection")}</SectionHeading>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <ConsolidationCard
             done={consolidatedDone}
@@ -1247,11 +1247,11 @@ export function BankStatsView() {
             href={bankRoute(currentBank, "?view=data&subTab=observations")}
           />
           <MentalModelsCard
-            models={mentalModels.filter((m) => !m.is_knowledge_page)}
+            models={mentalModels.filter((m) => !m.is_page)}
             title={t("mentalModels")}
             emptyLabel={t("noMentalModels")}
             Icon={Brain}
-            href={bankRoute(currentBank, "?view=knowledge&knowledgeTab=models")}
+            href={bankRoute(currentBank, "?view=pages&pagesTab=models")}
             hints={{
               inSync: t("hintModelsInSync"),
               stale: t("hintModelsStale"),
@@ -1260,11 +1260,11 @@ export function BankStatsView() {
             }}
           />
           <MentalModelsCard
-            models={mentalModels.filter((m) => m.is_knowledge_page)}
-            title={t("knowledgePages")}
-            emptyLabel={t("noKnowledgePages")}
+            models={mentalModels.filter((m) => m.is_page)}
+            title={t("pages")}
+            emptyLabel={t("noPages")}
             Icon={BookOpen}
-            href={bankRoute(currentBank, "?view=knowledge&knowledgeTab=pages")}
+            href={bankRoute(currentBank, "?view=pages&pagesTab=pages")}
             hints={{
               inSync: t("hintPagesInSync"),
               stale: t("hintPagesStale"),

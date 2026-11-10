@@ -1364,16 +1364,29 @@ paths:
           title: Offset
           type: integer
         style: form
-      - description: Leave out the mental models that hold knowledge page content
-          (list standalone models only).
+      - description: Leave out the mental models that hold page content (list standalone
+          models only).
+        explode: true
+        in: query
+        name: exclude_pages
+        required: false
+        schema:
+          default: false
+          description: Leave out the mental models that hold page content (list standalone
+            models only).
+          title: Exclude Pages
+          type: boolean
+        style: form
+      - deprecated: true
+        description: "Deprecated: use exclude_pages."
         explode: true
         in: query
         name: exclude_knowledge_pages
         required: false
         schema:
           default: false
-          description: Leave out the mental models that hold knowledge page content
-            (list standalone models only).
+          deprecated: true
+          description: "Deprecated: use exclude_pages."
           title: Exclude Knowledge Pages
           type: boolean
         style: form
@@ -1803,7 +1816,9 @@ paths:
       - Mental Models
   /v1/default/banks/{bank_id}/knowledge-base/tree:
     get:
-      description: Return the knowledge base as a nested tree of folders and pages.
+      deprecated: true
+      description: "Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/tree`;\
+        \ same request and response. Removed in 2.x."
       operationId: get_knowledge_base_tree
       parameters:
       - explode: false
@@ -1871,7 +1886,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/KnowledgeTreeResponse'
+                $ref: '#/components/schemas/PageTreeResponse'
           description: Successful Response
         "404":
           description: The bank does not exist.
@@ -1881,12 +1896,97 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Get the knowledge-base tree
+      summary: Get the page tree (deprecated path)
       tags:
       - Knowledge Base
+  /v1/default/banks/{bank_id}/pages/tree:
+    get:
+      description: Return a bank's pages as a nested tree of folders and pages.
+      operationId: get_page_tree
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: "Only return pages carrying these tags (matched per `tags_match`,\
+          \ like recall)."
+        explode: true
+        in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: "How `tags` match a page's tags: any, all, any_strict, all_strict,\
+          \ exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact'\
+          \ do not."
+        explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          description: "How `tags` match a page's tags: any, all, any_strict, all_strict,\
+            \ exact. 'any'/'all' also return untagged pages; the _strict modes and\
+            \ 'exact' do not."
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        style: form
+      - description: "JSON-encoded compound tag filter, same shape as recall's `tag_groups`,\
+          \ e.g. `[{\"or\":[{\"tags\":[\"user:kate\"],\"match\":\"all_strict\"},{\"\
+          tags\":[\"team\"]}]}]`. Top-level groups are AND-ed, and AND-ed with `tags`."
+        explode: true
+        in: query
+        name: tag_groups
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageTreeResponse'
+          description: Successful Response
+        "404":
+          description: The bank does not exist.
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get the page tree
+      tags:
+      - Pages
   /v1/default/banks/{bank_id}/knowledge-base/folders:
     post:
-      description: "Create a folder, optionally nested under a parent folder."
+      deprecated: true
+      description: "Deprecated alias of `POST /v1/default/banks/{bank_id}/pages/folders`;\
+        \ same request and response. Removed in 2.x."
       operationId: create_knowledge_folder
       parameters:
       - explode: false
@@ -1916,7 +2016,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/KnowledgeNode'
+                $ref: '#/components/schemas/PageNode'
           description: Successful Response
         "422":
           content:
@@ -1924,13 +2024,57 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Create a knowledge-base folder
+      summary: Create a folder (deprecated path)
       tags:
       - Knowledge Base
+  /v1/default/banks/{bank_id}/pages/folders:
+    post:
+      description: "Create a folder, optionally nested under a parent folder."
+      operationId: create_page_folder
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateFolderRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageNode'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create a folder
+      tags:
+      - Pages
   /v1/default/banks/{bank_id}/knowledge-base/pages:
     post:
-      description: Create a page (a mental model + tree node). Content is generated
-        asynchronously; use the returned operation_id to track completion.
+      deprecated: true
+      description: "Deprecated alias of `POST /v1/default/banks/{bank_id}/pages`;\
+        \ same request and response. Removed in 2.x."
       operationId: create_knowledge_page
       parameters:
       - explode: false
@@ -1960,7 +2104,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreateKnowledgePageResponse'
+                $ref: '#/components/schemas/CreatePageResponse'
           description: Successful Response
         "422":
           content:
@@ -1968,13 +2112,58 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Create a knowledge-base page
+      summary: Create a page (deprecated path)
       tags:
       - Knowledge Base
+  /v1/default/banks/{bank_id}/pages:
+    post:
+      description: Create a page (a mental model + tree node). Content is generated
+        asynchronously; use the returned operation_id to track completion.
+      operationId: create_page
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePageRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatePageResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create a page
+      tags:
+      - Pages
   /v1/default/banks/{bank_id}/knowledge-base/export:
     get:
-      description: "Return a portable markdown bundle: a nested index.md, one <id>.md\
-        \ per page, and history logs."
+      deprecated: true
+      description: "Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/export`;\
+        \ same request and response. Removed in 2.x."
       operationId: export_knowledge_base
       parameters:
       - explode: false
@@ -1998,7 +2187,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/KnowledgePageBundleResponse'
+                $ref: '#/components/schemas/PageBundleResponse'
           description: Successful Response
         "404":
           description: The bank does not exist.
@@ -2008,14 +2197,54 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Export the knowledge base as a markdown bundle
+      summary: Export the pages as a markdown bundle (deprecated path)
       tags:
       - Knowledge Base
+  /v1/default/banks/{bank_id}/pages/export:
+    get:
+      description: "Return a portable markdown bundle: a nested index.md, one <id>.md\
+        \ per page, and history logs."
+      operationId: export_pages
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageBundleResponse'
+          description: Successful Response
+        "404":
+          description: The bank does not exist.
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Export the pages as a markdown bundle
+      tags:
+      - Pages
   /v1/default/banks/{bank_id}/knowledge-base/search:
     get:
-      description: "Doc-level hybrid search across a bank's knowledge pages: a full-text\
-        \ (BM25) match and a vector-similarity match, Reciprocal-Rank-Fusion fused.\
-        \ No reranker — tuned for latency."
+      deprecated: true
+      description: "Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/search`;\
+        \ same request and response. Removed in 2.x."
       operationId: search_knowledge_base
       parameters:
       - explode: false
@@ -2107,7 +2336,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/KnowledgePageSearchResponse'
+                $ref: '#/components/schemas/PageSearchResponse'
           description: Successful Response
         "404":
           description: The bank does not exist.
@@ -2117,13 +2346,123 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Hybrid search over knowledge pages (BM25 + vector)
+      summary: Hybrid search over pages (BM25 + vector) (deprecated path)
       tags:
       - Knowledge Base
+  /v1/default/banks/{bank_id}/pages/search:
+    get:
+      description: "Doc-level hybrid search across a bank's pages: a full-text (BM25)\
+        \ match and a vector-similarity match, Reciprocal-Rank-Fusion fused. No reranker\
+        \ — tuned for latency."
+      operationId: search_pages
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Search query
+        explode: true
+        in: query
+        name: q
+        required: true
+        schema:
+          description: Search query
+          minLength: 1
+          title: Q
+          type: string
+        style: form
+      - description: Maximum results to return
+        explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 10
+          description: Maximum results to return
+          maximum: 50
+          minimum: 1
+          title: Limit
+          type: integer
+        style: form
+      - description: "Only return pages carrying these tags (matched per `tags_match`,\
+          \ like recall)."
+        explode: true
+        in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: "How `tags` match a page's tags: any, all, any_strict, all_strict,\
+          \ exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact'\
+          \ do not."
+        explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          description: "How `tags` match a page's tags: any, all, any_strict, all_strict,\
+            \ exact. 'any'/'all' also return untagged pages; the _strict modes and\
+            \ 'exact' do not."
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        style: form
+      - description: "JSON-encoded compound tag filter, same shape as recall's `tag_groups`,\
+          \ e.g. `[{\"or\":[{\"tags\":[\"user:kate\"],\"match\":\"all_strict\"},{\"\
+          tags\":[\"team\"]}]}]`. Top-level groups are AND-ed, and AND-ed with `tags`."
+        explode: true
+        in: query
+        name: tag_groups
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageSearchResponse'
+          description: Successful Response
+        "404":
+          description: The bank does not exist.
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Hybrid search over pages (BM25 + vector)
+      tags:
+      - Pages
   /v1/default/banks/{bank_id}/knowledge-base/pages/{page_id}:
     get:
-      description: Return a single page as a markdown document (frontmatter + markdown
-        body).
+      deprecated: true
+      description: "Deprecated alias of `GET /v1/default/banks/{bank_id}/pages/{page_id}`;\
+        \ same request and response. Removed in 2.x."
       operationId: get_knowledge_page
       parameters:
       - explode: false
@@ -2155,7 +2494,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/KnowledgePageResponse'
+                $ref: '#/components/schemas/PageResponse'
           description: Successful Response
         "422":
           content:
@@ -2163,13 +2502,60 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Get a knowledge-base page
+      summary: Get a page (deprecated path)
       tags:
       - Knowledge Base
+  /v1/default/banks/{bank_id}/pages/{page_id}:
+    get:
+      description: Return a single page as a markdown document (frontmatter + markdown
+        body).
+      operationId: get_page
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: page_id
+        required: true
+        schema:
+          title: Page Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get a page
+      tags:
+      - Pages
   /v1/default/banks/{bank_id}/knowledge-base/nodes/{node_id}:
     delete:
-      description: Delete a folder or page and its whole subtree (pages' mental models
-        are removed too).
+      deprecated: true
+      description: "Deprecated alias of `DELETE /v1/default/banks/{bank_id}/pages/nodes/{node_id}`;\
+        \ same request and response. Removed in 2.x."
       operationId: delete_knowledge_node
       parameters:
       - explode: false
@@ -2208,16 +2594,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Delete a knowledge-base node
+      summary: Delete a page node (deprecated path)
       tags:
       - Knowledge Base
     patch:
-      description: "Rename a node (set `name`), move it under another folder (set\
-        \ `parent_id`, null for the root), and/or update a page's options (`source_query`,\
-        \ `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async\
-        \ refresh so the page rebuilds against the new question. `trigger` is applied\
-        \ as a patch: the fields you send are updated and the rest keep the page's\
-        \ current values."
+      deprecated: true
+      description: "Deprecated alias of `PATCH /v1/default/banks/{bank_id}/pages/nodes/{node_id}`;\
+        \ same request and response. Removed in 2.x."
       operationId: update_knowledge_node
       parameters:
       - explode: false
@@ -2255,7 +2638,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/KnowledgeNode'
+                $ref: '#/components/schemas/PageNode'
           description: Successful Response
         "422":
           content:
@@ -2263,9 +2646,109 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
-      summary: Rename/move a knowledge-base node or update a page's options
+      summary: Rename/move a page node or update a page's options (deprecated path)
       tags:
       - Knowledge Base
+  /v1/default/banks/{bank_id}/pages/nodes/{node_id}:
+    delete:
+      description: Delete a folder or page and its whole subtree (pages' mental models
+        are removed too).
+      operationId: delete_page_node
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: node_id
+        required: true
+        schema:
+          title: Node Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete a page node
+      tags:
+      - Pages
+    patch:
+      description: "Rename a node (set `name`), move it under another folder (set\
+        \ `parent_id`, null for the root), and/or update a page's options (`source_query`,\
+        \ `tags`, `max_tokens`, `trigger`). Changing `source_query` schedules an async\
+        \ refresh so the page rebuilds against the new question. `trigger` is applied\
+        \ as a patch: the fields you send are updated and the rest keep the page's\
+        \ current values."
+      operationId: update_page_node
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: node_id
+        required: true
+        schema:
+          title: Node Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNodeRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageNode'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Rename/move a page node or update a page's options
+      tags:
+      - Pages
   /v1/default/banks/{bank_id}/directives:
     get:
       description: "List directive definitions. Unlike reflect, an omitted tag filter\
@@ -4126,8 +4609,8 @@ paths:
         \ /v1/default/files/download/{key}), storage_key, byte_size, and filename.\
         \ Pass document_id query params to export specific documents, or omit to export\
         \ the whole bank; include_observations=true carries consolidated observations\
-        \ and include_knowledge_base=true carries Mental Models plus Knowledge Pages\
-        \ (all whole-bank export only)."
+        \ and include_knowledge_base=true carries Mental Models plus Pages (all whole-bank\
+        \ export only)."
       operationId: export_documents
       parameters:
       - explode: false
@@ -4162,16 +4645,16 @@ paths:
           title: Include Observations
           type: boolean
         style: form
-      - description: Also export Mental Models and Knowledge Pages (restored on import;
-          whole-bank only)
+      - description: Also export Mental Models and Pages (restored on import; whole-bank
+          only)
         explode: true
         in: query
         name: include_knowledge_base
         required: false
         schema:
           default: false
-          description: Also export Mental Models and Knowledge Pages (restored on
-            import; whole-bank only)
+          description: Also export Mental Models and Pages (restored on import; whole-bank
+            only)
           title: Include Knowledge Base
           type: boolean
         style: form
@@ -4205,8 +4688,8 @@ paths:
         \ flags choose what the archive carries: include_data (documents, facts, observations,\
         \ attachments and their bytes, the curation archive, the operations log and\
         \ the maintenance queues), include_bank_config (bank config, mental models\
-        \ and their history, knowledge pages), include_bank_config (the bank's config\
-        \ overrides, directives and webhooks) and include_history (audit_log, llm_requests).\
+        \ and their history, pages), include_bank_config (the bank's config overrides,\
+        \ directives and webhooks) and include_history (audit_log, llm_requests).\
         \ Embeddings and database ids are never carried — importing re-embeds with\
         \ the target bank's model and re-resolves entities, so an archive moves between\
         \ instances configured with different embedding models. Returns an operation_id;\
@@ -4408,7 +4891,7 @@ paths:
       description: |-
         Copy this bank into a new one, in a single call. The clone starts with the source's memories as they are at clone time and evolves independently from then on: later retains, consolidation and edits on either bank leave the other alone.
 
-        This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and knowledge pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).
+        This is the export and import above run back to back on this instance, so nothing is re-extracted and no LLM is called — facts are re-embedded and entities re-resolved, exactly as a restore does. The same three flags choose what the clone inherits: include_data (documents, facts, observations, attachments, the curation archive, the operations log, and the mental models and pages synthesized from them), include_bank_config (the bank's config overrides, directives and **webhooks**) and include_history (audit_log, llm_requests).
 
         Note the webhooks: they travel with the bank's configuration, so a clone made with the default flags will call the source's webhook endpoints. Pass include_bank_config=false, or delete them on the clone, when they point at a per-bank consumer.
 
@@ -4434,7 +4917,7 @@ paths:
           type: string
         style: form
       - description: "Copy the memories, what backs them, and the mental models and\
-          \ knowledge pages synthesized from them"
+          \ pages synthesized from them"
         explode: true
         in: query
         name: include_data
@@ -4442,7 +4925,7 @@ paths:
         schema:
           default: true
           description: "Copy the memories, what backs them, and the mental models\
-            \ and knowledge pages synthesized from them"
+            \ and pages synthesized from them"
           title: Include Data
           type: boolean
         style: form
@@ -6692,6 +7175,9 @@ components:
         reflect_source_facts_max_tokens:
           nullable: true
           type: integer
+        page_default_trigger:
+          additionalProperties: {}
+          nullable: true
         knowledge_page_default_trigger:
           additionalProperties: {}
           nullable: true
@@ -7645,27 +8131,6 @@ components:
       required:
       - name
       title: CreateFolderRequest
-    CreateKnowledgePageResponse:
-      description: "Result of creating a page: the node id, its mental model, and\
-        \ the refresh op."
-      example:
-        page_id: page_id
-        operation_id: operation_id
-        mental_model_id: mental_model_id
-      properties:
-        page_id:
-          title: Page Id
-          type: string
-        mental_model_id:
-          title: Mental Model Id
-          type: string
-        operation_id:
-          nullable: true
-          type: string
-      required:
-      - mental_model_id
-      - page_id
-      title: CreateKnowledgePageResponse
     CreateMentalModelRequest:
       description: Request model for creating a mental model.
       example:
@@ -7795,6 +8260,27 @@ components:
       - name
       - source_query
       title: CreatePageRequest
+    CreatePageResponse:
+      description: "Result of creating a page: the node id, its mental model, and\
+        \ the refresh op."
+      example:
+        page_id: page_id
+        operation_id: operation_id
+        mental_model_id: mental_model_id
+      properties:
+        page_id:
+          title: Page Id
+          type: string
+        mental_model_id:
+          title: Mental Model Id
+          type: string
+        operation_id:
+          nullable: true
+          type: string
+      required:
+      - mental_model_id
+      - page_id
+      title: CreatePageResponse
     CreateWebhookRequest:
       description: Request model for registering a webhook.
       example:
@@ -8134,7 +8620,7 @@ components:
     DocumentEventKind:
       description: |-
         What a change was. A named enum, not a Literal: inline enums are named after their field by
-        the generated Rust client, and ``kind`` already names the knowledge-base node enum there.
+        the generated Rust client, and ``kind`` already names the page node enum there.
       enum:
       - retain
       - append
@@ -9177,393 +9663,6 @@ components:
         source_facts:
           $ref: '#/components/schemas/SourceFactsIncludeOptions'
       title: IncludeOptions
-    KnowledgeNode:
-      description: |-
-        A node in the knowledge-base tree — a folder or a page.
-
-        Pages carry ``description``/``tags`` from their backing mental model. The
-        knowledge base is client-managed (CRUD); ``managed`` lets a client tag a node
-        as system-owned vs. hand-authored.
-      example:
-        kind: folder
-        description: description
-        last_refresh_failed_at: last_refresh_failed_at
-        is_stale: true
-        trigger:
-          recall_chunks_max_tokens: 5
-          refresh_cron: refresh_cron
-          tag_groups:
-          - resolve: exact
-            match: any_strict
-            tags:
-            - tags
-            - tags
-          - resolve: exact
-            match: any_strict
-            tags:
-            - tags
-            - tags
-          reflect_search_observations_include_entities: true
-          exclude_mental_models: false
-          mode: full
-          refresh_after_consolidation: false
-          full_refresh_cron: full_refresh_cron
-          fact_types:
-          - world
-          - world
-          response_schema:
-            key: ""
-          exclude_mental_model_ids:
-          - exclude_mental_model_ids
-          - exclude_mental_model_ids
-          include_chunks: true
-          reflect_search_observations_max_tokens: 1
-          tags_match: any
-          min_refresh_interval_seconds: 0
-          keep_trace: false
-          budget: low
-          recall_max_tokens: 1
-        tags:
-        - tags
-        - tags
-        children:
-        - null
-        - null
-        parent_id: parent_id
-        managed: false
-        name: name
-        id: id
-        mental_model_id: mental_model_id
-        timestamp: timestamp
-      properties:
-        id:
-          title: Id
-          type: string
-        kind:
-          enum:
-          - folder
-          - page
-          title: Kind
-          type: string
-        name:
-          title: Name
-          type: string
-        parent_id:
-          nullable: true
-          type: string
-        mental_model_id:
-          nullable: true
-          type: string
-        managed:
-          default: false
-          description: "Client-set flag: true = system-owned, false = hand-authored."
-          title: Managed
-          type: boolean
-        description:
-          nullable: true
-          type: string
-        tags:
-          default: []
-          items:
-            type: string
-          type: array
-        timestamp:
-          nullable: true
-          type: string
-        is_stale:
-          nullable: true
-          type: boolean
-        last_refresh_failed_at:
-          nullable: true
-          type: string
-        trigger:
-          $ref: '#/components/schemas/MentalModelTrigger-Output'
-        children:
-          default: []
-          items:
-            $ref: '#/components/schemas/KnowledgeNode'
-          type: array
-      required:
-      - id
-      - kind
-      - name
-      title: KnowledgeNode
-    KnowledgePageBundleFile:
-      description: One file in a portable markdown bundle.
-      example:
-        path: path
-        content: content
-      properties:
-        path:
-          title: Path
-          type: string
-        content:
-          title: Content
-          type: string
-      required:
-      - content
-      - path
-      title: KnowledgePageBundleFile
-    KnowledgePageBundleResponse:
-      description: A portable markdown bundle — a flat set of markdown files (index
-        + pages + logs).
-      example:
-        files:
-        - path: path
-          content: content
-        - path: path
-          content: content
-      properties:
-        files:
-          items:
-            $ref: '#/components/schemas/KnowledgePageBundleFile'
-          type: array
-      required:
-      - files
-      title: KnowledgePageBundleResponse
-    KnowledgePageResponse:
-      description: A knowledge page rendered as a markdown document.
-      example:
-        name: name
-        markdown: markdown
-        description: description
-        id: id
-        type: type
-        body: body
-        tags:
-        - tags
-        - tags
-        timestamp: timestamp
-      properties:
-        id:
-          title: Id
-          type: string
-        name:
-          title: Name
-          type: string
-        type:
-          description: "Page type — from a `type:<x>` tag, else 'knowledge-page'."
-          title: Type
-          type: string
-        description:
-          nullable: true
-          type: string
-        tags:
-          default: []
-          items:
-            type: string
-          type: array
-        timestamp:
-          nullable: true
-          type: string
-        body:
-          nullable: true
-          type: string
-        markdown:
-          description: "The full markdown document: YAML frontmatter + markdown body.\
-            \ A page with no body yet renders 'No content yet.' as its body rather\
-            \ than frontmatter alone, which reads as a page that failed to render.\
-            \ The notice is added here on the way out; the stored body in `body` stays\
-            \ empty, and the export bundle keeps the bare document."
-          title: Markdown
-          type: string
-      required:
-      - id
-      - markdown
-      - name
-      - type
-      title: KnowledgePageResponse
-    KnowledgePageSearchResponse:
-      description: "Ranked knowledge-page search results (BM25 + vector, RRF-fused)."
-      example:
-        total: 6
-        results:
-        - snippet: snippet
-          score: 0.8008281904610115
-          source_query: source_query
-          updated_at: updated_at
-          name: name
-          id: id
-          mental_model_id: mental_model_id
-        - snippet: snippet
-          score: 0.8008281904610115
-          source_query: source_query
-          updated_at: updated_at
-          name: name
-          id: id
-          mental_model_id: mental_model_id
-      properties:
-        results:
-          items:
-            $ref: '#/components/schemas/KnowledgePageSearchResult'
-          type: array
-        total:
-          title: Total
-          type: integer
-      required:
-      - results
-      - total
-      title: KnowledgePageSearchResponse
-    KnowledgePageSearchResult:
-      description: "One hybrid-search hit: a knowledge page and its fused relevance\
-        \ score."
-      example:
-        snippet: snippet
-        score: 0.8008281904610115
-        source_query: source_query
-        updated_at: updated_at
-        name: name
-        id: id
-        mental_model_id: mental_model_id
-      properties:
-        id:
-          title: Id
-          type: string
-        name:
-          title: Name
-          type: string
-        mental_model_id:
-          nullable: true
-          type: string
-        source_query:
-          nullable: true
-          type: string
-        snippet:
-          description: "The page's opening text. A page whose body is still empty\
-            \ says so in words — 'No content yet.' — rather than coming back blank,\
-            \ so a caller can tell an unwritten page from a page whose snippet simply\
-            \ did not render. The marker is produced on the way out; the stored body\
-            \ stays empty and out of the search index."
-          title: Snippet
-          type: string
-        score:
-          description: "Rank-fusion score in 0..1, where 1.0 means every search arm\
-            \ placed this page first. It reflects where the page ranked for this query,\
-            \ not how well its text matched, so it is only comparable within one result\
-            \ set."
-          title: Score
-          type: number
-        updated_at:
-          nullable: true
-          type: string
-      required:
-      - id
-      - name
-      - score
-      - snippet
-      title: KnowledgePageSearchResult
-    KnowledgeTreeResponse:
-      description: The knowledge base as a nested folder/page tree.
-      example:
-        roots:
-        - kind: folder
-          description: description
-          last_refresh_failed_at: last_refresh_failed_at
-          is_stale: true
-          trigger:
-            recall_chunks_max_tokens: 5
-            refresh_cron: refresh_cron
-            tag_groups:
-            - resolve: exact
-              match: any_strict
-              tags:
-              - tags
-              - tags
-            - resolve: exact
-              match: any_strict
-              tags:
-              - tags
-              - tags
-            reflect_search_observations_include_entities: true
-            exclude_mental_models: false
-            mode: full
-            refresh_after_consolidation: false
-            full_refresh_cron: full_refresh_cron
-            fact_types:
-            - world
-            - world
-            response_schema:
-              key: ""
-            exclude_mental_model_ids:
-            - exclude_mental_model_ids
-            - exclude_mental_model_ids
-            include_chunks: true
-            reflect_search_observations_max_tokens: 1
-            tags_match: any
-            min_refresh_interval_seconds: 0
-            keep_trace: false
-            budget: low
-            recall_max_tokens: 1
-          tags:
-          - tags
-          - tags
-          children:
-          - null
-          - null
-          parent_id: parent_id
-          managed: false
-          name: name
-          id: id
-          mental_model_id: mental_model_id
-          timestamp: timestamp
-        - kind: folder
-          description: description
-          last_refresh_failed_at: last_refresh_failed_at
-          is_stale: true
-          trigger:
-            recall_chunks_max_tokens: 5
-            refresh_cron: refresh_cron
-            tag_groups:
-            - resolve: exact
-              match: any_strict
-              tags:
-              - tags
-              - tags
-            - resolve: exact
-              match: any_strict
-              tags:
-              - tags
-              - tags
-            reflect_search_observations_include_entities: true
-            exclude_mental_models: false
-            mode: full
-            refresh_after_consolidation: false
-            full_refresh_cron: full_refresh_cron
-            fact_types:
-            - world
-            - world
-            response_schema:
-              key: ""
-            exclude_mental_model_ids:
-            - exclude_mental_model_ids
-            - exclude_mental_model_ids
-            include_chunks: true
-            reflect_search_observations_max_tokens: 1
-            tags_match: any
-            min_refresh_interval_seconds: 0
-            keep_trace: false
-            budget: low
-            recall_max_tokens: 1
-          tags:
-          - tags
-          - tags
-          children:
-          - null
-          - null
-          parent_id: parent_id
-          managed: false
-          name: name
-          id: id
-          mental_model_id: mental_model_id
-          timestamp: timestamp
-      properties:
-        roots:
-          items:
-            $ref: '#/components/schemas/KnowledgeNode'
-          type: array
-      required:
-      - roots
-      title: KnowledgeTreeResponse
     LLMCallTrace:
       description: A single LLM call made during reflect.
       properties:
@@ -10970,6 +11069,7 @@ components:
             key: ""
           name: name
           id: id
+          is_page: true
         - max_tokens: 0
           created_at: created_at
           last_refresh_failed_at: last_refresh_failed_at
@@ -11022,6 +11122,7 @@ components:
             key: ""
           name: name
           id: id
+          is_page: true
       properties:
         items:
           items:
@@ -11240,6 +11341,7 @@ components:
           key: ""
         name: name
         id: id
+        is_page: true
       properties:
         id:
           title: Id
@@ -11281,6 +11383,9 @@ components:
         created_at:
           nullable: true
           type: string
+        is_page:
+          nullable: true
+          type: boolean
         is_knowledge_page:
           nullable: true
           type: boolean
@@ -11381,7 +11486,7 @@ components:
         whole document, so it wants its own retrieval and iteration settings. This
         trigger is therefore the only source for them — a bank's
         ``reflect_default_options`` deliberately does not reach a refresh. The
-        per-bank default for these fields is ``knowledge_page_default_trigger``,
+        per-bank default for these fields is ``page_default_trigger``,
         which is merged over this same shape when a page is created.
       example:
         recall_chunks_max_tokens: 5
@@ -11524,7 +11629,7 @@ components:
         whole document, so it wants its own retrieval and iteration settings. This
         trigger is therefore the only source for them — a bank's
         ``reflect_default_options`` deliberately does not reach a refresh. The
-        per-bank default for these fields is ``knowledge_page_default_trigger``,
+        per-bank default for these fields is ``page_default_trigger``,
         which is merged over this same shape when a page is created.
       example:
         recall_chunks_max_tokens: 5
@@ -11982,6 +12087,392 @@ components:
       - operations
       - total
       title: OperationsListResponse
+    PageBundleFile:
+      description: One file in a portable markdown bundle.
+      example:
+        path: path
+        content: content
+      properties:
+        path:
+          title: Path
+          type: string
+        content:
+          title: Content
+          type: string
+      required:
+      - content
+      - path
+      title: PageBundleFile
+    PageBundleResponse:
+      description: A portable markdown bundle — a flat set of markdown files (index
+        + pages + logs).
+      example:
+        files:
+        - path: path
+          content: content
+        - path: path
+          content: content
+      properties:
+        files:
+          items:
+            $ref: '#/components/schemas/PageBundleFile'
+          type: array
+      required:
+      - files
+      title: PageBundleResponse
+    PageNode:
+      description: |-
+        A node in the page tree — a folder or a page.
+
+        Pages carry ``description``/``tags`` from their backing mental model. The
+        pages is client-managed (CRUD); ``managed`` lets a client tag a node
+        as system-owned vs. hand-authored.
+      example:
+        kind: folder
+        description: description
+        last_refresh_failed_at: last_refresh_failed_at
+        is_stale: true
+        trigger:
+          recall_chunks_max_tokens: 5
+          refresh_cron: refresh_cron
+          tag_groups:
+          - resolve: exact
+            match: any_strict
+            tags:
+            - tags
+            - tags
+          - resolve: exact
+            match: any_strict
+            tags:
+            - tags
+            - tags
+          reflect_search_observations_include_entities: true
+          exclude_mental_models: false
+          mode: full
+          refresh_after_consolidation: false
+          full_refresh_cron: full_refresh_cron
+          fact_types:
+          - world
+          - world
+          response_schema:
+            key: ""
+          exclude_mental_model_ids:
+          - exclude_mental_model_ids
+          - exclude_mental_model_ids
+          include_chunks: true
+          reflect_search_observations_max_tokens: 1
+          tags_match: any
+          min_refresh_interval_seconds: 0
+          keep_trace: false
+          budget: low
+          recall_max_tokens: 1
+        tags:
+        - tags
+        - tags
+        children:
+        - null
+        - null
+        parent_id: parent_id
+        managed: false
+        name: name
+        id: id
+        mental_model_id: mental_model_id
+        timestamp: timestamp
+      properties:
+        id:
+          title: Id
+          type: string
+        kind:
+          enum:
+          - folder
+          - page
+          title: Kind
+          type: string
+        name:
+          title: Name
+          type: string
+        parent_id:
+          nullable: true
+          type: string
+        mental_model_id:
+          nullable: true
+          type: string
+        managed:
+          default: false
+          description: "Client-set flag: true = system-owned, false = hand-authored."
+          title: Managed
+          type: boolean
+        description:
+          nullable: true
+          type: string
+        tags:
+          default: []
+          items:
+            type: string
+          type: array
+        timestamp:
+          nullable: true
+          type: string
+        is_stale:
+          nullable: true
+          type: boolean
+        last_refresh_failed_at:
+          nullable: true
+          type: string
+        trigger:
+          $ref: '#/components/schemas/MentalModelTrigger-Output'
+        children:
+          default: []
+          items:
+            $ref: '#/components/schemas/PageNode'
+          type: array
+      required:
+      - id
+      - kind
+      - name
+      title: PageNode
+    PageResponse:
+      description: A page rendered as a markdown document.
+      example:
+        name: name
+        markdown: markdown
+        description: description
+        id: id
+        type: type
+        body: body
+        tags:
+        - tags
+        - tags
+        timestamp: timestamp
+      properties:
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        type:
+          description: "Page type — from a `type:<x>` tag, else 'page'."
+          title: Type
+          type: string
+        description:
+          nullable: true
+          type: string
+        tags:
+          default: []
+          items:
+            type: string
+          type: array
+        timestamp:
+          nullable: true
+          type: string
+        body:
+          nullable: true
+          type: string
+        markdown:
+          description: "The full markdown document: YAML frontmatter + markdown body.\
+            \ A page with no body yet renders 'No content yet.' as its body rather\
+            \ than frontmatter alone, which reads as a page that failed to render.\
+            \ The notice is added here on the way out; the stored body in `body` stays\
+            \ empty, and the export bundle keeps the bare document."
+          title: Markdown
+          type: string
+      required:
+      - id
+      - markdown
+      - name
+      - type
+      title: PageResponse
+    PageSearchResponse:
+      description: "Ranked page search results (BM25 + vector, RRF-fused)."
+      example:
+        total: 6
+        results:
+        - snippet: snippet
+          score: 0.8008281904610115
+          source_query: source_query
+          updated_at: updated_at
+          name: name
+          id: id
+          mental_model_id: mental_model_id
+        - snippet: snippet
+          score: 0.8008281904610115
+          source_query: source_query
+          updated_at: updated_at
+          name: name
+          id: id
+          mental_model_id: mental_model_id
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/PageSearchResult'
+          type: array
+        total:
+          title: Total
+          type: integer
+      required:
+      - results
+      - total
+      title: PageSearchResponse
+    PageSearchResult:
+      description: "One hybrid-search hit: a page and its fused relevance score."
+      example:
+        snippet: snippet
+        score: 0.8008281904610115
+        source_query: source_query
+        updated_at: updated_at
+        name: name
+        id: id
+        mental_model_id: mental_model_id
+      properties:
+        id:
+          title: Id
+          type: string
+        name:
+          title: Name
+          type: string
+        mental_model_id:
+          nullable: true
+          type: string
+        source_query:
+          nullable: true
+          type: string
+        snippet:
+          description: "The page's opening text. A page whose body is still empty\
+            \ says so in words — 'No content yet.' — rather than coming back blank,\
+            \ so a caller can tell an unwritten page from a page whose snippet simply\
+            \ did not render. The marker is produced on the way out; the stored body\
+            \ stays empty and out of the search index."
+          title: Snippet
+          type: string
+        score:
+          description: "Rank-fusion score in 0..1, where 1.0 means every search arm\
+            \ placed this page first. It reflects where the page ranked for this query,\
+            \ not how well its text matched, so it is only comparable within one result\
+            \ set."
+          title: Score
+          type: number
+        updated_at:
+          nullable: true
+          type: string
+      required:
+      - id
+      - name
+      - score
+      - snippet
+      title: PageSearchResult
+    PageTreeResponse:
+      description: The pages as a nested folder/page tree.
+      example:
+        roots:
+        - kind: folder
+          description: description
+          last_refresh_failed_at: last_refresh_failed_at
+          is_stale: true
+          trigger:
+            recall_chunks_max_tokens: 5
+            refresh_cron: refresh_cron
+            tag_groups:
+            - resolve: exact
+              match: any_strict
+              tags:
+              - tags
+              - tags
+            - resolve: exact
+              match: any_strict
+              tags:
+              - tags
+              - tags
+            reflect_search_observations_include_entities: true
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
+            full_refresh_cron: full_refresh_cron
+            fact_types:
+            - world
+            - world
+            response_schema:
+              key: ""
+            exclude_mental_model_ids:
+            - exclude_mental_model_ids
+            - exclude_mental_model_ids
+            include_chunks: true
+            reflect_search_observations_max_tokens: 1
+            tags_match: any
+            min_refresh_interval_seconds: 0
+            keep_trace: false
+            budget: low
+            recall_max_tokens: 1
+          tags:
+          - tags
+          - tags
+          children:
+          - null
+          - null
+          parent_id: parent_id
+          managed: false
+          name: name
+          id: id
+          mental_model_id: mental_model_id
+          timestamp: timestamp
+        - kind: folder
+          description: description
+          last_refresh_failed_at: last_refresh_failed_at
+          is_stale: true
+          trigger:
+            recall_chunks_max_tokens: 5
+            refresh_cron: refresh_cron
+            tag_groups:
+            - resolve: exact
+              match: any_strict
+              tags:
+              - tags
+              - tags
+            - resolve: exact
+              match: any_strict
+              tags:
+              - tags
+              - tags
+            reflect_search_observations_include_entities: true
+            exclude_mental_models: false
+            mode: full
+            refresh_after_consolidation: false
+            full_refresh_cron: full_refresh_cron
+            fact_types:
+            - world
+            - world
+            response_schema:
+              key: ""
+            exclude_mental_model_ids:
+            - exclude_mental_model_ids
+            - exclude_mental_model_ids
+            include_chunks: true
+            reflect_search_observations_max_tokens: 1
+            tags_match: any
+            min_refresh_interval_seconds: 0
+            keep_trace: false
+            budget: low
+            recall_max_tokens: 1
+          tags:
+          - tags
+          - tags
+          children:
+          - null
+          - null
+          parent_id: parent_id
+          managed: false
+          name: name
+          id: id
+          mental_model_id: mental_model_id
+          timestamp: timestamp
+      properties:
+        roots:
+          items:
+            $ref: '#/components/schemas/PageNode'
+          type: array
+      required:
+      - roots
+      title: PageTreeResponse
     PromptBlockModel:
       description: |-
         One block of a message: its text, and the setting that decides it.

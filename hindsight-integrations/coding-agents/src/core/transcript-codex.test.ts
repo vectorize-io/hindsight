@@ -318,7 +318,7 @@ describe("readCodexTranscript", () => {
           "2026-01-02T10:00:01Z",
           execCall(
             "call_1",
-            'text(await tools.mcp__hindsight__hindsight_search_knowledge_pages({query:"retry policy"}));\n' +
+            'text(await tools.mcp__hindsight__hindsight_search_pages({query:"retry policy"}));\n' +
               'text(await tools.exec_command({cmd:"git status --short"}));\n'
           )
         ),
@@ -327,7 +327,7 @@ describe("readCodexTranscript", () => {
           toolItem({
             type: "McpToolCall",
             server: "hindsight",
-            tool: "hindsight_search_knowledge_pages",
+            tool: "hindsight_search_pages",
             arguments: { query: "retry policy" },
             result: { content: [{ type: "text", text: "RESULT BODY" }] },
             status: "completed",
@@ -377,7 +377,7 @@ describe("readCodexTranscript", () => {
         },
         {
           role: "action",
-          content: "mcp__hindsight__hindsight_search_knowledge_pages retry policy",
+          content: "mcp__hindsight__hindsight_search_pages retry policy",
           timestamp: "2026-01-02T10:00:02Z",
         },
         {
@@ -399,7 +399,7 @@ describe("readCodexTranscript", () => {
       writeFileSync(file, rollout());
       const turns = readCodexTranscript(file);
       expect(summarizeTurns(turns)).toEqual([
-        { turn: 1, calls: ["hindsight_search_knowledge_pages"], credited: true },
+        { turn: 1, calls: ["hindsight_search_pages"], credited: true },
       ]);
 
       const usageFile = join(root, "usage.jsonl");
@@ -415,7 +415,7 @@ describe("readCodexTranscript", () => {
       expect(JSON.parse(readFileSync(usageFile, "utf8"))).toMatchObject({
         harness: "codex",
         turn: 1,
-        calls: ["hindsight_search_knowledge_pages"],
+        calls: ["hindsight_search_pages"],
         credited: true,
       });
     });

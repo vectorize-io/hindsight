@@ -126,7 +126,9 @@ fn test_memory_item_timestamp_serializes_as_plain_string() {
     // spec-massage step now collapses string-only anyOf unions into a plain
     // `{type: string}`, so the field is just `Option<String>`. Assert that.
     let item = hindsight_client::types::MemoryItem {
-        content: hindsight_client::types::Content::Variant0("Bob went hiking yesterday".to_string()),
+        content: hindsight_client::types::Content::Variant0(
+            "Bob went hiking yesterday".to_string(),
+        ),
         context: None,
         metadata: None,
         timestamp: Some("2026-05-31T10:00:00Z".to_string()),
@@ -259,4 +261,24 @@ fn test_sigpipe_terminates_with_signal_not_abort() {
         Some(13),
         "expected SIGPIPE termination, got status {status:?}"
     );
+}
+
+#[test]
+fn test_knowledge_base_is_a_hidden_alias_of_pages() {
+    // `knowledge-base` was renamed to `pages`; old scripts must keep working,
+    // but the old name must not show up in the top-level help.
+    let alias = Command::new(env!("CARGO_BIN_EXE_hindsight"))
+        .args(["knowledge-base", "--help"])
+        .output()
+        .expect("Failed to execute command");
+    assert!(alias.status.success());
+    assert!(String::from_utf8_lossy(&alias.stdout).contains("hindsight pages"));
+
+    let help = Command::new(env!("CARGO_BIN_EXE_hindsight"))
+        .arg("--help")
+        .output()
+        .expect("Failed to execute command");
+    let stdout = String::from_utf8_lossy(&help.stdout);
+    assert!(stdout.contains("pages"));
+    assert!(!stdout.contains("knowledge-base"));
 }

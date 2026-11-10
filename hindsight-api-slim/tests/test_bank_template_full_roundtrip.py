@@ -111,7 +111,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     ],
     "reflect_source_facts_max_tokens": 4096,
     "mental_model_min_refresh_interval_seconds": 900,
-    "knowledge_page_default_trigger": {"refresh_cron": "0 * * * *", "mode": "full"},
+    "page_default_trigger": {"refresh_cron": "0 * * * *", "mode": "full"},
     "reflect_default_options": {
         "reflect_search_observations_max_tokens": 3000,
         "reflect_search_observations_include_entities": False,
@@ -168,6 +168,12 @@ async def _read_overrides(api_client: httpx.AsyncClient, bank_id: str) -> dict[s
     return resp.json()["overrides"]
 
 
+def _current_template_fields() -> set[str]:
+    """Template fields minus deprecated aliases (knowledge_page_default_trigger), which only
+    repeat a current field for clients from before a rename. Remove the filter's use in 2.x."""
+    return {name for name, field in BankTemplateConfig.model_fields.items() if not field.deprecated}
+
+
 def test_every_configurable_field_is_exportable():
     """Every per-bank config field must be part of the template engine.
 
@@ -178,7 +184,7 @@ def test_every_configurable_field_is_exportable():
     decision to record here, in an explicit set with a reason, not an omission.
     """
     configurable = HindsightConfig.get_configurable_fields()
-    exportable = set(BankTemplateConfig.model_fields)
+    exportable = _current_template_fields()
     assert configurable == exportable, (
         f"bank config and the template engine have drifted:\n"
         f"  configurable but not exportable (add to BankTemplateConfig): "
@@ -194,7 +200,7 @@ def test_sample_values_cover_every_exportable_field():
     Guards the round-trip test below from quietly narrowing: without this, adding
     a template field leaves it untested and nothing says so.
     """
-    declared = set(BankTemplateConfig.model_fields)
+    declared = _current_template_fields()
     sampled = set(_SAMPLE_VALUES)
     assert declared == sampled, (
         f"_SAMPLE_VALUES is out of sync with BankTemplateConfig: "

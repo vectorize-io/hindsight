@@ -286,7 +286,7 @@ async def test_http_takes_tag_groups_as_json(api_client, scoped_bank):
         invalid = await api_client.get(f"/v1/default/banks/{bank_id}/entities", params={"tag_groups": bad})
         assert invalid.status_code == 400, bad
 
-    # Blank is no filter, as on the knowledge-base routes: the unfiltered list.
+    # Blank is no filter, as on the pages routes: the unfiltered list.
     blank = await api_client.get(f"/v1/default/banks/{bank_id}/entities", params={"tag_groups": ""})
     assert blank.status_code == 200
     assert blank.json()["total"] == 5

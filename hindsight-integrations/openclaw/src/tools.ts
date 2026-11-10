@@ -12,29 +12,49 @@ import { HindsightError, type HindsightClient } from "@vectorize-io/hindsight-cl
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
 import type { PluginConfig, PluginTool, PluginToolContext, PluginToolResult } from "./types.js";
 
-// The knowledge-base tools mirror Hindsight's own MCP tools of the same names
+// The page tools mirror Hindsight's own MCP tools of the same names
 // (hindsight_api/mcp_tools.py), on the session's bank. Deleting needs
-// allowKnowledgeDelete: it removes a whole subtree and cannot be undone.
+// allowPageDelete: it removes a whole subtree and cannot be undone.
 export const HINDSIGHT_TOOL_NAMES = [
   "hindsight_retain",
   "hindsight_recall",
   "hindsight_reflect",
-  "hindsight_get_knowledge_base_tree",
-  "hindsight_search_knowledge_base",
-  "hindsight_get_knowledge_page",
-  "hindsight_create_knowledge_folder",
-  "hindsight_create_knowledge_page",
-  "hindsight_update_knowledge_node",
-  "hindsight_delete_knowledge_node",
+  "hindsight_get_page_tree",
+  "hindsight_search_pages",
+  "hindsight_get_page",
+  "hindsight_create_page_folder",
+  "hindsight_create_page",
+  "hindsight_update_page_node",
+  "hindsight_delete_page_node",
 ];
+
+// The page tools were called "knowledge" tools before 1.3. OpenClaw lists every registered
+// tool to the model and checks tools.allow/deny itself, so the old names cannot live on as
+// hidden aliases; the plugin warns instead when the user's config still names one.
+// Remove in 2.x.
+export const RENAMED_TOOL_NAMES: Record<string, string> = {
+  hindsight_get_knowledge_base_tree: "hindsight_get_page_tree",
+  hindsight_search_knowledge_base: "hindsight_search_pages",
+  hindsight_get_knowledge_page: "hindsight_get_page",
+  hindsight_create_knowledge_folder: "hindsight_create_page_folder",
+  hindsight_create_knowledge_page: "hindsight_create_page",
+  hindsight_update_knowledge_node: "hindsight_update_page_node",
+  hindsight_delete_knowledge_node: "hindsight_delete_page_node",
+};
+
+/** Old tool names that appear anywhere in an OpenClaw config (tool allow/deny lists, agents). */
+export function oldToolNamesIn(config: unknown): string[] {
+  const raw = JSON.stringify(config ?? {});
+  return Object.keys(RENAMED_TOOL_NAMES).filter((old) => raw.includes(`"${old}"`));
+}
 
 // What a read-only (stateless) session must not get.
 const WRITE_TOOLS = new Set([
   "hindsight_retain",
-  "hindsight_create_knowledge_folder",
-  "hindsight_create_knowledge_page",
-  "hindsight_update_knowledge_node",
-  "hindsight_delete_knowledge_node",
+  "hindsight_create_page_folder",
+  "hindsight_create_page",
+  "hindsight_update_page_node",
+  "hindsight_delete_page_node",
 ]);
 
 /** What the tools need from the plugin; index.ts supplies the live implementations. */
@@ -239,12 +259,12 @@ export function createHindsightTools(
       },
     },
     {
-      name: "hindsight_get_knowledge_base_tree",
-      label: "Hindsight Knowledge Base Tree",
+      name: "hindsight_get_page_tree",
+      label: "Hindsight Page Tree",
       description:
-        "Browse the knowledge base as a nested tree of folders and pages. Each page is a " +
+        "Browse the bank's pages as a nested tree of folders and pages. Each page is a " +
         "living markdown document synthesized from memories; folders group them. Start here " +
-        "to discover what is documented, then read a page with hindsight_get_knowledge_page. " +
+        "to discover what is documented, then read a page with hindsight_get_page. " +
         "Pages report `is_stale`: true means something was written since the last refresh.",
       parameters: { type: "object", properties: {} },
       async execute(_id, _params, signal) {
@@ -258,12 +278,12 @@ export function createHindsightTools(
       },
     },
     {
-      name: "hindsight_search_knowledge_base",
-      label: "Hindsight Knowledge Base Search",
+      name: "hindsight_search_pages",
+      label: "Hindsight Page Search",
       description:
-        "Find knowledge pages by relevance (keyword + semantic search over page names and " +
+        "Find pages by relevance (keyword + semantic search over page names and " +
         "content), with a short snippet each. Read a hit in full with " +
-        "hindsight_get_knowledge_page. Use hindsight_recall to search raw memories instead.",
+        "hindsight_get_page. Use hindsight_recall to search raw memories instead.",
       parameters: {
         type: "object",
         required: ["query"],
@@ -291,12 +311,12 @@ export function createHindsightTools(
       },
     },
     {
-      name: "hindsight_get_knowledge_page",
-      label: "Hindsight Knowledge Page",
+      name: "hindsight_get_page",
+      label: "Hindsight Page",
       description:
-        "Read a knowledge page as a markdown document: YAML frontmatter (id, type, title, " +
+        "Read a page as a markdown document: YAML frontmatter (id, type, title, " +
         "description, tags, timestamp) followed by its synthesized body. Find page ids with " +
-        "hindsight_get_knowledge_base_tree or hindsight_search_knowledge_base.",
+        "hindsight_get_page_tree or hindsight_search_pages.",
       parameters: {
         type: "object",
         required: ["page_id"],
@@ -311,10 +331,9 @@ export function createHindsightTools(
       },
     },
     {
-      name: "hindsight_create_knowledge_folder",
-      label: "Hindsight Create Knowledge Folder",
-      description:
-        "Create a folder in the knowledge base. Folders group pages and hold no content.",
+      name: "hindsight_create_page_folder",
+      label: "Hindsight Create Page Folder",
+      description: "Create a page folder. Folders group pages and hold no content.",
       parameters: {
         type: "object",
         required: ["name"],
@@ -338,10 +357,10 @@ export function createHindsightTools(
       },
     },
     {
-      name: "hindsight_create_knowledge_page",
-      label: "Hindsight Create Knowledge Page",
+      name: "hindsight_create_page",
+      label: "Hindsight Create Page",
       description:
-        "Create a knowledge page: a living document Hindsight writes and keeps up to date " +
+        "Create a page: a living document Hindsight writes and keeps up to date " +
         "from memories, answering `source_query`. Content is generated in the background " +
         "after this returns.",
       parameters: {
@@ -383,10 +402,10 @@ export function createHindsightTools(
       },
     },
     {
-      name: "hindsight_update_knowledge_node",
-      label: "Hindsight Update Knowledge Node",
+      name: "hindsight_update_page_node",
+      label: "Hindsight Update Page Node",
       description:
-        "Rename or move a knowledge folder or page, or change a page's question, tags or " +
+        "Rename or move a page folder or page, or change a page's question, tags or " +
         "length. Only the fields you pass change. A new `source_query` rebuilds the page.",
       parameters: {
         type: "object",
@@ -431,10 +450,9 @@ export function createHindsightTools(
       },
     },
     {
-      name: "hindsight_delete_knowledge_node",
-      label: "Hindsight Delete Knowledge Node",
-      description:
-        "Delete a knowledge folder or page and everything under it. This cannot be undone.",
+      name: "hindsight_delete_page_node",
+      label: "Hindsight Delete Page Node",
+      description: "Delete a page folder or page and everything under it. This cannot be undone.",
       parameters: {
         type: "object",
         required: ["node_id"],
@@ -456,6 +474,6 @@ export function createHindsightTools(
   return tools.filter(
     (tool) =>
       !(readOnly && WRITE_TOOLS.has(tool.name)) &&
-      (tool.name !== "hindsight_delete_knowledge_node" || config.allowKnowledgeDelete === true)
+      (tool.name !== "hindsight_delete_page_node" || config.allowPageDelete === true)
   );
 }

@@ -12,7 +12,7 @@ const inRepo = (commonDir: string, bare = false) =>
   ({ status: "resolved", commonDir, bare }) as const;
 
 /**
- * #4146: the seeded knowledge pages carry a scope sentence naming the repository they are about,
+ * #4146: the seeded pages carry a scope sentence naming the repository they are about,
  * and that sentence is PATCHed onto pages that outlive the session. Deriving it from the session's
  * cwd made it a property of whoever ran last: on a bank several repositories share, every session
  * start rewrote all five pages to its own repo and the previous repo's synthesis was thrown away.

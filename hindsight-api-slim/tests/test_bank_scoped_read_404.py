@@ -29,6 +29,8 @@ _BANK_PREFIX = "/v1/default/banks/{bank_id}"
 
 # Query params without which a route is a 422 before it ever reaches the handler.
 _REQUIRED_PARAMS: dict[str, dict[str, str]] = {
+    "/pages/search": {"q": "anything"},
+    # Deprecated path of /pages/search, removed in 2.x.
     "/knowledge-base/search": {"q": "anything"},
 }
 

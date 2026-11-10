@@ -28,7 +28,7 @@ together. The incident behind the minimum-acceptance question: asked for the
 extrapolated backwards from the later growth and reported a specific number as
 "reliably deduced". Nothing in the bank said it.
 
-Same two assertions as the knowledge-page suite, in the same order: the trap
+Same two assertions as the page suite, in the same order: the trap
 (the answer asserts the specific wrong thing) before correctness (the answer is
 incomplete). A failure also says whether the gold evidence reached the model,
 which decides where the fix goes.
@@ -357,7 +357,7 @@ MISSION = (
     "3. A later commit that changes the behaviour without deciding anything (a cleanup, a simplification, "
     "a perf tweak, a refactor) does NOT replace it: say plainly that the decision is still the rule, and "
     "report that commit as a change that departed from it.\n"
-    "4. Knowledge pages and observations are summaries: they can merge, misread or drop a decision's exact "
+    "4. Pages and observations are summaries: they can merge, misread or drop a decision's exact "
     "values and exceptions. Before reporting a rule, recall the conversation or commit message that "
     "states it, and report the rule from there."
 )

@@ -13,7 +13,7 @@
  *
  * Everything behind those four seams is the harness-agnostic RuntimeCore, exactly as for v1, so
  * opencode2 gets the same surface: per-turn recall + attribution/user-feedback injection, the
- * hindsight_* knowledge tools, cold-check auto-seed and rich write-back.
+ * hindsight_* page tools, cold-check auto-seed and rich write-back.
  *
  * Two deliberate differences from the v1 adapter, both forced by the host:
  *
@@ -47,7 +47,7 @@ import { resolveHostMemory } from "../core/host-client";
 import { describeError } from "../core/log";
 import { diag } from "../core/diag";
 import { RuntimeCore } from "../core/runtime";
-import type { ToolSpec } from "../core/knowledge-tools";
+import type { ToolSpec } from "../core/page-tools";
 import { readOpencode2Messages, type Oc2Message } from "../core/transcript-opencode2";
 import { readPackagedSkill } from "../core/skill-sync";
 import { resolveProjectDirectory } from "./plugin-entry";
@@ -162,7 +162,7 @@ export async function wireOpencode2Runtime(
     readOpencode2Messages((await ctx.session.context({ sessionID })) as Oc2Message[])
   );
 
-  // Register the full hindsight_* knowledge + recall suite natively (no MCP server needed).
+  // Register the full hindsight_* page + recall suite natively (no MCP server needed).
   await ctx.tool.transform((draft) => {
     for (const spec of core.toolSpecs()) draft.add(toOpencode2Tool(spec));
   });
@@ -174,7 +174,7 @@ export async function wireOpencode2Runtime(
   const ownSessions = new Set<string>();
 
   // Each user turn: recall on the prompt, then add this turn's injection (recalled memories +
-  // attribution/user-feedback framing, plus the knowledge preamble on turn 1 and the roster refresh
+  // attribution/user-feedback framing, plus the pages preamble on turn 1 and the roster refresh
   // on cadence) as a synthetic message — a stored, model-facing user message the host lands just
   // before the prompt (verified against 0.0.0-beta-18743), and that `resume: false` keeps from
   // starting a run of its own. Stored, it stays in the turn it was made for and every later request

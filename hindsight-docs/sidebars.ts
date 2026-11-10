@@ -45,8 +45,8 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'developer/knowledge-pages',
-          label: 'Knowledge Pages',
+          id: 'developer/pages',
+          label: 'Pages',
           customProps: { icon: 'lu-book-text' },
         },
         {
@@ -118,8 +118,8 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'developer/api/knowledge-pages',
-          label: 'Knowledge Pages',
+          id: 'developer/api/pages',
+          label: 'Pages',
           customProps: { icon: 'lu-book-text' },
         },
         {

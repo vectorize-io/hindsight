@@ -158,7 +158,7 @@ def _rewrote_the_query(llm) -> bool:
     return any(anchor_for("reflect_round_query") in call.all_text for call in llm.calls)
 
 
-async def test_a_knowledge_page_refresh_follows_its_own_switch(typesafe_client, llm, stubs, decision_bank):
+async def test_a_page_refresh_follows_its_own_switch(typesafe_client, llm, stubs, decision_bank):
     """``mental_model_refresh_use_decision_model``, not reflect's switch, decides a refresh's path.
 
     Run as dry runs: they execute in the API process, the one with the decision model (this

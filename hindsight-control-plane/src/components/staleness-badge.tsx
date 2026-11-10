@@ -9,7 +9,7 @@ type TriggerLike = {
 };
 
 /**
- * The one staleness indicator, shared by knowledge pages and mental models.
+ * The one staleness indicator, shared by pages and mental models.
  *
  * They are the same object — a page is a mental model with a place in the tree —
  * so they get the same answer rendered the same way, rather than a badge here and

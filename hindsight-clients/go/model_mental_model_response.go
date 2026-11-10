@@ -34,6 +34,7 @@ type MentalModelResponse struct {
 	LastRefreshFailedAt NullableString `json:"last_refresh_failed_at,omitempty"`
 	LastFullRefreshedAt NullableString `json:"last_full_refreshed_at,omitempty"`
 	CreatedAt NullableString `json:"created_at,omitempty"`
+	IsPage NullableBool `json:"is_page,omitempty"`
 	IsKnowledgePage NullableBool `json:"is_knowledge_page,omitempty"`
 	ReflectResponse map[string]interface{} `json:"reflect_response,omitempty"`
 	IsStale NullableBool `json:"is_stale,omitempty"`
@@ -543,6 +544,48 @@ func (o *MentalModelResponse) UnsetCreatedAt() {
 	o.CreatedAt.Unset()
 }
 
+// GetIsPage returns the IsPage field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *MentalModelResponse) GetIsPage() bool {
+	if o == nil || IsNil(o.IsPage.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.IsPage.Get()
+}
+
+// GetIsPageOk returns a tuple with the IsPage field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *MentalModelResponse) GetIsPageOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.IsPage.Get(), o.IsPage.IsSet()
+}
+
+// HasIsPage returns a boolean if a field has been set.
+func (o *MentalModelResponse) HasIsPage() bool {
+	if o != nil && o.IsPage.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetIsPage gets a reference to the given NullableBool and assigns it to the IsPage field.
+func (o *MentalModelResponse) SetIsPage(v bool) {
+	o.IsPage.Set(&v)
+}
+// SetIsPageNil sets the value for IsPage to be an explicit nil
+func (o *MentalModelResponse) SetIsPageNil() {
+	o.IsPage.Set(nil)
+}
+
+// UnsetIsPage ensures that no value is present for IsPage, not even an explicit nil
+func (o *MentalModelResponse) UnsetIsPage() {
+	o.IsPage.Unset()
+}
+
 // GetIsKnowledgePage returns the IsKnowledgePage field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *MentalModelResponse) GetIsKnowledgePage() bool {
 	if o == nil || IsNil(o.IsKnowledgePage.Get()) {
@@ -702,6 +745,9 @@ func (o MentalModelResponse) ToMap() (map[string]interface{}, error) {
 	}
 	if o.CreatedAt.IsSet() {
 		toSerialize["created_at"] = o.CreatedAt.Get()
+	}
+	if o.IsPage.IsSet() {
+		toSerialize["is_page"] = o.IsPage.Get()
 	}
 	if o.IsKnowledgePage.IsSet() {
 		toSerialize["is_knowledge_page"] = o.IsKnowledgePage.Get()

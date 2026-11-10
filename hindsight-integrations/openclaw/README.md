@@ -108,7 +108,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `excludeProviders`         | `["heartbeat"]`                | Message providers to skip for recall/retain (e.g. `heartbeat`, `slack`, `telegram`, `discord`)                                                                                                                                                                                                                   |
 | `autoRecall`               | `true`                         | Auto-inject memories before each turn. Set to `false` when the agent has its own recall tool.                                                                                                                                                                                                                    |
 | `memoryMode`               | `"hybrid"`                     | `hybrid`: auto-recall plus the `hindsight_retain` / `hindsight_recall` / `hindsight_reflect` tools. `context`: auto-recall only. `tools`: tools only, no auto-recall. See [Agent tools](#agent-tools).                                                                                                           |
-| `allowKnowledgeDelete`     | `false`                        | Offer `hindsight_delete_knowledge_node`, which deletes a knowledge folder or page and everything under it. Cannot be undone. See [Agent tools](#agent-tools).                                                                                                                                                    |
+| `allowPageDelete`          | `false`                        | Offer `hindsight_delete_page_node`, which deletes a page folder or page and everything under it. Cannot be undone. The old name `allowKnowledgeDelete` still works. See [Agent tools](#agent-tools).                                                                                                             |
 | `autoRetain`               | `true`                         | Auto-retain conversations after each turn                                                                                                                                                                                                                                                                        |
 | `retainRoles`              | `["user", "assistant"]`        | Which message roles to retain. Options: `user`, `assistant`, `system`, `tool`                                                                                                                                                                                                                                    |
 | `retainFormat`             | `"json"`                       | Serialization format for retained conversation content. `"json"` emits a structured array of `{role, content}` messages (matches Claude Code). `"text"` emits legacy `[role: x] … [x:end]` markers.                                                                                                              |
@@ -249,15 +249,17 @@ The plugin gives the agent the same three memory tools the Hermes integration do
 - `hindsight_recall` searches memory with the same settings as auto-recall (`recallBudget`, `recallMaxTokens`, `recallTypes`, `preferObservations`, `recallMinScores`).
 - `hindsight_reflect` answers a question by reasoning over the memories.
 
-It also gives the agent Hindsight's knowledge-base tools, the same ones Hindsight's MCP server offers:
+It also gives the agent Hindsight's page tools, the same ones Hindsight's MCP server offers:
 
-- `hindsight_get_knowledge_base_tree`, `hindsight_search_knowledge_base` and `hindsight_get_knowledge_page` browse, search and read the knowledge pages.
-- `hindsight_create_knowledge_folder`, `hindsight_create_knowledge_page` and `hindsight_update_knowledge_node` organise them and create new pages, which Hindsight writes and keeps up to date from the memories.
-- `hindsight_delete_knowledge_node` deletes a folder or page and everything under it. It cannot be undone, so it is only offered with `allowKnowledgeDelete: true`.
+- `hindsight_get_page_tree`, `hindsight_search_pages` and `hindsight_get_page` browse, search and read the bank's pages.
+- `hindsight_create_page_folder`, `hindsight_create_page` and `hindsight_update_page_node` organise them and create new pages, which Hindsight writes and keeps up to date from the memories.
+- `hindsight_delete_page_node` deletes a folder or page and everything under it. It cannot be undone, so it is only offered with `allowPageDelete: true`.
+
+Before the rename these were `hindsight_get_knowledge_base_tree`, `hindsight_search_knowledge_base`, `hindsight_get_knowledge_page`, `hindsight_create_knowledge_folder`, `hindsight_create_knowledge_page`, `hindsight_update_knowledge_node` and `hindsight_delete_knowledge_node`. A tool allow-list in your OpenClaw config that names an old tool needs the new name; the plugin logs a warning at startup for each old name it finds there.
 
 No tool takes a bank. Each call uses the bank this session's auto-recall and auto-retain use, so `agentBankMap` and per-agent, per-channel and per-user banks all apply, and an agent can't reach another agent's or user's memory. A session that auto-recall would skip (for example one with no stable sender when banks are keyed by user) gets an error instead of a guessed bank.
 
-The session filters apply too: a session matching `ignoreSessionPatterns` gets no tools, and one matching `statelessSessionPatterns` gets no tools while `skipStatelessSessions` is on, and only the reading tools (`hindsight_recall`, `hindsight_reflect` and the knowledge-base reads) when it is off.
+The session filters apply too: a session matching `ignoreSessionPatterns` gets no tools, and one matching `statelessSessionPatterns` gets no tools while `skipStatelessSessions` is on, and only the reading tools (`hindsight_recall`, `hindsight_reflect` and the page reads) when it is off.
 
 `memoryMode` decides what the agent gets, like Hermes's `memory_mode`:
 

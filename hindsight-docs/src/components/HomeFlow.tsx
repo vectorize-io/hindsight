@@ -165,7 +165,7 @@ await hs.reflect(bank, "should I suggest Vue?")`}
           <div className={styles.bankItems}>
             <span>Facts &amp; entities</span>
             <span>Observations</span>
-            <span>Knowledge pages</span>
+            <span>Pages</span>
           </div>
           <span className={styles.bankNote}>One per user or agent, fully isolated</span>
         </div>

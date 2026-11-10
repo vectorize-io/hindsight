@@ -21,13 +21,13 @@
       "hindsight_retain",
       "hindsight_recall",
       "hindsight_reflect",
-      "hindsight_get_knowledge_base_tree",
-      "hindsight_search_knowledge_base",
-      "hindsight_get_knowledge_page",
-      "hindsight_create_knowledge_folder",
-      "hindsight_create_knowledge_page",
-      "hindsight_update_knowledge_node",
-      "hindsight_delete_knowledge_node"
+      "hindsight_get_page_tree",
+      "hindsight_search_pages",
+      "hindsight_get_page",
+      "hindsight_create_page_folder",
+      "hindsight_create_page",
+      "hindsight_update_page_node",
+      "hindsight_delete_page_node"
     ]
   },
   "configSchema": {
@@ -173,13 +173,17 @@
       "memoryMode": {
         "type": "string",
         "enum": ["hybrid", "context", "tools"],
-        "description": "Same as Hermes's memory_mode. 'hybrid': auto-recall plus the agent tools (hindsight_retain, hindsight_recall, hindsight_reflect and the knowledge-base tools); 'context': auto-recall only, no tools; 'tools': the tools only, no auto-recall. The tools always use the agent's own bank.",
+        "description": "Same as Hermes's memory_mode. 'hybrid': auto-recall plus the agent tools (hindsight_retain, hindsight_recall, hindsight_reflect and the page tools); 'context': auto-recall only, no tools; 'tools': the tools only, no auto-recall. The tools always use the agent's own bank.",
         "default": "hybrid"
+      },
+      "allowPageDelete": {
+        "type": "boolean",
+        "description": "Offer hindsight_delete_page_node, which deletes a page folder or page and everything under it. Cannot be undone. Off by default.",
+        "default": false
       },
       "allowKnowledgeDelete": {
         "type": "boolean",
-        "description": "Offer hindsight_delete_knowledge_node, which deletes a knowledge folder or page and everything under it. Cannot be undone. Off by default.",
-        "default": false
+        "description": "Deprecated: the old name of allowPageDelete, still read when allowPageDelete is unset. Remove in 2.x."
       },
       "excludeProviders": {
         "type": "array",
@@ -509,9 +513,13 @@
       "label": "Memory Mode",
       "placeholder": "hybrid (default), context (no tools), or tools (no auto-recall)"
     },
-    "allowKnowledgeDelete": {
-      "label": "Allow Knowledge Delete",
+    "allowPageDelete": {
+      "label": "Allow Page Delete",
       "placeholder": "false (default)"
+    },
+    "allowKnowledgeDelete": {
+      "label": "Allow Page Delete (old name)",
+      "placeholder": "deprecated, use allowPageDelete"
     },
     "excludeProviders": {
       "label": "Excluded Providers",
@@ -608,7 +616,7 @@
       "placeholder": "false (default) — enable to log per-hook latency"
     },
     "enableKnowledgeTools": {
-      "label": "Enable Knowledge Tools",
+      "label": "Deprecated (ignored)",
       "placeholder": "deprecated, ignored"
     },
     "retainQueuePath": {

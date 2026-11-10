@@ -48,7 +48,7 @@ on:
         type: string
         default: "1.0"
       system_evals_skip:
-        description: "Skip the system-evals quality job (knowledge pages, reflect answers, retain language, retain fidelity)"
+        description: "Skip the system-evals quality job (pages, reflect answers, retain language, retain fidelity)"
         type: boolean
         default: false
       system_evals_mode:
@@ -334,7 +334,7 @@ jobs:
       run: ./scripts/benchmarks/publish-obs-results.sh hindsight-dev/obs-results.json
 
   system-evals:
-    # Knowledge-page convergence, reflect answers and retain language, graded by an
+    # Page convergence, reflect answers and retain language, graded by an
     # independent judge, plus ranked retrieval (nDCG@k / Recall@k) scored against
     # BEIR's own labels rather than a judge. Blackbox: a real
     # hindsight-api process driven only through the published Python client, the

@@ -1,4 +1,4 @@
-//! Persistent sync state for a mount. Tracks which file mirrors each knowledge
+//! Persistent sync state for a mount. Tracks which file mirrors each
 //! page (keyed by its relative path) and a content hash so unchanged pages are
 //! not rewritten (keeps mtimes stable for editors, watchers, and `ls -la`),
 //! plus the folder directories created, so removed folders are pruned.

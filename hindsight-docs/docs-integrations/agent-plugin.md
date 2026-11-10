@@ -58,7 +58,7 @@ Via the MCP server, the agent gets Hindsight's full memory surface. The three it
 | `retain` | After learning a durable, reusable fact | Stores the fact for future sessions |
 | `reflect` | When a lookup is too shallow and you need synthesized reasoning | Disposition-aware reasoning over everything remembered |
 
-Additional tools (knowledge pages, mental models, documents, tags) are exposed too — see the [MCP Server reference](/developer/mcp-server).
+Additional tools (pages, mental models, documents, tags) are exposed too — see the [MCP Server reference](/developer/mcp-server).
 
 ## Configuration
 

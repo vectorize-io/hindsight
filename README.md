@@ -34,7 +34,7 @@ It eliminates the shortcomings of alternative techniques such as RAG and knowled
 - [Memory Performance & Accuracy](#memory-performance--accuracy)
 - [Quick Start](#quick-start) — [server](#1-start-a-server) · [clients](#2-connect-a-client) · [platforms](#supported-platforms) · [embedded](#python-embedded-no-server-required)
 - [Adding Hindsight to Your Agent](#adding-hindsight-to-your-agent) — [LLM Wrapper](#llm-wrapper-2-lines-of-code) · [integrations](#integrations) · [coding agents](#coding-agents) · [MCP](#mcp-server)
-- [Core Concepts](#core-concepts) — [memory types](#memory-types) · [retain / recall / reflect](#the-three-operations) · [observations](#observations) · [mental models & knowledge pages](#mental-models--knowledge-pages) · [decision models](#decision-models) · [banks](#memory-banks)
+- [Core Concepts](#core-concepts) — [memory types](#memory-types) · [retain / recall / reflect](#the-three-operations) · [observations](#observations) · [mental models & pages](#mental-models--pages) · [decision models](#decision-models) · [banks](#memory-banks)
 - [Use Cases](#use-cases)
 - [Running in Production](#running-in-production)
 - [Resources](#resources)
@@ -251,7 +251,7 @@ If you need explicit control over *when* memories are stored and recalled, use t
 
 ### Coding Agents
 
-One package gives CLI coding agents long-term project memory: a per-repo bank built automatically from git history and past sessions, injected into the agent as it starts working, plus curated knowledge pages covering architecture, conventions and in-flight work.
+One package gives CLI coding agents long-term project memory: a per-repo bank built automatically from git history and past sessions, injected into the agent as it starts working, plus curated pages covering architecture, conventions and in-flight work.
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install all          # every detected agent, wired natively
@@ -353,21 +353,21 @@ Retained facts don't stay a flat pile. In the background, Hindsight consolidates
 
 [Observations docs →](https://hindsight.vectorize.io/developer/observations)
 
-### Mental Models & Knowledge Pages
+### Mental Models & Pages
 
 A **mental model** is a standing answer to a question about a bank ("What are this user's preferences?"). You define the question once; Hindsight writes the answer, stores it, and rewrites it in the background as the bank learns more. Reading one is a database read — no retrieval, no LLM call — so an agent can boot with a page of settled knowledge instead of rediscovering it every session.
 
-**Knowledge pages** are mental models with the mechanics hidden: living documents a bank writes about itself, organized in folders like a wiki, searchable, and projectable onto disk as ordinary markdown. Supply a name and a question; every other decision is a default you can override.
+**Pages** are mental models with the mechanics hidden: living documents a bank writes about itself, organized in folders like a wiki, searchable, and projectable onto disk as ordinary markdown. Supply a name and a question; every other decision is a default you can override.
 
-[Mental models →](https://hindsight.vectorize.io/developer/mental-models) · [Knowledge pages →](https://hindsight.vectorize.io/developer/knowledge-pages)
+[Mental models →](https://hindsight.vectorize.io/developer/mental-models) · [Pages →](https://hindsight.vectorize.io/developer/pages)
 
 ### Decision Models
 
-Most of what a memory system does between storing and recalling is small judgments: is this fact new, which of these memories matter for the question, could this change a knowledge page. A **decision model** answers those directly, with a typed answer instead of text to parse, so Hindsight sends far fewer of them to your LLM. Turn it on and recall, consolidation, reflect and knowledge pages use it.
+Most of what a memory system does between storing and recalling is small judgments: is this fact new, which of these memories matter for the question, could this change a page. A **decision model** answers those directly, with a typed answer instead of text to parse, so Hindsight sends far fewer of them to your LLM. Turn it on and recall, consolidation, reflect and pages use it.
 
 | Model | What it does | Size | License |
 |---|---|---|---|
-| [`hs-decide-1-flash`](https://huggingface.co/hindsight-ai/hs-decide-1-flash) | Decision model: the judgments inside recall, consolidation, reflect and knowledge pages | 0.8B | Apache 2.0 |
+| [`hs-decide-1-flash`](https://huggingface.co/hindsight-ai/hs-decide-1-flash) | Decision model: the judgments inside recall, consolidation, reflect and pages | 0.8B | Apache 2.0 |
 | [`hs-rerank-1`](https://huggingface.co/hindsight-ai/hs-rerank-1) | Reranker: orders recalled memories by relevance | 114M | MIT |
 | [`hs-embed-1`](https://huggingface.co/hindsight-ai/hs-embed-1) | Embeddings: 384-dimensional vectors for search | 112M | MIT |
 

@@ -1,6 +1,6 @@
-"""Markdown rendering for knowledge pages.
+"""Markdown rendering for pages.
 
-Knowledge pages render as *read-only* markdown documents over the existing mental
+Pages render as *read-only* markdown documents over the existing mental
 models: each mental model becomes a markdown body with a YAML frontmatter block
 (``type`` required; ``title``/``description``/``tags``/``timestamp`` optional).
 
@@ -17,7 +17,7 @@ from typing import Any
 
 # Every page carries exactly one ``type`` frontmatter field. We default to this
 # when a page does not declare one via a ``type:<x>`` tag.
-DEFAULT_PAGE_TYPE = "knowledge-page"
+DEFAULT_PAGE_TYPE = "page"
 
 #: What a reader is told when a page has no body yet. A page with nothing under its
 #: title is a state to act on, and blankness does not say so — an agent reads it as a
@@ -145,8 +145,8 @@ def render_index(nodes: list[dict[str, Any]]) -> str:
     ``nodes`` is the flat folder/page list (each with ``id``, ``kind``, ``name``,
     ``parent_id``); folders nest their children, pages link to their ``.md``.
     """
-    fm = render_frontmatter({"type": "index", "title": "Knowledge base"})
-    lines = [fm, "", "# Knowledge base", ""]
+    fm = render_frontmatter({"type": "index", "title": "Pages"})
+    lines = [fm, "", "# Pages", ""]
 
     children: dict[Any, list[dict[str, Any]]] = {}
     for node in nodes:
@@ -166,7 +166,7 @@ def render_index(nodes: list[dict[str, Any]]) -> str:
 
     walk(None, 0)
     if len(lines) == 4:
-        lines.append("_No knowledge pages yet._")
+        lines.append("_No pages yet._")
     return "\n".join(lines) + "\n"
 
 

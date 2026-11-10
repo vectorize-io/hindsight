@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Native TS MCP (stdio) server exposing the `hindsight_*` knowledge-page + recall + capture tools.
+ * Native TS MCP (stdio) server exposing the `hindsight_*` page + recall + capture tools.
  *
  * Bank resolution MUST mirror the hooks exactly (`resolveHostMemory`, i.e. loadConfig +
- * deriveBankId + the banks section, harness from the REQUIRED HINDSIGHT_MCP_HARNESS) so knowledge
+ * deriveBankId + the banks section, harness from the REQUIRED HINDSIGHT_MCP_HARNESS) so
  * pages, recall, and retain all land in ONE per-repo bank — this is
  * why this is a native TS server and not a reuse of the Python MCP (whose bank derivation
  * differs). MCP servers usually launch with the project dir as cwd; `HINDSIGHT_MCP_PROJECT_CWD`
@@ -19,7 +19,7 @@ import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { type Config } from "./core/config";
 import { resolveHostMemory } from "./core/host-client";
 import { HindsightClient } from "./core/hindsight";
-import { buildKnowledgeTools, type ToolSpec } from "./core/knowledge-tools";
+import { buildPageTools, type ToolSpec } from "./core/page-tools";
 import { buildPageTrigger } from "./core/missions";
 import { buildRetainStamp } from "./core/retain-stamp";
 
@@ -39,7 +39,7 @@ export function selectTools(
   const harness = opts.harness ?? cfg.harness;
   return cfg.disabled
     ? []
-    : buildKnowledgeTools(client, bankId, {
+    : buildPageTools(client, bankId, {
         repoDir: cwd,
         harness,
         pageTrigger: buildPageTrigger(cfg),

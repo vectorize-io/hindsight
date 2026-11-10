@@ -165,7 +165,7 @@ async def tool_search_mental_models(
     Returns:
         Dict with matching mental models including content and freshness info
     """
-    from ..memory_engine import _knowledge_snippet, _mental_model_stale_scope_from_row
+    from ..memory_engine import _mental_model_stale_scope_from_row, _page_snippet
     from ..search.tags import build_tag_groups_where_clause, build_tags_where_clause
 
     # Build filters dynamically
@@ -207,7 +207,7 @@ async def tool_search_mental_models(
 
     store = get_memories()
     if store.store_owned_for(bank_id):
-        matches = await store.search_knowledge_pages_semantic(
+        matches = await store.search_pages_semantic(
             bank_id,
             embedding=list(query_embedding),
             limit=max_results,
@@ -289,7 +289,7 @@ async def tool_search_mental_models(
             {
                 "id": str(row["id"]),
                 "name": row["name"],
-                # Past the budget, a snippet like the knowledge-page search this mirrors:
+                # Past the budget, a snippet like the page search this mirrors:
                 # five unbounded whole pages measured 8.7-19k tokens and were re-sent on
                 # every later turn of the loop, the largest single item in a reflect's
                 # floor (#4533). The model reads the ones it wants with
@@ -297,11 +297,11 @@ async def tool_search_mental_models(
                 **(
                     {"content": content}
                     if whole
-                    # ``_knowledge_snippet`` so a page with no body reads as
+                    # ``_page_snippet`` so a page with no body reads as
                     # empty-on-purpose rather than as a blank match — the same
-                    # wording the knowledge-page search gives for the same state.
+                    # wording the page search gives for the same state.
                     else {
-                        "snippet": _knowledge_snippet(content),
+                        "snippet": _page_snippet(content),
                         "content_chars": len(content),
                     }
                 ),

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /**
- * Downloading a knowledge page or mental model (#5457): Markdown is a file built
+ * Downloading a page or mental model (#5457): Markdown is a file built
  * from the page; PDF is the page rendered into a bare window and handed to the
  * browser's print dialog.
  */

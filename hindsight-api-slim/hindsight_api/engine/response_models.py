@@ -928,7 +928,7 @@ class ReflectDefaultOptions(BaseModel):
     value -> bank ``reflect_default_options`` -> the shipped default.
 
     A mental-model refresh does NOT read this. It is its own operation with its
-    own per-bank default (``knowledge_page_default_trigger``), so the same-named
+    own per-bank default (``page_default_trigger``), so the same-named
     fields are declared on ``MentalModelTrigger`` instead — see there.
     """
 
@@ -999,7 +999,7 @@ class MentalModelTrigger(BaseModel):
     whole document, so it wants its own retrieval and iteration settings. This
     trigger is therefore the only source for them — a bank's
     ``reflect_default_options`` deliberately does not reach a refresh. The
-    per-bank default for these fields is ``knowledge_page_default_trigger``,
+    per-bank default for these fields is ``page_default_trigger``,
     which is merged over this same shape when a page is created.
     """
 

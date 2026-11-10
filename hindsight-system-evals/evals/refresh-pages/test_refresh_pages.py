@@ -1,4 +1,4 @@
-"""Refresh pages: a knowledge page must stay right as the bank changes under it.
+"""Refresh pages: a page must stay right as the bank changes under it.
 
 Each case has a ``category`` and its test id is ``<category>/<case id>``, so
 ``-k "update/"`` runs one group and ``eval-table`` compares models per group:
@@ -21,7 +21,7 @@ Each case has a ``category`` and its test id is ``<category>/<case id>``, so
 The benchmarks at the bottom (``test_refresh_pages_benchmark_cost*``) are not cases:
 they record what a refresh spends, on a frozen bank.
 
-Convergence — A knowledge page must converge on the right answer as data arrives.
+Convergence — A page must converge on the right answer as data arrives.
 
 This is the eval that motivated the package. A page is created with a source
 query and then accumulates: each ingest triggers a delta refresh that edits what
@@ -87,7 +87,7 @@ The trap is the stale restatement; ``correct`` also requires that the gaps the
 new notice did NOT fill are still recorded, because "rewrite every block that
 mentions the pump" would pass the trap and erase them.
 
-Refresh cost — How many tokens a knowledge-page refresh spends, and on what.
+Refresh cost — How many tokens a page refresh spends, and on what.
 
 A baseline, not a gate. Every other suite here grades what a refresh wrote; this
 one records what writing it cost — each LLM call's input, cached and output
@@ -175,7 +175,7 @@ async def _run(
         f"{question_id}: the page is empty after {len(outcome.waves)} waves — sizes {[w.chars for w in outcome.waves]}"
     )
 
-    context = f"This is a knowledge page built to answer: {question.question}"
+    context = f"This is a page built to answer: {question.question}"
     verdict = await evaluate(outcome.final_content, question.answer_criteria, context=context)
     outcome.correct, outcome.correct_reason = verdict.meets_criteria, verdict.reasoning
 
@@ -279,7 +279,7 @@ async def _run_delta(client: Hindsight, bank_id: str, settled: SettleFn, case: D
     finally:
         # Also when a refresh failed and raised: that is the run whose replies matter.
         await _dump_llm_calls(client, bank_id, case_id)
-    context = f"This is a knowledge page built to answer: {question.question}"
+    context = f"This is a page built to answer: {question.question}"
     where = f"bank {outcome.bank_id}, page {outcome.page_id}"
 
     # Without the old value on the wave-1 page the update has nothing to replace,
@@ -532,7 +532,7 @@ async def _run_consistency(client: Hindsight, bank_id: str, settled: SettleFn, q
     outcome = await build_page(client, bank_id, question, waves, settled)
     assert outcome.final_content.strip(), f"{case_id}: the page is empty — bank {bank_id}"
 
-    context = f"This is a knowledge page built to answer: {question.question}"
+    context = f"This is a page built to answer: {question.question}"
     trap = await evaluate(
         outcome.final_content,
         f"The page asserts anywhere — a summary, a source note or an information-gap line "
@@ -703,7 +703,7 @@ async def test_refresh_pages_follows_decision_model(target: Target, tmp_path: Pa
             bank = f"syseval-{case.id}"
             await client.aretain_batch(bank_id=bank, items=[{"content": text} for text in case.facts])
             await wait_until_settled(client, bank)
-            created = await client.knowledge_base.create_knowledge_page(
+            created = await client.pages.create_page(
                 bank,
                 {
                     "name": f"eval {case.id}",

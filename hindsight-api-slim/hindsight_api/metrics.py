@@ -1171,7 +1171,7 @@ class MetricsCollector(MetricsCollectorBase):
         queue depth and backlog can be trended and alerted on instead of only
         polled per-bank over HTTP. The two motivating questions both come for
         free here: "is the worker keeping up?" (async-op queue) and "is the
-        knowledge base caught up?" (consolidation backlog) — including the
+        pages caught up?" (consolidation backlog) — including the
         ``processing`` state, which is the only signal that surfaces a hung
         operation stuck holding a worker slot.
 

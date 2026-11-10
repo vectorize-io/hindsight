@@ -38,7 +38,7 @@ DESTRUCTIVE_ACTIONS: frozenset[str] = frozenset(
         "delete_document",
         "delete_mental_model",
         "clear_mental_model",
-        "delete_knowledge_node",
+        "delete_page_node",
         "delete_directive",
         "delete_bank_alias",
         "delete_webhook",

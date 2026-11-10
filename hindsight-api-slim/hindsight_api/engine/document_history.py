@@ -47,7 +47,7 @@ MAX_IDS = 100
 
 class DocumentEventKind(StrEnum):
     """What a change was. A named enum, not a Literal: inline enums are named after their field by
-    the generated Rust client, and ``kind`` already names the knowledge-base node enum there."""
+    the generated Rust client, and ``kind`` already names the page node enum there."""
 
     RETAIN = "retain"
     APPEND = "append"

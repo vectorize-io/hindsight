@@ -15,7 +15,7 @@ import (
 	"fmt"
 )
 
-// DocumentEventKind What a change was. A named enum, not a Literal: inline enums are named after their field by the generated Rust client, and ``kind`` already names the knowledge-base node enum there.
+// DocumentEventKind What a change was. A named enum, not a Literal: inline enums are named after their field by the generated Rust client, and ``kind`` already names the page node enum there.
 type DocumentEventKind string
 
 // List of DocumentEventKind

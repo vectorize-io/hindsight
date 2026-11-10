@@ -114,16 +114,16 @@ async def _create_mental_model(memory: MemoryEngine, bank_id: str, rc: RequestCo
     await memory.create_mental_model(bank_id, "Prefs", "what does the user prefer?", "Tea.", request_context=rc)
 
 
-async def _create_knowledge_folder(memory: MemoryEngine, bank_id: str, rc: RequestContext) -> None:
-    await memory.create_knowledge_folder(bank_id, "Notes", request_context=rc)
+async def _create_page_folder(memory: MemoryEngine, bank_id: str, rc: RequestContext) -> None:
+    await memory.create_page_folder(bank_id, "Notes", request_context=rc)
 
 
-async def _create_knowledge_page(memory: MemoryEngine, bank_id: str, rc: RequestContext) -> None:
-    await memory.create_knowledge_page(bank_id, "Prefs", "what does the user prefer?", "Tea.", request_context=rc)
+async def _create_page(memory: MemoryEngine, bank_id: str, rc: RequestContext) -> None:
+    await memory.create_page(bank_id, "Prefs", "what does the user prefer?", "Tea.", request_context=rc)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("create", [_create_mental_model, _create_knowledge_folder, _create_knowledge_page])
+@pytest.mark.parametrize("create", [_create_mental_model, _create_page_folder, _create_page])
 async def test_write_that_creates_its_bank_retries_transient_deadlock(
     memory: MemoryEngine, request_context: RequestContext, monkeypatch, create
 ):

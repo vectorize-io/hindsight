@@ -7,7 +7,7 @@ import {
   codingBankManifest,
   DEFAULT_PAGE_TRIGGER_CRON,
   expandCronHash,
-  KNOWLEDGE_LABELS,
+  PAGE_LABELS,
   PAGE_NAMES,
   pagesFor,
   pageScopeRule,
@@ -20,7 +20,7 @@ import {
 } from "./missions";
 
 /**
- * The page trigger is what a project's knowledge pages COST to keep current: auto-refresh means one
+ * The page trigger is what a project's pages COST to keep current: auto-refresh means one
  * LLM synthesis per page per consolidation, which on a few auto-surveyed repos is real money
  * (#3506). It was hardcoded, so the only workaround was patching dist/ or fixing pages up after
  * the fact.
@@ -65,8 +65,8 @@ describe("buildPageTrigger", () => {
   });
 
   /**
-   * HOW a page refreshes belongs to the server: `create_knowledge_page` merges a client's fields
-   * over KNOWLEDGE_PAGE_DEFAULT_TRIGGER (delta, no sibling pages in the reflect loop). Restating
+   * HOW a page refreshes belongs to the server: `create_page` merges a client's fields
+   * over PAGE_DEFAULT_TRIGGER (delta, no sibling pages in the reflect loop). Restating
    * those here would freeze a copy of someone else's defaults — so the trigger says nothing but
    * what this plugin actually decides.
    */
@@ -386,7 +386,7 @@ describe("codingBankManifest (#3927)", () => {
         retain_default_strategy: "mycustom",
         entities_allow_free_form: false,
         retain_strategies: RETAIN_STRATEGIES,
-        entity_labels: [KNOWLEDGE_LABELS],
+        entity_labels: [PAGE_LABELS],
       })
     ).toBeUndefined();
   });
@@ -406,13 +406,13 @@ describe("codingBankManifest (#3927)", () => {
     const mine = { key: "audience", type: "multi-values", values: [] };
     expect(bankOf({ reflect_mission: "seeded", entity_labels: [mine] })!.entity_labels).toEqual([
       mine,
-      KNOWLEDGE_LABELS,
+      PAGE_LABELS,
     ]);
     // Already present — including a version the user reworded — is left as it is.
     expect(
       bankOf({
         reflect_mission: "seeded",
-        entity_labels: [{ ...KNOWLEDGE_LABELS, description: "my wording" }],
+        entity_labels: [{ ...PAGE_LABELS, description: "my wording" }],
       })
     ).not.toHaveProperty("entity_labels");
   });
@@ -479,7 +479,7 @@ describe("codingBankManifest defaultBankConfig (#4725)", () => {
           retain_default_strategy: "git",
           entities_allow_free_form: true,
           retain_strategies: RETAIN_STRATEGIES,
-          entity_labels: [KNOWLEDGE_LABELS],
+          entity_labels: [PAGE_LABELS],
           ...cheap,
         },
         "concise",

@@ -67,7 +67,7 @@ async def test_the_mission_sends_reflect_past_a_fresh_page_to_the_decision(llm_c
         bank_profile={
             "name": "Test",
             "mission": (
-                "Knowledge pages are summaries and can misread a decision's exact values. Before reporting a "
+                "Pages are summaries and can misread a decision's exact values. Before reporting a "
                 "rule, recall the commit message or conversation that states it, and report the rule from there."
             ),
         },

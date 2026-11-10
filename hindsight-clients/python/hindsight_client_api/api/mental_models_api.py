@@ -1843,7 +1843,8 @@ class MentalModelsApi:
         detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
-        exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold knowledge page content (list standalone models only).")] = None,
+        exclude_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold page content (list standalone models only).")] = None,
+        exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Deprecated: use exclude_pages.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1874,7 +1875,9 @@ class MentalModelsApi:
         :type limit: int
         :param offset:
         :type offset: int
-        :param exclude_knowledge_pages: Leave out the mental models that hold knowledge page content (list standalone models only).
+        :param exclude_pages: Leave out the mental models that hold page content (list standalone models only).
+        :type exclude_pages: bool
+        :param exclude_knowledge_pages: Deprecated: use exclude_pages.
         :type exclude_knowledge_pages: bool
         :param authorization:
         :type authorization: str
@@ -1907,6 +1910,7 @@ class MentalModelsApi:
             detail=detail,
             limit=limit,
             offset=offset,
+            exclude_pages=exclude_pages,
             exclude_knowledge_pages=exclude_knowledge_pages,
             authorization=authorization,
             _request_auth=_request_auth,
@@ -1940,7 +1944,8 @@ class MentalModelsApi:
         detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
-        exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold knowledge page content (list standalone models only).")] = None,
+        exclude_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold page content (list standalone models only).")] = None,
+        exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Deprecated: use exclude_pages.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1971,7 +1976,9 @@ class MentalModelsApi:
         :type limit: int
         :param offset:
         :type offset: int
-        :param exclude_knowledge_pages: Leave out the mental models that hold knowledge page content (list standalone models only).
+        :param exclude_pages: Leave out the mental models that hold page content (list standalone models only).
+        :type exclude_pages: bool
+        :param exclude_knowledge_pages: Deprecated: use exclude_pages.
         :type exclude_knowledge_pages: bool
         :param authorization:
         :type authorization: str
@@ -2004,6 +2011,7 @@ class MentalModelsApi:
             detail=detail,
             limit=limit,
             offset=offset,
+            exclude_pages=exclude_pages,
             exclude_knowledge_pages=exclude_knowledge_pages,
             authorization=authorization,
             _request_auth=_request_auth,
@@ -2037,7 +2045,8 @@ class MentalModelsApi:
         detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
         limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
-        exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold knowledge page content (list standalone models only).")] = None,
+        exclude_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold page content (list standalone models only).")] = None,
+        exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Deprecated: use exclude_pages.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2068,7 +2077,9 @@ class MentalModelsApi:
         :type limit: int
         :param offset:
         :type offset: int
-        :param exclude_knowledge_pages: Leave out the mental models that hold knowledge page content (list standalone models only).
+        :param exclude_pages: Leave out the mental models that hold page content (list standalone models only).
+        :type exclude_pages: bool
+        :param exclude_knowledge_pages: Deprecated: use exclude_pages.
         :type exclude_knowledge_pages: bool
         :param authorization:
         :type authorization: str
@@ -2101,6 +2112,7 @@ class MentalModelsApi:
             detail=detail,
             limit=limit,
             offset=offset,
+            exclude_pages=exclude_pages,
             exclude_knowledge_pages=exclude_knowledge_pages,
             authorization=authorization,
             _request_auth=_request_auth,
@@ -2129,6 +2141,7 @@ class MentalModelsApi:
         detail,
         limit,
         offset,
+        exclude_pages,
         exclude_knowledge_pages,
         authorization,
         _request_auth,
@@ -2175,6 +2188,10 @@ class MentalModelsApi:
         if offset is not None:
             
             _query_params.append(('offset', offset))
+            
+        if exclude_pages is not None:
+            
+            _query_params.append(('exclude_pages', exclude_pages))
             
         if exclude_knowledge_pages is not None:
             

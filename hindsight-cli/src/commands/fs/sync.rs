@@ -1,4 +1,4 @@
-//! The sync engine: fetch a bank's knowledge base (folder/page tree + page
+//! The sync engine: fetch a bank's pages (folder/page tree + page
 //! contents) and mirror it as a nested folder of markdown files in the mount
 //! directory — folders become directories, pages become `.md` files.
 //!
@@ -93,7 +93,7 @@ pub fn run_sync(config: &MountConfig) -> Result<SyncResult> {
     let mut state = load_state(&config.dir, &config.bank_id, &config.api_url);
     let client = FsClient::new(&config.api_url, config.api_token.as_deref())?;
 
-    let snapshot = match client.load_knowledge(&config.bank_id) {
+    let snapshot = match client.load_pages(&config.bank_id) {
         Ok(s) => s,
         Err(err) => {
             state.last_sync_at = Some(synced_at);

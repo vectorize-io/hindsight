@@ -14,7 +14,7 @@
  *   4. progressively DEEPEN: ingest the next batch of not-yet-ingested commits individually with
  *      their full diffs, NEWEST first (recent decisions matter most), up to DIFF_BATCH per run and
  *      DEEPEN_DIFF_TARGET total — full precision arrives across sessions without a big-bang ingest
- *   5. drain this run's extractions, then create the knowledge pages if the bank has none —
+ *   5. drain this run's extractions, then create the pages if the bank has none —
  *      pages-last makes `syncStatus().synced` a real completion marker
  *
  * A per-bank heartbeat lease makes concurrent session starts a no-op.
@@ -67,7 +67,7 @@ if (cfg.disabled) {
   process.exit(0);
 }
 const HARNESS = arg("harness") ?? cfg0.harness;
-// The repository name the seeded knowledge pages are scoped to — see the `project` option below.
+// The repository name the seeded pages are scoped to — see the `project` option below.
 // `resolved0.bankId !== BANK` means a `banks.<id>.bank` rename redirected this run, and several
 // repos may be renamed onto one destination, so the repo cannot claim to name it.
 const PAGE_PROJECT = REPO && resolved0.bankId === BANK ? bankProjectName(cfg, REPO) : undefined;
@@ -157,8 +157,8 @@ async function main() {
       extractionMode: cfg.retainExtractionMode,
       defaults: cfg.defaultBankConfig,
     });
-    if (client.knowledgePagesSupported === false) {
-      diag(harness.name, "knowledge_pages_unavailable", {
+    if (client.pagesSupported === false) {
+      diag(harness.name, "pages_unavailable", {
         bank: FINAL_BANK,
         apiUrl: client.apiUrl,
       });
@@ -171,7 +171,7 @@ async function main() {
     //
     // `retainSessions: false` covers THIS door too, not just the live write-back (#3596): history
     // import puts the very same conversations in the bank, one session later, so honoring the flag
-    // in only one of the two places would leave the opt-out cosmetic. Git ingest, knowledge pages
+    // in only one of the two places would leave the opt-out cosmetic. Git ingest, pages
     // and bank configuration below are untouched by it.
     let sessions: ChatSession[] = [];
     if (!cfg.retainSessions) {
@@ -300,7 +300,7 @@ async function main() {
       log(`[deepen] waiting for ${active} server-side op(s) to settle …`);
       await new Promise((r) => setTimeout(r, 5000));
     }
-    // (knowledge pages need no separate pass: configureBank seeds them through the knowledge-base
+    // (pages need no separate pass: configureBank seeds them through the pages
     // API every run, matched by name — syncStatus's `synced` stays sound because it also requires
     // the gitlog seed present AND zero active extraction operations.)
 

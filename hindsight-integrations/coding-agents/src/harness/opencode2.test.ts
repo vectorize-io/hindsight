@@ -9,7 +9,7 @@
 import { isAbsolute } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeCore } from "../core/runtime";
-import type { ToolSpec } from "../core/knowledge-tools";
+import type { ToolSpec } from "../core/page-tools";
 import { wireOpencode2Runtime } from "./opencode2";
 
 type PromptHook = (input: { sessionID: string; prompt?: { text?: string } }) => Promise<void>;

@@ -29,7 +29,7 @@
  * `McpToolCall` / `CommandExecution` items instead, and the `exec` wrapper is skipped.
  *
  * `developer`-role messages carry Codex's system prompt AND our hook-injected context
- * (<hindsight_knowledge>, <hindsight_memories>, <user_feedback>), so dropping them entirely is what
+ * (<hindsight_pages>, <hindsight_memories>, <user_feedback>), so dropping them entirely is what
  * prevents a retain→recall feedback loop (plus stripInjectedMemory as a defensive second pass on the
  * text we do keep). Fail-open: never throws on a missing file or a malformed line.
  */

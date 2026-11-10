@@ -76,7 +76,7 @@ def _truncate_inputs(
 
     The budget covers the *whole* string that will go over the wire, not just the
     caller's payload: an asymmetric model's prefix is subtracted up front (see
-    :func:`_prefix_tokens`), and callers that decorate their text — a knowledge page
+    :func:`_prefix_tokens`), and callers that decorate their text — a page
     embeds ``f"{name} {content}"`` — pass the joined string, so the join is inside the
     cap rather than one token past it (#4165).
     """

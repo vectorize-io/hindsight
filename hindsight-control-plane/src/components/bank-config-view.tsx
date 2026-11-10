@@ -142,7 +142,7 @@ type DocStorageEdits = {
   store_document_text: boolean | null;
 };
 
-// Mental models and the knowledge pages backed by them. null = inherit the
+// Mental models and the pages backed by them. null = inherit the
 // server default.
 type MentalModelsEdits = {
   mental_model_min_refresh_interval_seconds: number | null;
@@ -157,10 +157,10 @@ type ReflectOptionsEdits = {
   reflect_search_mental_models_max_tokens: number | null;
 };
 
-// The server's built-in knowledge-page trigger (MemoryEngine.KNOWLEDGE_PAGE_DEFAULT_TRIGGER).
+// The server's built-in page trigger (MemoryEngine.PAGE_DEFAULT_TRIGGER).
 // The configured default merges over it, so the form starts from the pair to show
 // what a new page actually gets.
-const KNOWLEDGE_PAGE_BUILTIN_TRIGGER = {
+const PAGE_BUILTIN_TRIGGER = {
   mode: "delta",
   fact_types: ["observation"],
   exclude_mental_models: true,
@@ -168,7 +168,7 @@ const KNOWLEDGE_PAGE_BUILTIN_TRIGGER = {
 } as const;
 
 function effectivePageTrigger(configured: Record<string, any> | null | undefined): TriggerForm {
-  const merged: Record<string, any> = { ...KNOWLEDGE_PAGE_BUILTIN_TRIGGER, ...configured };
+  const merged: Record<string, any> = { ...PAGE_BUILTIN_TRIGGER, ...configured };
   // Same exclusivity rule as the server's merge: a configured cron replaces the
   // built-in refresh-after-consolidation.
   if (configured?.refresh_cron && configured.refresh_after_consolidation === undefined)
@@ -271,16 +271,16 @@ function getMcpToolGroups(t: (key: string) => string): McpToolGroup[] {
     },
     { key: "tags", label: t("mcpGroupTags"), tools: ["list_tags"] },
     {
-      key: "knowledgeBase",
-      label: t("mcpGroupKnowledgeBase"),
+      key: "pages",
+      label: t("mcpGroupPages"),
       tools: [
-        "get_knowledge_base_tree",
-        "search_knowledge_base",
-        "get_knowledge_page",
-        "create_knowledge_folder",
-        "create_knowledge_page",
-        "update_knowledge_node",
-        "delete_knowledge_node",
+        "get_page_tree",
+        "search_pages",
+        "get_page",
+        "create_page_folder",
+        "create_page",
+        "update_page_node",
+        "delete_page_node",
       ],
     },
   ];
@@ -319,15 +319,32 @@ const MCP_ALL_TOOLS: string[] = [
   "get_operation",
   "cancel_operation",
   "list_tags",
-  "get_knowledge_base_tree",
-  "search_knowledge_base",
-  "get_knowledge_page",
-  "create_knowledge_folder",
-  "create_knowledge_page",
-  "update_knowledge_node",
-  "delete_knowledge_node",
+  "get_page_tree",
+  "search_pages",
+  "get_page",
+  "create_page_folder",
+  "create_page",
+  "update_page_node",
+  "delete_page_node",
 ];
 const ALL_TOOLS: string[] = MCP_ALL_TOOLS;
+
+// Old MCP tool names a stored allow-list may still hold; the server maps them to
+// the new names, so show them checked under the new name. Remove in 2.x.
+const MCP_RENAMED_TOOLS: Record<string, string> = {
+  get_knowledge_base_tree: "get_page_tree",
+  search_knowledge_base: "search_pages",
+  get_knowledge_page: "get_page",
+  create_knowledge_folder: "create_page_folder",
+  create_knowledge_page: "create_page",
+  update_knowledge_node: "update_page_node",
+  delete_knowledge_node: "delete_page_node",
+};
+
+function normalizeMcpTools(tools: string[] | null | undefined): string[] | null {
+  if (!tools) return null;
+  return [...new Set(tools.map((tool) => MCP_RENAMED_TOOLS[tool] ?? tool))];
+}
 
 // ─── Slice helpers ────────────────────────────────────────────────────────────
 
@@ -359,7 +376,7 @@ function strategiesSlice(config: Record<string, any>): StrategiesEdits {
 
 function mcpSlice(config: Record<string, any>, overrides: Record<string, any>): MCPEdits {
   return {
-    mcp_enabled_tools: config.mcp_enabled_tools ?? null,
+    mcp_enabled_tools: normalizeMcpTools(config.mcp_enabled_tools),
     default_timezone: overrides.default_timezone ?? null,
   };
 }
@@ -466,7 +483,7 @@ export function BankConfigView() {
   );
   const [reflectEdits, setReflectEdits] = useState<ProfileData>(DEFAULT_PROFILE);
   // Reflect's default options are edited in their own dialog and saved from
-  // there, apart from the section's Save — same as the knowledge-page trigger.
+  // there, apart from the section's Save — same as the page trigger.
   const [reflectOptionsOpen, setReflectOptionsOpen] = useState(false);
   const [reflectOptionsForm, setReflectOptionsForm] = useState<ReflectOptionsEdits>(
     reflectOptionsSlice({})
@@ -481,7 +498,7 @@ export function BankConfigView() {
   const [mentalModelsEdits, setMentalModelsEdits] = useState<MentalModelsEdits>(
     mentalModelsSlice({})
   );
-  // The knowledge-page default trigger is edited in its own dialog and saved
+  // The page default trigger is edited in its own dialog and saved
   // from there, apart from the section's Save.
   const [pageTriggerOpen, setPageTriggerOpen] = useState(false);
   const [pageTriggerForm, setPageTriggerForm] = useState<TriggerForm>(() =>
@@ -783,7 +800,7 @@ export function BankConfigView() {
   };
 
   const openPageTrigger = () => {
-    setPageTriggerForm(effectivePageTrigger(baseConfig.knowledge_page_default_trigger));
+    setPageTriggerForm(effectivePageTrigger(baseConfig.page_default_trigger));
     setPageTriggerError(null);
     setPageTriggerOpen(true);
   };
@@ -800,12 +817,12 @@ export function BankConfigView() {
     setPageTriggerSaving(true);
     setPageTriggerError(null);
     try {
-      await client.updateBankConfig(bankId, { knowledge_page_default_trigger: trigger });
+      await client.updateBankConfig(bankId, { page_default_trigger: trigger });
       if (reset) {
         await loadAll();
       } else {
-        setBaseConfig((prev) => ({ ...prev, knowledge_page_default_trigger: trigger }));
-        setBaseOverrides((prev) => ({ ...prev, knowledge_page_default_trigger: trigger }));
+        setBaseConfig((prev) => ({ ...prev, page_default_trigger: trigger }));
+        setBaseOverrides((prev) => ({ ...prev, page_default_trigger: trigger }));
       }
       setPageTriggerOpen(false);
     } catch (err: any) {
@@ -1027,7 +1044,7 @@ export function BankConfigView() {
               <ReflectOptionsSummary options={reflectOptionsSlice(baseConfig)} />
             </div>
             <Button variant="outline" size="sm" className="shrink-0" onClick={openReflectOptions}>
-              {t("knowledgePageDefaultTriggerEdit")}
+              {t("pageDefaultTriggerEdit")}
             </Button>
           </div>
           <Dialog
@@ -1182,7 +1199,7 @@ export function BankConfigView() {
           />
         </ConfigSection>
 
-        {/* Mental Models & Knowledge Pages Section */}
+        {/* Mental Models & Pages Section */}
         <ConfigSection
           title={t("mentalModelsTitle")}
           description={t("mentalModelsDescription")}
@@ -1213,24 +1230,22 @@ export function BankConfigView() {
           <div className="px-6 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
             <div className="min-w-0 space-y-2">
               <div>
-                <p className="text-sm font-medium">{t("knowledgePageDefaultTriggerLabel")}</p>
+                <p className="text-sm font-medium">{t("pageDefaultTriggerLabel")}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {t("knowledgePageDefaultTriggerDescription")}
+                  {t("pageDefaultTriggerDescription")}
                 </p>
               </div>
-              <TriggerSummary
-                form={effectivePageTrigger(baseConfig.knowledge_page_default_trigger)}
-              />
+              <TriggerSummary form={effectivePageTrigger(baseConfig.page_default_trigger)} />
             </div>
             <Button variant="outline" size="sm" className="shrink-0" onClick={openPageTrigger}>
-              {t("knowledgePageDefaultTriggerEdit")}
+              {t("pageDefaultTriggerEdit")}
             </Button>
           </div>
           <Dialog open={pageTriggerOpen} onOpenChange={(o) => !o && setPageTriggerOpen(false)}>
             <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col">
               <DialogHeader>
-                <DialogTitle>{t("knowledgePageDefaultTriggerDialogTitle")}</DialogTitle>
-                <DialogDescription>{t("knowledgePageDefaultTriggerDialogHint")}</DialogDescription>
+                <DialogTitle>{t("pageDefaultTriggerDialogTitle")}</DialogTitle>
+                <DialogDescription>{t("pageDefaultTriggerDialogHint")}</DialogDescription>
               </DialogHeader>
               <div className="flex-1 overflow-y-auto px-1.5 py-2">
                 <MentalModelTriggerFields value={pageTriggerForm} onChange={setPageTriggerForm} />
@@ -1243,7 +1258,7 @@ export function BankConfigView() {
               )}
               <DialogFooter className="sm:justify-between">
                 <div>
-                  {baseOverrides.knowledge_page_default_trigger && (
+                  {baseOverrides.page_default_trigger && (
                     <Button
                       variant="ghost"
                       onClick={() => savePageTrigger(true)}

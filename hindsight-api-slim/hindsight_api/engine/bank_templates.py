@@ -6,7 +6,7 @@ server's default template (``HINDSIGHT_API_DEFAULT_BANK_TEMPLATE``) to every new
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from hindsight_api.config import RETAIN_EXTRACTION_MODES, get_config
 from hindsight_api.engine.interface import BankTemplateImportWrite
@@ -91,11 +91,11 @@ class BankTemplateConfig(BaseModel):
         description="When the server has a decision model, reflect lets it prune evidence and decide when to stop",
     )
     mental_model_refresh_use_decision_model: bool | None = Field(
-        default=None, description="The same, for knowledge-page refreshes"
+        default=None, description="The same, for page refreshes"
     )
     mental_model_delta_use_decision_model: bool | None = Field(
         default=None,
-        description="When the server has a decision model, a delta knowledge-page refresh asks it which new "
+        description="When the server has a decision model, a delta page refresh asks it which new "
         "memories could change the page instead of running reflect",
     )
     disposition_skepticism: int | None = Field(default=None, ge=1, le=5, description="Skepticism trait (1-5)")
@@ -176,12 +176,20 @@ class BankTemplateConfig(BaseModel):
     reflect_source_facts_max_tokens: int | None = Field(
         default=None, description="Max tokens of source facts per reflect call"
     )
-    knowledge_page_default_trigger: dict[str, Any] | None = Field(
+    page_default_trigger: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Trigger fields merged over the built-in knowledge-page default when a page is created "
+            "Trigger fields merged over the built-in page default when a page is created "
             '(e.g. {"refresh_cron": "0 * * * *"}). A trigger sent with the create request still wins.'
         ),
+    )
+    # A real field rather than a validation alias, so templates exported here still
+    # carry the old key: older servers and clients only know that one. Kept equal to
+    # page_default_trigger by _sync_deprecated_page_trigger. Remove in 2.x.
+    knowledge_page_default_trigger: dict[str, Any] | None = Field(
+        default=None,
+        deprecated=True,
+        description="Deprecated alias of page_default_trigger. Remove in 2.x.",
     )
     reflect_default_options: dict[str, Any] | None = Field(
         default=None,
@@ -190,7 +198,7 @@ class BankTemplateConfig(BaseModel):
             '(e.g. {"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}). '
             "Applied to every reflect request in the bank (API and MCP) that leaves the option unset. "
             "Mental-model refreshes do not read it: they take these options from their own trigger, "
-            "defaulted per bank by knowledge_page_default_trigger."
+            "defaulted per bank by page_default_trigger."
         ),
     )
     mental_model_min_refresh_interval_seconds: int | None = Field(
@@ -276,9 +284,20 @@ class BankTemplateConfig(BaseModel):
         description="Memory Defense policy for this bank (validated against the DefensePolicy schema on write)",
     )
 
+    @model_validator(mode="after")
+    def _sync_deprecated_page_trigger(self) -> "BankTemplateConfig":
+        # Deprecated alias, remove in 2.x: either key may come in; both go out.
+        # Through __dict__ because reading a deprecated field emits a DeprecationWarning.
+        value = self.page_default_trigger or self.__dict__["knowledge_page_default_trigger"]
+        self.page_default_trigger = value
+        self.__dict__["knowledge_page_default_trigger"] = value
+        return self
+
     def get_config_updates(self) -> dict[str, Any]:
         """Return only the fields that were explicitly set (non-None)."""
-        return {k: v for k, v in self.model_dump().items() if v is not None}
+        # The deprecated alias would only repeat page_default_trigger. Remove in 2.x.
+        dumped = self.model_dump(exclude={"knowledge_page_default_trigger"})
+        return {k: v for k, v in dumped.items() if v is not None}
 
 
 class BankTemplateDirective(BaseModel):

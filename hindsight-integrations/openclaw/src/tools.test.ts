@@ -99,9 +99,9 @@ describe("Hermes's tools in OpenClaw (#5635)", () => {
       "hindsight_recall",
       "hindsight_reflect",
     ]);
-    // Deleting knowledge is opt-in; everything else is offered.
+    // Deleting pages is opt-in; everything else is offered.
     expect(tools?.map((t) => t.name)).toEqual(
-      names?.filter((n) => n !== "hindsight_delete_knowledge_node")
+      names?.filter((n) => n !== "hindsight_delete_page_node")
     );
     for (const t of tools ?? []) {
       expect(Object.keys(t.parameters.properties as object)).not.toContain("bank_id");
@@ -211,9 +211,9 @@ describe("Hermes's tools in OpenClaw (#5635)", () => {
     ).toEqual([
       "hindsight_recall",
       "hindsight_reflect",
-      "hindsight_get_knowledge_base_tree",
-      "hindsight_search_knowledge_base",
-      "hindsight_get_knowledge_page",
+      "hindsight_get_page_tree",
+      "hindsight_search_pages",
+      "hindsight_get_page",
     ]);
   });
 
@@ -241,8 +241,8 @@ describe("Hermes's tools in OpenClaw (#5635)", () => {
   });
 });
 
-describe("knowledge-base tools", () => {
-  function mockKnowledge() {
+describe("page tools", () => {
+  function mockPages() {
     const p = HindsightClient.prototype;
     return {
       tree: vi.spyOn(p, "getKnowledgeBaseTree").mockResolvedValue({ roots: [] } as never),
@@ -259,30 +259,30 @@ describe("knowledge-base tools", () => {
   const session = { agentId: "support", sessionKey: "agent:support:main" };
 
   it("reads and writes the agent's own bank", async () => {
-    const kb = mockKnowledge();
+    const kb = mockPages();
     const { factory } = await load({ agentBankMap: { support: "team-bank" } });
     const tools = factory(session);
 
-    await tool(tools, "hindsight_get_knowledge_base_tree").execute("c1", {});
+    await tool(tools, "hindsight_get_page_tree").execute("c1", {});
     expect(kb.tree).toHaveBeenCalledWith("team-bank", expect.anything());
 
-    await tool(tools, "hindsight_search_knowledge_base").execute("c2", { query: "q", limit: 500 });
+    await tool(tools, "hindsight_search_pages").execute("c2", { query: "q", limit: 500 });
     expect(kb.search).toHaveBeenCalledWith(
       "team-bank",
       "q",
       expect.objectContaining({ limit: 50 })
     );
 
-    const page = await tool(tools, "hindsight_get_knowledge_page").execute("c3", {
+    const page = await tool(tools, "hindsight_get_page").execute("c3", {
       page_id: "kp-1",
     });
     expect(kb.page).toHaveBeenCalledWith("team-bank", "kp-1", expect.anything());
     expect(JSON.parse(page.content[0].text)).toEqual({ id: "kp-1" });
 
-    await tool(tools, "hindsight_create_knowledge_folder").execute("c4", { name: "People" });
+    await tool(tools, "hindsight_create_page_folder").execute("c4", { name: "People" });
     expect(kb.folder).toHaveBeenCalledWith("team-bank", "People", expect.anything());
 
-    await tool(tools, "hindsight_create_knowledge_page").execute("c5", {
+    await tool(tools, "hindsight_create_page").execute("c5", {
       name: "Food",
       source_query: "What does the user like to eat?",
       parent_id: "kf-1",
@@ -295,7 +295,7 @@ describe("knowledge-base tools", () => {
       expect.objectContaining({ parentId: "kf-1", tags: ["user:alice"] })
     );
 
-    await tool(tools, "hindsight_update_knowledge_node").execute("c6", {
+    await tool(tools, "hindsight_update_page_node").execute("c6", {
       node_id: "kp-2",
       parent_id: "root",
     });
@@ -307,22 +307,22 @@ describe("knowledge-base tools", () => {
   });
 
   it("refuses an update that changes nothing", async () => {
-    const kb = mockKnowledge();
+    const kb = mockPages();
     const { factory } = await load({ bankId: "b", dynamicBankId: false });
     await expect(
-      tool(factory(session), "hindsight_update_knowledge_node").execute("c1", { node_id: "kp-1" })
+      tool(factory(session), "hindsight_update_page_node").execute("c1", { node_id: "kp-1" })
     ).rejects.toThrow(/Provide name/);
     expect(kb.update).not.toHaveBeenCalled();
   });
 
-  it("offers delete only with allowKnowledgeDelete", async () => {
-    const kb = mockKnowledge();
+  it("offers delete only with allowPageDelete", async () => {
+    const kb = mockPages();
     const { factory } = await load({
       bankId: "b",
       dynamicBankId: false,
-      allowKnowledgeDelete: true,
+      allowPageDelete: true,
     });
-    await tool(factory(session), "hindsight_delete_knowledge_node").execute("c1", {
+    await tool(factory(session), "hindsight_delete_page_node").execute("c1", {
       node_id: "kf-1",
     });
     expect(kb.remove).toHaveBeenCalledWith("b", "kf-1", expect.anything());
@@ -332,16 +332,33 @@ describe("knowledge-base tools", () => {
     const { factory } = await load({
       statelessSessionPatterns: ["agent:*:readonly:**"],
       skipStatelessSessions: false,
-      allowKnowledgeDelete: true,
+      allowPageDelete: true,
     });
     expect(
       factory({ agentId: "main", sessionKey: "agent:main:readonly:x" })?.map((t) => t.name)
     ).toEqual([
       "hindsight_recall",
       "hindsight_reflect",
-      "hindsight_get_knowledge_base_tree",
-      "hindsight_search_knowledge_base",
-      "hindsight_get_knowledge_page",
+      "hindsight_get_page_tree",
+      "hindsight_search_pages",
+      "hindsight_get_page",
     ]);
+  });
+});
+
+describe("renamed page tools (deprecated names, remove in 2.x)", () => {
+  it("finds old tool names in OpenClaw tool lists and maps each to a real tool", async () => {
+    const { oldToolNamesIn, RENAMED_TOOL_NAMES, HINDSIGHT_TOOL_NAMES } = await import("./tools.js");
+    const config = {
+      tools: { allow: ["hindsight_search_knowledge_base", "hindsight_recall"] },
+      agents: { list: [{ tools: { deny: ["hindsight_delete_knowledge_node"] } }] },
+    };
+    expect(oldToolNamesIn(config)).toEqual([
+      "hindsight_search_knowledge_base",
+      "hindsight_delete_knowledge_node",
+    ]);
+    expect(oldToolNamesIn({ tools: { allow: ["hindsight_search_pages"] } })).toEqual([]);
+    for (const next of Object.values(RENAMED_TOOL_NAMES))
+      expect(HINDSIGHT_TOOL_NAMES).toContain(next);
   });
 });

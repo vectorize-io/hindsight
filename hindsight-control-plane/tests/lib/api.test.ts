@@ -288,7 +288,7 @@ describe("ControlPlaneClient direct fetch error formatting", () => {
     });
   });
 
-  it("passes the knowledge-base export flag to the transfer route", async () => {
+  it("passes the pages export flag to the transfer route", async () => {
     fetchSpy.mockResolvedValueOnce(new Response(new Blob(["zip"]), { status: 200 }));
 
     await client.exportDocuments("bank-a", undefined, false, true);

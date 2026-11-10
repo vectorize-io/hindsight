@@ -585,8 +585,8 @@ class ConfigResolver:
 
         # Both of these are merged into a request the API also accepts directly, so
         # hold them to the same contract as the request that carries those fields.
-        if normalized_updates.get("knowledge_page_default_trigger") is not None:
-            _validate_knowledge_page_default_trigger(normalized_updates["knowledge_page_default_trigger"])
+        if normalized_updates.get("page_default_trigger") is not None:
+            _validate_page_default_trigger(normalized_updates["page_default_trigger"])
         if normalized_updates.get("reflect_default_options") is not None:
             _validate_reflect_default_options(normalized_updates["reflect_default_options"])
 
@@ -845,9 +845,9 @@ def _validate_against_model(key: str, value: dict[str, Any], model: "type[BaseMo
         raise ValueError(f"Invalid {key}: {problems}") from e
 
 
-def _validate_knowledge_page_default_trigger(value: dict[str, Any]) -> None:
+def _validate_page_default_trigger(value: dict[str, Any]) -> None:
     """Reject unknown trigger fields and values ``MentalModelTrigger`` refuses."""
-    _validate_against_model("knowledge_page_default_trigger", value, MentalModelTrigger, "trigger")
+    _validate_against_model("page_default_trigger", value, MentalModelTrigger, "trigger")
 
 
 def _validate_reflect_default_options(value: dict[str, Any]) -> None:

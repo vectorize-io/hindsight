@@ -1560,7 +1560,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     async def could_change_page(self, topic: str, page: str, memory: str) -> bool:
         """Whether ``memory`` could change a page about ``topic`` that reads ``page``: one Choice.
 
-        Gates a delta knowledge-page refresh: a memory answered "no" is never shown to
+        Gates a delta page refresh: a memory answered "no" is never shown to
         the LLM. Worded so a doubt is a "yes", because a wrong "no" is silent and
         permanent (the refresh moves past the memory) while a wrong "yes" costs one
         LLM call, which is what every refresh pays without the gate.

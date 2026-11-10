@@ -130,24 +130,24 @@ const TOPICS: Topic[] = [
       "A cross-encoder reranks the fused recall results", // 3
       "Recall fills a token budget instead of a top-k", // 4
       "Each observation keeps its evidence and its history", // 5
-      "Knowledge pages are rewritten as consolidation runs", // 6
-      "Knowledge pages never cite each other", // 7
+      "Pages are rewritten as consolidation runs", // 6
+      "Pages never cite each other", // 7
     ],
     experience: [
       "I ran consolidation on the support bank overnight", // 8
-      "I mounted the knowledge pages with hindsight fs mount", // 9
+      "I mounted the pages with hindsight fs mount", // 9
       "I answered an on-call question with reflect", // 10
     ],
     observation: [
       { text: "Recall merges several searches by rank, then reranks", from: [1, 2, 3] },
-      { text: "Knowledge pages stay current only while consolidation runs", from: [6, 8] },
+      { text: "Pages stay current only while consolidation runs", from: [6, 8] },
     ],
   },
   {
     world: [
       "The on-call rotation is weekly, with a handover on Monday", // 0
       "A Sev1 pages the primary and the secondary on-call at once", // 1
-      "The on-call runbook lives in the knowledge pages, not in Notion", // 2
+      "The on-call runbook lives in the pages, not in Notion", // 2
       "Every incident gets a written review within 5 days", // 3
       "Dashboards are in Grafana, alerts go through Alertmanager", // 4
       "More than 5 pages a night triggers an alert tuning pass", // 5
@@ -219,14 +219,14 @@ const TOPICS: Topic[] = [
     world: [
       "The coding agent retains every session it finishes", // 0
       "Each retained document records which coding agent wrote it", // 1
-      "The coding agent reads the knowledge pages before writing code", // 2
+      "The coding agent reads the pages before writing code", // 2
       "Sessions are captured automatically, not by hand", // 3
       "The Hindsight plugin ships as a skill the coding agent loads", // 4
     ],
     experience: [
       "I read the component map before changing the engine", // 5
       "I corrected a stale memory about the config defaults", // 6
-      "I saved the retrieval initiative as a knowledge page", // 7
+      "I saved the retrieval initiative as a page", // 7
     ],
     observation: [
       { text: "Coding agent sessions are the bank's largest source of facts", from: [0, 3] },
@@ -287,7 +287,7 @@ const ENTITIES: Array<[string, RegExp]> = [
   ["reranker", /\brerank|cross-encoder/i],
   ["rank fusion", /\bfus(ed|ion)\b/i],
   ["consolidation", /\bconsolidat/i],
-  ["knowledge pages", /\bknowledge pages?\b/i],
+  ["pages", /\bpages?\b/i],
   ["embeddings", /\bembedding/i],
   ["ingestion pipeline", /\bingestion\b/i],
   ["on-call", /\bon-call\b|\bpaged\b/i],

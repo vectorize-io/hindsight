@@ -4,7 +4,7 @@
  * Maps opencode's persistent-plugin hooks onto the shared RuntimeCore, and reads opencode sessions
  * for backfill. opencode is the cleanest platform of the lot: a real per-turn event, a working
  * user-message injection channel, transcript access, and NATIVE tool registration — so the whole
- * v2 surface (per-turn recall + attribution/user-feedback injection, the hindsight_* knowledge
+ * v2 surface (per-turn recall + attribution/user-feedback injection, the hindsight_* page
  * tools, cold-check auto-seed, rich write-back) rides these hooks with no MCP server needed.
  * This is the only opencode-specific file; everything it uses is in ../core.
  */
@@ -13,7 +13,7 @@ import type { Config, Hooks } from "@opencode-ai/plugin";
 import type { RuntimeCore } from "../core/runtime";
 import type { HarnessAdapter } from "../core/types";
 import { diag } from "../core/diag";
-import type { ToolSpec } from "../core/knowledge-tools";
+import type { ToolSpec } from "../core/page-tools";
 import {
   readOpencodeMessages,
   opencodeSessionId,
@@ -95,7 +95,7 @@ function toOpencodeTool(spec: ToolSpec) {
 
 // ── runtime: opencode plugin hooks wired to the RuntimeCore ──────────────────────
 function createRuntime(core: RuntimeCore) {
-  // Register the full hindsight_* knowledge + recall suite natively (no MCP server needed).
+  // Register the full hindsight_* page + recall suite natively (no MCP server needed).
   const tools: Record<string, ReturnType<typeof tool>> = {};
   for (const spec of core.toolSpecs()) tools[spec.name] = toOpencodeTool(spec);
 
@@ -103,7 +103,7 @@ function createRuntime(core: RuntimeCore) {
     ...surveyAgentHook,
     tool: tools,
     // Each user turn: recall on the prompt, then add this turn's injection (recalled memories +
-    // attribution/user-feedback framing, plus the knowledge preamble on turn 1 and the roster
+    // attribution/user-feedback framing, plus the pages preamble on turn 1 and the roster
     // refresh on cadence) to the user message as a synthetic text part. The host saves the parts
     // this hook leaves behind, so the block stays in the turn it was made for and every later
     // request repeats it byte for byte. It used to be pushed into the system prompt through

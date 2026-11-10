@@ -242,7 +242,7 @@ smaller context. Defaults to `true`.
 
 ### reflect_search_mental_models_max_tokens
 
-Token budget for the mental models (knowledge pages) that the agent's
+Token budget for the mental models (pages) that the agent's
 `search_mental_models` tool returns in full, packed in rank order. The
 best-ranked page always comes back in full, even when it alone is over the
 budget; the others that do not fit come back as a short snippet, and the model
@@ -255,7 +255,7 @@ All three options can be defaulted for a whole bank with the
 [Configuration](../configuration.mdx)); an explicit value on the request always
 wins. A mental-model refresh is configured separately and does **not** read
 `reflect_default_options` — set the trigger's fields of the same name, or the
-bank's `knowledge_page_default_trigger`, instead (see
+bank's `page_default_trigger`, instead (see
 [Mental Models](./mental-models.mdx)). A refresh always gets only the
 best-ranked page in full and the others as snippets, to keep its cost down.
 

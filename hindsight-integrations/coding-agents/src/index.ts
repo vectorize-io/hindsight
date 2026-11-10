@@ -7,8 +7,8 @@
  *   READ   — each user turn, recall on the prompt and PUSH a `<hindsight_memories>` block (with the
  *            attribution + user-feedback framing) into the user message.
  *   SEED   — on load, cold-check the bank and (if cold) start a background git-log seed + codebase
- *            survey. (The knowledge-page preamble is built per session, on the first prompt.)
- *   TOOLS  — register the hindsight_* knowledge/recall suite natively (no MCP server needed).
+ *            survey. (The page preamble is built per session, on the first prompt.)
+ *   TOOLS  — register the hindsight_* page/recall suite natively (no MCP server needed).
  *   WRITE  — on by default: upsert the rich transcript (text + tool calls/outputs) on the turn
  *            cadence, and again on session.idle — only the idle pass can see the agent's reply.
  *

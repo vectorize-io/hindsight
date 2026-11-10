@@ -8,7 +8,7 @@ This module provides the core tool logic used by both:
 import json
 import logging
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, Literal, get_args
@@ -48,6 +48,25 @@ _OperationsLimit = Annotated[int, Field(ge=1, le=100)]
 
 # All tools available in the system (explicit list — no wildcards).
 # Defined here (shared module) to avoid circular imports with api/mcp.py.
+# Old tool names -> new, from when pages were called "knowledge pages". An allow-list
+# (env, bank config or MCPToolsConfig.tools) that names an old tool still enables it, and a
+# call by an old name still runs the tool (hidden: never listed). Remove in 2.x.
+_RENAMED_TOOLS: dict[str, str] = {
+    "get_knowledge_base_tree": "get_page_tree",
+    "search_knowledge_base": "search_pages",
+    "get_knowledge_page": "get_page",
+    "create_knowledge_folder": "create_page_folder",
+    "create_knowledge_page": "create_page",
+    "update_knowledge_node": "update_page_node",
+    "delete_knowledge_node": "delete_page_node",
+}
+
+
+def canonical_tool_names(names: Iterable[str]) -> set[str]:
+    """Map any old tool names in ``names`` to their current names."""
+    return {_RENAMED_TOOLS.get(name, name) for name in names}
+
+
 _ALL_TOOLS: frozenset[str] = frozenset(
     {
         "retain",
@@ -82,13 +101,13 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "update_bank",
         "delete_bank",
         "clear_memories",
-        "get_knowledge_base_tree",
-        "search_knowledge_base",
-        "get_knowledge_page",
-        "create_knowledge_folder",
-        "create_knowledge_page",
-        "update_knowledge_node",
-        "delete_knowledge_node",
+        "get_page_tree",
+        "search_pages",
+        "get_page",
+        "create_page_folder",
+        "create_page",
+        "update_page_node",
+        "delete_page_node",
     }
 )
 
@@ -96,7 +115,7 @@ logger = logging.getLogger(__name__)
 
 
 class MentalModelTriggerInput(BaseModel):
-    """The refresh policy of a mental model or knowledge page, as an MCP tool input.
+    """The refresh policy of a mental model or page, as an MCP tool input.
 
     Mirrors the HTTP ``MentalModelTrigger`` field for field — an agent that read
     the API docs must not have a call rejected for naming a setting that exists.
@@ -597,9 +616,9 @@ _READ_ONLY_TOOLS = {
     "list_operations",
     "get_operation",
     "list_tags",
-    "get_knowledge_base_tree",
-    "search_knowledge_base",
-    "get_knowledge_page",
+    "get_page_tree",
+    "search_pages",
+    "get_page",
 }
 _DESTRUCTIVE_TOOLS = {
     "delete_bank",
@@ -609,7 +628,7 @@ _DESTRUCTIVE_TOOLS = {
     "delete_directive",
     "delete_document",
     "invalidate_memory",
-    "delete_knowledge_node",
+    "delete_page_node",
 }
 
 
@@ -644,47 +663,51 @@ def register_mcp_tools(
 
         config.bank_alias_resolver = _resolve_alias
 
-    tools_to_register = config.tools or {
-        "retain",
-        "sync_retain",
-        "recall",
-        "reflect",
-        "list_banks",
-        "create_bank",
-        "list_mental_models",
-        "get_mental_model",
-        "create_mental_model",
-        "update_mental_model",
-        "delete_mental_model",
-        "refresh_mental_model",
-        "clear_mental_model",
-        "list_directives",
-        "create_directive",
-        "delete_directive",
-        "list_memories",
-        "get_memory",
-        "update_memory",
-        "invalidate_memory",
-        "list_documents",
-        "get_document",
-        "delete_document",
-        "list_operations",
-        "get_operation",
-        "cancel_operation",
-        "list_tags",
-        "get_bank",
-        "get_bank_stats",
-        "update_bank",
-        "delete_bank",
-        "clear_memories",
-        "get_knowledge_base_tree",
-        "search_knowledge_base",
-        "get_knowledge_page",
-        "create_knowledge_folder",
-        "create_knowledge_page",
-        "update_knowledge_node",
-        "delete_knowledge_node",
-    }
+    tools_to_register = (
+        canonical_tool_names(config.tools)
+        if config.tools
+        else {
+            "retain",
+            "sync_retain",
+            "recall",
+            "reflect",
+            "list_banks",
+            "create_bank",
+            "list_mental_models",
+            "get_mental_model",
+            "create_mental_model",
+            "update_mental_model",
+            "delete_mental_model",
+            "refresh_mental_model",
+            "clear_mental_model",
+            "list_directives",
+            "create_directive",
+            "delete_directive",
+            "list_memories",
+            "get_memory",
+            "update_memory",
+            "invalidate_memory",
+            "list_documents",
+            "get_document",
+            "delete_document",
+            "list_operations",
+            "get_operation",
+            "cancel_operation",
+            "list_tags",
+            "get_bank",
+            "get_bank_stats",
+            "update_bank",
+            "delete_bank",
+            "clear_memories",
+            "get_page_tree",
+            "search_pages",
+            "get_page",
+            "create_page_folder",
+            "create_page",
+            "update_page_node",
+            "delete_page_node",
+        }
+    )
 
     if "retain" in tools_to_register:
         _register_retain(mcp, memory, config)
@@ -788,27 +811,27 @@ def register_mcp_tools(
     if "clear_memories" in tools_to_register:
         _register_clear_memories(mcp, memory, config)
 
-    # Knowledge base tools
-    if "get_knowledge_base_tree" in tools_to_register:
-        _register_get_knowledge_base_tree(mcp, memory, config)
+    # Pages tools
+    if "get_page_tree" in tools_to_register:
+        _register_get_page_tree(mcp, memory, config)
 
-    if "search_knowledge_base" in tools_to_register:
-        _register_search_knowledge_base(mcp, memory, config)
+    if "search_pages" in tools_to_register:
+        _register_search_pages(mcp, memory, config)
 
-    if "get_knowledge_page" in tools_to_register:
-        _register_get_knowledge_page(mcp, memory, config)
+    if "get_page" in tools_to_register:
+        _register_get_page(mcp, memory, config)
 
-    if "create_knowledge_folder" in tools_to_register:
-        _register_create_knowledge_folder(mcp, memory, config)
+    if "create_page_folder" in tools_to_register:
+        _register_create_page_folder(mcp, memory, config)
 
-    if "create_knowledge_page" in tools_to_register:
-        _register_create_knowledge_page(mcp, memory, config)
+    if "create_page" in tools_to_register:
+        _register_create_page(mcp, memory, config)
 
-    if "update_knowledge_node" in tools_to_register:
-        _register_update_knowledge_node(mcp, memory, config)
+    if "update_page_node" in tools_to_register:
+        _register_update_page_node(mcp, memory, config)
 
-    if "delete_knowledge_node" in tools_to_register:
-        _register_delete_knowledge_node(mcp, memory, config)
+    if "delete_page_node" in tools_to_register:
+        _register_delete_page_node(mcp, memory, config)
 
     _apply_bank_tool_filtering(mcp, memory, config)
     _apply_audit_logging(mcp, memory, config)
@@ -830,6 +853,8 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
         # Layer 1: bank config filter (existing)
         bank_cfg = await memory._config_resolver.get_bank_config(bank_id, request_context)
         bank_tools: list[str] | None = bank_cfg.get("mcp_enabled_tools")
+        if bank_tools is not None:
+            bank_tools = list(canonical_tool_names(bank_tools))
         enabled: set[str] | None = set(bank_tools) if bank_tools is not None else None
 
         # Layer 2: operation validator filter
@@ -863,6 +888,10 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
             return [t for t in tools if t.name in enabled_set]
 
         async def _filtered_get_tool(name, **kwargs):
+            # A call by an old tool name runs the renamed tool. list_tools only shows the new
+            # names, so agents never see the old ones; only callers that hardcode them use this.
+            # Deprecated alias, remove in 2.x.
+            name = _RENAMED_TOOLS.get(name, name)
             enabled_set = await _get_enabled_tools()
             if enabled_set is not None and name not in enabled_set:
                 return None  # FastMCP treats None as "not found" → raises NotFoundError
@@ -909,8 +938,8 @@ _UNAUDITED_MCP_TOOLS: frozenset[str] = frozenset(
         "get_bank",
         "get_bank_stats",
         "get_document",
-        "get_knowledge_base_tree",
-        "get_knowledge_page",
+        "get_page_tree",
+        "get_page",
         "get_memory",
         "get_mental_model",
         "get_operation",
@@ -921,7 +950,7 @@ _UNAUDITED_MCP_TOOLS: frozenset[str] = frozenset(
         "list_mental_models",
         "list_operations",
         "list_tags",
-        "search_knowledge_base",
+        "search_pages",
     }
 )
 
@@ -2503,25 +2532,25 @@ def _register_clear_mental_model(mcp: FastMCP, memory: MemoryEngine, config: MCP
 
 
 # =========================================================================
-# KNOWLEDGE BASE TOOLS
+# PAGES TOOLS
 # =========================================================================
 # A tree of folders and pages over mental models (see the HTTP
-# /knowledge-base endpoints). Pages read as markdown documents; folders are
-# containers. ``export_knowledge_base`` is deliberately NOT exposed here — it
+# /pages endpoints). Pages read as markdown documents; folders are
+# containers. ``export_pages`` is deliberately NOT exposed here — it
 # returns the whole bank as one markdown bundle, which belongs on the HTTP/CLI
 # path rather than in an agent's context window.
 
 # MCP tool arguments cannot express an explicit null: an omitted argument and a
-# null one both arrive as ``None``, so update_knowledge_node reads this literal
+# null one both arrive as ``None``, so update_page_node reads this literal
 # as "move to the top level". Node ids are prefixed (``kf-``/``kp-``), so it
 # cannot collide with a real folder id.
-KNOWLEDGE_ROOT_PARENT = "root"
+PAGE_ROOT_PARENT = "root"
 
 
-def _knowledge_node_json(node: dict[str, Any]) -> dict[str, Any]:
+def _page_node_json(node: dict[str, Any]) -> dict[str, Any]:
     """Project an engine node dict into the compact JSON an MCP client sees.
 
-    Mirrors the HTTP ``KnowledgeNode`` projection, minus the fields an agent has
+    Mirrors the HTTP ``PageNode`` projection, minus the fields an agent has
     no use for (bank_id, sort_order): page metadata comes from the backing
     mental model, folders carry structure only.
     """
@@ -2548,9 +2577,9 @@ def _knowledge_node_json(node: dict[str, Any]) -> dict[str, Any]:
     return projected
 
 
-def _knowledge_tree_json(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _page_tree_json(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Assemble the flat node list into nested roots (mirrors the HTTP tree)."""
-    projected = {n["id"]: _knowledge_node_json(n) for n in nodes}
+    projected = {n["id"]: _page_node_json(n) for n in nodes}
     roots: list[dict[str, Any]] = []
     for node in nodes:
         parent_id = node.get("parent_id")
@@ -2563,36 +2592,34 @@ def _knowledge_tree_json(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return roots
 
 
-async def _do_get_knowledge_base_tree(
-    memory: MemoryEngine, target_bank: str, request_context: RequestContext
-) -> dict[str, Any]:
-    """Shared implementation for the get_knowledge_base_tree MCP tool variants."""
-    nodes = await memory.list_knowledge_nodes(bank_id=target_bank, with_staleness=True, request_context=request_context)
-    return {"roots": _knowledge_tree_json(nodes)}
+async def _do_get_page_tree(memory: MemoryEngine, target_bank: str, request_context: RequestContext) -> dict[str, Any]:
+    """Shared implementation for the get_page_tree MCP tool variants."""
+    nodes = await memory.list_page_nodes(bank_id=target_bank, with_staleness=True, request_context=request_context)
+    return {"roots": _page_tree_json(nodes)}
 
 
-async def _do_search_knowledge_base(
+async def _do_search_pages(
     memory: MemoryEngine, target_bank: str, request_context: RequestContext, *, query: str, limit: int
 ) -> dict[str, Any]:
-    """Shared implementation for the search_knowledge_base MCP tool variants.
+    """Shared implementation for the search_pages MCP tool variants.
 
     ``limit`` is clamped rather than rejected: the HTTP route answers an
     out-of-range limit with a 422, but an agent that asked for 500 pages wants
     results, not a validation round trip.
     """
-    results = await memory.search_knowledge_pages(
+    results = await memory.search_pages(
         bank_id=target_bank, query=query, limit=max(1, min(limit, 50)), request_context=request_context
     )
     return {"results": results, "total": len(results)}
 
 
-async def _do_get_knowledge_page(
+async def _do_get_page(
     memory: MemoryEngine, target_bank: str, request_context: RequestContext, *, page_id: str
 ) -> dict[str, Any]:
-    """Shared implementation for the get_knowledge_page MCP tool variants."""
-    node = await memory.get_knowledge_page(bank_id=target_bank, page_id=page_id, request_context=request_context)
+    """Shared implementation for the get_page MCP tool variants."""
+    node = await memory.get_page(bank_id=target_bank, page_id=page_id, request_context=request_context)
     if node is None:
-        return {"error": f"Knowledge page '{page_id}' not found in bank '{target_bank}'"}
+        return {"error": f"Page '{page_id}' not found in bank '{target_bank}'"}
     page = page_markdown.page_type(node.get("tags"))
     # The rendered document already carries the body under a frontmatter block,
     # so it is returned once rather than alongside a duplicate `body` field.
@@ -2607,17 +2634,17 @@ async def _do_get_knowledge_page(
     }
 
 
-async def _do_create_knowledge_folder(
+async def _do_create_page_folder(
     memory: MemoryEngine, target_bank: str, request_context: RequestContext, *, name: str, parent_id: str | None
 ) -> dict[str, Any]:
-    """Shared implementation for the create_knowledge_folder MCP tool variants."""
-    node = await memory.create_knowledge_folder(
+    """Shared implementation for the create_page_folder MCP tool variants."""
+    node = await memory.create_page_folder(
         bank_id=target_bank, name=name, parent_id=parent_id, request_context=request_context
     )
-    return _knowledge_node_json(node)
+    return _page_node_json(node)
 
 
-async def _do_create_knowledge_page(
+async def _do_create_page(
     memory: MemoryEngine,
     target_bank: str,
     request_context: RequestContext,
@@ -2630,8 +2657,8 @@ async def _do_create_knowledge_page(
     trigger: MentalModelTriggerInput | None,
     refresh_after_consolidation: bool | None,
 ) -> dict[str, Any]:
-    """Shared implementation for the create_knowledge_page MCP tool variants."""
-    node = await memory.create_knowledge_page(
+    """Shared implementation for the create_page MCP tool variants."""
+    node = await memory.create_page(
         bank_id=target_bank,
         name=name,
         source_query=source_query,
@@ -2640,7 +2667,7 @@ async def _do_create_knowledge_page(
         tags=tags or None,
         max_tokens=max_tokens,
         # Only the fields the caller stated: the engine merges them over
-        # KNOWLEDGE_PAGE_DEFAULT_TRIGGER, so an unmentioned setting keeps the page
+        # PAGE_DEFAULT_TRIGGER, so an unmentioned setting keeps the page
         # contract (delta mode, observation-only facts, sibling pages excluded).
         trigger=_mental_model_trigger_patch(trigger, refresh_after_consolidation=refresh_after_consolidation),
         request_context=request_context,
@@ -2659,7 +2686,7 @@ async def _do_create_knowledge_page(
     }
 
 
-async def _do_update_knowledge_node(
+async def _do_update_page_node(
     memory: MemoryEngine,
     target_bank: str,
     request_context: RequestContext,
@@ -2673,7 +2700,7 @@ async def _do_update_knowledge_node(
     trigger: MentalModelTriggerInput | None,
     refresh_after_consolidation: bool | None,
 ) -> dict[str, Any]:
-    """Shared implementation for the update_knowledge_node MCP tool variants.
+    """Shared implementation for the update_page_node MCP tool variants.
 
     Each field is applied only when provided, so a rename never resets a page's
     query and moving a page never drops its tags.
@@ -2694,11 +2721,11 @@ async def _do_update_knowledge_node(
     # One call, one transaction: a rename must not survive the move that fails
     # after it. This tool is driven by agents that retry on error, and a partly
     # applied patch made the retry read a tree nobody asked for.
-    updated = await memory.update_knowledge_node(
+    updated = await memory.update_page_node(
         bank_id=target_bank,
         node_id=node_id,
         name=name,
-        parent_id=(None if parent_id == KNOWLEDGE_ROOT_PARENT else parent_id) if parent_id is not None else KEEP_PARENT,
+        parent_id=(None if parent_id == PAGE_ROOT_PARENT else parent_id) if parent_id is not None else KEEP_PARENT,
         source_query=source_query,
         tags=tags,
         max_tokens=max_tokens,
@@ -2706,45 +2733,45 @@ async def _do_update_knowledge_node(
         request_context=request_context,
     )
     if updated is None:
-        return {"error": f"Knowledge node '{node_id}' not found in bank '{target_bank}'"}
+        return {"error": f"Page node '{node_id}' not found in bank '{target_bank}'"}
     # A new source query means the page's content no longer answers it — rebuild.
     # Scheduled only once the patch has committed.
     if source_query is not None and updated.get("mental_model_id"):
         await memory.submit_async_refresh_mental_model(
             bank_id=target_bank, mental_model_id=updated["mental_model_id"], request_context=request_context
         )
-    return _knowledge_node_json(updated)
+    return _page_node_json(updated)
 
 
-async def _do_delete_knowledge_node(
+async def _do_delete_page_node(
     memory: MemoryEngine, target_bank: str, request_context: RequestContext, *, node_id: str
 ) -> dict[str, Any]:
-    """Shared implementation for the delete_knowledge_node MCP tool variants."""
-    deleted = await memory.delete_knowledge_node(bank_id=target_bank, node_id=node_id, request_context=request_context)
+    """Shared implementation for the delete_page_node MCP tool variants."""
+    deleted = await memory.delete_page_node(bank_id=target_bank, node_id=node_id, request_context=request_context)
     if not deleted:
-        return {"error": f"Knowledge node '{node_id}' not found in bank '{target_bank}'"}
+        return {"error": f"Page node '{node_id}' not found in bank '{target_bank}'"}
     return {"status": "deleted", "node_id": node_id}
 
 
-def _register_get_knowledge_base_tree(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
-    """Register the get_knowledge_base_tree tool."""
+def _register_get_page_tree(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the get_page_tree tool."""
 
     async def _run(target_bank: str) -> Any:
-        return await _do_get_knowledge_base_tree(memory, target_bank, _get_request_context(config))
+        return await _do_get_page_tree(memory, target_bank, _get_request_context(config))
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("get_knowledge_base_tree"), output_schema=None)
-        async def get_knowledge_base_tree(
+        @mcp.tool(annotations=_tool_annotations("get_page_tree"), output_schema=None)
+        async def get_page_tree(
             bank_id: str | None = None,
         ) -> str:
             """
-            Browse the knowledge base as a nested tree of folders and pages.
+            Browse the pages as a nested tree of folders and pages.
 
             Start here to discover what the bank documents: each page is a living
             markdown document synthesized from the bank's memories, and folders
-            group them. Use get_knowledge_page to read a page's content, or
-            search_knowledge_base when you know what you are looking for.
+            group them. Use get_page to read a page's content, or
+            search_pages when you know what you are looking for.
 
             Pages report `is_stale`: false means the page is provably up to date;
             true means something was written since its last refresh, so it MAY be
@@ -2757,21 +2784,21 @@ def _register_get_knowledge_base_tree(mcp: FastMCP, memory: MemoryEngine, config
                 config,
                 bank_id=bank_id,
                 as_json=True,
-                action="getting knowledge base tree",
+                action="getting pages tree",
                 run=lambda target_bank: _run(target_bank),
             )
 
     else:
 
-        @mcp.tool(annotations=_tool_annotations("get_knowledge_base_tree"))
-        async def get_knowledge_base_tree() -> dict:
+        @mcp.tool(annotations=_tool_annotations("get_page_tree"))
+        async def get_page_tree() -> dict:
             """
-            Browse the knowledge base as a nested tree of folders and pages.
+            Browse the pages as a nested tree of folders and pages.
 
             Start here to discover what the bank documents: each page is a living
             markdown document synthesized from the bank's memories, and folders
-            group them. Use get_knowledge_page to read a page's content, or
-            search_knowledge_base when you know what you are looking for.
+            group them. Use get_page to read a page's content, or
+            search_pages when you know what you are looking for.
 
             Pages report `is_stale`: false means the page is provably up to date;
             true means something was written since its last refresh, so it MAY be
@@ -2781,33 +2808,31 @@ def _register_get_knowledge_base_tree(mcp: FastMCP, memory: MemoryEngine, config
                 config,
                 bank_id=None,
                 as_json=False,
-                action="getting knowledge base tree",
+                action="getting pages tree",
                 run=lambda target_bank: _run(target_bank),
             )
 
 
-def _register_search_knowledge_base(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
-    """Register the search_knowledge_base tool."""
+def _register_search_pages(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the search_pages tool."""
 
     async def _run(target_bank: str, query: str, limit: int) -> Any:
-        return await _do_search_knowledge_base(
-            memory, target_bank, _get_request_context(config), query=query, limit=limit
-        )
+        return await _do_search_pages(memory, target_bank, _get_request_context(config), query=query, limit=limit)
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("search_knowledge_base"), output_schema=None)
-        async def search_knowledge_base(
+        @mcp.tool(annotations=_tool_annotations("search_pages"), output_schema=None)
+        async def search_pages(
             query: str,
             limit: int = 10,
             bank_id: str | None = None,
         ) -> str:
             """
-            Find knowledge pages by relevance (hybrid keyword + semantic search).
+            Find pages by relevance (hybrid keyword + semantic search).
 
             Searches page names and content, returning ranked pages with a short
-            snippet each. Read a hit in full with get_knowledge_page. This searches
-            the curated knowledge base only — use recall to search raw memories.
+            snippet each. Read a hit in full with get_page. This searches
+            the curated pages only — use recall to search raw memories.
 
             Args:
                 query: What to search for
@@ -2818,23 +2843,23 @@ def _register_search_knowledge_base(mcp: FastMCP, memory: MemoryEngine, config: 
                 config,
                 bank_id=bank_id,
                 as_json=True,
-                action="searching knowledge base",
+                action="searching pages",
                 run=lambda target_bank: _run(target_bank, query, limit),
             )
 
     else:
 
-        @mcp.tool(annotations=_tool_annotations("search_knowledge_base"))
-        async def search_knowledge_base(
+        @mcp.tool(annotations=_tool_annotations("search_pages"))
+        async def search_pages(
             query: str,
             limit: int = 10,
         ) -> dict:
             """
-            Find knowledge pages by relevance (hybrid keyword + semantic search).
+            Find pages by relevance (hybrid keyword + semantic search).
 
             Searches page names and content, returning ranked pages with a short
-            snippet each. Read a hit in full with get_knowledge_page. This searches
-            the curated knowledge base only — use recall to search raw memories.
+            snippet each. Read a hit in full with get_page. This searches
+            the curated pages only — use recall to search raw memories.
 
             Args:
                 query: What to search for
@@ -2844,30 +2869,30 @@ def _register_search_knowledge_base(mcp: FastMCP, memory: MemoryEngine, config: 
                 config,
                 bank_id=None,
                 as_json=False,
-                action="searching knowledge base",
+                action="searching pages",
                 run=lambda target_bank: _run(target_bank, query, limit),
             )
 
 
-def _register_get_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
-    """Register the get_knowledge_page tool."""
+def _register_get_page(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the get_page tool."""
 
     async def _run(target_bank: str, page_id: str) -> Any:
-        return await _do_get_knowledge_page(memory, target_bank, _get_request_context(config), page_id=page_id)
+        return await _do_get_page(memory, target_bank, _get_request_context(config), page_id=page_id)
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("get_knowledge_page"), output_schema=None)
-        async def get_knowledge_page(
+        @mcp.tool(annotations=_tool_annotations("get_page"), output_schema=None)
+        async def get_page(
             page_id: str,
             bank_id: str | None = None,
         ) -> str:
             """
-            Read a knowledge page as a markdown document.
+            Read a page as a markdown document.
 
             Returns the page's YAML frontmatter (id, type, title, description,
             tags, timestamp) followed by its synthesized markdown body. Discover
-            page ids with get_knowledge_base_tree or search_knowledge_base.
+            page ids with get_page_tree or search_pages.
 
             Args:
                 page_id: The ID of the page to read (a `kp-...` node id)
@@ -2877,22 +2902,22 @@ def _register_get_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: MCP
                 config,
                 bank_id=bank_id,
                 as_json=True,
-                action="getting knowledge page",
+                action="getting page",
                 run=lambda target_bank: _run(target_bank, page_id),
             )
 
     else:
 
-        @mcp.tool(annotations=_tool_annotations("get_knowledge_page"))
-        async def get_knowledge_page(
+        @mcp.tool(annotations=_tool_annotations("get_page"))
+        async def get_page(
             page_id: str,
         ) -> dict:
             """
-            Read a knowledge page as a markdown document.
+            Read a page as a markdown document.
 
             Returns the page's YAML frontmatter (id, type, title, description,
             tags, timestamp) followed by its synthesized markdown body. Discover
-            page ids with get_knowledge_base_tree or search_knowledge_base.
+            page ids with get_page_tree or search_pages.
 
             Args:
                 page_id: The ID of the page to read (a `kp-...` node id)
@@ -2901,29 +2926,29 @@ def _register_get_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: MCP
                 config,
                 bank_id=None,
                 as_json=False,
-                action="getting knowledge page",
+                action="getting page",
                 run=lambda target_bank: _run(target_bank, page_id),
             )
 
 
-def _register_create_knowledge_folder(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
-    """Register the create_knowledge_folder tool."""
+def _register_create_page_folder(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the create_page_folder tool."""
 
     async def _run(target_bank: str, name: str, parent_id: str | None) -> Any:
-        return await _do_create_knowledge_folder(
+        return await _do_create_page_folder(
             memory, target_bank, _get_request_context(config), name=name, parent_id=parent_id
         )
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("create_knowledge_folder"), output_schema=None)
-        async def create_knowledge_folder(
+        @mcp.tool(annotations=_tool_annotations("create_page_folder"), output_schema=None)
+        async def create_page_folder(
             name: str,
             parent_id: str | None = None,
             bank_id: str | None = None,
         ) -> str:
             """
-            Create a folder in the knowledge base.
+            Create a folder in the pages.
 
             Folders group pages; they hold no content of their own.
 
@@ -2943,13 +2968,13 @@ def _register_create_knowledge_folder(mcp: FastMCP, memory: MemoryEngine, config
 
     else:
 
-        @mcp.tool(annotations=_tool_annotations("create_knowledge_folder"))
-        async def create_knowledge_folder(
+        @mcp.tool(annotations=_tool_annotations("create_page_folder"))
+        async def create_page_folder(
             name: str,
             parent_id: str | None = None,
         ) -> dict:
             """
-            Create a folder in the knowledge base.
+            Create a folder in the pages.
 
             Folders group pages; they hold no content of their own.
 
@@ -2967,8 +2992,8 @@ def _register_create_knowledge_folder(mcp: FastMCP, memory: MemoryEngine, config
             )
 
 
-def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
-    """Register the create_knowledge_page tool."""
+def _register_create_page(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the create_page tool."""
 
     async def _run(
         target_bank: str,
@@ -2980,7 +3005,7 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
         trigger: MentalModelTriggerInput | None,
         refresh_after_consolidation: bool | None,
     ) -> Any:
-        return await _do_create_knowledge_page(
+        return await _do_create_page(
             memory,
             target_bank,
             _get_request_context(config),
@@ -2995,8 +3020,8 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("create_knowledge_page"), output_schema=None)
-        async def create_knowledge_page(
+        @mcp.tool(annotations=_tool_annotations("create_page"), output_schema=None)
+        async def create_page(
             name: str,
             source_query: str,
             parent_id: str | None = None,
@@ -3007,11 +3032,11 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
             bank_id: str | None = None,
         ) -> str:
             """
-            Create a knowledge page — a living document answering a question.
+            Create a page — a living document answering a question.
 
             The page's content is synthesized from the bank's memories by running
             source_query, asynchronously: use the returned operation_id to track
-            completion, then read it with get_knowledge_page. By default the page
+            completion, then read it with get_page. By default the page
             keeps itself current, rebuilding after each consolidation.
 
             EXAMPLES:
@@ -3027,7 +3052,7 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
                 trigger: Refresh policy for this page — when it rebuilds itself (mode,
                     refresh_after_consolidation, refresh_cron) and what it rebuilds from
                     (fact_types, tags_match, tag_groups, exclude_mental_models,
-                    recall_max_tokens, ...). Omitted fields keep the knowledge-page
+                    recall_max_tokens, ...). Omitted fields keep the page
                     defaults: incremental (delta) rebuilds from consolidated observations
                     after each consolidation, ignoring sibling pages. Set refresh_cron
                     instead to move the page onto a fixed UTC schedule.
@@ -3038,7 +3063,7 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
                 config,
                 bank_id=bank_id,
                 as_json=True,
-                action="creating knowledge page",
+                action="creating page",
                 run=lambda target_bank: _run(
                     target_bank, name, source_query, parent_id, tags, max_tokens, trigger, refresh_after_consolidation
                 ),
@@ -3047,8 +3072,8 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
 
     else:
 
-        @mcp.tool(annotations=_tool_annotations("create_knowledge_page"))
-        async def create_knowledge_page(
+        @mcp.tool(annotations=_tool_annotations("create_page"))
+        async def create_page(
             name: str,
             source_query: str,
             parent_id: str | None = None,
@@ -3058,11 +3083,11 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
             refresh_after_consolidation: bool | None = None,
         ) -> dict:
             """
-            Create a knowledge page — a living document answering a question.
+            Create a page — a living document answering a question.
 
             The page's content is synthesized from the bank's memories by running
             source_query, asynchronously: use the returned operation_id to track
-            completion, then read it with get_knowledge_page. By default the page
+            completion, then read it with get_page. By default the page
             keeps itself current, rebuilding after each consolidation.
 
             EXAMPLES:
@@ -3078,7 +3103,7 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
                 trigger: Refresh policy for this page — when it rebuilds itself (mode,
                     refresh_after_consolidation, refresh_cron) and what it rebuilds from
                     (fact_types, tags_match, tag_groups, exclude_mental_models,
-                    recall_max_tokens, ...). Omitted fields keep the knowledge-page
+                    recall_max_tokens, ...). Omitted fields keep the page
                     defaults: incremental (delta) rebuilds from consolidated observations
                     after each consolidation, ignoring sibling pages. Set refresh_cron
                     instead to move the page onto a fixed UTC schedule.
@@ -3088,7 +3113,7 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
                 config,
                 bank_id=None,
                 as_json=False,
-                action="creating knowledge page",
+                action="creating page",
                 run=lambda target_bank: _run(
                     target_bank, name, source_query, parent_id, tags, max_tokens, trigger, refresh_after_consolidation
                 ),
@@ -3096,8 +3121,8 @@ def _register_create_knowledge_page(mcp: FastMCP, memory: MemoryEngine, config: 
             )
 
 
-def _register_update_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
-    """Register the update_knowledge_node tool."""
+def _register_update_page_node(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the update_page_node tool."""
 
     async def _run(
         target_bank: str,
@@ -3110,7 +3135,7 @@ def _register_update_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
         trigger: MentalModelTriggerInput | None,
         refresh_after_consolidation: bool | None,
     ) -> Any:
-        return await _do_update_knowledge_node(
+        return await _do_update_page_node(
             memory,
             target_bank,
             _get_request_context(config),
@@ -3126,8 +3151,8 @@ def _register_update_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("update_knowledge_node"), output_schema=None)
-        async def update_knowledge_node(
+        @mcp.tool(annotations=_tool_annotations("update_page_node"), output_schema=None)
+        async def update_page_node(
             node_id: str,
             name: str | None = None,
             parent_id: str | None = None,
@@ -3166,7 +3191,7 @@ def _register_update_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
                 config,
                 bank_id=bank_id,
                 as_json=True,
-                action="updating knowledge node",
+                action="updating page node",
                 run=lambda target_bank: _run(
                     target_bank,
                     node_id,
@@ -3183,8 +3208,8 @@ def _register_update_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
 
     else:
 
-        @mcp.tool(annotations=_tool_annotations("update_knowledge_node"))
-        async def update_knowledge_node(
+        @mcp.tool(annotations=_tool_annotations("update_page_node"))
+        async def update_page_node(
             node_id: str,
             name: str | None = None,
             parent_id: str | None = None,
@@ -3221,7 +3246,7 @@ def _register_update_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
                 config,
                 bank_id=None,
                 as_json=False,
-                action="updating knowledge node",
+                action="updating page node",
                 run=lambda target_bank: _run(
                     target_bank,
                     node_id,
@@ -3237,21 +3262,21 @@ def _register_update_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
             )
 
 
-def _register_delete_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
-    """Register the delete_knowledge_node tool."""
+def _register_delete_page_node(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    """Register the delete_page_node tool."""
 
     async def _run(target_bank: str, node_id: str) -> Any:
-        return await _do_delete_knowledge_node(memory, target_bank, _get_request_context(config), node_id=node_id)
+        return await _do_delete_page_node(memory, target_bank, _get_request_context(config), node_id=node_id)
 
     if config.include_bank_id_param:
 
-        @mcp.tool(annotations=_tool_annotations("delete_knowledge_node"), output_schema=None)
-        async def delete_knowledge_node(
+        @mcp.tool(annotations=_tool_annotations("delete_page_node"), output_schema=None)
+        async def delete_page_node(
             node_id: str,
             bank_id: str | None = None,
         ) -> str:
             """
-            Delete a knowledge-base folder or page and everything under it.
+            Delete a folder or page and everything under it.
 
             Deleting a folder also deletes its whole subtree, and each deleted page
             takes its backing mental model with it. This cannot be undone.
@@ -3264,19 +3289,19 @@ def _register_delete_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
                 config,
                 bank_id=bank_id,
                 as_json=True,
-                action="deleting knowledge node",
+                action="deleting page node",
                 run=lambda target_bank: _run(target_bank, node_id),
                 indent=None,
             )
 
     else:
 
-        @mcp.tool(annotations=_tool_annotations("delete_knowledge_node"))
-        async def delete_knowledge_node(
+        @mcp.tool(annotations=_tool_annotations("delete_page_node"))
+        async def delete_page_node(
             node_id: str,
         ) -> dict:
             """
-            Delete a knowledge-base folder or page and everything under it.
+            Delete a folder or page and everything under it.
 
             Deleting a folder also deletes its whole subtree, and each deleted page
             takes its backing mental model with it. This cannot be undone.
@@ -3288,7 +3313,7 @@ def _register_delete_knowledge_node(mcp: FastMCP, memory: MemoryEngine, config: 
                 config,
                 bank_id=None,
                 as_json=False,
-                action="deleting knowledge node",
+                action="deleting page node",
                 run=lambda target_bank: _run(target_bank, node_id),
                 indent=None,
             )

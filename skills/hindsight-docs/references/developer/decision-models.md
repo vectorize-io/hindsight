@@ -2,13 +2,13 @@
 
 # Decision Models
 
-A **decision model** answers short, typed questions — *yes or no*, *which of these*, *how likely* — in well under a second. Hindsight hands it the small judgment calls hidden inside recall, consolidation, reflect and knowledge-page refresh, and keeps the LLM for the part that needs writing.
+A **decision model** answers short, typed questions — *yes or no*, *which of these*, *how likely* — in well under a second. Hindsight hands it the small judgment calls hidden inside recall, consolidation, reflect and page refresh, and keeps the LLM for the part that needs writing.
 
 It is optional. Without one, every operation works exactly as it always has; with one, the same operations make fewer LLM calls. You set it up once and every operation that supports it starts using it.
 
 > **💡 Get one from Hindsight Inference**
 >
-[Hindsight Inference](https://inference.hindsight.vectorize.io) serves `hs-decide-1-flash`, a decision model trained for the judgments Hindsight makes, at $0.02 per million input tokens. It works with every operation, reflect and knowledge pages included. Sign in once and pick the `hindsight` provider:
+[Hindsight Inference](https://inference.hindsight.vectorize.io) serves `hs-decide-1-flash`, a decision model trained for the judgments Hindsight makes, at $0.02 per million input tokens. It works with every operation, reflect and pages included. Sign in once and pick the `hindsight` provider:
 
 ```bash
 hindsight-admin cloud login     # signs in to Hindsight Cloud and saves a key
@@ -93,9 +93,9 @@ With a decision model, reflect changes shape. One LLM call writes a search query
 
 ## Refreshing Only What Changed
 
-A [knowledge page](./knowledge-pages.md) refreshes incrementally: it only has to consider the memories that arrived since its last refresh. Without a decision model, that refresh still runs reflect to gather them and an LLM to judge them.
+A [page](./pages.md) refreshes incrementally: it only has to consider the memories that arrived since its last refresh. Without a decision model, that refresh still runs reflect to gather them and an LLM to judge them.
 
-**Figure: Knowledge Page Refresh with a Decision Model.** An animated diagram on the docs site; its narration, step by step:
+**Figure: Page Refresh with a Decision Model.** An animated diagram on the docs site; its narration, step by step:
 
 - **refresh**
   1. Five memories arrived since this page was last refreshed. A page refreshes incrementally, so only these need a look.
@@ -104,7 +104,7 @@ A [knowledge page](./knowledge-pages.md) refreshes incrementally: it only has to
   4. Only those reach the LLM that edits the page. When none could change it, there is no LLM call at all.
   5. On the refresh cost eval, a 20-memory refresh went from 3 LLM calls to 1, with about 70% fewer input tokens.
 
-With a decision model, the refresh skips reflect. It asks, for each new memory, with the page in front of it: *could this change the page?* Only the memories that could reach the LLM that edits the page; the rest are dropped and not offered again. When none could, the refresh makes no LLM call at all. On the refresh cost eval, a 20-memory refresh went from 3 LLM calls to 1, with about 70% fewer input tokens. See [Knowledge Pages](./knowledge-pages.md#decision-model-refresh).
+With a decision model, the refresh skips reflect. It asks, for each new memory, with the page in front of it: *could this change the page?* Only the memories that could reach the LLM that edits the page; the rest are dropped and not offered again. When none could, the refresh makes no LLM call at all. On the refresh cost eval, a 20-memory refresh went from 3 LLM calls to 1, with about 70% fewer input tokens. See [Pages](./pages.md#decision-model-refresh).
 
 ---
 
@@ -114,10 +114,10 @@ A decision model only ever saves LLM calls; it never becomes the only way an ope
 
 - **Consolidation** sends the fact to the LLM, as before.
 - **Reflect** lets the LLM decide when to stop, as in agent mode.
-- **Knowledge pages** run reflect for the refresh, as before.
+- **Pages** run reflect for the refresh, as before.
 - **Recall** is the exception: the decision model *is* its ranker, so a recall fails if it cannot be reached after retries — the same as with any remote reranker.
 
-Reflect and knowledge-page refresh currently need the `hindsight` or `typesafe` provider; with another provider they keep their LLM-only path and log a warning, while recall and consolidation still use it.
+Reflect and page refresh currently need the `hindsight` or `typesafe` provider; with another provider they keep their LLM-only path and log a warning, while recall and consolidation still use it.
 
 Every decision-model call is recorded in the bank's model call log next to the LLM, embedding and reranker calls, so you can see what it was asked and what it answered: open a bank in the control plane and go to **LLM Requests**.
 
@@ -168,4 +168,4 @@ Memories already stored need re-embedding after you switch embedding models. To 
 - [**Hugging Face**](https://huggingface.co/hindsight-ai) — The open weights for all three models
 - [**Configuration › Decision model**](./configuration.md#decision-model) — Set it up, turn it off, tune it
 - [**Models › Decision Model**](./models.md#decision-model) — Providers and default models
-- [**Recall**](./retrieval.md#decision-model-ranking) · [**Observations**](./observations.md#decision-model-triage) · [**Reflect**](./reflect.md#decision-model-orchestration) · [**Knowledge Pages**](./knowledge-pages.md#decision-model-refresh) — Each operation in detail
+- [**Recall**](./retrieval.md#decision-model-ranking) · [**Observations**](./observations.md#decision-model-triage) · [**Reflect**](./reflect.md#decision-model-orchestration) · [**Pages**](./pages.md#decision-model-refresh) — Each operation in detail
