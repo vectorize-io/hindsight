@@ -757,3 +757,40 @@ async def test_banks_with_attachments_in_window(memory: MemoryEngine):
         async with memory._pool.acquire() as conn:
             for schema in (full, empty):
                 await conn.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+def _load_attachments_window_migration():
+    path = (
+        Path(__file__).resolve().parent.parent
+        / "hindsight_api/alembic/versions/05867433a58c_add_banks_with_attachments_in_window_routine.py"
+    )
+    spec = importlib.util.spec_from_file_location("_banks_with_attachments_in_window", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("target_schema", "configured", "expected_prefix"),
+    [
+        (None, "public", ""),
+        ("public", "public", '"public".'),
+        ("hs_tenant", "hs_tenant", '"hs_tenant".'),
+    ],
+)
+def test_attachments_window_routine_installs_in_the_configured_schema(
+    monkeypatch, target_schema, configured, expected_prefix
+):
+    """One copy, in the configured schema ``fq_routine`` calls, with the concurrent-DDL guard."""
+    migration = _load_attachments_window_migration()
+    joined = "\n".join(_capture_upgrade(migration, monkeypatch, target_schema, configured))
+
+    assert f"CREATE OR REPLACE FUNCTION {expected_prefix}banks_with_attachments_in_window" in joined
+    assert "lock_not_available" in joined
+    assert "advisory" not in joined.lower()
+
+
+def test_attachments_window_routine_tenant_runs_install_nothing(monkeypatch):
+    migration = _load_attachments_window_migration()
+    assert _capture_upgrade(migration, monkeypatch, "tenant_xyz", configured_schema="public") == []

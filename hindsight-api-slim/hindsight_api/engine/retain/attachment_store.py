@@ -342,6 +342,26 @@ class InMemoryAttachmentLoader:
 AttachmentLoader = Union[RetainAttachmentLoader, InMemoryAttachmentLoader]
 
 
+async def unreferenced_attachment_blobs(conn, bank_id: str, storage_keys: Sequence[str]) -> list[str]:
+    """Of these storage keys, the ones no ``attachments`` row in the bank still names.
+
+    Run after the rows that owned them are deleted. Only a bank retained before an
+    attachment belonged to its document has keys shared by more than one row; for
+    everything since, every key here is unreferenced.
+    """
+    if not storage_keys:
+        return []
+    wanted = list(dict.fromkeys(storage_keys))
+    rows = await conn.fetch(
+        f"SELECT DISTINCT storage_key FROM {fq_table('attachments')} "
+        f"WHERE bank_id = $1 AND storage_key = ANY($2::text[])",
+        bank_id,
+        wanted,
+    )
+    still_named = {row["storage_key"] for row in rows}
+    return [key for key in wanted if key not in still_named]
+
+
 #: How old an attachment must be before a sweep may judge it: a retain still running
 #: inline has not written its document yet, and a day is far past any retain.
 ATTACHMENT_SWEEP_GRACE = timedelta(days=1)
@@ -438,20 +458,7 @@ async def reclaim_unreferenced_attachments(
         removed += len(keys)
         if not keys:
             continue
-        # A blob outlives its row only in a bank retained before an attachment belonged
-        # to its document, where one key could be shared by several rows.
-        still_named = {
-            row["storage_key"]
-            for row in await conn.fetch(
-                f"SELECT DISTINCT storage_key FROM {fq_table('attachments')} "
-                f"WHERE bank_id = $1 AND storage_key = ANY($2::text[])",
-                bank_id,
-                keys,
-            )
-        }
-        for key in dict.fromkeys(keys):
-            if key in still_named:
-                continue
+        for key in await unreferenced_attachment_blobs(conn, bank_id, keys):
             try:
                 await file_storage.delete(key)
             except Exception:

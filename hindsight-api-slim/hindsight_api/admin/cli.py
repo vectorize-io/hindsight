@@ -783,6 +783,7 @@ async def _run_repair_bank(
             schema_rebuilt = 0
             schema_attachments = 0
             schema_banks_done = 0
+            schema_file_storage = _admin_file_storage(conn, target_schema) if attachments else None
             try:
                 bank_ids = [bank_id] if bank_id else await list_bank_ids(conn, target_schema)
                 for bid in bank_ids:
@@ -797,13 +798,13 @@ async def _run_repair_bank(
                     schema_rebuilt += await pg_store.admin_rebuild_observation_search_vectors(
                         conn=conn, schema=target_schema, bank_id=bid, dry_run=dry_run
                     )
-                    if attachments:
+                    if schema_file_storage is not None:
                         # The shared rule resolves tables through fq_table.
                         token = _current_schema.set(target_schema)
                         try:
                             schema_attachments += await reclaim_unreferenced_attachments(
                                 conn,
-                                _admin_file_storage(conn, target_schema),
+                                schema_file_storage,
                                 get_memories(),
                                 bid,
                                 created_after=attachments_after,
@@ -966,6 +967,7 @@ def repair_bank(
     Reach for the command when you want convergence without waiting for a write:
     after a restore or upgrade, after a backend switch, or to shed indexes in
     bulk on a deployment recovering from lock-table exhaustion (#3485).
+
     With --attachments, also deletes the images and files of retains that failed
     after the API stored them: attachments, a day or more old, that their
     document's text does not reference — the document was never created, or the

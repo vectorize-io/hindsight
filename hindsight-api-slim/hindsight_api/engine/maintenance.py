@@ -120,7 +120,7 @@ _RETENTION_BATCH_PAUSE_SECONDS = 0.25
 # A retain's attachments are stored before the retain runs; one its document
 # still does not reference a day later — the document was never created, or an
 # update to it failed — belongs to a retain that failed. Only the past
-# week is checked, so a daily run asks about each attachment about six times rather
+# week is checked, so a daily run asks about each attachment about seven times rather
 # than about every attachment the bank ever held.
 # An attachment orphaned before the job existed, or while every process was down
 # (or its retain queued) for over a week, falls out of the window: that is what

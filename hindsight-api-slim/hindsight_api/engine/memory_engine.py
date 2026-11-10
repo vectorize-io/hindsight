@@ -9109,23 +9109,10 @@ class MemoryEngine(MemoryEngineInterface):
         return await self._unreferenced_attachment_blobs(conn, bank_id, [row["storage_key"] for row in keys])
 
     async def _unreferenced_attachment_blobs(self, conn, bank_id: str, storage_keys: "Sequence[str]") -> list[str]:
-        """Of these storage keys, the ones no ``attachments`` row in the bank still names.
+        """Of these storage keys, the ones no ``attachments`` row in the bank still names."""
+        from .retain.attachment_store import unreferenced_attachment_blobs
 
-        Run after the rows that owned them are deleted. Only a bank retained
-        before an attachment belonged to its document has keys shared by more than
-        one row; for everything since, every key here is unreferenced.
-        """
-        if not storage_keys:
-            return []
-        wanted = list(dict.fromkeys(storage_keys))
-        rows = await conn.fetch(
-            f"SELECT DISTINCT storage_key FROM {fq_table('attachments')} "
-            f"WHERE bank_id = $1 AND storage_key = ANY($2::text[])",
-            bank_id,
-            wanted,
-        )
-        still_named = {row["storage_key"] for row in rows}
-        return [key for key in wanted if key not in still_named]
+        return await unreferenced_attachment_blobs(conn, bank_id, storage_keys)
 
     def _require_vision_capable_retain_llm(self) -> None:
         """Refuse an image-bearing retain the configured vision LLM cannot read.
