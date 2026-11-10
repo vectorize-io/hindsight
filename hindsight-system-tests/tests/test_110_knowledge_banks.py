@@ -53,8 +53,18 @@ async def test_a_sync_ingest_returns_once_every_document_is_searchable(kb, knowl
 
     assert r.status == 200, r.body
     assert r.body == {"document_ids": ["keys", "billing", "outage"], "operation_ids": [], "unchanged_document_ids": []}
-    # Searchable on return: no waiting, no polling.
-    assert (await _hits(kb, knowledge_bank, query="how do I rotate an api key", top_k=1)) == ["keys"]
+    # Searchable on return: no waiting, no polling. The whole hit is deterministic with the stub embedder.
+    r = await kb.search(knowledge_bank, query="how do I rotate an api key", top_k=1, neighbors=0)
+    [hit] = r.body["results"]
+    assert {k: hit[k] for k in ("document_id", "index", "text", "media_type", "page", "context")} == {
+        "document_id": "keys",
+        "index": 0,
+        "text": GUIDES["keys"],
+        "media_type": "text",
+        "page": None,
+        "context": None,
+    }
+    assert hit["filename"] == "keys.md" and hit["score"] > 0
     assert (await _hits(kb, knowledge_bank, query="when are invoices emailed", top_k=1)) == ["billing"]
     bank = (await kb.get(knowledge_bank)).body
     assert (bank["document_count"], bank["ready_count"], bank["failed_count"]) == (3, 3, 0)
@@ -125,7 +135,9 @@ async def test_one_bad_document_fails_alone(kb, knowledge_bank):
     assert (await kb.document(knowledge_bank, "good")).body["status"] == "ready"
     failed = (await kb.document(knowledge_bank, "empty")).body
     assert failed["status"] == "failed" and "nothing to search" in failed["error"]
-    # The same id in one request twice is refused before anything is stored.
+
+
+async def test_one_document_twice_in_a_request_is_refused_before_anything_is_stored(kb, knowledge_bank):
     twice = [{"document_id": "x", "text": "a"}, {"document_id": "x", "text": "b"}]
     r = await kb.ingest(knowledge_bank, twice)
     assert r.status == 400 and "more than once" in r.body["detail"]

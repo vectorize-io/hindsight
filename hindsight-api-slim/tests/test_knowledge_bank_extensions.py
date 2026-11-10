@@ -363,3 +363,36 @@ def test_strategies_are_parsed_and_matched_by_extension_or_content_type():
         ingest_strategy.parse_strategies({"zip": {".zip": {}}})
     with pytest.raises(ValueError, match="either files or passages"):
         IngestOutput()
+
+
+async def test_a_split_document_stays_ready_when_another_document_of_its_batch_fails(
+    api_client,
+    kb,  # noqa: F811
+    strategies,
+    fake_embedder,  # noqa: F811
+    monkeypatch,
+):
+    import aiohttp
+
+    real = fake_embedder.embed_documents
+
+    async def down_for_b(items):
+        if any("bravo" in (i.text or "") for i in items):
+            raise aiohttp.ClientConnectionError("embedder down")
+        return await real(items)
+
+    monkeypatch.setattr(fake_embedder, "embed_documents", down_for_b)
+    items = [
+        {
+            "document_id": "pack",
+            "text": json.dumps({"a": "alpha red"}),
+            "filename": "pack.bundle",
+            "strategy": "assets",
+        },
+        {"document_id": "b", "text": "bravo blue"},
+    ]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.status_code == 503, r.text
+    # The split committed before the embedder went down on "b": it is not reset by that failure.
+    statuses = {d: (await api_client.get(f"{KB}/{kb}/documents/{d}")).json()["status"] for d in ("pack", "b")}
+    assert statuses == {"pack": "ready", "b": "failed"}

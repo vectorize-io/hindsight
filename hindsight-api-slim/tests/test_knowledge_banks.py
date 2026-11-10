@@ -1018,7 +1018,8 @@ async def test_writes_for_a_replaced_version_leave_the_newer_one_alone(api_clien
     # A batch still working on the first version fails it, or commits its passages, too late.
     await store.set_statuses(kb, [StatusUpdate("d", "failed", "old version broke", storage_key="gone")])
     stale = KnowledgePassage(index=0, modality="text", text="first red", embedding=[1.0] + [0.0] * (len(_AXES) - 1))
-    assert await store.replace_passages(kb, [PassageReplacement("d", [stale], storage_key="gone")]) == []
+    replaced = await store.replace_passages(kb, [PassageReplacement("d", [stale], storage_key="gone")])
+    assert (replaced.stale_media_keys, replaced.skipped_document_ids) == ([], ["d"])
     after = (await store.get_documents(kb, ["d"]))["d"]
     assert (after.status, after.error, after.storage_key) == ("ready", None, newer.storage_key)
     assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["second blue"]
@@ -1047,3 +1048,67 @@ async def test_neighbour_windows_that_grow_into_each_other_are_merged(api_client
     hits = [SearchHit(passages[i], document, 1.0 - i / 10) for i in (0, 4, 2)]
     items = await service._with_context(kb, hits, 1)
     assert [(i.context_first, i.context_last) for i in items] == [(0, 5)]
+
+
+async def test_a_document_replaced_during_its_batch_is_not_committed(memory, kb, fake_embedder, monkeypatch):
+    from hindsight_api.knowledge.service import IngestItem
+    from hindsight_api.models import RequestContext
+
+    service = get_knowledge_service(memory)
+    media_keys: list[str] = []
+    real_store = memory._file_storage.store
+
+    async def store_spy(*, file_data, key, metadata=None):
+        if "/kb/media/" in key:
+            media_keys.append(key)
+        return await real_store(file_data=file_data, key=key, metadata=metadata)
+
+    monkeypatch.setattr(memory._file_storage, "store", store_spy)
+    real_embed = fake_embedder.embed_documents
+
+    async def embed_then_replace(items):
+        # A newer ingest of the same document lands while this batch embeds it.
+        row = (await service.store.get_documents(kb, ["p"]))["p"]
+        await service.store.put_documents(kb, [replace(row, storage_key="newer", status="pending")])
+        return await real_embed(items)
+
+    monkeypatch.setattr(fake_embedder, "embed_documents", embed_then_replace)
+    png = IngestItem(data=_png((255, 0, 0)), filename="p.png", content_type="image/png", document_id="p")
+    await service.ingest(kb, [png], RequestContext(), wait=True)
+
+    after = (await service.store.get_documents(kb, ["p"]))["p"]
+    assert (after.storage_key, after.status) == ("newer", "pending")  # not marked ready by the older batch
+    assert (await service.store.list_passages(kb, ["p"]))["p"] == []
+    # Its passage media was stored, then deleted again: nobody owns it.
+    assert media_keys and not [k for k in media_keys if await memory._file_storage.exists(k)]
+
+
+async def test_a_refused_document_stops_being_split(api_client, kb, fake_embedder, monkeypatch):
+    from hindsight_api.knowledge import service as service_module
+    from hindsight_api.knowledge.embedders import UnsupportedModalityError
+
+    pulled = {"n": 0}
+    real_next = service_module._next_draft
+
+    def counting(drafts):
+        pulled["n"] += 1
+        return real_next(drafts)
+
+    async def refuse(items):
+        raise UnsupportedModalityError("refused")
+
+    monkeypatch.setattr(service_module, "_next_draft", counting)
+    monkeypatch.setattr(fake_embedder, "embed_documents", refuse)
+    text = "\n\n".join(f"# Part {n}\n\npassage {n}" for n in range(5 * _EMBED_ROUND))
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "long", "text": text}]})
+    assert r.status_code == 400, r.text
+    # One round pulled, then refused: the other four rounds' passages were never cut.
+    assert pulled["n"] == _EMBED_ROUND
+
+
+async def test_a_new_content_type_ingests_the_same_file_again(api_client, kb):
+    first = await _upload(api_client, kb, [("n.txt", b"red notes", "text/plain")], [{"document_id": "n"}])
+    assert first.is_success, first.text
+    again = await _upload(api_client, kb, [("n.txt", b"red notes", "text/markdown")], [{"document_id": "n"}])
+    assert again.json()["unchanged_document_ids"] == []
+    assert (await api_client.get(f"{KB}/{kb}/documents/n")).json()["content_type"] == "text/markdown"

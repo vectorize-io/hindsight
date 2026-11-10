@@ -97,6 +97,15 @@ class PassageReplacement:
 
 
 @dataclass
+class PassagesReplaced:
+    #: Media keys of the old passages no new passage reuses: the caller deletes those files.
+    stale_media_keys: list[str] = field(default_factory=list)
+    #: Items left out because their document no longer holds their ``storage_key`` (or is gone):
+    #: their new passages belong to nobody, so the caller deletes their media too.
+    skipped_document_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
 class SearchHit:
     passage: KnowledgePassage
     document: KnowledgeDocument
@@ -168,10 +177,9 @@ class KnowledgeStore(ABC):
     async def set_statuses(self, bank_id: str, updates: list[StatusUpdate]) -> None: ...
 
     @abstractmethod
-    async def replace_passages(self, bank_id: str, items: list[PassageReplacement]) -> list[str]:
+    async def replace_passages(self, bank_id: str, items: list[PassageReplacement]) -> PassagesReplaced:
         """Swap each document's passages for the given ones and mark it ready; an item whose
-        ``storage_key`` the document no longer holds is skipped. Returns the media keys of the old passages
-        no new passage reuses."""
+        ``storage_key`` the document no longer holds is skipped, and reported as such."""
 
     @abstractmethod
     async def list_passages(self, bank_id: str, document_ids: list[str]) -> dict[str, list[KnowledgePassage]]:
@@ -467,9 +475,9 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 [u.storage_key for u in updates],
             )
 
-    async def replace_passages(self, bank_id: str, items: list[PassageReplacement]) -> list[str]:
+    async def replace_passages(self, bank_id: str, items: list[PassageReplacement]) -> PassagesReplaced:
         if not items:
-            return []
+            return PassagesReplaced()
         table = fq_table("kb_passages")
         # A fixed five statements in one transaction, however many documents: the old passages must be
         # gone before the new ones (same primary keys) go in, which one statement with data-modifying
@@ -482,18 +490,21 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     r["document_id"]: r["storage_key"]
                     for r in await conn.fetch(
                         f"SELECT document_id, storage_key FROM {fq_table('kb_documents')} "
-                        "WHERE bank_id = $1 AND document_id = ANY($2::text[]) FOR UPDATE",
+                        # Locked in a fixed order, so two overlapping batches cannot deadlock.
+                        "WHERE bank_id = $1 AND document_id = ANY($2::text[]) ORDER BY document_id FOR UPDATE",
                         bank_id,
                         [i.document_id for i in items],
                     )
                 }
-                items = [
+                kept = [
                     i
                     for i in items
                     if i.document_id in held and (i.storage_key is None or held[i.document_id] == i.storage_key)
                 ]
+                skipped = [i.document_id for i in items if i not in kept]
+                items = kept
                 if not items:
-                    return []
+                    return PassagesReplaced(skipped_document_ids=skipped)
                 document_ids = [i.document_id for i in items]
                 old = await conn.fetch(
                     f"DELETE FROM {table} WHERE bank_id = $1 AND document_id = ANY($2::text[]) RETURNING media_key",
@@ -550,7 +561,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     [i.language for i in items],
                 )
         new_keys = {p.media_key for i in items for p in i.passages}
-        return [r["media_key"] for r in old if r["media_key"] and r["media_key"] not in new_keys]
+        return PassagesReplaced(
+            stale_media_keys=[r["media_key"] for r in old if r["media_key"] and r["media_key"] not in new_keys],
+            skipped_document_ids=skipped,
+        )
 
     async def list_passages(self, bank_id: str, document_ids: list[str]) -> dict[str, list[KnowledgePassage]]:
         out: dict[str, list[KnowledgePassage]] = {d: [] for d in document_ids}

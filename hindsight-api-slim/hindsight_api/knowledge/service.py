@@ -887,15 +887,10 @@ class KnowledgeService:
                     doc.error = media.MediaError("the file holds nothing to search")
 
             done = [d for d in docs if d.error is None and not d.split]
-            current = await self.store.get_documents(bank_id, [d.work.document_id for d in done])
-            kept: list[_InFlight] = []
-            for d in done:
-                now = current.get(d.work.document_id)
-                if now is None or now.storage_key != d.work.storage_key:
-                    await self._delete_keys(d.media_keys)  # replaced or deleted meanwhile: nobody's passages
-                else:
-                    kept.append(d)
-            stale = await self.store.replace_passages(
+            # The store commits each one only while it still holds the file this batch read: one replaced
+            # or deleted meanwhile is skipped (it used to be re-read here first, which left a gap between
+            # the check and the write), and its passages belong to nobody.
+            replaced = await self.store.replace_passages(
                 bank_id,
                 [
                     PassageReplacement(
@@ -904,11 +899,16 @@ class KnowledgeService:
                         detect_language("\n".join(p.text or "" for p in d.passages)),
                         storage_key=d.work.storage_key,
                     )
-                    for d in kept
+                    for d in done
                 ],
             )
+            skipped = set(replaced.skipped_document_ids)
+            for d in done:
+                if d.work.document_id in skipped:
+                    await self._delete_keys(d.media_keys)
+            kept = [d for d in done if d.work.document_id not in skipped]
             committed |= {d.work.document_id for d in kept}
-            await self._delete_keys(stale)
+            await self._delete_keys(replaced.stale_media_keys)
             # Only a document that used to be split can have split-out documents to drop now.
             was_split = [d.work.document_id for d in kept if d.work.was_split]
             if was_split:
@@ -1064,9 +1064,10 @@ class KnowledgeService:
         keep = {c.document_id for c in children}
         await self._delete_trees(bank_id, [c for c in derived if c not in keep])
         # The source itself holds no passages: it is ready once its files are queued.
-        await self._delete_keys(
-            await self.store.replace_passages(bank_id, [PassageReplacement(document.document_id, [])])
+        replaced = await self.store.replace_passages(
+            bank_id, [PassageReplacement(document.document_id, [], storage_key=storage_key)]
         )
+        await self._delete_keys(replaced.stale_media_keys)
         logger.info(f"Knowledge ingest {bank_id}/{document.document_id}: split into {len(children)} documents")
 
     async def _delete_trees(self, bank_id: str, document_ids: list[str]) -> list[KnowledgeDocument]:

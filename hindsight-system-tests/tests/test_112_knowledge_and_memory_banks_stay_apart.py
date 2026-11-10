@@ -28,7 +28,7 @@ async def test_the_two_kinds_of_bank_refuse_each_others_api(client, bank_id):
         # A memory write or delete aimed at the knowledge bank is refused, and it is still there.
         with pytest.raises(ApiException) as retain:
             await client.aretain(bank_id=knowledge, content="This must not become a memory.")
-        assert "is a knowledge bank" in str(retain.value.body)
+        assert retain.value.status == 400 and "is a knowledge bank" in str(retain.value.body)
         with pytest.raises(ApiException) as delete:
             await client.banks.delete_bank(knowledge)
         assert delete.value.status == 400 and "is a knowledge bank" in str(delete.value.body)
