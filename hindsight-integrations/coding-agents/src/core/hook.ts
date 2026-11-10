@@ -28,6 +28,7 @@ import { applyBankConfig, loadConfig } from "./config";
 import { diag, diagFilePath, readHookEvent } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import { startBackgroundSeed } from "./seed";
+import { stripInjectedMemory } from "./transcript-util";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient, ReflectError } from "./hindsight";
 import { brandWord } from "./brand";
@@ -440,7 +441,10 @@ export async function runHook(
   }
   if (spec.requireCwd && !rawCwd) return;
   const cwd = rawCwd || process.cwd();
-  const prompt = (rawPrompt || "").trim();
+  // Hosts may put their own tagged blocks (a <system-reminder>, a task notification) before the
+  // user's words. Left in, they fill the head of the reflect goal and the length-capped recall
+  // query, so the search runs on boilerplate and never reaches what the user asked (#6488).
+  const prompt = stripInjectedMemory(rawPrompt || "").trim();
   if (!prompt) return;
 
   let cfg = loadConfig({ harness: spec.harness });

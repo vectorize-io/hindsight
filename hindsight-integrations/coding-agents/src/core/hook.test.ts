@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import { buildHookOutput, runHook } from "./hook";
-import { diagFilePath } from "./diag";
+import { diagFilePath, readHookEvent } from "./diag";
+import { journalPath, readJournalTranscript } from "./turn-journal";
 import { ReflectError } from "./hindsight";
 import { buildReflectQuery } from "./inject";
 
@@ -849,5 +850,65 @@ describe("runHook anti-recursion guard", () => {
     // alone without calling makeClient) proves the guard fired first.
     await runHook({ harness: "claude-code", parse: () => ({}), emit: (c) => ({ c }) }, makeClient);
     expect(makeClient).not.toHaveBeenCalled();
+  });
+});
+
+vi.mock("./diag", async (orig) => ({
+  ...(await orig<typeof import("./diag")>()),
+  readHookEvent: vi.fn(),
+}));
+
+describe("runHook prompt cleaning (#6488)", () => {
+  const spec = {
+    harness: "hs-test-6488",
+    journalPrompt: true,
+    parse: (ev: Record<string, unknown>) => ({
+      prompt: ev.prompt as string,
+      cwd: root,
+      sessionId: "s1",
+    }),
+    emit: (c: string) => ({ c }),
+  };
+
+  beforeEach(() => {
+    vi.stubEnv("HINDSIGHT_AUTO_SEED", "false");
+    vi.stubEnv("HINDSIGHT_API_URL", "http://127.0.0.1:9");
+    vi.stubEnv("HINDSIGHT_BANK_ID", "hs-test-6488");
+    vi.stubEnv("HINDSIGHT_AUTO_INJECT", "reflect");
+  });
+  // The journal and the once-per-session cache both live in this harness's temp directory.
+  afterEach(() =>
+    rmSync(dirname(journalPath(spec.harness, "s1")), { recursive: true, force: true })
+  );
+
+  async function run(prompt: string) {
+    vi.mocked(readHookEvent).mockReturnValue({ prompt });
+    const client = makeClient();
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      await runHook(spec, () => client as never);
+    } finally {
+      write.mockRestore();
+    }
+    return client;
+  }
+
+  it("drops a host's <system-reminder> block so the query starts with the user's words", async () => {
+    const boilerplate = "host instructions ".repeat(300);
+    const client = await run(
+      `<system-reminder>\n${boilerplate}\n</system-reminder>\n\nwhy does upload retry fail?`
+    );
+    const journal = readJournalTranscript(journalPath(spec.harness, "s1"));
+    expect(journal.map((t) => t.content)).toEqual(["why does upload retry fail?"]);
+    expect(client.reflect).toHaveBeenCalledTimes(1);
+    const [query] = vi.mocked(client.reflect).mock.calls[0];
+    expect(query).not.toContain("system-reminder");
+    expect(query).toContain("why does upload retry fail?");
+  });
+
+  it("a prompt made only of injected tags is skipped", async () => {
+    const client = await run("<system-reminder>only host text</system-reminder>");
+    expect(existsSync(journalPath(spec.harness, "s1"))).toBe(false);
+    expect(client.reflect).not.toHaveBeenCalled();
   });
 });
