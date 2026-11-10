@@ -38,10 +38,13 @@ export const CATEGORY_LABELS: Record<string, string> = {
   framework: 'Frameworks & SDKs',
   mcp: 'MCP',
   tool: 'Tools & apps',
+  // Not a `category` value: the gallery files every community entry here, whatever its category,
+  // so people can tell what we maintain from what others built.
+  community: 'Community',
   legacy: 'Superseded',
 };
 
-const CATEGORY_ORDER = ['framework', 'mcp', 'tool', 'coding-agent', 'legacy'];
+const CATEGORY_ORDER = ['framework', 'mcp', 'tool', 'coding-agent', 'community', 'legacy'];
 
 function categoryRank(category: string): number {
   const i = CATEGORY_ORDER.indexOf(category);
