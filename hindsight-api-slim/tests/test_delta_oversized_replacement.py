@@ -14,6 +14,8 @@ lowers only ``retain_batch_tokens`` and asserts the same document edit still
 skips the unchanged chunks.
 """
 
+import asyncio
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -456,5 +458,220 @@ async def test_recovering_partially_written_oversized_document_resumes_slice_by_
         seen = "\n".join(retry.texts)
         missing = [f"MARKER{i:02d}" for i in range(_BASE_SECTIONS) if f"MARKER{i:02d}" not in committed]
         assert all(m in seen for m in missing), "every chunk the crash left unwritten must be extracted"
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# Issue #6394: same as #5485, but the follow-up is a small APPEND, not a retry of the same body. The
+# append's body hash differs from the stored one, so the #5485 gate does not apply, and the delta
+# extracted the append plus every chunk the crash left unwritten in one step that commits only at
+# the end. A timeout there lost all of it, every time.
+@pytest.mark.asyncio
+async def test_append_to_partially_written_document_saves_batch_by_batch(memory, request_context, monkeypatch):
+    bank_id = f"test_6394_append_{_ts()}"
+    document_id = "doc-6394"
+    body = _body()
+    monkeypatch.setenv("HINDSIGHT_API_RETAIN_BATCH_TOKENS", str(_OVERSIZED_BATCH_TOKENS))
+    clear_config_cache()
+
+    try:
+        first = _CrashAfter(3)
+        first.install(monkeypatch)
+        with pytest.raises(RuntimeError, match="simulated worker crash"):
+            await memory.retain_async(
+                bank_id=bank_id, content=body, context="notes", document_id=document_id, request_context=request_context
+            )
+        committed = [m for m in (f"MARKER{i:02d}" for i in range(_BASE_SECTIONS)) if m in "\n".join(first.texts)]
+        assert 0 < len(committed) < _BASE_SECTIONS, "premise: the first run must commit only part of the document"
+        monkeypatch.delenv("HINDSIGHT_API_RETAIN_BATCH_TOKENS")
+        # One chunk per commit, so "saved as it goes" is visible on a 10-chunk document.
+        monkeypatch.setattr(memory._config_resolver._global_config, "retain_chunk_batch_size", 1)
+        clear_config_cache()
+
+        # The append is interrupted too, after two extraction calls: what it extracted must stay.
+        append = _CrashAfter(2)
+        append.install(monkeypatch)
+        with pytest.raises(RuntimeError, match="simulated worker crash"):
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{"content": "\n\n" + _section(100), "context": "notes", "update_mode": "append"}],
+                document_id=document_id,
+                request_context=request_context,
+            )
+        assert max(append.items_per_call) == 1, (
+            f"the append extracted {max(append.items_per_call)} chunks in one step "
+            f"(calls: {append.items_per_call}); it must go one slice at a time, committing as it goes"
+        )
+
+        # Retrying the append resumes: it re-extracts nothing the interrupted attempt already saved.
+        later = _CrashAfter(None)
+        later.install(monkeypatch)
+        await memory.retain_batch_async(
+            bank_id=bank_id,
+            contents=[{"content": "\n\n" + _section(100), "context": "notes", "update_mode": "append"}],
+            document_id=document_id,
+            request_context=request_context,
+        )
+        redone = [t[:20] for t in later.texts if any(t == s for s in append.texts)]
+        assert not redone, f"the later append redid work the interrupted one had saved: {redone}"
+        seen = "\n".join(first.texts + append.texts + later.texts)
+        expected = [f"MARKER{i:02d}" for i in range(_BASE_SECTIONS)] + ["MARKER100"]
+        assert all(m in seen for m in expected), "every chunk of the document must end up extracted"
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc["original_text"].count("MARKER100.") == 1, "the retried append must land exactly once"
+        assert max(later.items_per_call) == 1
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+async def _assert_document_consistent(memory, bank_id: str, document_id: str) -> str:
+    """The stored chunks are exactly the stored body's chunk plan, and every fact sits on the chunk
+    it was extracted from. Returns the stored body."""
+    from hindsight_api.engine.retain import chunk_storage
+
+    # Raw SQL on purpose: the defect this checks is a fact left on a chunk it was not extracted
+    # from, and no engine read reports a fact's chunk (`list_memory_units` has no chunk_id) or a
+    # chunk's content hash.
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        body = await conn.fetchval(
+            "SELECT original_text FROM documents WHERE bank_id = $1 AND id = $2", bank_id, document_id
+        )
+        chunks = await conn.fetch(
+            "SELECT chunk_id, chunk_index, chunk_text, content_hash FROM chunks "
+            "WHERE bank_id = $1 AND document_id = $2 ORDER BY chunk_index",
+            bank_id,
+            document_id,
+        )
+        units = await conn.fetch(
+            "SELECT text, chunk_id FROM memory_units WHERE bank_id = $1 AND document_id = $2 AND fact_type = 'world'",
+            bank_id,
+            document_id,
+        )
+    plan = fact_extraction.chunk_text(body, max_chars=3000)
+    assert [c["content_hash"] for c in chunks] == [chunk_storage.compute_chunk_hash(t) for t in plan], (
+        "the stored chunks must be exactly the stored body's chunk plan"
+    )
+    text_by_chunk = {c["chunk_id"]: c["chunk_text"] for c in chunks}
+    for unit in units:
+        marker = re.search(r"MARKER\d+", unit["text"])
+        if marker is None:  # the mock LLM also echoes prompt sentences, which name no section
+            continue
+        assert marker.group(0) in text_by_chunk[unit["chunk_id"]], (
+            f"fact {unit['text'][:40]!r} sits on a chunk it was not extracted from"
+        )
+    return body
+
+
+def _sections(*, edited: frozenset[int] = frozenset()) -> str:
+    return "\n\n".join(_section(i, edited=i in edited) for i in range(_BASE_SECTIONS))
+
+
+# #6394, the edit case (#5485 option a): a large edit to a stored document is saved batch by batch,
+# so an interrupted edit keeps what it extracted and its retry extracts only the rest. The document
+# keeps its old body until the last batch commits.
+@pytest.mark.asyncio
+async def test_interrupted_large_edit_keeps_its_saved_batches(memory, request_context, monkeypatch):
+    bank_id = f"test_6394_edit_{_ts()}"
+    document_id = "doc-6394-edit"
+    edited = _sections(edited=frozenset({2, 5, 8}))
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content=_sections(),
+            context="notes",
+            document_id=document_id,
+            request_context=request_context,
+        )
+        monkeypatch.setattr(memory._config_resolver._global_config, "retain_chunk_batch_size", 1)
+
+        first = _CrashAfter(2)
+        first.install(monkeypatch)
+        with pytest.raises(RuntimeError, match="simulated worker crash"):
+            await memory.retain_async(
+                bank_id=bank_id,
+                content=edited,
+                context="notes",
+                document_id=document_id,
+                request_context=request_context,
+            )
+        assert first.items_per_call == [1, 1], f"one chunk per batch, calls: {first.items_per_call}"
+        doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+        assert doc["original_text"] == _sections(), "the document must keep its old body until the last batch"
+
+        retry = _CrashAfter(None)
+        retry.install(monkeypatch)
+        await memory.retain_async(
+            bank_id=bank_id, content=edited, context="notes", document_id=document_id, request_context=request_context
+        )
+        assert retry.items_per_call == [1] and "MARKER08" in retry.texts[0], (
+            f"the retry must extract only the chunk the interrupted edit did not save, got {retry.texts!r}"
+        )
+        assert await _assert_document_consistent(memory, bank_id, document_id) == edited
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+# A batched delta leaves the document's hash at its base until its last batch, so the document-hash
+# check alone cannot tell a second writer that the first is part-way through. Without the chunk-level
+# check the second append upserted its chunk over the first's and both versions' facts stayed on it.
+@pytest.mark.asyncio
+async def test_append_landing_between_batches_of_another_keeps_document_consistent(
+    memory, request_context, monkeypatch
+):
+    bank_id = f"test_6394_race_{_ts()}"
+    document_id = "doc-6394-race"
+    try:
+        await memory.retain_async(
+            bank_id=bank_id,
+            content=_sections(),
+            context="notes",
+            document_id=document_id,
+            request_context=request_context,
+        )
+        monkeypatch.setattr(memory._config_resolver._global_config, "retain_chunk_batch_size", 1)
+        original = fact_extraction.extract_facts_from_contents
+        b_planned, a_committed, b_done = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        a_calls = [0]
+
+        # Force the one order the document-hash check cannot see: B plans against the base, A then
+        # commits its first batch (leaving the hash at the base), and only then does B write.
+        async def _interleave(contents, *args, **kwargs):
+            text = "\n".join(c.content for c in contents)
+            if "MARKER200" in text and not b_planned.is_set():
+                b_planned.set()
+                await a_committed.wait()
+            elif "MARKER10" in text:
+                a_calls[0] += 1
+                if a_calls[0] == 1:
+                    await b_planned.wait()
+                elif a_calls[0] == 2:  # A's first batch is committed
+                    a_committed.set()
+                    await b_done.wait()
+            return await original(contents, *args, **kwargs)
+
+        monkeypatch.setattr(fact_extraction, "extract_facts_from_contents", _interleave)
+        tail = "\n\n".join(_section(100 + j) for j in range(_APPENDED_SECTIONS))
+
+        async def _append(content: str) -> None:
+            await memory.retain_batch_async(
+                bank_id=bank_id,
+                contents=[{"content": content, "context": "notes", "update_mode": "append"}],
+                document_id=document_id,
+                request_context=request_context,
+            )
+
+        async def _b() -> None:
+            try:
+                await _append("\n\n" + _section(200))
+            finally:
+                b_done.set()
+
+        await asyncio.wait_for(asyncio.gather(_append("\n\n" + tail), _b()), timeout=300)
+
+        body = await _assert_document_consistent(memory, bank_id, document_id)
+        assert body.startswith(_sections()), "both appends must extend the stored document, not replace it"
+        for marker in ["MARKER200.", "MARKER100.", "MARKER101.", "MARKER102."]:
+            assert body.count(marker) == 1, f"{marker} must be in the document exactly once"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
