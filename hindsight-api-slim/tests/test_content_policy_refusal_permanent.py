@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -293,3 +293,37 @@ async def test_execute_task_marks_refused_retain_failed_without_retry(memory):
 
     await pool.execute("DELETE FROM async_operations WHERE operation_id = $1", operation_id)
     await pool.execute("DELETE FROM banks WHERE bank_id = $1", bank_id)
+
+
+@pytest.mark.asyncio
+async def test_failed_async_retain_names_the_providers_own_refusal(memory, monkeypatch):
+    """The failed operation carries Gemini's block reason, not just "refused by content policy".
+
+    The operation's error_message is the only place a worker-side refusal can be read from, so it must
+    say what the provider actually answered. Drives the real Gemini provider (network mocked) through an
+    async retain.
+    """
+    pytest.importorskip("google.genai")
+    from google.genai import types as genai_types
+    from hindsight_api.engine.providers.mock_llm import MockLLM
+    from hindsight_api.models import RequestContext
+    from tests.test_gemini_content_block import _empty_response, _make_gemini_provider
+
+    gemini = _make_gemini_provider()
+    gemini._client.aio.models.generate_content = AsyncMock(
+        return_value=_empty_response(finish_reason=genai_types.FinishReason.PROHIBITED_CONTENT)
+    )
+
+    async def through_gemini(self, *args, **kwargs):
+        return await gemini.call(*args, **kwargs)
+
+    monkeypatch.setattr(MockLLM, "call", through_gemini)
+
+    bank_id = f"test-gemini-refusal-{uuid.uuid4().hex[:8]}"
+    ctx = RequestContext()
+    submitted = await memory.submit_async_retain(bank_id, [{"content": "refused content"}], request_context=ctx)
+    op = await memory.get_operation_status(bank_id, submitted["operation_id"], request_context=ctx)
+
+    assert op["status"] == "failed"
+    assert op["retry_count"] == 0
+    assert "Gemini blocked the request (PROHIBITED_CONTENT)" in op["error_message"]
