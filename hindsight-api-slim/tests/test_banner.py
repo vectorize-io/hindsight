@@ -6,7 +6,12 @@ repository by accident. The gradient wraps every character in an ANSI escape,
 so these strip the escapes and assert on the text that actually reads.
 """
 
+import importlib
+import io
 import re
+import sys
+
+import pytest
 
 from hindsight_api.banner import (
     GRADIENT_END,
@@ -14,6 +19,7 @@ from hindsight_api.banner import (
     gradient_text,
     print_banner,
 )
+from hindsight_api.utils import configure_stdio
 
 TAGLINE = "Hindsight: Agent Memory That Learns"
 
@@ -54,3 +60,60 @@ class TestPrintBanner:
         # The logo is drawn with half-block characters.
         assert "▄" in out
         assert out.index("▄") < out.index(TAGLINE)
+
+
+class TestRedirectedStdout:
+    """A stdout whose encoding has no block characters must not stop the server (#6458).
+
+    Before Python 3.15, ``hindsight-api > log`` on Windows writes in the ANSI code page.
+    """
+
+    @staticmethod
+    def _stream(encoding: str) -> io.TextIOWrapper:
+        return io.TextIOWrapper(io.BytesIO(), encoding=encoding)
+
+    def test_banner_prints_after_configure_stdio(self, monkeypatch):
+        monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+        out = self._stream("cp1252")
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", self._stream("cp949"))
+
+        configure_stdio()
+        print_banner()
+
+        out.flush()
+        text = out.buffer.getvalue().decode("utf-8")
+        assert "▄" in text
+        assert TAGLINE in strip_ansi(text)
+
+    def test_operator_encoding_is_kept_and_never_raises(self, monkeypatch):
+        monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+        out = self._stream("cp1252")
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", self._stream("cp1252"))
+
+        configure_stdio()
+        print_banner()
+
+        out.flush()
+        text = out.buffer.getvalue().decode("cp1252")
+        assert out.encoding == "cp1252"
+        assert "\\u2584" in text  # escaped, not dropped and not raised
+        assert TAGLINE in strip_ansi(text)
+
+
+class _ConfiguredStdio(Exception):
+    pass
+
+
+@pytest.mark.parametrize("module", ["hindsight_api.main", "hindsight_api.worker.main", "hindsight_api.admin.cli"])
+def test_every_entry_point_configures_stdio_first(monkeypatch, module):
+    """Each console script must fix its streams before it prints anything (#6458)."""
+    mod = importlib.import_module(module)
+
+    def stop() -> None:
+        raise _ConfiguredStdio
+
+    monkeypatch.setattr(mod, "configure_stdio", stop)
+    with pytest.raises(_ConfiguredStdio):
+        mod.main()
