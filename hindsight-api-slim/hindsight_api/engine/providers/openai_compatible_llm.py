@@ -1337,8 +1337,13 @@ class OpenAICompatibleLLM(LLMInterface):
                     },
                 }
             else:
-                # Soft enforcement: add schema to prompt and use json_object mode
-                if schema is not None:
+                # Soft enforcement: json_object, with the schema in the prompt. Or, with
+                # ENV_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA, the backend enforces the schema
+                # itself and the prompt carries none: Gemma 4 on vLLM, decoding under a
+                # grammar with that schema text in front of it, answered retain with an empty
+                # or schema-shaped reply 38 times in 120 and with neither 2 in 120.
+                enforce = schema is not None and self._supports_json_mode(scope) and self._enforces_schema()
+                if schema is not None and not enforce:
                     schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
 
                     if call_params["messages"] and call_params["messages"][0].get("role") == "system":
@@ -1349,7 +1354,12 @@ class OpenAICompatibleLLM(LLMInterface):
                         first_msg = call_params["messages"][0]
                         if isinstance(first_msg, dict) and isinstance(first_msg.get("content"), str):
                             first_msg["content"] = schema_msg + "\n\n" + first_msg["content"]
-                if self._supports_json_mode():
+                if enforce:
+                    call_params["response_format"] = {
+                        "type": "json_schema",
+                        "json_schema": {"name": "response", "strict": False, "schema": schema},
+                    }
+                elif self._supports_json_mode(scope):
                     call_params["messages"] = _ensure_json_word_in_user_message(call_params["messages"])
                     call_params["response_format"] = {"type": "json_object"}
 
@@ -1981,11 +1991,19 @@ class OpenAICompatibleLLM(LLMInterface):
         """
         return self.provider != "deepseek"
 
-    def _supports_json_mode(self) -> bool:
+    def _enforces_schema(self) -> bool:
+        """Whether the soft path asks the backend to enforce the schema rather than json_object."""
+        from hindsight_api.config import get_config
+
+        return get_config().llm_openai_compatible_enforce_schema
+
+    def _supports_json_mode(self, scope: str) -> bool:
         """Whether to send ``json_object`` on the soft path, or the schema in the prompt only."""
         from hindsight_api.config import get_config
 
         config = get_config()
+        if scope.startswith("retain") and config.retain_llm_openai_compatible_json_mode is not None:
+            return config.retain_llm_openai_compatible_json_mode
         if config.llm_openai_compatible_json_mode is not None:
             return config.llm_openai_compatible_json_mode
         if self.provider == "llamacpp":
