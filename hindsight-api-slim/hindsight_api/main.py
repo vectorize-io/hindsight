@@ -42,6 +42,7 @@ from .daemon import (
     ENV_DAEMON_CHILD,
     daemonize,
 )
+from .utils import configure_stdio
 
 # `create_app`, `MemoryEngine` and the extension machinery are NOT imported at module level, and
 # that is load-bearing rather than tidiness. uvicorn's multiprocess supervisor uses spawn, so every
@@ -278,6 +279,7 @@ def main():
     """Main entry point for the CLI."""
     global _memory
 
+    configure_stdio()
     load_dotenv_for_entrypoint()
 
     # Arm profiling here, after .env is loaded and before anything starts serving, so a

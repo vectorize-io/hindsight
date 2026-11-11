@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import get_config, load_dotenv_for_entrypoint
 from ..engine.task_backend import WorkerTaskBackend
+from ..utils import configure_stdio
 from .poller import WorkerPoller
 
 if TYPE_CHECKING:
@@ -245,6 +246,7 @@ def create_worker_app(poller: WorkerPoller, memory):
 
 def main():
     """Main entry point for the hindsight-worker CLI."""
+    configure_stdio()
     load_dotenv_for_entrypoint()
 
     # Load configuration from environment

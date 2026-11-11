@@ -1,6 +1,32 @@
+import io
 import logging
 import os
+import sys
 from urllib.parse import urlparse, urlunparse
+
+
+def configure_stdio() -> None:
+    """Make stdout and stderr write any text instead of crashing on it.
+
+    Before Python 3.15, a redirected stdout on Windows (``hindsight-api > log``) uses the
+    ANSI code page (cp1252, cp949), which cannot encode the banner's block characters, a
+    non-Latin model name or a memory quoted in a log line. Python stops the server on the
+    first such character (#6458). Use UTF-8, as Python 3.15 does by default, unless the
+    operator chose an encoding with ``PYTHONIOENCODING``; a character the chosen encoding
+    still cannot write is escaped instead of raising.
+
+    Called from Hindsight's own entry points only (API server, worker, admin CLI): an
+    application that imports ``hindsight_api`` keeps the streams it set up. The local MCP
+    server is left out on purpose: its stdout is the protocol channel, which the MCP SDK
+    already writes as UTF-8.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if not isinstance(stream, io.TextIOWrapper):
+            continue
+        if os.environ.get("PYTHONIOENCODING"):
+            stream.reconfigure(errors="backslashreplace")
+        else:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def detect_container_runtime() -> str | None:
