@@ -308,7 +308,8 @@ async def test_every_document_in_one_batch_sends_its_own_image(client, llm, bank
     for caption in (CAPTION, RACK_CAPTION):
         call = next((call for call in llm.calls if caption in call.all_text), None)
         assert call is not None, f"extraction never ran for {caption!r}"
-        assert _parts(call.messages) == ["text", "image_url"], f"{caption!r} reached the model without its image"
+        # Exactly one image; the text around it is the prompt, and retain's reminders follow the content.
+        assert _parts(call.messages).count("image_url") == 1, f"{caption!r} reached the model without its image"
 
 
 async def test_each_document_keeps_the_image_it_arrived_with(client, bank_with_two_photographed_documents):
