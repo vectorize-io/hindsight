@@ -164,6 +164,22 @@ class TestLocalSTCrossEncoder:
 
         assert isinstance(build.call_args.kwargs["activation_fn"], torch.nn.Identity)
 
+    @pytest.mark.parametrize("fp16", [True, False])
+    async def test_initialize_honours_fp16_on_cpu(self, fp16: bool):
+        """FP16 on CPU halves the reranker's RAM (#6453), so the opt-in applies there too."""
+        torch = pytest.importorskip("torch")
+        model = MagicMock()
+        model.model = torch.nn.Linear(4, 4)
+        model.predict.return_value = [1.0]
+
+        with (
+            patch("hindsight_api.engine.cross_encoder.prefetch_local_model"),
+            patch("sentence_transformers.CrossEncoder", return_value=model),
+        ):
+            await LocalSTCrossEncoder(model_name="org/m", force_cpu=True, fp16=fp16).initialize()
+
+        assert model.model.weight.dtype == (torch.float16 if fp16 else torch.float32)
+
     async def test_predict_not_initialized_raises(self):
         encoder = LocalSTCrossEncoder()
         with pytest.raises(RuntimeError, match="not initialized"):
