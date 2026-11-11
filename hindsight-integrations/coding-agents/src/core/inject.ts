@@ -14,7 +14,9 @@ export function buildReflectQuery(prompt: string): string {
     "Report what this bank's memory holds that bears on that goal. Lead with past attempts on " +
     "similar work that turned out WRONG — what was done (exact names and values), what the outcome " +
     "was, and the suspected cause or correction — since repeating a past mistake is the costliest " +
-    "miss. Then the decisions and their rationale, then facts learned about the environment (where " +
+    "miss. Search for those failures on their own, whatever their topic: a mistake made on a " +
+    "different task (how a term was read, which column was trusted) can repeat here. Then the " +
+    "decisions and their rationale, then facts learned about the environment (where " +
     "things live, names, formats, units). Rendering rules, strict:\n" +
     "- Declarative, past-tense, attributed facts only — what happened, what was decided and why, " +
     "with dates, commit/PR/issue ids and exact values where known.\n" +
