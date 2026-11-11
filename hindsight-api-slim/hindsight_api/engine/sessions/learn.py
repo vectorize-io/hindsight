@@ -1,4 +1,4 @@
-"""Rules a session learns from what the agent says about its notes.
+"""Rules a session learns from what the agent says about its notes, and from the user's corrections.
 
 The agent answers every note with a verdict and its reason (``NoteFeedback``): used, not needed,
 or wrong. Some of those reasons carry a rule the next session should start from — a user
@@ -7,9 +7,10 @@ correction of what memory claimed ("that cap is gone since the gateway queue"). 
 reasons stayed in one session: the next session in the bank was told the same rejected rule again.
 
 So, when the bank turns it on (``session_learn_rules``), each new verdict is weighed: the decision
-model says whether the reason states a lasting rule, and only then the LLM writes it as a mental
-model. Reflect searches a bank's mental models first, so every later check reads the rules. The
-models are named ``rule-...`` so their effect can be measured.
+model says whether the reason states a lasting rule, and only then the LLM proposes a knowledge page
+for it: a title and the question the page answers. Reflect writes the page from the bank's memories
+and refreshes it like any other page. Checks read these pages, and only these; they are named
+``rule-...`` so their effect can be measured.
 """
 
 from __future__ import annotations
@@ -25,14 +26,6 @@ LEARN_TASK = "session_learn"
 # no rule, and the writer, told what each verdict allows, makes the call (it wrote 20 of 84).
 LEARN_AT = 0.15
 RULE_ID_PREFIX = "rule-"
-# A rule for a rejected note that shares this much of the note's words restates the note.
-RESTATES_NOTE = 0.6
-# A rule that shares this much of its words with the session's instructions file (a scheduled job's
-# JOB.md) restates that file. Replayed over real verdicts, disk-guard's two rules restating JOB.md
-# ("skip scanning ~/.cache/uv", "Hugging Face models are deletable") scored 0.78 and 0.73, and would
-# have been picked on 47 of 49 later runs, each run reading the same rule in JOB.md anyway; its one
-# live rule with a fact JOB.md lacks (pg0 does not know hindsight-system-evals folders) scored 0.52.
-IN_REQUEST_FILE = 0.65
 # How many of the bank's learned rules the writer is shown to avoid writing one twice.
 MAX_EXISTING_RULES = 30
 # A rule whose notes agents rejected this many times, and never used, stops reaching checks: it is
@@ -48,16 +41,6 @@ RETIRED_TAG = "rule:retired"
 # a pasted log or a new spec. Over a week of live replies, the corrections ran 13 to ~1,500 characters.
 REPLY_MIN_CHARS = 10
 REPLY_MAX_CHARS = 2000
-# A rule from a reply that shares this much of its words with CORRECTION_PROMPT restates the prompt:
-# where the session was about this very feature, the writer turned its own instructions into "rules"
-# ("when a developer corrects a value ... treat it as a project rule"), 5 of 13 in the offline run, at
-# 0.46-0.67; the 8 real ones scored 0.19-0.35 (2026-11-10).
-RESTATES_PROMPT = 0.4
-# A new rule that shares this much of its words with an existing rule is that rule again, and replaces
-# it (the newer wording wins). Live, the writer was shown a rule written 2 minutes before and wrote it
-# again: the copies scored 0.76 and 0.88, and the closest distinct rules of any bank 0.40 (2026-11-11).
-# A near-copy of a retired rule is not written: it would bring back a rule agents rejected.
-SAME_RULE = 0.6
 
 LEARN_QUESTION = (
     "Does the agent's reason below settle a rule for future work on this project, one a later "
@@ -89,25 +72,28 @@ VERDICT_GUIDE = {
     ),
 }
 
-# Shared by both writers; <SOURCE> and <SAYS> are each writer's own words. The note writer's wording is
-# kept as it was: "the exact names ... from the agent's reason" said generically ("given above") brought
-# back the run's own port as the rule (test_a_value_the_agent_chose_for_its_run_is_not_the_rule).
-RULE_FORMAT = """Write the rule, for agents in later sessions:
-- name: a short title naming the component and the rule (at most 8 words).
-- query: the question an agent working on that component would ask, which this rule answers.
-- content: the rule as a standing instruction for any later change to that component, in at most 3
-  sentences: name the file or component, what a change there must or must not do, and why. Not the
-  task the agent did ("Merge X into Y"), but the rule it leaves ("X is a tab inside Y: add new ones
-  there, never as separate panels"). Use the exact names, values and paths from <SOURCE>.
-  A value the agent picked only for its own run (a free port, a temp folder, a branch name) is not
-  the project's: write the condition and what to do ("when the default test port 5556 is taken, set
-  HINDSIGHT_TEST_PG_PORT to a free port"), not that value. A rule never tells an agent to skip a
-  check or ignore a failure: say what is known and how to tell it apart ("X is flaky under load
-  because ...; rerun it alone before treating a failure as yours"), not "do not investigate".
-  Never include a password, key or token.
+# Shared by both writers; <SOURCE> and <SAYS> are each writer's own words. A learned rule is a
+# knowledge page: the writer proposes its title and question, and reflect writes the page from the
+# bank's memories and keeps it refreshed. The writer first wrote the rule's text itself, saved as is:
+# it never changed when the project did, cited nothing, and was managed apart from every other page
+# (2026-11-11). What it learned about wording rules carries over to the question: ask for the standing
+# rule, not the task ("Merge X into Y" scored 0.15 for a later change to X, the same fact as an
+# instruction for later changes 0.94, 2026-11-05), and never for a value one run chose (from "I ran
+# with 5617; the default port was taken" it wrote "tests must use 5617", which nothing in the repo
+# names). The note writer's "from the agent's reason" is kept: said generically ("given above") it
+# brought back the run's own port (test_a_value_the_agent_chose_for_its_run_is_not_the_rule).
+PAGE_FORMAT = """Propose the page, for agents in later sessions. The page is written from the project's
+memories by answering its question, and an agent about to change that component reads it:
+- name: a short title naming the component and the topic (at most 8 words).
+- query: the one question the page answers, about the standing rule <SOURCE> settles for any later
+  change there. Name the exact file, component or setting from <SOURCE>. Ask for the rule, not about
+  the task the agent did: "How must new panels be added to shell.tsx?", not "Were the panels merged
+  into one?". A value the agent picked only for its own run (a free port, a temp folder, a branch
+  name) is not the project's: ask about the condition ("Which port do tests use when the default 5556
+  is taken?"), not that value. Never include a password, key or token.
 
-Set create to false when an existing rule above already says this, or when <SAYS>.
-When this rule replaces existing rules above (they say an older value or the opposite), list their
+Set create to false when an existing page above already answers this, or when <SAYS>.
+When this page replaces existing pages above (they hold an older value or the opposite), list their
 names in replaces: they are removed.
 """
 
@@ -122,10 +108,10 @@ What the user had asked the agent: {goal}
 
 {guide}
 
-Rules the project already has:
+Pages of rules the project already has (title: question):
 {existing}
 
-""" + RULE_FORMAT.replace("<SOURCE>", "the agent's reason").replace("<SAYS>", "the verdict above says to")
+""" + PAGE_FORMAT.replace("<SOURCE>", "the agent's reason").replace("<SAYS>", "the verdict above says to")
 
 # Rules from the user's own corrections. Measured over a week of live sessions (2026-11-10): of
 # ~830 follow-up user messages, 164 corrected the agent, and for 28 of them memory already held the
@@ -153,28 +139,15 @@ Then create: true only when what the developer says will still hold for later, d
 project, not only for this task. The rule is what the developer says, never what the agent did that the
 developer rejected.
 
-Rules the project already has:
+Pages of rules the project already has (title: question):
 {existing}
 
-""" + RULE_FORMAT.replace("<SOURCE>", "the developer's reply").replace("<SAYS>", "corrects is false")
-
-# The content is worded as a standing rule because the session check's decision model picks it by
-# that wording: the e2e rule written as the task ("Merge the Files, Knowledge, and Settings floating
-# panels into a single System panel") scored 0.15 for "add a floating Logs panel to shell.tsx", and
-# the same rule as an instruction for later changes scored 0.94 (2026-11-05).
+""" + PAGE_FORMAT.replace("<SOURCE>", "the developer's reply").replace("<SAYS>", "corrects is false")
 
 # A used note is not always right as written: "Count transfers to the piva account as tax already set
 # aside" was used to REMOVE that shortcut ("I removed the shortcut ...; the dashboard now uses the real
 # balance"), and the writer, told "the rule is what the note says", wrote the removed shortcut back as
 # a rule (live, fin, 2026-11-09).
-
-# A value one run chose is not a rule: from "I ran with 5617; the default port was taken by another
-# session" the writer wrote "you must set HINDSIGHT_TEST_PG_PORT to 5617", and the next session was
-# told so though nothing in the repo names 5617 (the agent: the setting is real, the value is not).
-
-# A rule may not switch a check off: from "this test is flaky under load" the writer wrote "Do not
-# investigate failures in <test> ... regardless of the code changes", which would hide a real
-# regression in that test from every later session (live rule, 2026-11-06).
 
 # For a rejected note the writer is not shown the note: told only "never write what the note claims",
 # the writer still inverted the agent's reason into the note (offline: "you asked to merge them into
@@ -183,12 +156,11 @@ REJECTED_NOTE = "(not shown: the agent rejected it; work from the agent's reason
 
 
 class RuleDraft(BaseModel):
-    """The LLM's answer: the rule to write, or that none is needed."""
+    """The LLM's answer: the page to propose (its title and question), or that none is needed."""
 
     create: bool
     name: str = ""
     query: str = ""
-    content: str = ""
     replaces: list[str] = Field(default_factory=list)
 
 
@@ -204,7 +176,6 @@ class CorrectionDraft(BaseModel):
     create: bool
     name: str = ""
     query: str = ""
-    content: str = ""
     replaces: list[str] = Field(default_factory=list)
 
 
@@ -229,17 +200,17 @@ def learn_context(note: str, verdict: str, reason: str, goal: str) -> str:
 
 
 class RuleSummary(BaseModel):
-    """A rule the bank already learned, as the writer is shown it."""
+    """A rule the bank already learned, as the writer is shown it: its page's title and question."""
 
     id: str
     name: str
-    content: str
+    query: str
 
 
 def existing_rules_text(rules: list[RuleSummary]) -> str:
     if not rules:
         return "(none yet)"
-    return "\n".join(f"- {r.name}: {r.content[:300]}" for r in rules)
+    return "\n".join(f"- {r.name}: {r.query[:300]}" for r in rules)
 
 
 def is_reply_to_weigh(text: str) -> bool:

@@ -92,7 +92,7 @@ async def test_a_rule_learned_from_a_wrong_note_reaches_the_next_session(learnin
         json.dumps({"applies": True, "answer": OLD_NOTE})
     )
     llm.on_step("session_learn").returns_text(
-        json.dumps({"create": True, "name": RULE_NAME, "query": "How are shell panels laid out?", "content": RULE})
+        json.dumps({"create": True, "name": RULE_NAME, "query": "How are shell panels laid out?"})
     )
     llm.on_step("reflect_abstain_answer", contains="Logs panel").returns_text(
         json.dumps({"applies": True, "answer": NEW_NOTE})
@@ -154,7 +154,6 @@ async def test_a_rule_learned_from_the_users_correction_reaches_the_next_session
                 "create": True,
                 "name": "Typesafe price",
                 "query": "What does typesafe cost per token?",
-                "content": PRICE_RULE,
             }
         )
     )

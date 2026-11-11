@@ -1105,7 +1105,6 @@ async def test_a_lasting_verdict_becomes_a_rule_every_later_check_reads(memory, 
             create=True,
             name="Panels: one panel, not three",
             query="How many panels does the shell show?",
-            content="The shell shows one merged panel; the three floating panels are gone (user's request).",
         )
         return LLMCallResult(content=draft)
 
@@ -1208,38 +1207,6 @@ async def test_a_rule_whose_notes_are_rejected_twice_is_retired_not_deleted(memo
     assert calls and calls[0]["exclude_mental_models"] is True
 
 
-async def test_a_rule_the_jobs_own_file_states_is_not_learned(memory, request_context, monkeypatch):
-    """A scheduled job reads its JOB.md every run: a rule restating it would come back to every run."""
-    from hindsight_api.engine.response_models import LLMCallResult
-    from hindsight_api.engine.sessions.learn import RuleDraft
-    from hindsight_api.engine.sessions.models import NoteFeedback, NoteLog
-
-    bank = _bank()
-    await memory.ensure_bank_profile(bank, request_context=request_context)
-    monkeypatch.setattr(memory, "_reflect_decision_model", lambda: _LearnStub(0.9))
-    rule = "Skip scanning ~/.cache/uv in disk-guard and use the last known size, because its scan is too slow."
-
-    async def call(messages, **kw):
-        return LLMCallResult(
-            content=RuleDraft(create=True, name="disk-guard: skip ~/.cache/uv", query="q", content=rule)
-        )
-
-    monkeypatch.setattr(memory._llm_config, "call", call)
-    note = NoteLog(
-        text="You are scanning ~/.cache/uv.",
-        trigger="command",
-        check_seq=1,
-        memory_ids=[],
-        feedback=NoteFeedback(verdict="used", reason="JOB.md says to skip ~/.cache/uv, its scan is too slow"),
-    )
-    job = "JOB.md:\n51. Skip ~/.cache/uv (use the last known size): its scan is too slow.\n52. Never touch ~/dev."
-    log = await memory.sessions._learn_one(bank, 5, note, "Run disk-guard", job, request_context)
-    assert (log.outcome, log.reason) == ("skipped", "the request file states it")
-    # Without the job's file the same rule is learned.
-    log = await memory.sessions._learn_one(bank, 5, note, "Run disk-guard", "", request_context)
-    assert log.outcome == "created"
-
-
 async def test_a_verdict_that_settles_nothing_writes_no_rule(memory, request_context, monkeypatch):
     bank = _bank()
     _learning_on(memory, monkeypatch)
@@ -1298,7 +1265,6 @@ async def test_a_rule_that_replaces_an_older_one_removes_it(memory, request_cont
                 create=True,
                 name="Decision limit: 8 API, 4 workers",
                 query="What is the decision limit?",
-                content="8 decision calls per API pod, 4 per worker pod (#1643).",
                 replaces=["Decision limit per pod"],
             )
         )
@@ -1319,66 +1285,6 @@ async def test_a_rule_that_replaces_an_older_one_removes_it(memory, request_cont
     assert "rule-old" not in ids and learned[0].payload["mental_model_id"] in ids
 
 
-async def test_a_rule_written_again_replaces_the_copy(memory, request_context, monkeypatch):
-    """Live, the writer was shown a rule from 2 minutes before and wrote it again, reworded."""
-    from hindsight_api.engine.sessions.learn import CorrectionDraft
-
-    bank = _bank()
-    _learning_on(memory, monkeypatch)
-    await memory.create_mental_model(
-        bank,
-        "Typesafe price",
-        "What does typesafe cost?",
-        "Typesafe costs $0.04 per 1M tokens: use this price in margin tables.",
-        mental_model_id="rule-old",
-        request_context=request_context,
-    )
-    draft = CorrectionDraft(
-        corrects=True,
-        create=True,
-        name="Typesafe cost per token",
-        query="What does typesafe cost?",
-        content="Typesafe costs $0.04 per 1M tokens: use this price in margin and COGS tables.",
-    )
-    log, _ = await _session_with_a_reply(memory, request_context, monkeypatch, bank, "it's 4 cent, not 40", draft)
-    assert log[0].payload["replaced"] == ["rule-old"]
-    ids = [
-        m["id"]
-        for m in (await memory.list_mental_models(bank, detail="metadata", request_context=request_context)).items
-    ]
-    assert ids == [log[0].payload["mental_model_id"]]
-
-
-async def test_a_retired_rule_written_again_stays_retired(memory, request_context, monkeypatch):
-    from hindsight_api.engine.sessions.learn import RETIRED_TAG, CorrectionDraft
-
-    bank = _bank()
-    _learning_on(memory, monkeypatch)
-    await memory.create_mental_model(
-        bank,
-        "Invoice currency",
-        "Which currency do invoices use?",
-        "Invoices in the billing export are always in EUR, never USD.",
-        mental_model_id="rule-old",
-        tags=[RETIRED_TAG],
-        request_context=request_context,
-    )
-    draft = CorrectionDraft(
-        corrects=True,
-        create=True,
-        name="Billing currency",
-        query="Which currency?",
-        content="Invoices in the billing export are in EUR, never USD.",
-    )
-    log, _ = await _session_with_a_reply(memory, request_context, monkeypatch, bank, "invoices are EUR", draft)
-    assert [(e.payload["outcome"], e.payload.get("reason")) for e in log] == [("skipped", "a retired rule says it")]
-    ids = [
-        m["id"]
-        for m in (await memory.list_mental_models(bank, detail="metadata", request_context=request_context)).items
-    ]
-    assert ids == ["rule-old"]
-
-
 async def test_a_rule_carrying_a_credential_is_not_written(memory, request_context, monkeypatch):
     from hindsight_api.engine.response_models import LLMCallResult
     from hindsight_api.engine.sessions.learn import RuleDraft
@@ -1390,7 +1296,7 @@ async def test_a_rule_carrying_a_credential_is_not_written(memory, request_conte
     async def call(messages, **kw):
         return LLMCallResult(
             content=RuleDraft(
-                create=True, name="Sheepit login", query="How to sign in?", content="The password is hunter2x9."
+                create=True, name="Sheepit login", query="Sheepit sign-in: the password is hunter2x9, still?"
             )
         )
 
@@ -1445,10 +1351,7 @@ async def test_a_users_correction_becomes_a_rule(memory, request_context, monkey
 
     bank = _bank()
     _learning_on(memory, monkeypatch)
-    rule = "Typesafe costs $0.04 per 1M tokens: use this price in margin and COGS tables."
-    draft = CorrectionDraft(
-        corrects=True, create=True, name="Typesafe price", query="What does typesafe cost?", content=rule
-    )
+    draft = CorrectionDraft(corrects=True, create=True, name="Typesafe price", query="What does typesafe cost?")
     log, prompts = await _session_with_a_reply(memory, request_context, monkeypatch, bank, "it's 4 cent, not 40", draft)
     assert [(e.payload["outcome"], e.payload["source"]) for e in log] == [("created", "correction")]
     # The writer read the reply and what it answers; the first request is never weighed.
@@ -1456,7 +1359,7 @@ async def test_a_users_correction_becomes_a_rule(memory, request_context, monkey
     # What the user had asked comes from the message before, not the session's request (now the reply).
     assert "Add the typesafe cost to the margin table" in prompts[0]
     # The rule is a knowledge page: its question is the writer's, its content reflect's, from the
-    # bank's observations, so the writer's text is never saved.
+    # bank's observations.
     rule_id = log[0].payload["mental_model_id"]
     pages = [
         n
@@ -1477,7 +1380,7 @@ async def test_a_reply_that_corrects_nothing_writes_no_rule(memory, request_cont
     _learning_on(memory, monkeypatch)
     # Asked only "create?", the writer made rules of the user's next requests: the draft says create,
     # but corrects is false, and that decides.
-    draft = CorrectionDraft(corrects=False, create=True, name="n", query="q", content="Rename Knowledge to Documents.")
+    draft = CorrectionDraft(corrects=False, create=True, name="n", query="What is the Knowledge tab called?")
     log, _ = await _session_with_a_reply(
         memory, request_context, monkeypatch, bank, "now rename Knowledge to Documents", draft
     )
@@ -1490,7 +1393,7 @@ async def test_a_notification_in_the_users_turn_is_not_weighed(memory, request_c
 
     bank = _bank()
     _learning_on(memory, monkeypatch)
-    draft = CorrectionDraft(corrects=True, create=True, name="n", query="q", content="c")
+    draft = CorrectionDraft(corrects=True, create=True, name="n", query="q")
     log, prompts = await _session_with_a_reply(
         memory,
         request_context,
@@ -1502,25 +1405,11 @@ async def test_a_notification_in_the_users_turn_is_not_weighed(memory, request_c
     assert log == [] and prompts == []
 
 
-async def test_a_correction_rule_that_restates_the_prompt_is_dropped(memory, request_context, monkeypatch):
-    """Where the session was about this feature, the writer made its own instructions a "rule"."""
-    from hindsight_api.engine.sessions.learn import CORRECTION_PROMPT, CorrectionDraft
-
-    bank = _bank()
-    _learning_on(memory, monkeypatch)
-    echo = CORRECTION_PROMPT.split("First, corrects:")[1][:400]
-    draft = CorrectionDraft(corrects=True, create=True, name="Corrections", query="q", content=echo)
-    log, _ = await _session_with_a_reply(
-        memory, request_context, monkeypatch, bank, "no, the rule writer must check corrections first", draft
-    )
-    assert [(e.payload["outcome"], e.payload.get("reason")) for e in log] == [("skipped", "restated the prompt")]
-
-
 async def test_a_correction_is_not_weighed_when_learning_is_off(memory, request_context, monkeypatch):
     from hindsight_api.engine.sessions.learn import CorrectionDraft
 
     bank = _bank()
     _learning_on(memory, monkeypatch, on=False)
-    draft = CorrectionDraft(corrects=True, create=True, name="n", query="q", content="c")
+    draft = CorrectionDraft(corrects=True, create=True, name="n", query="q")
     log, prompts = await _session_with_a_reply(memory, request_context, monkeypatch, bank, "it's 4 cent, not 40", draft)
     assert log == [] and prompts == []

@@ -870,7 +870,7 @@ class SessionService:
         logs: list[L.LearnLog] = []
         if cfg.get("session_learn_rules"):
             for seq, note in sorted(notes.items()):
-                log = await self._learn_one(bank_id, seq, note, state.goal, state.request_file, rc)
+                log = await self._learn_one(bank_id, seq, note, state.goal, rc)
                 if log is not None:
                     logs.append(log)
             for r in said:
@@ -881,7 +881,6 @@ class SessionService:
                         str(r["user_text"] or ""),
                         str(r["agent_text"] or ""),
                         str(r["asked_text"] or ""),
-                        state.request_file,
                         rc,
                     )
                 )
@@ -965,9 +964,9 @@ class SessionService:
         return logs
 
     async def _learn_one(
-        self, bank_id: str, seq: int, note: NoteLog, goal: str, request_file: str, rc: RequestContext
+        self, bank_id: str, seq: int, note: NoteLog, goal: str, rc: RequestContext
     ) -> L.LearnLog | None:
-        """One note's verdict: is it a lasting rule, and if so the mental model that keeps it."""
+        """One note's verdict: is it a lasting rule, and if so the page that keeps it."""
         fb = note.feedback
         if fb is None:
             return None
@@ -998,18 +997,13 @@ class SessionService:
                 existing=existing,
             ),
             L.RuleDraft,
-            # A rule for a note the agent rejected must not be that note again, reworded.
-            restates=note.text if fb.verdict != "used" else "",
-            restates_at=L.RESTATES_NOTE,
-            restates_reason="restated the note",
-            request_file=request_file,
-            rc=rc,
+            rc,
         )
 
     async def _learn_correction(
-        self, bank_id: str, seq: int, user: str, agent: str, asked: str, request_file: str, rc: RequestContext
+        self, bank_id: str, seq: int, user: str, agent: str, asked: str, rc: RequestContext
     ) -> L.LearnLog:
-        """One user reply: does it correct the agent with a lasting rule, and if so the mental model.
+        """One user reply: does it correct the agent with a lasting rule, and if so the page that keeps it.
 
         No decision-model step first, unlike a verdict: over 826 real replies its score did not tell
         corrections apart (at 0.5 it kept 45 of 164 corrections and 112 of 662 other replies), so the
@@ -1024,11 +1018,7 @@ class SessionService:
                 existing=existing,
             ),
             L.CorrectionDraft,
-            restates=L.CORRECTION_PROMPT,
-            restates_at=L.RESTATES_PROMPT,
-            restates_reason="restated the prompt",
-            request_file=request_file,
-            rc=rc,
+            rc,
         )
 
     async def _write_rule(
@@ -1037,25 +1027,26 @@ class SessionService:
         log: L.LearnLog,
         prompt_for: Callable[[str], str],
         draft_type: type[L.RuleDraft] | type[L.CorrectionDraft],
-        *,
-        restates: str,
-        restates_at: float,
-        restates_reason: str,
-        request_file: str,
         rc: RequestContext,
     ) -> L.LearnLog:
-        """Ask the writer for a rule and keep it as a mental model, unless a guard drops it. ``log``
-        carries what the caller knows (seq, source, score); the outcome is filled in here."""
+        """Ask the writer for a page and create it, unless the draft declines or a guard drops it.
+        ``log`` carries what the caller knows (seq, source, score); the outcome is filled in here.
+
+        Rules were first the writer's own text, saved as is, and guarded against restating the
+        rejected note, the writer's prompt or the job's own file, and against near-copies. A page is
+        written from memory, so those text guards went with the text (2026-11-11)."""
         engine = self._engine
         existing = [
             m
-            for m in (await engine.list_mental_models(bank_id, detail="content", limit=200, request_context=rc)).items
+            for m in (await engine.list_mental_models(bank_id, detail="config", limit=200, request_context=rc)).items
             if str(m.get("id", "")).startswith(L.RULE_ID_PREFIX)
         ][-L.MAX_EXISTING_RULES :]
         prompt = prompt_for(
             L.existing_rules_text(
                 [
-                    L.RuleSummary(id=str(m["id"]), name=str(m.get("name") or ""), content=str(m.get("content") or ""))
+                    L.RuleSummary(
+                        id=str(m["id"]), name=str(m.get("name") or ""), query=str(m.get("source_query") or "")
+                    )
                     for m in existing
                 ]
             )
@@ -1082,37 +1073,23 @@ class SessionService:
             return log.model_copy(update={"reason": "writer failed"})
         if isinstance(draft, L.CorrectionDraft) and not draft.corrects:
             return log.model_copy(update={"outcome": "no_rule"})
-        if not draft.create or not draft.content.strip():
+        if not draft.create or not draft.query.strip():
             return log.model_copy(update={"outcome": "covered"})
-        # Never a credential in a rule every later check reads (the writer is told so; this holds anyway).
-        if W._SECRET.search(draft.content):
+        # Never a credential in a page every later check reads (the writer is told so; this holds anyway).
+        if W._SECRET.search(f"{draft.name}\n{draft.query}"):
             return log.model_copy(update={"reason": "carried a credential"})
-        if restates and W._overlap(draft.content, restates) >= restates_at:
-            return log.model_copy(update={"reason": restates_reason})
-        # A rule the session's own instructions file already states would come back to every run of
-        # that job, telling it what it has just read (see learn.IN_REQUEST_FILE).
-        if request_file and W._overlap(draft.content, request_file) >= L.IN_REQUEST_FILE:
-            return log.model_copy(update={"reason": "the request file states it"})
-        # A rule that replaces older ones (a new value, the opposite) removes them: two rules saying
-        # 2 and 8 for the same limit would both reach every later check.
-        # A near-copy of an existing rule replaces it too: the writer is told not to write a rule twice,
-        # and still did. A near-copy of a retired one is dropped (see learn.SAME_RULE).
-        copies = [m for m in existing if W._overlap(draft.content, str(m.get("content") or "")) >= L.SAME_RULE]
-        if any(L.RETIRED_TAG in (m.get("tags") or []) for m in copies):
-            return log.model_copy(update={"reason": "a retired rule says it"})
-        replaced = [str(m["id"]) for m in existing if str(m.get("name") or "") in set(draft.replaces) or m in copies]
+        # A page that replaces older ones (a new value, the opposite) removes them: two pages on the
+        # same limit would both reach every later check.
+        replaced = [str(m["id"]) for m in existing if str(m.get("name") or "") in set(draft.replaces)]
         for old_id in replaced:
             await engine.delete_mental_model(bank_id, old_id, request_context=rc)
         mm_id = f"{L.RULE_ID_PREFIX}{uuid.uuid4().hex[:16]}"
-        # A learned rule is a knowledge page: the writer picks its name and question, and reflect writes
-        # the content from the bank's observations, cited, and refreshes it after each consolidation.
-        # Rules were first saved with the writer's own text: they never changed when the project did,
-        # cited nothing, and were managed apart from every other page (2026-11-11). The draft's content
-        # now only feeds the guards above.
+        # Reflect writes the page from the bank's observations, cited, and refreshes it after each
+        # consolidation (see learn.PAGE_FORMAT).
         page = await engine.create_knowledge_page(
             bank_id,
             draft.name.strip()[:120] or "Rule",
-            draft.query.strip() or draft.name.strip(),
+            draft.query.strip(),
             "",
             mental_model_id=mm_id,
             managed=True,
