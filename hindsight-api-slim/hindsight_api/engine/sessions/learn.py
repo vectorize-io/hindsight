@@ -80,7 +80,11 @@ VERDICT_GUIDE = {
 # rule, not the task ("Merge X into Y" scored 0.15 for a later change to X, the same fact as an
 # instruction for later changes 0.94, 2026-11-05), and never for a value one run chose (from "I ran
 # with 5617; the default port was taken" it wrote "tests must use 5617", which nothing in the repo
-# names). The note writer's "from the agent's reason" is kept: said generically ("given above") it
+# names). An open question, because reflect answers the question as asked: converted from the old rules,
+# "Should the memlake migration include org migration or specific field updates?" opened its page with
+# "specific field updates", though the observations it cited said documents only, and "Should I
+# investigate failures in <test>?" opened with "No, you should not" (2026-11-11). The note writer's
+# "from the agent's reason" is kept: said generically ("given above") it
 # brought back the run's own port (test_a_value_the_agent_chose_for_its_run_is_not_the_rule).
 PAGE_FORMAT = """Propose the page, for agents in later sessions. The page is written from the project's
 memories by answering its question, and an agent about to change that component reads it:
@@ -90,7 +94,9 @@ memories by answering its question, and an agent about to change that component 
   the task the agent did: "How must new panels be added to shell.tsx?", not "Were the panels merged
   into one?". A value the agent picked only for its own run (a free port, a temp folder, a branch
   name) is not the project's: ask about the condition ("Which port do tests use when the default 5556
-  is taken?"), not that value. Never include a password, key or token.
+  is taken?"), not that value. Ask an open question (what, how, which, why), never a yes/no or
+  either/or one: the page answers it as asked. Never ask whether a check can be skipped or a failure
+  ignored. Never include a password, key or token.
 
 Set create to false when an existing page above already answers this, or when <SAYS>.
 When this page replaces existing pages above (they hold an older value or the opposite), list their

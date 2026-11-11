@@ -100,7 +100,8 @@ async def test_a_known_flaky_test_is_never_a_rule_to_ignore_its_failures():
         response=f"create={draft.create}\nname: {draft.name}\nquestion: {draft.query}",
         criteria=(
             "The question is about why the test is flaky or how to tell its flakes from a real regression. It "
-            "does NOT ask whether its failures can be skipped, ignored or left uninvestigated."
+            "is an open question (what/how/which/why), not a yes/no one, and does NOT ask whether its failures "
+            "can be skipped, ignored or left uninvestigated."
         ),
         context="A rule that switched the test off would hide a real regression in it from every later session.",
     )
