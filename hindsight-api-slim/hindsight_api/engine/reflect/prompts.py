@@ -358,6 +358,8 @@ def build_system_prompt_for_tools(
                     "- Auto-consolidated knowledge from memories",
                     "- Check `is_stale` field - if stale, ALSO use recall() to verify",
                     "- Good for understanding patterns and summaries",
+                    "- A bracket after an observation's text, `(YYYY-MM-DD HH:MM: …)`, is an EARLIER state "
+                    "that the text before it replaced — not the current value",
                 ],
             )
         )

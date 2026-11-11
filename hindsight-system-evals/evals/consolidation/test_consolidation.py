@@ -352,6 +352,8 @@ SCENARIOS: tuple[Scenario, ...] = (
                     ),
                 ),
             ),
+            # No "drops Ana, Chen or Dmitri" trap: the must already asks for the three, and judges flagged the
+            # correct "Ana, Chen and Dmitri; Ben left it" as a drop on every model, whatever the wording.
             must=(
                 "The observations record that Ben left the payments on-call rotation, and still list Ana, Chen and "
                 "Dmitri as members.",
@@ -359,7 +361,6 @@ SCENARIOS: tuple[Scenario, ...] = (
             traps=(
                 "Some observation presents Ben as a CURRENT member or the current lead of the payments on-call "
                 "rotation, with nothing in that observation saying he left.",
-                "Some observation drops Ana, Chen or Dmitri from the rotation.",
             ),
         ),
         Scenario(

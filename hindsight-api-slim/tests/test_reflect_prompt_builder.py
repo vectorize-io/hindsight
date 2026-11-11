@@ -149,6 +149,7 @@ You have access to THREE levels of knowledge. Use them in this order:
 - Auto-consolidated knowledge from memories
 - Check `is_stale` field - if stale, ALSO use recall() to verify
 - Good for understanding patterns and summaries
+- A bracket after an observation's text, `(YYYY-MM-DD HH:MM: …)`, is an EARLIER state that the text before it replaced — not the current value
 
 ### 3. RAW FACTS (recall) - Ground Truth
 - Individual memories (world facts and experiences)
@@ -198,6 +199,7 @@ You have access to TWO levels of knowledge. Use them in this order:
 - Auto-consolidated knowledge from memories
 - Check `is_stale` field - if stale, ALSO use recall() to verify
 - Good for understanding patterns and summaries
+- A bracket after an observation's text, `(YYYY-MM-DD HH:MM: …)`, is an EARLIER state that the text before it replaced — not the current value
 
 ### 2. RAW FACTS (recall) - Ground Truth
 - Individual memories (world facts and experiences)
