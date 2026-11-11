@@ -44,7 +44,6 @@ RETIRE_AFTER = 2
 RETRY_REASONS = frozenset({"decision failed", "writer failed"})
 RETRY_AFTER_S = 60
 RETIRED_TAG = "rule:retired"
-MAX_RULE_CHARS = 1200
 # A user reply is weighed as a correction only within these lengths: shorter is "go" or "yes", longer is
 # a pasted log or a new spec. Over a week of live replies, the corrections ran 13 to ~1,500 characters.
 REPLY_MIN_CHARS = 10

@@ -1418,6 +1418,14 @@ async def _session_with_a_reply(memory, request_context, monkeypatch, bank: str,
 
     monkeypatch.setattr(memory._llm_config, "call", call)
     monkeypatch.setattr(memory, "reflect_async", _reflect_stub([], []))
+    refreshed: list[str] = []
+
+    async def refresh(bank_id, mental_model_id, **kw):
+        refreshed.append(mental_model_id)
+        return {"operation_id": "op"}
+
+    monkeypatch.setattr(memory, "submit_async_refresh_mental_model", refresh)
+    monkeypatch.setattr(memory, "refreshed_rules", refreshed, raising=False)  # read back by the tests
     s = memory.sessions
     steps = [
         {"id": "u1", "role": "user", "text": "Add the typesafe cost to the margin table"},
@@ -1447,8 +1455,19 @@ async def test_a_users_correction_becomes_a_rule(memory, request_context, monkey
     assert len(prompts) == 1 and "it's 4 cent, not 40" in prompts[0] and "$0.40 per 1M" in prompts[0]
     # What the user had asked comes from the message before, not the session's request (now the reply).
     assert "Add the typesafe cost to the margin table" in prompts[0]
-    models = (await memory.list_mental_models(bank, detail="content", request_context=request_context)).items
-    assert [m["content"].strip() for m in models if m["id"] == log[0].payload["mental_model_id"]] == [rule]
+    # The rule is a knowledge page: its question is the writer's, its content reflect's, from the
+    # bank's observations, so the writer's text is never saved.
+    rule_id = log[0].payload["mental_model_id"]
+    pages = [
+        n
+        for n in await memory.list_knowledge_nodes(bank, request_context=request_context)
+        if n["mental_model_id"] == rule_id
+    ]
+    assert [(p["kind"], p["name"], p["managed"]) for p in pages] == [("page", "Typesafe price", True)]
+    model = await memory.get_mental_model(bank, rule_id, request_context=request_context)
+    assert (model["source_query"], model["content"]) == ("What does typesafe cost?", "")
+    assert model["trigger"]["refresh_after_consolidation"] is True
+    assert memory.refreshed_rules == [rule_id]
 
 
 async def test_a_reply_that_corrects_nothing_writes_no_rule(memory, request_context, monkeypatch):

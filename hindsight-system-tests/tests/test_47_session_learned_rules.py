@@ -2,8 +2,8 @@
 
 Sessions, the agent's note feedback, mental models and the session check meet here: a check gives
 a note from an old decision, the agent answers it is wrong and says what holds instead, the server
-writes that as a rule (a ``rule-`` mental model), and a later session's check in the same bank
-reads the rule. Before, checks excluded mental models, and a learned rule never reached a later
+writes that as a rule (a ``rule-`` knowledge page, whose content a refresh writes from the bank's
+memories), and a later session's check in the same bank reads the rule. Before, checks excluded mental models, and a learned rule never reached a later
 session.
 
 Checks and learning both need reflect's decision model, so the server is ``learning_server``; the
@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator
 import pytest
 from hindsight_client_api.models import SessionAppendRequest, SessionMessage, SessionOptions
 
-from hindsight_system_tests import wait_until_settled
+from hindsight_system_tests import reflect_loop, wait_until_settled
 from hindsight_system_tests.payloads import extracted, fact, observes
 from hindsight_system_tests.steps import anchor_for
 
@@ -62,6 +62,18 @@ async def _until(client, bank: str, session: str, kind: str, timeout: float = 60
         await asyncio.sleep(0.25)
 
 
+async def _page_content(client, bank: str, rule_id: str, timeout: float = 60.0) -> str:
+    """The rule's page once its first refresh wrote it."""
+    deadline = time.monotonic() + timeout
+    while True:
+        (model,) = [m for m in (await client.mental_models.list_mental_models(bank, detail="content")).items]
+        if model.content:
+            assert model.id == rule_id
+            return model.content.rstrip("\n")
+        assert time.monotonic() < deadline, "the rule's page was never written"
+        await asyncio.sleep(0.25)
+
+
 async def _ask(client, bank: str, session: str, request: str) -> None:
     await client.sessions.append_session_events(
         bank,
@@ -90,6 +102,10 @@ async def test_a_rule_learned_from_a_wrong_note_reaches_the_next_session(learnin
     await _ask(learning_client, shell_bank, "s1", "Merge the three floating panels in shell.tsx into one System panel")
     (note,) = await _until(learning_client, shell_bank, "s1", "note")
     assert note.payload["text"] == OLD_NOTE
+    # The rule's page is written by a refresh, from the bank's memories (scripted only now, after the
+    # first check, so its search turns never answer the check).
+    llm.on_step("reflect_round_query").returns_text("shell panels layout")
+    reflect_loop(llm, answer=RULE, query="shell panels layout")
     reply = (
         f"Merged them.\n> 🧠 Hindsight thought #{note.payload['number']} — they stay floating panels; wrong: "
         "the user asked to merge Files, Knowledge and Settings into one System panel in shell.tsx."
@@ -107,8 +123,8 @@ async def test_a_rule_learned_from_a_wrong_note_reaches_the_next_session(learnin
     assert rule_id.startswith("rule-")
     (writer,) = [c for c in llm.calls if anchor_for("session_learn") in c.all_text]
     assert "merge Files, Knowledge and Settings" in writer.all_text and OLD_NOTE not in writer.all_text
-    models = (await learning_client.mental_models.list_mental_models(shell_bank, detail="content")).items
-    assert [(m.id, m.content.rstrip("\n")) for m in models] == [(rule_id, RULE)]
+    # The rule is a knowledge page: reflect writes its content from the bank's observations.
+    assert await _page_content(learning_client, shell_bank, rule_id) == RULE
 
     # 3. A later session's check reads the rule, and its note cites it.
     await _ask(learning_client, shell_bank, "s2", "Add a floating Logs panel to shell.tsx for the server logs")
@@ -145,7 +161,15 @@ async def test_a_rule_learned_from_the_users_correction_reaches_the_next_session
     llm.on_step("reflect_abstain_answer", contains="margin").returns_text(
         json.dumps({"applies": True, "answer": "Before you price typesafe: it costs $0.04 per 1M tokens."})
     )
+    llm.on_step("reflect_round_query").returns_text("typesafe price")
+    reflect_loop(llm, answer=PRICE_RULE, query="typesafe price")
     try:
+        # The bank already knows the price: a page can only say what memory holds, and an empty bank
+        # leaves the rule's page empty.
+        llm.on_step("extract_facts").returns(extracted(fact("Typesafe costs $0.04 per 1M tokens")))
+        llm.on_step("consolidate").answers_with(observes("Typesafe costs $0.04 per 1M tokens"))
+        await learning_client.aretain(bank_id=bank, content="Typesafe is $0.04 per 1M tokens.")
+        await wait_until_settled(learning_client, bank)
         # 1. A request, the agent's wrong price, and the user's correction.
         await _ask(learning_client, bank, "s1", "Add the typesafe cost to the COGS table")
         for mid, role, text in (
@@ -164,6 +188,7 @@ async def test_a_rule_learned_from_the_users_correction_reaches_the_next_session
         rule_id = learned.payload["mental_model_id"]
         (writer,) = [c for c in llm.calls if anchor_for("session_learn") in c.all_text]
         assert "it's 4 cent, not 40" in writer.all_text and "$0.40 per 1M" in writer.all_text
+        assert await _page_content(learning_client, bank, rule_id) == PRICE_RULE
 
         # 3. A later session's check reads it.
         await _ask(learning_client, bank, "s2", "Recompute the margin table with the typesafe calls")

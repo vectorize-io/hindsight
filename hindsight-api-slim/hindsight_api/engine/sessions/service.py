@@ -1104,14 +1104,23 @@ class SessionService:
         for old_id in replaced:
             await engine.delete_mental_model(bank_id, old_id, request_context=rc)
         mm_id = f"{L.RULE_ID_PREFIX}{uuid.uuid4().hex[:16]}"
-        await engine.create_mental_model(
+        # A learned rule is a knowledge page: the writer picks its name and question, and reflect writes
+        # the content from the bank's observations, cited, and refreshes it after each consolidation.
+        # Rules were first saved with the writer's own text: they never changed when the project did,
+        # cited nothing, and were managed apart from every other page (2026-11-11). The draft's content
+        # now only feeds the guards above.
+        page = await engine.create_knowledge_page(
             bank_id,
             draft.name.strip()[:120] or "Rule",
             draft.query.strip() or draft.name.strip(),
-            draft.content.strip()[: L.MAX_RULE_CHARS],
+            "",
             mental_model_id=mm_id,
+            managed=True,
             request_context=rc,
         )
+        if page is None:  # a page of that name already exists
+            return log.model_copy(update={"outcome": "covered"})
+        await engine.submit_async_refresh_mental_model(bank_id, mm_id, request_context=rc)
         logger.info(f"session learn: {bank_id} rule {mm_id} '{draft.name}' from {log.source} {log.note_seq}")
         return log.model_copy(
             update={"outcome": "created", "mental_model_id": mm_id, "name": draft.name, "replaced": replaced or None}
