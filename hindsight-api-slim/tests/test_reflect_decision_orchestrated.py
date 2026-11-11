@@ -40,7 +40,10 @@ class _ScriptedProvider:
 
     async def call(self, *, messages, **_):
         self.distill_prompts.append(messages[-1]["content"])
-        content = self.search_query if self.search_query is not None else messages[-1]["content"]
+        # The rewrite gets the request in a <request> block with its task after it: echo the request.
+        wrapped = messages[-1]["content"]
+        request = wrapped.split("<request>\n", 1)[-1].split("\n</request>", 1)[0]
+        content = self.search_query if self.search_query is not None else request
         return LLMCallResult(content=content, usage=TokenUsage(input_tokens=1, output_tokens=1))
 
 
@@ -124,7 +127,9 @@ async def test_insufficient_evidence_runs_another_parallel_round_with_the_llms_q
     assert result.text == "A"
     for name in ("search_mental_models_fn", "search_observations_fn", "recall_fn"):
         assert [c.args[0] for c in functions[name].await_args_list] == ["where does Alice live?", "Alice's new address"]
-    assert prune.await_count == 2, "both rounds are pruned"
+    # Both rounds are pruned against the request; the second also against its own search query.
+    assert [c.args[0] for c in prune.await_args_list].count("where does Alice live?") == 2, "both rounds are pruned"
+    assert "Alice's new address" in [c.args[0] for c in prune.await_args_list]
     assert sufficient.await_count == 2, "the decision model, not the LLM, ends the second round"
 
 
@@ -385,7 +390,9 @@ async def test_every_request_is_searched_with_a_rewritten_query():
 
     result = await _reflect(provider, functions, AsyncMock(return_value=True))
 
-    assert provider.distill_prompts == ["where does Alice live?"]
+    assert provider.distill_prompts == [
+        "<request>\nwhere does Alice live?\n</request>\n\nWrite the search query for this request."
+    ]
     for name in ("search_mental_models_fn", "search_observations_fn", "recall_fn"):
         assert functions[name].await_args.args[0] == "Alice home city"
     assert [c.scope for c in result.llm_trace][0] == "round_query"
@@ -546,3 +553,101 @@ async def test_trace_start_times_put_llm_and_tool_calls_in_the_order_they_ran():
     assert ordered[0] == "round_query"
     assert set(ordered[1:4]) == {"search_mental_models", "search_observations", "recall"}
     assert ordered[4:] == ["decision_sufficiency", "closing_done"]
+
+
+@pytest.mark.asyncio
+async def test_a_request_that_ends_with_its_own_instruction_still_gets_its_task_last():
+    """A plugin's request ended "if nothing bears on the goal, say so in one line", and the rewrite
+    obeyed it: the first round searched "No information in memory bears on this goal."."""
+    provider = _ScriptedProvider([_done()], search_query="Alice home city")
+    request = "Where does Alice live? If nothing bears on it, say so in one line."
+
+    await run_reflect_agent(
+        llm_config=provider,
+        bank_id="b",
+        query=request,
+        bank_profile={"name": "T", "mission": "M"},
+        has_mental_models=True,
+        budget="mid",
+        max_iterations=6,
+        evidence_is_sufficient_fn=AsyncMock(return_value=True),
+        **_functions(),
+    )
+
+    (prompt,) = provider.distill_prompts
+    assert prompt.startswith("<request>\n" + request + "\n</request>")
+    assert prompt.rstrip().endswith("Write the search query for this request.")
+
+
+def _long_recall(texts: list[str]) -> AsyncMock:
+    return AsyncMock(return_value={"memories": [{"id": f"mem-{i}", "text": t} for i, t in enumerate(texts)]})
+
+
+@pytest.mark.asyncio
+async def test_the_cut_also_keeps_what_the_rounds_search_query_keeps():
+    """Ranked against a long task prompt, the bookkeeping that repeats its words beat the fact the goal
+    needed; ranked against the round's search query, that fact came first."""
+    provider = _ScriptedProvider([_done()], search_query="median electronics price")
+    functions = _functions()
+    functions["recall_fn"] = AsyncMock(
+        return_value={
+            "memories": [
+                {"id": "mem-noise", "text": "used 2 of 15 queries"},
+                {"id": "mem-lesson", "text": "the median of prc_usd was rejected"},
+            ]
+        }
+    )
+    request = "Question 14: CORRECT! queries used: 2. Question 15: median electronics price?"
+
+    async def prune(question: str, texts: list[str]) -> list[bool]:
+        if question == request:
+            return ["queries" in t for t in texts]
+        return ["prc_usd" in t for t in texts]
+
+    sufficient = AsyncMock(return_value=True)
+    await run_reflect_agent(
+        llm_config=provider,
+        bank_id="b",
+        query=request,
+        bank_profile={"name": "T", "mission": "M"},
+        has_mental_models=True,
+        budget="mid",
+        max_iterations=6,
+        evidence_is_sufficient_fn=sufficient,
+        prune_evidence_fn=prune,
+        **functions,
+    )
+
+    evidence = sufficient.await_args.args[1]
+    assert "the median of prc_usd was rejected" in evidence, "kept by the search query"
+    assert "used 2 of 15 queries" in evidence, "still kept by the request"
+
+
+@pytest.mark.asyncio
+async def test_a_searchs_own_top_results_survive_the_cut_but_a_short_list_does_not_get_that_pass():
+    provider = _ScriptedProvider([_done()])
+    functions = _functions()
+    long_list = [f"fact {i}" for i in range(8)]
+    functions["recall_fn"] = _long_recall(long_list)
+    functions["search_observations_fn"] = AsyncMock(
+        return_value={"observations": [{"id": "obs-1", "text": "o1"}, {"id": "obs-2", "text": "o2"}]}
+    )
+    sufficient = AsyncMock(return_value=True)
+
+    await run_reflect_agent(
+        llm_config=provider,
+        bank_id="b",
+        query="q",
+        bank_profile={"name": "T", "mission": "M"},
+        has_mental_models=True,
+        budget="mid",
+        max_iterations=6,
+        evidence_is_sufficient_fn=sufficient,
+        prune_evidence_fn=AsyncMock(side_effect=lambda q, texts: [False] * len(texts)),
+        **functions,
+    )
+
+    evidence = sufficient.await_args.args[1]
+    assert all(f'"fact {i}"' in evidence for i in range(5)), "the search's own top five stay"
+    assert not any(f'"fact {i}"' in evidence for i in range(5, 8)), "the rest is the cut's"
+    assert '"o1"' not in evidence and '"o2"' not in evidence, "a list of two gets no pass"
