@@ -1462,7 +1462,7 @@ DEFAULT_RERANKER_LOCAL_MAX_CONCURRENT = 4  # Limit concurrent CPU-bound rerankin
 DEFAULT_RERANKER_LOCAL_TRUST_REMOTE_CODE = (
     False  # Security: disabled by default, required for some models like jina-reranker-v2
 )
-DEFAULT_RERANKER_LOCAL_FP16 = False  # FP16 inference: opt-in, faster on CUDA (not CPU)
+DEFAULT_RERANKER_LOCAL_FP16 = False  # FP16 inference: opt-in; faster on CUDA, halves memory on CPU
 DEFAULT_RERANKER_LOCAL_BUCKET_BATCHING = False  # Length-sorted bucket batching: opt-in, 36-54% speedup
 DEFAULT_RERANKER_LOCAL_BATCH_SIZE = 32  # Batch size for local reranker predict() calls
 # Wall-clock ceiling for scoring ONE recall's candidates on an in-process model.

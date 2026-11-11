@@ -302,8 +302,8 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             trust_remote_code: Allow loading models with custom code (security risk).
                               Required for some models like jina-reranker-v2-base-multilingual.
                               Default: False (disabled for security)
-            fp16: Use FP16 (half precision) inference. Faster on CUDA,
-                  may be slower on CPU. Default: False (opt-in via env var).
+            fp16: Use FP16 (half precision) inference. Faster on CUDA; on CPU
+                  it halves memory but may not be faster. Default: False (opt-in via env var).
             bucket_batching: Sort pairs by token length before batching to reduce
                             padding waste. 36-54% speedup, quality-identical.
                             Default: False (opt-in via env var).
@@ -421,11 +421,17 @@ class LocalSTCrossEncoder(CrossEncoderModel):
 
             self._device_type = resolve_model_device_type(self._model)
 
-            # FP16 inference: convert model weights to half precision.
-            # Empirically validated: 27-36% faster on MPS, quality-identical (20/20 overlap).
-            if self.fp16 and self._device_type != "cpu":
+            # FP16 inference: convert model weights to half precision. On CUDA it is
+            # faster. It used to be skipped on CPU because it is not faster there, but
+            # it still halves the weights' RAM, and #6453 measured identical top-10
+            # rankings for bge-reranker-v2-m3, so the opt-in now applies on CPU too.
+            # The smoke test below catches a CPU that cannot run it.
+            if self.fp16:
                 self._model.model.half()
-                logger.info("Reranker: FP16 inference enabled")
+                if self._device_type == "cpu":
+                    logger.info("Reranker: FP16 inference enabled on CPU (halves memory, may not be faster)")
+                else:
+                    logger.info("Reranker: FP16 inference enabled")
 
             # Smoke-test the fully configured model (after any FP16 conversion). NaN logits
             # are sanitized to 0.0 downstream, so startup is the last point at which a model
