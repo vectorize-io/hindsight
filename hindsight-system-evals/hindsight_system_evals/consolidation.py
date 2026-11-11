@@ -407,8 +407,11 @@ async def run_scenario(client: Hindsight, bank_id: str, settled: SettleFn, scena
     rendered = _render(outcome.final, scenario.focus)
     context = (
         "These are the OBSERVATIONS a memory system consolidated from the facts below. Facts arrived in "
-        "waves; 'stated' is when each was said, and a later statement is the more recent truth. Grade the "
-        "observations, not the facts.\n\nFacts:\n" + _timeline(scenario)
+        "waves; 'stated' is when each was said, and a later statement is the more recent truth. Waves are "
+        "only the order facts arrived in, not the order they were said: a later wave can hold an older "
+        "statement. Grade the "
+        "observations, not the facts. A bracket after an observation's text, `(YYYY-MM-DD HH:MM: ...)`, is "
+        "an EARLIER state that the text before it replaced, not a current value.\n\nFacts:\n" + _timeline(scenario)
     )
     for trap in scenario.traps:
         verdict = await evaluate(rendered, trap, context=context, confirm_met=True)
