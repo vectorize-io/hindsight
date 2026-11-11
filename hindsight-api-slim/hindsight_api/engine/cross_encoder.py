@@ -422,9 +422,10 @@ class LocalSTCrossEncoder(CrossEncoderModel):
             self._device_type = resolve_model_device_type(self._model)
 
             # FP16 inference: convert model weights to half precision. On CUDA it is
-            # faster; on CPU it mostly halves the weights' RAM (#6453 measured identical
-            # rankings for bge-reranker-v2-m3). The smoke test below catches a CPU that
-            # cannot run it.
+            # faster. It used to be skipped on CPU because it is not faster there, but
+            # it still halves the weights' RAM, and #6453 measured identical top-10
+            # rankings for bge-reranker-v2-m3, so the opt-in now applies on CPU too.
+            # The smoke test below catches a CPU that cannot run it.
             if self.fp16:
                 self._model.model.half()
                 if self._device_type == "cpu":
