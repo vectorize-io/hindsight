@@ -54,6 +54,11 @@ REPLY_MAX_CHARS = 2000
 # ("when a developer corrects a value ... treat it as a project rule"), 5 of 13 in the offline run, at
 # 0.46-0.67; the 8 real ones scored 0.19-0.35 (2026-11-10).
 RESTATES_PROMPT = 0.4
+# A new rule that shares this much of its words with an existing rule is that rule again, and replaces
+# it (the newer wording wins). Live, the writer was shown a rule written 2 minutes before and wrote it
+# again: the copies scored 0.76 and 0.88, and the closest distinct rules of any bank 0.40 (2026-11-11).
+# A near-copy of a retired rule is not written: it would bring back a rule agents rejected.
+SAME_RULE = 0.6
 
 LEARN_QUESTION = (
     "Does the agent's reason below settle a rule for future work on this project, one a later "

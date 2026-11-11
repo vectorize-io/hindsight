@@ -1048,7 +1048,7 @@ async def test_a_verdict_named_again_in_other_words_is_weighed_once(memory, requ
     _learning_on(memory, monkeypatch)
     stub = _LearnStub(0.1)
     monkeypatch.setattr(memory, "_reflect_decision_model", lambda: stub)
-    learned = await _session_with_a_verdict(
+    await _session_with_a_verdict(
         memory, request_context, monkeypatch, bank, "> 🧠 Hindsight thought #{n} — keep three panels; no change: done."
     )
     number = [
@@ -1317,6 +1317,66 @@ async def test_a_rule_that_replaces_an_older_one_removes_it(memory, request_cont
         for m in (await memory.list_mental_models(bank, detail="metadata", request_context=request_context)).items
     ]
     assert "rule-old" not in ids and learned[0].payload["mental_model_id"] in ids
+
+
+async def test_a_rule_written_again_replaces_the_copy(memory, request_context, monkeypatch):
+    """Live, the writer was shown a rule from 2 minutes before and wrote it again, reworded."""
+    from hindsight_api.engine.sessions.learn import CorrectionDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    await memory.create_mental_model(
+        bank,
+        "Typesafe price",
+        "What does typesafe cost?",
+        "Typesafe costs $0.04 per 1M tokens: use this price in margin tables.",
+        mental_model_id="rule-old",
+        request_context=request_context,
+    )
+    draft = CorrectionDraft(
+        corrects=True,
+        create=True,
+        name="Typesafe cost per token",
+        query="What does typesafe cost?",
+        content="Typesafe costs $0.04 per 1M tokens: use this price in margin and COGS tables.",
+    )
+    log, _ = await _session_with_a_reply(memory, request_context, monkeypatch, bank, "it's 4 cent, not 40", draft)
+    assert log[0].payload["replaced"] == ["rule-old"]
+    ids = [
+        m["id"]
+        for m in (await memory.list_mental_models(bank, detail="metadata", request_context=request_context)).items
+    ]
+    assert ids == [log[0].payload["mental_model_id"]]
+
+
+async def test_a_retired_rule_written_again_stays_retired(memory, request_context, monkeypatch):
+    from hindsight_api.engine.sessions.learn import RETIRED_TAG, CorrectionDraft
+
+    bank = _bank()
+    _learning_on(memory, monkeypatch)
+    await memory.create_mental_model(
+        bank,
+        "Invoice currency",
+        "Which currency do invoices use?",
+        "Invoices in the billing export are always in EUR, never USD.",
+        mental_model_id="rule-old",
+        tags=[RETIRED_TAG],
+        request_context=request_context,
+    )
+    draft = CorrectionDraft(
+        corrects=True,
+        create=True,
+        name="Billing currency",
+        query="Which currency?",
+        content="Invoices in the billing export are in EUR, never USD.",
+    )
+    log, _ = await _session_with_a_reply(memory, request_context, monkeypatch, bank, "invoices are EUR", draft)
+    assert [(e.payload["outcome"], e.payload.get("reason")) for e in log] == [("skipped", "a retired rule says it")]
+    ids = [
+        m["id"]
+        for m in (await memory.list_mental_models(bank, detail="metadata", request_context=request_context)).items
+    ]
+    assert ids == ["rule-old"]
 
 
 async def test_a_rule_carrying_a_credential_is_not_written(memory, request_context, monkeypatch):

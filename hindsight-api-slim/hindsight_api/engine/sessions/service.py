@@ -1095,7 +1095,12 @@ class SessionService:
             return log.model_copy(update={"reason": "the request file states it"})
         # A rule that replaces older ones (a new value, the opposite) removes them: two rules saying
         # 2 and 8 for the same limit would both reach every later check.
-        replaced = [str(m["id"]) for m in existing if str(m.get("name") or "") in set(draft.replaces)]
+        # A near-copy of an existing rule replaces it too: the writer is told not to write a rule twice,
+        # and still did. A near-copy of a retired one is dropped (see learn.SAME_RULE).
+        copies = [m for m in existing if W._overlap(draft.content, str(m.get("content") or "")) >= L.SAME_RULE]
+        if any(L.RETIRED_TAG in (m.get("tags") or []) for m in copies):
+            return log.model_copy(update={"reason": "a retired rule says it"})
+        replaced = [str(m["id"]) for m in existing if str(m.get("name") or "") in set(draft.replaces) or m in copies]
         for old_id in replaced:
             await engine.delete_mental_model(bank_id, old_id, request_context=rc)
         mm_id = f"{L.RULE_ID_PREFIX}{uuid.uuid4().hex[:16]}"
