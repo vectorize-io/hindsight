@@ -28,10 +28,11 @@ LEARN_AT = 0.15
 RULE_ID_PREFIX = "rule-"
 # How many of the bank's learned rules the writer is shown to avoid writing one twice.
 MAX_EXISTING_RULES = 30
-# A rule whose notes agents rejected this many times, and never used, stops reaching checks: it is
+# A rule whose notes agents called wrong this many times, and never used, stops reaching checks: it is
 # tagged, not deleted, so a person can see it and take the tag off. Live, the first rule learned from
 # one run's free port ("tests must use 5617") was rejected on each of its first notes, and kept
-# coming back to every test run of the bank (2026-11-06).
+# coming back to every test run of the bank (2026-11-06). Only "wrong" counts, not "not_needed"
+# (see service._retire_rejected_rules).
 RETIRE_AFTER = 2
 # A verdict skipped for one of these is weighed again RETRY_AFTER_S later (see run_learn).
 RETRY_REASONS = frozenset({"decision failed", "writer failed"})

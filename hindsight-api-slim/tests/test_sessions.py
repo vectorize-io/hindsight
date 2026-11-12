@@ -1156,7 +1156,17 @@ async def test_a_bank_without_rules_keeps_mental_models_out_of_checks(memory, re
     assert calls and calls[0]["exclude_mental_models"] is True
 
 
-async def test_a_rule_whose_notes_are_rejected_twice_is_retired_not_deleted(memory, request_context, monkeypatch):
+@pytest.mark.parametrize(
+    "verdict, retired",
+    [
+        ("wrong: tests use whatever port is free.", True),
+        # Live, a correct page was retired by two checks that picked it for unrelated work (2026-11-13).
+        ("no change: I used my own free port.", False),
+    ],
+)
+async def test_a_rule_whose_notes_are_called_wrong_twice_is_retired_not_deleted(
+    memory, request_context, monkeypatch, verdict, retired
+):
     """Live, a rule learned from one run's free port came back to every test run and was rejected each time."""
     from hindsight_api.engine.sessions.learn import RETIRED_TAG
 
@@ -1189,16 +1199,18 @@ async def test_a_rule_whose_notes_are_rejected_twice_is_retired_not_deleted(memo
         notes = [e for e in log if e.kind == "note"]
         assert len(notes) == 1, (session, [(e.kind, e.payload) for e in log])
         (note,) = notes
-        reply = f"> 🧠 Hindsight thought #{note.payload['number']} — use 5617; no change: I used my own free port."
+        reply = f"> 🧠 Hindsight thought #{note.payload['number']} — use 5617; {verdict}"
         await s.append(
             bank, session, _req({"id": "a", "role": "assistant", "text": reply}), request_context=request_context
         )
     learned = [
         e.payload for e in (await s.events(bank, "s2", request_context=request_context)).items if e.kind == "learn"
     ]
-    assert [x["outcome"] for x in learned if x["outcome"] == "retired"] == ["retired"]
+    assert [x["outcome"] for x in learned if x["outcome"] == "retired"] == (["retired"] if retired else [])
     rule = await memory.get_mental_model(bank, "rule-port", request_context=request_context)
-    assert rule is not None and RETIRED_TAG in rule["tags"], "tagged, not deleted"
+    assert rule is not None and (RETIRED_TAG in rule["tags"]) is retired, "tagged, not deleted"
+    if not retired:
+        return
     # The next check reads no rule: the bank's only rule is retired.
     calls: list[dict] = []
     monkeypatch.setattr(memory, "reflect_async", _reflect_stub([], calls))

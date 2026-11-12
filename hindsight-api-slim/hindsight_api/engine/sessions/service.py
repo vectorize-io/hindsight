@@ -921,11 +921,16 @@ class SessionService:
     async def _retire_rejected_rules(
         self, bank_id: str, notes: dict[int, NoteLog], rc: RequestContext
     ) -> list[L.LearnLog]:
-        """Retire each learned rule a rejected note was built from, once agents rejected its notes
-        RETIRE_AFTER times and used none (see learn.RETIRE_AFTER)."""
+        """Retire each learned rule a wrong note was built from, once agents called its notes wrong
+        RETIRE_AFTER times and used none (see learn.RETIRE_AFTER).
+
+        Only "wrong" counts. "not_needed" counted too at first, and live it retired a correct page: a
+        check picked the memlake migration page twice for work that never touched it, and almost every
+        page's first verdict was not_needed (2026-11-13). Not needed says the check picked badly, not
+        that the page is wrong."""
         logs: list[L.LearnLog] = []
         for seq, note in sorted(notes.items()):
-            if note.feedback is None or note.feedback.verdict == "used":
+            if note.feedback is None or note.feedback.verdict != "wrong":
                 continue
             for rule_id in [i for i in note.memory_ids if i.startswith(L.RULE_ID_PREFIX)]:
                 backend = await self._engine._get_backend()
@@ -942,7 +947,7 @@ class SessionService:
                             rule_id,
                         )
                     ]
-                if "used" in verdicts or len(verdicts) < L.RETIRE_AFTER:
+                if "used" in verdicts or verdicts.count("wrong") < L.RETIRE_AFTER:
                     continue
                 rule = await self._engine.get_mental_model(bank_id, rule_id, request_context=rc)
                 tags = list((rule or {}).get("tags") or [])
