@@ -33,6 +33,7 @@ from ..engine import bank_aliases
 from ..engine.db_utils import acquire_with_retry
 from ..engine.response_models import KnowledgeDocumentHit
 from ..engine.retain import bank_utils
+from ..engine.retain import timing as _timing
 from ..engine.schema import fq_table
 from ..engine.storage import bank_storage_prefix, key_segment
 from ..extensions.operation_validator import (
@@ -80,7 +81,10 @@ KIND = "knowledge"
 # Bumped whenever splitting changes what a file becomes, so rewriting an unchanged file re-splits it.
 _PIPELINE_VERSION = 9  # 9: PDF page units pack whole lines (as benchmarked)
 # How many passages are embedded and stored per round, so a 2h video never sits in memory whole.
+# Media passages carry their clip or image, so a round holds few of them; a text passage is a few
+# KB, and a round of them is what sets how many embed calls a batch makes, one after another.
 _EMBED_ROUND = 16
+_EMBED_ROUND_TEXT = 256
 #: Files an ingest saves at once.
 _FILE_SAVE_CONCURRENCY = 16
 
@@ -724,11 +728,15 @@ class KnowledgeService:
         return saved
 
     async def _delete_keys(self, keys: list[str]) -> None:
-        for key in keys:
-            try:
-                await self._engine._file_storage.delete(key)
-            except Exception as exc:  # an orphaned blob is harmless; a failed write over it is not
-                logger.warning(f"Could not delete knowledge file {key}: {exc}")
+        if not keys:
+            return
+        async with _timing.timed("file.delete"):
+            for key in keys:
+                try:
+                    await self._engine._file_storage.delete(key)
+                except Exception as exc:  # an orphaned blob is harmless; a failed write over it is not
+                    logger.warning(f"Could not delete knowledge file {key}: {exc}")
+        _timing.record("file.delete", 0.0, calls=len(keys) - 1)  # one round trip per key
 
     # --- ingest (worker) --------------------------------------------------------------------
 
@@ -829,6 +837,24 @@ class KnowledgeService:
         depth: int = 0,
         caller: dict[str, Any] | None = None,
     ) -> None:
+        # Every phase of the batch is attributed (seconds and round trips) and emitted as one
+        # `[knowledge_ingest-timing]` line plus the phase metrics, as a retain's are: a slow batch is
+        # otherwise only attributable by guessing which of storage, splitting, the embedder or the
+        # knowledge store it was.
+        async with _timing.retain_timing(
+            op="knowledge_ingest", bank_id=bank_id, store=type(self.store).__name__, documents=len(work)
+        ):
+            await self._process_batch(bank_id, work, retries_left=retries_left, depth=depth, caller=caller)
+
+    async def _process_batch(
+        self,
+        bank_id: str,
+        work: list[_Work],
+        *,
+        retries_left: bool = False,
+        depth: int = 0,
+        caller: dict[str, Any] | None = None,
+    ) -> None:
         """The worker half of an ingest (and the whole of a sync one): split stored documents into passages,
         embed them and commit them, as one batch. The store is read once, marked processing once and
         written once; passages are embedded in rounds of ``_EMBED_ROUND`` across documents, so a batch of
@@ -839,7 +865,8 @@ class KnowledgeService:
         embedder down) commits nothing and propagates, for the worker to retry; a document this batch
         already committed is ``ready`` under the same storage key and is skipped on the retry."""
         await self._ready(None)
-        rows = await self.store.get_documents(bank_id, [w.document_id for w in work])
+        async with _timing.timed("store.read"):
+            rows = await self.store.get_documents(bank_id, [w.document_id for w in work])
         docs: list[_InFlight] = []
         for w in work:
             row = rows.get(w.document_id)
@@ -850,13 +877,15 @@ class KnowledgeService:
             docs.append(_InFlight(w, row, _title_hint(row), media_prefix))
         if not docs:
             return
-        await self.store.set_statuses(
-            bank_id, [StatusUpdate(d.work.document_id, "processing", storage_key=d.work.storage_key) for d in docs]
-        )
+        async with _timing.timed("store.status"):
+            await self.store.set_statuses(
+                bank_id, [StatusUpdate(d.work.document_id, "processing", storage_key=d.work.storage_key) for d in docs]
+            )
         started = time.perf_counter()
         committed: set[str] = set()
         try:
             waiting: list[_Waiting] = []
+            media_waiting = 0
             for doc in docs:
                 try:
                     drafts = await self._open(bank_id, doc, caller or {}, depth)
@@ -870,16 +899,17 @@ class KnowledgeService:
                 try:
                     # A document an embed round refused stops here: its remaining passages (a long
                     # video's windows) would only be cut to be thrown away.
-                    while doc.error is None and (draft := await asyncio.to_thread(_next_draft, drafts)) is not None:
+                    while doc.error is None and (draft := await _split(_next_draft, drafts)) is not None:
                         waiting.append(_Waiting(doc, draft))
-                        if len(waiting) >= _EMBED_ROUND:
+                        media_waiting += draft.data is not None
+                        if media_waiting >= _EMBED_ROUND or len(waiting) >= _EMBED_ROUND_TEXT:
                             await self._embed_round(waiting)
-                            waiting = []
+                            waiting, media_waiting = [], 0
                 except ValueError as exc:
                     doc.error = exc
                 finally:
                     # Close the splitter now, off the event loop, rather than whenever it is collected.
-                    await asyncio.to_thread(_close_drafts, drafts)
+                    await _split(_close_drafts, drafts)
             if waiting:
                 await self._embed_round(waiting)
             for doc in docs:
@@ -887,21 +917,20 @@ class KnowledgeService:
                     doc.error = media.MediaError("the file holds nothing to search")
 
             done = [d for d in docs if d.error is None and not d.split]
+            t0 = time.perf_counter()
+            languages = [detect_language("\n".join(p.text or "" for p in d.passages)) for d in done]
+            _timing.record("language", time.perf_counter() - t0, calls=len(done))
             # The store commits each one only while it still holds the file this batch read: one replaced
             # or deleted meanwhile is skipped (it used to be re-read here first, which left a gap between
             # the check and the write), and its passages belong to nobody.
-            replaced = await self.store.replace_passages(
-                bank_id,
-                [
-                    PassageReplacement(
-                        d.work.document_id,
-                        d.passages,
-                        detect_language("\n".join(p.text or "" for p in d.passages)),
-                        storage_key=d.work.storage_key,
-                    )
-                    for d in done
-                ],
-            )
+            async with _timing.timed("store.write"):
+                replaced = await self.store.replace_passages(
+                    bank_id,
+                    [
+                        PassageReplacement(d.work.document_id, d.passages, language, storage_key=d.work.storage_key)
+                        for d, language in zip(done, languages, strict=True)
+                    ],
+                )
             skipped = set(replaced.skipped_document_ids)
             for d in done:
                 if d.work.document_id in skipped:
@@ -953,10 +982,11 @@ class KnowledgeService:
     ) -> Iterator[media.PassageDraft] | None:
         """One document's passages to embed, as a lazy iterator; None when its strategy split it into files."""
         document, w = doc.document, doc.work
-        data = await self._engine._file_storage.retrieve(w.storage_key)
+        async with _timing.timed("file.read"):
+            data = await self._engine._file_storage.retrieve(w.storage_key)
         if w.handler is None:
             # Splitting is blocking (pdfium, ffmpeg): it runs in a thread, one draft at a time.
-            return await asyncio.to_thread(self._drafts, document, data)
+            return await _split(self._drafts, document, data)
         made = await ingest_strategy.load_extension(w.handler).ingest(
             ingest_strategy.IngestFile(
                 bank_id=bank_id,
@@ -984,7 +1014,8 @@ class KnowledgeService:
             return
         plans = [self._vectors_to_embed(w.draft, w.doc.document, w.doc.title) for w in live]
         try:
-            embedded = await self.embedder.embed_documents([e.input for plan in plans for e in plan])
+            async with _timing.timed("embed"):
+                embedded = await self.embedder.embed_documents([e.input for plan in plans for e in plan])
         except ValueError as exc:
             if len({id(w.doc) for w in live}) == 1:
                 live[0].doc.error = exc
@@ -1002,9 +1033,10 @@ class KnowledgeService:
             key = None
             if draft.data is not None:
                 key = f"{doc.media_prefix}{index}.{draft.extension}"
-                await self._engine._file_storage.store(
-                    file_data=draft.data, key=key, metadata={"content_type": draft.mime or ""}
-                )
+                async with _timing.timed("media.write"):
+                    await self._engine._file_storage.store(
+                        file_data=draft.data, key=key, metadata={"content_type": draft.mime or ""}
+                    )
                 doc.media_keys.append(key)
             doc.passages.append(
                 KnowledgePassage(
@@ -1335,6 +1367,13 @@ def _drafts_of(passages: list[ingest_strategy.OutputPassage]) -> list[media.Pass
             )
         )
     return drafts
+
+
+async def _split(fn: Any, *args: Any) -> Any:
+    """Run a blocking step of splitting (opening a file, cutting its next passage) off the event
+    loop, timed as the batch's ``split`` phase."""
+    async with _timing.timed("split"):
+        return await asyncio.to_thread(fn, *args)
 
 
 def _close_drafts(drafts: Iterator[media.PassageDraft]) -> None:

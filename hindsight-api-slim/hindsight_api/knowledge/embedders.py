@@ -28,6 +28,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from ..engine.retain import timing as _timing
 from . import media
 
 if TYPE_CHECKING:
@@ -302,6 +303,7 @@ class GeminiEmbedder(KnowledgeEmbedder):
         return (await self._embed([types.Content(parts=parts)]))[0]
 
 
+_TEXT_CONCURRENCY = 4  # text requests in flight per embed call (see OpenAIEmbedder.embed_documents)
 _MEDIA_CONCURRENCY = 4  # media requests in flight per embed call (see OpenAIEmbedder.embed_documents)
 
 
@@ -415,12 +417,18 @@ class OpenAIEmbedder(_RemoteEmbedder):
         texts = [
             (i, _document_text(item.text or "", item.title)) for i, item in enumerate(items) if item.modality == "text"
         ]
-        for start in range(0, len(texts), self._batch_size):
-            chunk = texts[start : start + self._batch_size]
-            for (i, _), vector in zip(
-                chunk, await self._post({"input": [t for _, t in chunk]}, len(chunk)), strict=True
-            ):
-                out[i] = vector
+        # A few text requests in flight at once: each is a round trip the server batches on its side,
+        # and one after another they are what a text ingest spends its time on.
+        chunks = [texts[s : s + self._batch_size] for s in range(0, len(texts), self._batch_size)]
+        # Counted apart from the `embed` phase (which counts rounds): a phase slow because each request
+        # is slow and one slow because it makes many need opposite fixes.
+        _timing.record("embed.requests", 0.0, calls=len(chunks))
+        for start in range(0, len(chunks), _TEXT_CONCURRENCY):
+            wave = chunks[start : start + _TEXT_CONCURRENCY]
+            vectors = await asyncio.gather(*(self._post({"input": [t for _, t in c]}, len(c)) for c in wave))
+            for chunk, got in zip(wave, vectors, strict=True):
+                for (i, _), vector in zip(chunk, got, strict=True):
+                    out[i] = vector
         media_items = [(i, item) for i, item in enumerate(items) if item.modality != "text"]
         # One request per media passage, a few at a time: firing a document's every page at once
         # (times every document ingesting) flooded the server and its proxy, and each reset sent a

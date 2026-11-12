@@ -53,6 +53,9 @@ class RetainTiming:
 
     bank_id: str = ""
     store: str = ""
+    #: The operation timed: "retain", or "knowledge_ingest" for a knowledge-bank ingest batch, which
+    #: crosses the same four kinds of subsystem and is read the same way.
+    op: str = "retain"
     documents: int = 0
     content_bytes: int = 0
     started: float = field(default_factory=time.perf_counter)
@@ -125,14 +128,16 @@ async def timed(phase: str):
 
 
 @contextlib.asynccontextmanager
-async def retain_timing(*, bank_id: str = "", store: str = "", documents: int = 0, content_bytes: int = 0):
+async def retain_timing(
+    *, bank_id: str = "", store: str = "", documents: int = 0, content_bytes: int = 0, op: str = "retain"
+):
     """Install a fresh accumulator for one retain, and emit its breakdown on the way out.
 
     Emitted even when the retain raises: a failed retain's breakdown is the one most worth
     having, and losing it to the exception is how "it was slow, then it failed" stays
     unexplained.
     """
-    t = RetainTiming(bank_id=bank_id, store=store, documents=documents, content_bytes=content_bytes)
+    t = RetainTiming(bank_id=bank_id, store=store, op=op, documents=documents, content_bytes=content_bytes)
     token = _CURRENT.set(t)
     try:
         yield t
@@ -148,15 +153,17 @@ def _emit(t: RetainTiming) -> None:
         from ...metrics import get_metrics_collector
 
         collector = get_metrics_collector()
+        record = collector.record_retain_phase if t.op == "retain" else collector.record_knowledge_ingest_phase
         for name, s in t.seconds.items():
-            collector.record_retain_phase(name, s, calls=t.calls.get(name, 0), store=t.store)
+            record(name, s, calls=t.calls.get(name, 0), store=t.store)
     except Exception:
         # Instrumentation must never be the reason a retain fails.
-        logger.debug("retain phase metrics not recorded", exc_info=True)
+        logger.debug("%s phase metrics not recorded", t.op, exc_info=True)
 
     parts = " ".join(f"{name}={p['s']}s/{p['calls']}c/{p['pct_wall']}%" for name, p in summary["phases"].items())
     logger.info(
-        "[retain-timing] bank=%s store=%s docs=%s wall=%ss %sKB/s | %s",
+        "[%s-timing] bank=%s store=%s docs=%s wall=%ss %sKB/s | %s",
+        t.op,
         summary["bank_id"] or "-",
         summary["store"] or "-",
         summary["documents"],

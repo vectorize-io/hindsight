@@ -19,7 +19,7 @@ from PIL import Image
 
 from hindsight_api.knowledge import media
 from hindsight_api.knowledge.embedders import EmbedInput, KnowledgeEmbedder
-from hindsight_api.knowledge.service import _EMBED_ROUND, _Work, get_knowledge_service, run_ingest_task
+from hindsight_api.knowledge.service import _EMBED_ROUND_TEXT, _Work, get_knowledge_service, run_ingest_task
 from hindsight_api.knowledge.store import StatusUpdate
 
 KB = "/v1/default/knowledge-banks"
@@ -938,9 +938,22 @@ async def test_an_ingest_of_many_documents_costs_a_fixed_number_of_calls(api_cli
     assert len(payloads) == 1 and len(payloads[0]["documents"]) == 100
     page = (await api_client.get(f"{KB}/{kb}/documents", params={"status": "ready", "limit": 1})).json()
     assert page["total"] == 100
-    # One row write, one passage write, and embed calls in rounds across documents (100 passages / 16).
+    # One row write, one passage write, and embed calls in rounds of text passages across documents.
     assert counts == {"put_documents": 1, "replace_passages": 1}
-    assert len(fake_embedder.calls) == math.ceil(100 / _EMBED_ROUND)
+    assert len(fake_embedder.calls) == math.ceil(100 / _EMBED_ROUND_TEXT)
+
+
+async def test_an_ingest_batch_reports_where_its_time_went(api_client, kb, fake_embedder, caplog):
+    items = [{"document_id": f"t{n}", "text": f"note {n} about blue"} for n in range(20)]
+    with caplog.at_level("INFO", logger="hindsight_api.engine.retain.timing"):
+        r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.is_success, r.text
+    lines = [m.getMessage() for m in caplog.records if "[knowledge_ingest-timing]" in m.getMessage()]
+    assert len(lines) == 1 and "docs=20" in lines[0], lines
+    # Every stage a batch passes through is attributed, with its round-trip count.
+    for phase in ("store.read=", "store.status=", "file.read=", "split=", "embed=", "store.write=", "language="):
+        assert phase in lines[0], (phase, lines[0])
+    assert "file.read=" in lines[0] and "/20c/" in lines[0].split("file.read=")[1].split(" ")[0]
 
 
 async def test_a_bad_document_fails_alone_and_a_sync_ingest_reports_it(api_client, kb):
@@ -1100,11 +1113,11 @@ async def test_a_refused_document_stops_being_split(api_client, kb, fake_embedde
 
     monkeypatch.setattr(service_module, "_next_draft", counting)
     monkeypatch.setattr(fake_embedder, "embed_documents", refuse)
-    text = "\n\n".join(f"# Part {n}\n\npassage {n}" for n in range(5 * _EMBED_ROUND))
+    text = "\n\n".join(f"# Part {n}\n\npassage {n}" for n in range(5 * _EMBED_ROUND_TEXT))
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "long", "text": text}]})
     assert r.status_code == 400, r.text
     # One round pulled, then refused: the other four rounds' passages were never cut.
-    assert pulled["n"] == _EMBED_ROUND
+    assert pulled["n"] == _EMBED_ROUND_TEXT
 
 
 async def test_a_new_content_type_ingests_the_same_file_again(api_client, kb):
