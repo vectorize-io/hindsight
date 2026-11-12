@@ -25,6 +25,7 @@ import contextlib
 import logging
 import os
 import threading
+import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -331,7 +332,13 @@ class GeminiEmbedder(KnowledgeEmbedder):
 
 
 _MEDIA_CONCURRENCY = 4  # media requests in flight per embed call (see OpenAIEmbedder.embed_documents)
-_IN_FLIGHT: dict[int, tuple[int, asyncio.Semaphore]] = {}
+# Keyed by the loop itself, weakly, so a closed loop's entry goes with it. It was keyed by
+# ``id(loop)``: ids are reused, so a new loop could pick up a stale semaphore bound to a dead one, and
+# the entries never went away. Each loop only reads and writes its own entry, from its own thread, so
+# single get/set calls under the GIL stay as safe across threads as the plain dict was.
+_IN_FLIGHT: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[int, asyncio.Semaphore]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 @contextlib.asynccontextmanager
@@ -345,7 +352,7 @@ async def _in_flight():
     if limit <= 0:
         yield
         return
-    key = id(asyncio.get_running_loop())
+    key = asyncio.get_running_loop()
     held = _IN_FLIGHT.get(key)
     if held is None or held[0] != limit:
         held = _IN_FLIGHT[key] = (limit, asyncio.Semaphore(limit))
@@ -403,7 +410,8 @@ class _RemoteEmbedder(KnowledgeEmbedder):
 
 #: A batch holds up to ``batch_size`` times this many characters, and never more than this many inputs.
 #: 800 is what one input carried on average (8 inputs, a page text plus its 128-token units, were ~6.4k
-#: characters on ViDoRe hr); the default batch size of 32 makes that ~25k characters a request. Counting inputs alone sent sentences (~40 tokens) 8 to a request. Twice this (fewer, bigger
+#: characters on ViDoRe hr); the default batch size of 32 makes that ~25k characters a request. Counting
+#: inputs alone sent sentences (~40 tokens) 8 to a request. Twice this (fewer, bigger
 #: requests) helped a remote embedder but cost a GPU-bound one 12%: more batches in flight instead
 #: (``_TEXT_CONCURRENCY``) serves both.
 _BATCH_UNIT_CHARS = 800

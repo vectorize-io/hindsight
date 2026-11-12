@@ -2455,7 +2455,7 @@
       "documentsTitle": "Documents",
       "documentsDescription": "Files and text in this bank. Each is split into passages and embedded; drop files anywhere here to upload them.",
       "searchTitle": "Search",
-      "searchDescription": "Find passages with text, an image, a video clip and exact text, alone or together, in one ranked list."
+      "searchDescription": "Find passages with text, an image or a video clip, alone or together, in one ranked list."
     },
     "documents": {
       "filterPlaceholder": "Filter by file name or id…",
@@ -2514,14 +2514,14 @@
       "originalUnsupported": "This file type cannot be previewed in the browser."
     },
     "search": {
-      "placeholder": "Search by meaning, e.g. how do I rotate an API key?",
+      "placeholder": "Search, e.g. how do I rotate an API key?",
       "addMedia": "Image / video",
       "mediaHint": "Paste, drop or choose an image or an MP4 clip to search with, alone or with text.",
       "imageQuery": "Searching with this image",
       "videoQuery": "Searching with this video",
       "removeMedia": "Remove",
       "notMedia": "Only an image or an MP4 video can be a search query",
-      "pastedMedia": "Pasted image",
+      "pastedMedia": "Pasted file",
       "topK": "Results",
       "submit": "Search",
       "options": "Options",
@@ -2530,7 +2530,7 @@
       "tagsAny": "Any",
       "tagsAll": "All",
       "noResults": "No passages match this search.",
-      "idle": "Search this bank by text, an image, a video clip, exact text, or any mix of them.",
+      "idle": "Search this bank by text, an image, a video clip, or any mix of them.",
       "openPassage": "Open in document",
       "failed": "Search failed",
       "mediaTypes": "Media types",

@@ -54,8 +54,6 @@ export interface KnowledgeDocument {
   created_at: string | null;
   updated_at: string | null;
   document_url: string;
-  /** Set on a document an ingestion strategy split out of another file: that file's id. */
-  source_document_id?: string | null;
 }
 
 export interface KnowledgePassage {
@@ -104,7 +102,7 @@ export interface KnowledgeSearchResponse {
 
 export interface KnowledgeIngestResponse {
   document_ids: string[];
-  operation_ids: (string | null)[];
+  operation_ids: string[];
   unchanged_document_ids: string[];
 }
 

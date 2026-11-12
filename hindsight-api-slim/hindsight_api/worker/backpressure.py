@@ -81,6 +81,13 @@ def is_append_conflict(exc: BaseException) -> bool:
     return False
 
 
+#: Task types whose upstream 429s are deferred instead of failed. Knowledge ingest only: an LLM can answer
+#: 429 for a quota that is used up, which never clears, so a retain's or a reflect's 429 keeps failing as
+#: before. Shared by the engine (which passes such a 429 up) and the poller (which defers it); the engine
+#: used to test ``task_type == "knowledge_ingest"`` on its own, which could drift from the poller's set.
+RATE_LIMIT_DEFERRED_TASKS = frozenset({"knowledge_ingest"})
+
+
 def is_upstream_rate_limit(exc: BaseException) -> bool:
     """Is `exc` an upstream (an embedder, through its gateway) answering 429, "too many requests"?
 

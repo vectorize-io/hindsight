@@ -13,6 +13,7 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -195,7 +196,9 @@ class KnowledgeStore(ABC):
     ) -> DocumentPage: ...
 
     @abstractmethod
-    async def set_statuses(self, bank_id: str, updates: list[StatusUpdate]) -> None: ...
+    async def set_statuses(self, bank_id: str, updates: list[StatusUpdate]) -> None:
+        """Set each document's status and error (see ``StatusUpdate``). A document set to "failed" also
+        drops whatever it had staged (see ``PassageStage``): that version will never commit it."""
 
     @abstractmethod
     async def stage_passages(self, bank_id: str, items: list[PassageStage]) -> list[str]:
@@ -368,7 +371,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     f"CREATE INDEX IF NOT EXISTS idx_{table_name}_candidates ON {passages} USING {using} "
                     f"WHERE {CANDIDATE_ROLES_SQL}"
                 )
-                # The full index it replaces (until pipeline 10) would still pay every sentence insert.
+                # Until _PIPELINE_VERSION became 10 one full index covered every vector; it was dropped then,
+                # as it would still pay every sentence insert.
                 await conn.execute(f"DROP INDEX IF EXISTS {fq_table(f'idx_{table_name}_embedding')}")
             elif using:
                 # ponytail: one global HNSW index; per-bank partial indexes if one tenant holds many big banks.
@@ -494,26 +498,40 @@ class PostgresKnowledgeStore(KnowledgeStore):
             return
         async with acquire_with_retry(await self._pool()) as conn:
             table = fq_table("kb_documents")
-            # The rows are locked in document_id order first (an UPDATE ... FROM locks in join order), the
-            # order replace_passages and put_documents use, so overlapping batches cannot deadlock.
-            await conn.execute(
-                f"""
-                WITH locked AS (
-                    SELECT document_id FROM {table}
-                    WHERE bank_id = $1 AND document_id = ANY($2::text[]) ORDER BY document_id FOR UPDATE
+            async with conn.transaction():
+                # The rows are locked in document_id order first (an UPDATE ... FROM locks in join order), the
+                # order replace_passages and put_documents use, so overlapping batches cannot deadlock.
+                rows = await conn.fetch(
+                    f"""
+                    WITH locked AS (
+                        SELECT document_id FROM {table}
+                        WHERE bank_id = $1 AND document_id = ANY($2::text[]) ORDER BY document_id FOR UPDATE
+                    )
+                    UPDATE {table} d SET status = u.status, error = u.error, updated_at = now()
+                    FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS u(document_id, status, error, key)
+                    WHERE d.bank_id = $1 AND d.document_id = u.document_id
+                        AND d.document_id IN (SELECT document_id FROM locked)
+                        AND (u.key IS NULL OR d.storage_key = u.key)
+                    RETURNING d.document_id, d.status
+                    """,
+                    bank_id,
+                    [u.document_id for u in updates],
+                    [u.status for u in updates],
+                    [u.error for u in updates],
+                    [u.storage_key for u in updates],
                 )
-                UPDATE {table} d SET status = u.status, error = u.error, updated_at = now()
-                FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS u(document_id, status, error, key)
-                WHERE d.bank_id = $1 AND d.document_id = u.document_id
-                    AND d.document_id IN (SELECT document_id FROM locked)
-                    AND (u.key IS NULL OR d.storage_key = u.key)
-                """,
-                bank_id,
-                [u.document_id for u in updates],
-                [u.status for u in updates],
-                [u.error for u in updates],
-                [u.storage_key for u in updates],
-            )
+                # A document that failed for good will not commit what it staged, so the pieces go now
+                # (their vectors cascade). They used to stay until the document's next ingest started over,
+                # and a failed document that was never ingested again kept them for ever. Only the rows the
+                # update reached: a failure of an older version must not drop what a newer one is staging.
+                failed = [r["document_id"] for r in rows if r["status"] == "failed"]
+                if failed:
+                    await conn.execute(
+                        f"DELETE FROM {fq_table('kb_staged_passages')} "
+                        "WHERE bank_id = $1 AND document_id = ANY($2::text[])",
+                        bank_id,
+                        failed,
+                    )
 
     async def _held(self, conn: Any, bank_id: str, document_ids: list[str]) -> dict[str, str | None]:
         """Each document's storage key, its row locked: an ingest of a newer version cannot swap the file
@@ -531,7 +549,12 @@ class PostgresKnowledgeStore(KnowledgeStore):
 
     @staticmethod
     async def _insert_passages(
-        conn: Any, bank_id: str, items: list[Any], table: str, vectors_table: str, languages: bool
+        conn: Any,
+        bank_id: str,
+        items: Sequence[PassageStage | PassageReplacement],
+        table: str,
+        vectors_table: str,
+        languages: bool,
     ) -> None:
         """The passages of ``items`` and their extra vectors, pipelined (executemany). Vectors go as binary
         float arrays cast to vector, not as their text: formatting and parsing 768 floats as text cost
@@ -1002,7 +1025,8 @@ def page_score(primary: float, roles: dict[str, list[float]], text_weight: float
 
     A PDF page: image = mean(whole page, best band); text = best of (its 128-token units, its sentences
     once the page is in the rescored top, and a whole-page text vector where an older ingest stored one);
-    score = (1 - w) * image + w * text, w = 0.6. That beat one blended page vector by ~7 nDCG@10.
+    score = (1 - w) * image + w * text, w = ``knowledge_pdf_text_weight`` (default 0.7). That beat one
+    blended page vector by ~7 nDCG@10.
     Every other passage has only its primary vector, so its score is that vector's similarity.
     """
     image = 0.5 * primary + 0.5 * max(roles["band"]) if roles.get("band") else primary

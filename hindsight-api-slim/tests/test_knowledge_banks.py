@@ -1306,6 +1306,27 @@ async def test_what_an_ingest_that_never_committed_staged_is_dropped(api_client,
     assert not any("lost" in h["text"] or "kept" in h["text"] for h in hits), hits
 
 
+async def test_a_document_that_fails_drops_what_it_staged(api_client, memory, kb, fake_embedder):
+    from hindsight_api.knowledge.store import PassageReplacement, PassageStage, StatusUpdate
+
+    store = get_knowledge_service(memory).store
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
+    assert r.status_code == 200, r.text
+    key = (await store.get_documents(kb, ["d"]))["d"].storage_key
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), "en", key)])
+    # A failure for another version (an older file) leaves what this one staged.
+    await store.set_statuses(kb, [StatusUpdate("d", "failed", "boom", "some-other-key")])
+    await store.replace_passages(kb, [PassageReplacement("d", [], "en", key, staged=3)])
+    assert len((await store.list_passages(kb, ["d"]))["d"]) == 3
+    # Failing for good drops it: a commit naming the staged pieces finds none. The store has no read of
+    # staged rows, so a commit that would move them in is how the test sees they are gone.
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), "en", key)])
+    await store.set_statuses(kb, [StatusUpdate("d", "failed", "boom", key)])
+    assert (await store.get_documents(kb, ["d"]))["d"].status == "failed"
+    await store.replace_passages(kb, [PassageReplacement("d", [], "en", key, staged=3)])
+    assert (await store.list_passages(kb, ["d"]))["d"] == []
+
+
 async def test_renaming_a_file_ingests_it_again(api_client, kb):
     for name in ("a.md", "b.md"):
         r = await api_client.post(

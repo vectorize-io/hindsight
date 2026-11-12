@@ -2455,7 +2455,7 @@
       "documentsTitle": "文档",
       "documentsDescription": "此库中的文件和文本。每个文档都会被切分为段落并嵌入;将文件拖放到此处任意位置即可上传。",
       "searchTitle": "搜索",
-      "searchDescription": "用文本、图片、视频片段和精确文本(单独或一起)查找段落,结果为一个排序列表。"
+      "searchDescription": "用文本、图片或视频片段(单独或一起)查找段落,结果为一个排序列表。"
     },
     "documents": {
       "filterPlaceholder": "按文件名或 ID 筛选…",
@@ -2514,14 +2514,14 @@
       "originalUnsupported": "此文件类型无法在浏览器中预览。"
     },
     "search": {
-      "placeholder": "按语义搜索,例如:如何轮换 API 密钥?",
+      "placeholder": "搜索,例如:如何轮换 API 密钥?",
       "addMedia": "图片 / 视频",
       "mediaHint": "粘贴、拖放或选择一张图片或一段 MP4 视频进行搜索,可单独使用或配合文本。",
       "imageQuery": "正在用此图片搜索",
       "videoQuery": "正在用此视频搜索",
       "removeMedia": "移除",
       "notMedia": "只能使用图片或 MP4 视频作为搜索查询",
-      "pastedMedia": "粘贴的图片",
+      "pastedMedia": "粘贴的文件",
       "topK": "结果数",
       "submit": "搜索",
       "options": "选项",
@@ -2530,7 +2530,7 @@
       "tagsAny": "任一",
       "tagsAll": "全部",
       "noResults": "没有与此搜索匹配的段落。",
-      "idle": "用文本、图片、视频片段、精确文本或它们的任意组合搜索此库。",
+      "idle": "用文本、图片、视频片段或它们的任意组合搜索此库。",
       "openPassage": "在文档中打开",
       "failed": "搜索失败",
       "mediaTypes": "媒体类型",

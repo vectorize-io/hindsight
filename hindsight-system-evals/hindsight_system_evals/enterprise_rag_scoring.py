@@ -234,9 +234,17 @@ async def _judge(prompt: str) -> str:
     body = {"model": JUDGE_MODEL, "input": [{"role": "user", "content": prompt}], "reasoning": {"effort": JUDGE_EFFORT}}
     async with _JUDGE_CONCURRENCY:
         for attempt in range(6):
-            response = await _CLIENT.post(
-                "https://api.openai.com/v1/responses", json=body, headers={"Authorization": f"Bearer {key}"}
-            )
+            # A dropped connection or a timeout is as transient as a 429/5xx over ~4,000 calls a
+            # run; retried the same way so one of them does not cost the question its score.
+            try:
+                response = await _CLIENT.post(
+                    "https://api.openai.com/v1/responses", json=body, headers={"Authorization": f"Bearer {key}"}
+                )
+            except httpx.TransportError:
+                if attempt == 5:
+                    raise
+                await asyncio.sleep(2**attempt)
+                continue
             if response.status_code in (429, 500, 502, 503) and attempt < 5:
                 await asyncio.sleep(2**attempt)
                 continue
@@ -377,11 +385,16 @@ async def _consensus(question: str, gold: list[str], candidates: list[str]) -> C
 async def _regenerate(question: Question, required: list[str]) -> Question:
     docs = read_documents(required)
     reference = "\n\n".join("\n".join(p for p in d.text.split("\n", 1) if p) for d in docs)
-    new_answer = await _judge(
-        ANSWER_UPDATOR_PROMPT.format(
-            previous_gold_answer=question.gold_answer, reference_documents=reference, query=question.question
+    # A judge that stays down after its retries leaves the gold answer as it was (only the
+    # required set moves), the same fallback as an empty regenerated answer.
+    try:
+        new_answer = await _judge(
+            ANSWER_UPDATOR_PROMPT.format(
+                previous_gold_answer=question.gold_answer, reference_documents=reference, query=question.question
+            )
         )
-    )
+    except httpx.HTTPError:
+        new_answer = ""
     if not new_answer:
         return question.model_copy(update={"expected_doc_ids": required})
     facts: list[str] = []
@@ -393,7 +406,7 @@ async def _regenerate(question: Question, required: list[str]) -> Question:
             await _judge(ANTI_HALLUCINATION_FACT_VALIDATOR_PROMPT.format(fact_list=json.dumps(question.answer_facts)))
         )
         guards = [str(f) for f in parsed] if isinstance(parsed, list) else []
-    except ValueError:
+    except (ValueError, httpx.HTTPError):  # unparsable or unreachable: keep the original facts
         pass
     return question.model_copy(
         update={

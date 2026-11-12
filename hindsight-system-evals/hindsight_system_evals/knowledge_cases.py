@@ -13,7 +13,7 @@ a public leaderboard, so a score sits next to the best published models.
 leaderboards above, which rank bare embedding models.
 
 A case writes its corpus into a knowledge bank (once per session), runs its queries through
-search and returns its scores. The fourth category, agents answering from a knowledge bank, is
+search and returns its scores. A sixth category, agents answering from a knowledge bank, is
 ``evals/knowledge_agent`` (EnterpriseRAG-Bench, judged).
 
 Sizes are small by default and full with ``--full``: the corpus is always whole (a smaller pool
@@ -35,6 +35,7 @@ from hindsight_system_evals.knowledge import (
     failed_documents,
     ingest,
     latency,
+    preloaded,
     ranked_documents,
     score_ranked,
     search_all,
@@ -81,7 +82,7 @@ class Context:
     async def bank(self, key: str, items: Sequence[FileItem | TextItem]) -> Bank:
         if key not in self.banks:
             bank_id = f"{BANK_PREFIX}{key.replace('_', '-')}-{uuid.uuid4().hex[:6]}"
-            stats = await ingest(self.client, bank_id, items)
+            stats = await ingest(self.client, bank_id, [i.id for i in items], preloaded(items))
             bank = Bank(bank_id, stats)
             self.banks[key] = bank
             if stats.failed:
@@ -157,4 +158,4 @@ CASES: list[Case] = [
 ]
 
 #: What a default run covers: one case per category.
-MINIMUM = {"scifact", "hr", "flickr30k", "msrvtt"}
+MINIMUM = {"scifact", "hr", "flickr30k", "msrvtt", "brightpro_biology"}

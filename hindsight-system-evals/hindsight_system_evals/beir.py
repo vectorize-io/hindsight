@@ -95,7 +95,7 @@ def load_beir_slice() -> BeirSlice:
     or it reports a number the real run cannot reproduce.
     """
     if directory := os.getenv("HINDSIGHT_EVAL_BEIR_DIR"):
-        sliced = _read_beir_directory(Path(directory))
+        sliced = read_beir_directory(Path(directory))
     else:
         sliced = _read_fixture(FIXTURE)
 
@@ -180,7 +180,7 @@ def _query_sort_key(query_id: str) -> tuple[int, int, str]:
     return (0, int(query_id), "") if query_id.isdigit() else (1, 0, query_id)
 
 
-def _read_beir_directory(directory: Path, *, split: str = "test") -> BeirSlice:
+def read_beir_directory(directory: Path, *, split: str = "test") -> BeirSlice:
     """A whole unpacked BEIR dataset, unsliced — for a full-corpus run."""
     qrels = _read_qrels(directory / "qrels" / f"{split}.tsv")
     corpus = {row.id: row for row in _read_jsonl(directory / "corpus.jsonl", _CorpusRow)}
@@ -251,7 +251,7 @@ def build(output: Path = FIXTURE) -> BeirSlice:
     with tempfile.TemporaryDirectory() as scratch:
         archive.extractall(scratch)
         root = next(path for path in Path(scratch).iterdir() if (path / "corpus.jsonl").exists())
-        sliced = cut_slice(_read_beir_directory(root))
+        sliced = cut_slice(read_beir_directory(root))
     _write(sliced, output)
     return sliced
 

@@ -4,7 +4,7 @@
 
 The eval (``evals/knowledge_agent``) starts this as a subprocess with Hermes' interpreter
 (``HINDSIGHT_EVAL_HERMES_PYTHON``), because Hermes' pinned dependency set cannot share a venv
-with this repo's packages. Nothing here imports from the repo: the three tools come from the
+with this repo's packages. Nothing here imports from the repo: the two tools come from the
 ``hindsight_knowledge`` plugin next to this file, registered into Hermes' tool registry
 exactly as its plugin loader would.
 
@@ -108,7 +108,9 @@ def _opening(plugin, question: str, preload: int) -> str:
     if not preload:
         return question
     found = plugin.knowledge_search({"query": question, "top_k": 10})
-    ids = list(dict.fromkeys(re.findall(r"^\[\d+\] (dsid_[0-9a-f]{32})", found, re.M)))[:preload]
+    # Each hit is headed by its bare document id (``dsid_… | filename | tags=…``): the plugin stopped
+    # numbering hits ("[1] dsid_…"), and this used to match only the numbered form, so preload read nothing.
+    ids = list(dict.fromkeys(re.findall(r"^(dsid_[0-9a-f]{32}) \|", found, re.M)))[:preload]
     documents = "\n\n".join(plugin.knowledge_read({"document_id": d}) for d in ids)
     return (
         f"Question: {question}\n\n"

@@ -13,14 +13,16 @@ and recall@k (how Flickr30k is reported).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import statistics
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import httpx
+from pydantic import BaseModel
 
 from hindsight_system_evals.knowledge_data import FileItem, RankedQuery, TextItem
 from hindsight_system_evals.report import KnowledgeIngest, KnowledgeLatency
@@ -34,6 +36,9 @@ INGEST_TIMEOUT = float(os.getenv("HINDSIGHT_EVAL_KNOWLEDGE_INGEST_TIMEOUT", str(
 FILES_PER_UPLOAD = 16
 #: The text ingest's ceiling per request.
 TEXTS_PER_UPLOAD = 100
+#: Documents loaded per batch: a multiple of both ceilings, so batching the loads adds no
+#: short upload requests.
+LOAD_BATCH = 400
 #: The search API's ceiling. Text corpora return several passages per document, so the
 #: document list can be shorter than 100 and recall@100 there is a floor.
 RANKED_TOP_K = 200
@@ -49,6 +54,40 @@ class SearchHit:
     page: int | None
 
 
+# The routes' responses, parsed at the boundary. Only the fields a suite reads: the server's
+# models carry more, and pydantic ignores the rest.
+
+
+class KnowledgeConfig(BaseModel):
+    provider: str
+    model: str
+    media_types: list[str]
+
+
+class BankStats(BaseModel):
+    passage_count: int
+    ready_count: int
+    failed_count: int
+
+
+class FailedDocument(BaseModel):
+    document_id: str
+    error: str | None
+
+
+class _DocumentList(BaseModel):
+    documents: list[FailedDocument]
+
+
+class _SearchResult(BaseModel):
+    document_id: str
+    page: int | None = None
+
+
+class _SearchResponse(BaseModel):
+    results: list[_SearchResult]
+
+
 class KnowledgeApi:
     """The knowledge-bank routes over plain HTTP: they are hidden from the OpenAPI spec, so the
     published client has no methods for them."""
@@ -60,16 +99,16 @@ class KnowledgeApi:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _call(self, method: str, path: str, **kwargs: object) -> dict:
+    async def _call(self, method: str, path: str, **kwargs: object) -> bytes:
         r = await self._http.request(method, f"{PREFIX}{path}", **kwargs)  # type: ignore[arg-type]
         if r.status_code >= 300:
             raise httpx.HTTPStatusError(
                 f"{method} {path}: {r.status_code} {r.text[:500]}", request=r.request, response=r
             )
-        return r.json()
+        return r.content
 
-    async def config(self) -> dict:
-        return await self._call("GET", "/config")
+    async def config(self) -> KnowledgeConfig:
+        return KnowledgeConfig.model_validate_json(await self._call("GET", "/config"))
 
     async def create_bank(self, bank_id: str) -> None:
         await self._call("POST", "", json={"bank_id": bank_id})
@@ -77,8 +116,8 @@ class KnowledgeApi:
     async def delete_bank(self, bank_id: str) -> None:
         await self._call("DELETE", f"/{bank_id}")
 
-    async def bank(self, bank_id: str) -> dict:
-        return await self._call("GET", f"/{bank_id}")
+    async def bank(self, bank_id: str) -> BankStats:
+        return BankStats.model_validate_json(await self._call("GET", f"/{bank_id}"))
 
     async def ingest_files(self, bank_id: str, items: Sequence[FileItem]) -> None:
         files = [("files", (i.path.name, i.path.read_bytes())) for i in items]
@@ -104,84 +143,110 @@ class KnowledgeApi:
         }
         await self._call("POST", f"/{bank_id}/ingest", json=body)
 
-    async def failed(self, bank_id: str, limit: int = 20) -> list[dict]:
+    async def failed(self, bank_id: str, limit: int = 20) -> list[FailedDocument]:
         # The list endpoint caps a page at 500, so walk pages until `limit` (or the end) is reached.
-        docs: list[dict] = []
+        docs: list[FailedDocument] = []
         while len(docs) < limit:
-            params = {"status": "failed", "limit": min(500, limit - len(docs)), "offset": len(docs)}
-            page = (await self._call("GET", f"/{bank_id}/documents", params=params))["documents"]
+            page_size = min(500, limit - len(docs))
+            params = {"status": "failed", "limit": page_size, "offset": len(docs)}
+            raw = await self._call("GET", f"/{bank_id}/documents", params=params)
+            page = _DocumentList.model_validate_json(raw).documents
             docs.extend(page)
-            if len(page) < params["limit"]:
+            if len(page) < page_size:
                 break
         return docs
 
     async def search(self, bank_id: str, query: str, top_k: int) -> list[SearchHit]:
-        body = await self._call("POST", f"/{bank_id}/search", json={"query": query, "top_k": top_k, "neighbors": 0})
-        return [SearchHit(r["document_id"], r.get("page")) for r in body["results"]]
+        raw = await self._call("POST", f"/{bank_id}/search", json={"query": query, "top_k": top_k, "neighbors": 0})
+        return [SearchHit(r.document_id, r.page) for r in _SearchResponse.model_validate_json(raw).results]
 
 
 async def embedder_name(api: KnowledgeApi) -> str:
     config = await api.config()
-    return f"{config['provider']}:{config['model']}"
+    return f"{config.provider}:{config.model}"
 
 
 async def embedder_media_types(api: KnowledgeApi) -> list[str]:
-    return list((await api.config())["media_types"])
+    return (await api.config()).media_types
 
 
-async def ingest(api: KnowledgeApi, bank_id: str, items: Sequence[FileItem | TextItem]) -> KnowledgeIngest:
-    """Create the bank, upload every item, and wait until each is ready or failed."""
-    await api.create_bank(bank_id)
+#: Loads the items for a batch of document ids. Ingest asks for one batch at a time, so a corpus
+#: read from disk (EnterpriseRAG's 1.26 GB zip) is never held in memory whole.
+Loader = Callable[[Sequence[str]], Sequence[FileItem | TextItem]]
+
+
+def preloaded(items: Sequence[FileItem | TextItem]) -> Loader:
+    """A loader over items already in memory."""
+    by_id = {i.id: i for i in items}
+    return lambda ids: [by_id[i] for i in ids]
+
+
+async def _upload(api: KnowledgeApi, bank_id: str, document_ids: Sequence[str], load: Loader) -> None:
+    for n in range(0, len(document_ids), LOAD_BATCH):
+        batch = load(document_ids[n : n + LOAD_BATCH])
+        files = [i for i in batch if isinstance(i, FileItem)]
+        texts = [i for i in batch if isinstance(i, TextItem)]
+        for m in range(0, len(files), FILES_PER_UPLOAD):
+            await api.ingest_files(bank_id, files[m : m + FILES_PER_UPLOAD])
+        for m in range(0, len(texts), TEXTS_PER_UPLOAD):
+            await api.ingest_texts(bank_id, texts[m : m + TEXTS_PER_UPLOAD])
+
+
+async def ingest(
+    api: KnowledgeApi,
+    bank_id: str,
+    document_ids: Sequence[str],
+    load: Loader,
+    *,
+    reuse_bank: bool = False,
+    timeout: float = INGEST_TIMEOUT,
+) -> KnowledgeIngest:
+    """Create the bank (or, with ``reuse_bank``, write into the one already there), upload every
+    document, and wait until each is ready or failed."""
+    if reuse_bank:
+        with contextlib.suppress(httpx.HTTPStatusError):  # already there: re-ingest unchanged documents
+            await api.create_bank(bank_id)
+    else:
+        await api.create_bank(bank_id)
     started = time.perf_counter()
-    files = [i for i in items if isinstance(i, FileItem)]
-    texts = [i for i in items if isinstance(i, TextItem)]
-    for n in range(0, len(files), FILES_PER_UPLOAD):
-        await api.ingest_files(bank_id, files[n : n + FILES_PER_UPLOAD])
-    for n in range(0, len(texts), TEXTS_PER_UPLOAD):
-        await api.ingest_texts(bank_id, texts[n : n + TEXTS_PER_UPLOAD])
+    await _upload(api, bank_id, document_ids, load)
     uploaded = time.perf_counter() - started
 
     # One bank read per poll instead of one per document: waiting on 5,000 documents one at a
     # time would add minutes of polling to the ingest time being measured.
-    deadline = started + INGEST_TIMEOUT
+    deadline = started + timeout
     retried = False
     while True:
         bank = await api.bank(bank_id)
-        if bank["ready_count"] + bank["failed_count"] >= len(items):
-            if not bank["failed_count"] or retried:
+        if bank.ready_count + bank.failed_count >= len(document_ids):
+            if not bank.failed_count or retried:
                 break
             # A remote embedder behind a tunnel drops a long request now and then, and the server
             # fails that ingest's documents once its retry budget runs out. Writing them again once
             # (same ids, so an upsert; a failed document is never "unchanged") keeps a blip from
             # failing a run; a document that fails twice is reported.
             retried = True
-            failed = {d["document_id"] for d in await api.failed(bank_id, limit=len(items))}
-            again = [i for i in items if i.id in failed]
-            for n in range(0, len(again), FILES_PER_UPLOAD):
-                batch = again[n : n + FILES_PER_UPLOAD]
-                if files_batch := [i for i in batch if isinstance(i, FileItem)]:
-                    await api.ingest_files(bank_id, files_batch)
-                if texts_batch := [i for i in batch if isinstance(i, TextItem)]:
-                    await api.ingest_texts(bank_id, texts_batch)
+            failed = {d.document_id for d in await api.failed(bank_id, limit=len(document_ids))}
+            await _upload(api, bank_id, [d for d in document_ids if d in failed], load)
             await asyncio.sleep(5.0)
             continue
         if time.perf_counter() > deadline:
-            raise TimeoutError(f"{bank_id}: {bank['ready_count']}/{len(items)} ready after {INGEST_TIMEOUT:.0f}s")
+            raise TimeoutError(f"{bank_id}: {bank.ready_count}/{len(document_ids)} ready after {timeout:.0f}s")
         await asyncio.sleep(1.0)
     wall = time.perf_counter() - started
     return KnowledgeIngest(
-        documents=len(items),
-        passages=bank["passage_count"],
-        failed=bank["failed_count"],
+        documents=len(document_ids),
+        passages=bank.passage_count,
+        failed=bank.failed_count,
         upload_s=round(uploaded, 2),
         wall_s=round(wall, 2),
-        documents_per_s=round(len(items) / wall, 3),
-        passages_per_s=round(bank["passage_count"] / wall, 3),
+        documents_per_s=round(len(document_ids) / wall, 3),
+        passages_per_s=round(bank.passage_count / wall, 3),
     )
 
 
 async def failed_documents(api: KnowledgeApi, bank_id: str) -> list[str]:
-    return [f"{d['document_id']}: {d['error']}" for d in await api.failed(bank_id)]
+    return [f"{d.document_id}: {d.error}" for d in await api.failed(bank_id)]
 
 
 @dataclass(frozen=True)
@@ -270,7 +335,9 @@ def score_ranked(queries: Sequence[RankedQuery], runs: dict[str, list[str]]) -> 
 
     metrics = block(queries, "", (1, 5, 10, 100))
     if any(q.aspect_of for q in queries):  # BRIGHT-Pro's headline: aspect coverage in the top 25
-        metrics["alpha_ndcg@25"] = mean([alpha_ndcg_at_k(runs[q.id], q.aspect_of, q.aspect_weight, 25) for q in queries])
+        metrics["alpha_ndcg@25"] = mean(
+            [alpha_ndcg_at_k(runs[q.id], q.aspect_of, q.aspect_weight, 25) for q in queries]
+        )
     groups = sorted({q.group for q in queries})
     if len(groups) > 1:
         per = {g: block([q for q in queries if q.group == g], f"{g}:", (1,)) for g in groups}

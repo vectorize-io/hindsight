@@ -2455,7 +2455,7 @@
       "documentsTitle": "Documentos",
       "documentsDescription": "Arquivos e textos deste banco. Cada um é dividido em trechos e recebe embeddings; solte arquivos em qualquer lugar aqui para enviá-los.",
       "searchTitle": "Pesquisa",
-      "searchDescription": "Encontre trechos com texto, uma imagem, um clipe de vídeo e texto exato, sozinhos ou juntos, numa só lista ordenada."
+      "searchDescription": "Encontre trechos com texto, uma imagem ou um clipe de vídeo, sozinhos ou juntos, numa só lista ordenada."
     },
     "documents": {
       "filterPlaceholder": "Filtrar por nome de arquivo ou id…",
@@ -2514,14 +2514,14 @@
       "originalUnsupported": "Este tipo de arquivo não pode ser visualizado no navegador."
     },
     "search": {
-      "placeholder": "Pesquise pelo significado, ex.: como rotaciono uma chave de API?",
+      "placeholder": "Pesquisar, p. ex. como faço a rotação de uma chave de API?",
       "addMedia": "Imagem / vídeo",
       "mediaHint": "Cole, solte ou escolha uma imagem ou um clipe MP4 para pesquisar com ele, sozinho ou com texto.",
       "imageQuery": "Pesquisando com esta imagem",
       "videoQuery": "Pesquisando com este vídeo",
       "removeMedia": "Remover",
       "notMedia": "Somente uma imagem ou um vídeo MP4 pode ser uma consulta",
-      "pastedMedia": "Imagem colada",
+      "pastedMedia": "Arquivo colado",
       "topK": "Resultados",
       "submit": "Pesquisar",
       "options": "Opções",
@@ -2530,7 +2530,7 @@
       "tagsAny": "Qualquer",
       "tagsAll": "Todas",
       "noResults": "Nenhum trecho corresponde a esta pesquisa.",
-      "idle": "Pesquise neste banco com texto, uma imagem, um clipe de vídeo, texto exato ou qualquer combinação.",
+      "idle": "Pesquise neste banco com texto, uma imagem, um clipe de vídeo ou qualquer combinação.",
       "openPassage": "Abrir no documento",
       "failed": "A pesquisa falhou",
       "mediaTypes": "Tipos de mídia",

@@ -8,7 +8,7 @@ model that is strong on one category and weak on another shows it. Traps count
 as failures here (a trap is never ``correct``); the run report keeps them apart.
 
 A run with knowledge-bank suites (``evals/knowledge``) gets a second table: each
-suite's scores, ingest rate and search latency, one column per run — how one
+suite's scores, ingest rate and search (or agent answer) latency, one column per run — how one
 knowledge embedder is compared with another. Such a run is labelled by its
 knowledge embedder rather than its LLM, which those suites never call.
 """
@@ -30,7 +30,11 @@ def _knowledge_rows(results: list[KnowledgeResult]) -> dict[tuple[str, str], str
             cells[(name, metric)] = f"{value:.1f}"
         if r.ingest:
             cells[(name, "ingest docs/s")] = f"{r.ingest.documents_per_s:.2f}"
-        cells[(name, "search p50 / p95 ms")] = f"{r.latency.client_p50_ms:.0f} / {r.latency.client_p95_ms:.0f}"
+        if r.latency:
+            cells[(name, "search p50 / p95 ms")] = f"{r.latency.client_p50_ms:.0f} / {r.latency.client_p95_ms:.0f}"
+        if r.agent_latency:
+            a = r.agent_latency
+            cells[(name, "answer p50 / p95 ms")] = f"{a.answer_p50_ms:.0f} / {a.answer_p95_ms:.0f}"
     return cells
 
 
@@ -41,9 +45,8 @@ def table(paths: list[Path]) -> str:
         data = json.loads(path.read_text(encoding="utf-8"))
         label = ModelConfig.model_validate(data["model_config"]).hindsight.model
         results = [KnowledgeResult.model_validate(k) for k in data.get("knowledge", [])]
-        embedders = [r.embedder for r in results if r.embedder != "grep"]
-        if embedders and not data["items"]:
-            label = embedders[0]
+        if results and not data["items"]:
+            label = results[0].embedder
         columns.append((label, by_category([EvalRecord.model_validate(item) for item in data["items"]])))
         knowledge.append((label, _knowledge_rows(results)))
 

@@ -33,7 +33,12 @@ from ..engine.permit_wait import excluding_permit_wait
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import OperationOutcome, get_metrics_collector
 from ..operation_runs import worker_task
-from .backpressure import is_append_conflict, is_store_backpressure, is_upstream_rate_limit
+from .backpressure import (
+    RATE_LIMIT_DEFERRED_TASKS,
+    is_append_conflict,
+    is_store_backpressure,
+    is_upstream_rate_limit,
+)
 from .exceptions import DeferOperation, RetryTaskAt, format_task_error
 
 
@@ -67,9 +72,6 @@ _APPEND_CONFLICT_DEFER_COUNT_KEY = "append_conflict_defers"
 # count is recoverable, a failed one loses the documents.
 _RATE_LIMIT_DEFER_BASE_SECONDS = 15.0
 _RATE_LIMIT_DEFER_COUNT_KEY = "rate_limit_defers"
-#: Task types whose 429s are deferred. Knowledge ingest only: an LLM can answer 429 for a quota that is
-#: used up, which never clears, so a retain's or a reflect's 429 keeps failing as before.
-_RATE_LIMIT_DEFERRED_TASKS = frozenset({"knowledge_ingest"})
 
 
 def _append_conflict_defer_seconds(defer_count: int, base: float = _APPEND_CONFLICT_DEFER_BASE_SECONDS) -> float:
@@ -1134,9 +1136,10 @@ class WorkerPoller:
             return
         logger.warning(f"Task {operation_id} scheduled for retry at {retry_at}: {error_message}")
 
-    async def _append_conflict_defer_count(self, task: ClaimedTask, key: str = _APPEND_CONFLICT_DEFER_COUNT_KEY) -> int:
-        """How many times this task has already been deferred for a lost append race (or, with
-        ``key``, for another reason counted the same way).
+    async def _defer_count(self, task: ClaimedTask, key: str = _APPEND_CONFLICT_DEFER_COUNT_KEY) -> int:
+        """How many times this task has already been deferred for the reason ``key`` counts: a lost
+        append race by default, an upstream still rate-limiting with ``_RATE_LIMIT_DEFER_COUNT_KEY``.
+        (Was ``_append_conflict_defer_count``; renamed once it counted rate-limit deferrals too.)
 
         Only drives the backoff and the log line, so a read that fails is not worth failing the
         task over — it falls back to 0, i.e. the shortest delay.
@@ -1386,8 +1389,8 @@ class WorkerPoller:
             # knowledge ingest: "not now". Failing it is what lost whole PDFs on a busy gateway; the
             # batch commits nothing on a transient error, and a document it committed before is
             # skipped on the redo, so deferring is safe.
-            if task_type in _RATE_LIMIT_DEFERRED_TASKS and is_upstream_rate_limit(e):
-                defers = await self._append_conflict_defer_count(task, _RATE_LIMIT_DEFER_COUNT_KEY) + 1
+            if task_type in RATE_LIMIT_DEFERRED_TASKS and is_upstream_rate_limit(e):
+                defers = await self._defer_count(task, _RATE_LIMIT_DEFER_COUNT_KEY) + 1
                 retry_at = datetime.now(timezone.utc) + timedelta(
                     seconds=_append_conflict_defer_seconds(defers, _RATE_LIMIT_DEFER_BASE_SECONDS)
                 )
@@ -1412,7 +1415,7 @@ class WorkerPoller:
             # (issue #5393). The pipeline already redoes it a few times in-process; reaching the
             # worker means the contention outlasted that, which a later attempt usually clears.
             if is_append_conflict(e):
-                defers = await self._append_conflict_defer_count(task) + 1
+                defers = await self._defer_count(task) + 1
                 retry_at = datetime.now(timezone.utc) + timedelta(seconds=_append_conflict_defer_seconds(defers))
                 documents = sorted(
                     {

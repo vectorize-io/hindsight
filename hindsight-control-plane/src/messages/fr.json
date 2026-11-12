@@ -2455,7 +2455,7 @@
       "documentsTitle": "Documents",
       "documentsDescription": "Fichiers et textes de cette banque. Chacun est découpé en passages puis vectorisé ; déposez des fichiers n’importe où ici pour les importer.",
       "searchTitle": "Recherche",
-      "searchDescription": "Trouvez des passages avec du texte, une image, un clip vidéo et du texte exact, seuls ou ensemble, en une seule liste classée."
+      "searchDescription": "Trouvez des passages avec du texte, une image ou un clip vidéo, seuls ou ensemble, en une seule liste classée."
     },
     "documents": {
       "filterPlaceholder": "Filtrer par nom de fichier ou identifiant…",
@@ -2514,14 +2514,14 @@
       "originalUnsupported": "Ce type de fichier ne peut pas être prévisualisé dans le navigateur."
     },
     "search": {
-      "placeholder": "Recherchez par le sens, p. ex. comment renouveler une clé d’API ?",
+      "placeholder": "Rechercher, p. ex. comment faire tourner une clé d’API ?",
       "addMedia": "Image / vidéo",
       "mediaHint": "Collez, déposez ou choisissez une image ou un clip MP4 pour lancer une recherche, seul ou avec du texte.",
       "imageQuery": "Recherche avec cette image",
       "videoQuery": "Recherche avec cette vidéo",
       "removeMedia": "Retirer",
       "notMedia": "Seule une image ou une vidéo MP4 peut servir de requête",
-      "pastedMedia": "Image collée",
+      "pastedMedia": "Fichier collé",
       "topK": "Résultats",
       "submit": "Rechercher",
       "options": "Options",
@@ -2530,7 +2530,7 @@
       "tagsAny": "Au moins un",
       "tagsAll": "Tous",
       "noResults": "Aucun passage ne correspond à cette recherche.",
-      "idle": "Recherchez dans cette banque par texte, image, clip vidéo, texte exact, ou n’importe quel mélange.",
+      "idle": "Recherchez dans cette banque par texte, image, clip vidéo, ou n’importe quel mélange.",
       "openPassage": "Ouvrir dans le document",
       "failed": "La recherche a échoué",
       "mediaTypes": "Types de média",

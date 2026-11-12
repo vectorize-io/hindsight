@@ -122,3 +122,14 @@ def test_plugin_search_heads_each_hit_with_its_document_id_not_a_number(monkeypa
     assert not any(line.startswith("[") for line in lines)
 
 
+def test_preload_reads_the_top_documents_of_the_plugins_own_search_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    from hindsight_system_evals.knowledge_agent import runner
+
+    plugin = _plugin(monkeypatch)
+    a, b = "dsid_" + "a" * 32, "dsid_" + "b" * 32
+    hit = lambda d: {"document_id": d, "filename": f"{d}.txt", "text": "x", "tags": []}  # noqa: E731
+    monkeypatch.setattr(plugin, "_request", lambda *a_, **k: _Reply(200, {"results": [hit(a), hit(b)]}))
+    read: list[str] = []
+    monkeypatch.setattr(plugin, "knowledge_read", lambda args: read.append(args["document_id"]) or "")
+    opening = runner._opening(plugin, "q?", preload=4)
+    assert read == [a, b] and "The full text of the top 2" in opening

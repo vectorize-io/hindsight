@@ -594,9 +594,9 @@ HINDSIGHT_EVAL_SET_LLM_PROMPT_CACHE_ENABLED=false uv run pytest evals/refresh-pa
 
 ### Knowledge banks — `evals/knowledge/test_knowledge.py`
 
-Five categories, each on datasets with a public leaderboard, so every score sits next to the
-best published systems. Four measure **retrieval** (search alone, no LLM; the model under test
-is the server's knowledge embedder); the fifth, **agent use**, measures an agent answering
+Six categories, each on datasets with a public leaderboard, so every score sits next to the
+best published systems. Five measure **retrieval** (search alone, no LLM; the model under test
+is the server's knowledge embedder); the sixth, **agent use**, measures an agent answering
 from a knowledge bank, and lives in `evals/knowledge_agent` (next section).
 
 | category | cases | what a query is | main metric | leaderboard |
@@ -605,7 +605,7 @@ from a knowledge bank, and lives in `evals/knowledge_agent` (next section).
 | `pdf` | `hr` (default) + 7 more ViDoRe V3 tasks | a question in one of 6 languages → the pages of business PDFs that answer it; each source PDF uploaded whole | nDCG@10, per language and as MTEB's language mean | [MTEB, benchmark ViDoRe(v3)](https://huggingface.co/spaces/mteb/leaderboard); [ViDoRe V3 announcement](https://huggingface.co/blog/QuentinJG/introducing-vidore-v3) |
 | `image` | `flickr30k` (default, 1k test), `mscoco` (5k test) | a photo caption → the photo | recall@1 (also @5/@10, nDCG@10) | no live board for these splits: compare with the R@1 model papers report (MIEB on MTEB uses a larger pool, so its numbers are not comparable) |
 | `video` | `msrvtt` (default, 1k-A test), `msvd` (test) | a clip description → the clip (picture and soundtrack, cut into windows by the server) | nDCG@10, recall@1 | MMEB-V2 video retrieval, on the [MMEB leaderboard](https://huggingface.co/spaces/TIGER-Lab/MMEB-Leaderboard) (scored as Hit@1); vendors report nDCG@10 / R@1 in their papers |
-| `research` | `brightpro_<domain>` (7 StackExchange domains), `browsecomp_plus` | a question that needs reasoning → the passages covering each of its aspects; a hard research question → the evidence web pages | alpha-nDCG@25 (BRIGHT-Pro); nDCG@10, recall@100 on evidence documents (BrowseComp-Plus) | [BRIGHT-Pro paper](https://arxiv.org/abs/2605.04018) Table 2; [BrowseComp-Plus paper](https://arxiv.org/abs/2508.06600) Table 2. These rank retrieval *systems*, so a Hindsight number is a fair system score |
+| `research` | `brightpro_<domain>` (7 StackExchange domains; `brightpro_biology` default), `browsecomp_plus` | a question that needs reasoning → the passages covering each of its aspects; a hard research question → the evidence web pages | alpha-nDCG@25 (BRIGHT-Pro); nDCG@10, recall@100 on evidence documents (BrowseComp-Plus) | [BRIGHT-Pro paper](https://arxiv.org/abs/2605.04018) Table 2; [BrowseComp-Plus paper](https://arxiv.org/abs/2508.06600) Table 2. These rank retrieval *systems*, so a Hindsight number is a fair system score |
 | agent use | `evals/knowledge_agent` | a business question → an answer, judged | overall (completeness when correct, else 0) | [EnterpriseRAG-Bench](https://huggingface.co/spaces/onyx-dot-app/EnterpriseRAG-Bench-Leaderboard) |
 
 **How retrieval is scored.** Each dataset gives its queries and, per query, the right
@@ -624,8 +624,9 @@ Scores, ingest rate and search latency (p50/p95, timed by the client) go to `--o
 broken pipeline (a failed document, a query with no results).
 
 **Small by default, the leaderboard number with `--full`.** The corpus is always whole (a
-smaller pool makes every query easier); a default run only cuts the queries: SciFact 100,
-ViDoRe 17 per language (~100 per task), one caption per photo or clip. `--full` asks every query.
+smaller pool makes every query easier); a default run only cuts the queries: SciFact and FiQA
+100 each, ViDoRe 17 per language (~100 per task), one caption per photo or clip, BRIGHT-Pro 25
+per domain, BrowseComp-Plus 100. `--full` asks every query.
 
 ```bash
 cd hindsight-system-evals
@@ -641,6 +642,9 @@ Compare embedders one server per run. A server this package starts takes them as
 `HINDSIGHT_EVAL_SET_KNOWLEDGE_EMBEDDINGS_PROVIDER` / `_MODEL` / `_BASE_URL` / `_MODALITIES`
 (they reach it as `HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_*`); with `--api-url`, start the server
 with those settings yourself. A case whose media type the embedder cannot write is skipped.
+`HINDSIGHT_EVAL_KNOWLEDGE_SEARCH_CONCURRENCY` (4) is how many searches run at once (latency is
+reported with it), `HINDSIGHT_EVAL_KNOWLEDGE_INGEST_TIMEOUT` (seconds, 6 h) how long a corpus
+may take to be ready.
 Data is downloaded on first use into `$HINDSIGHT_EVAL_KNOWLEDGE_CACHE` (default
 `~/.cache/hindsight/knowledge-evals`, outside the repo; all eight ViDoRe tasks are a few GB).
 Without the `knowledge` extra every case skips, which is why the nightly job does not run them.
@@ -652,6 +656,7 @@ benchmark; measured 2026-11-10/11):
 | category | dataset | Hindsight | best published | gap |
 |---|---|---|---|---|
 | text | SciFact, nDCG@10 | 84.2 | papr-embed-code-1-4b 86.8, MiniCPM-Embedding 86.6 ([MTEB results](https://github.com/embeddings-benchmark/results)); EmbeddingGemma 300M 78.7 | −2.6 |
+| text | FiQA-2018, nDCG@10 | not measured yet | see [MTEB](https://huggingface.co/spaces/mteb/leaderboard) (FiQA2018) | — |
 | pdf | ViDoRe V3, 8 public tasks, nDCG@10 | **54.8** (hr 57.7, computer_science 69.4, pharmaceuticals 57.6, finance_en 60.2, finance_fr 43.1, energy 61.2, physics 41.6, industrial 47.7) | EVIE-8B 66.4, pplx-embed-v2-late 9B 65.0, Nemotron ColEmbed VL 8B 63.5, Qwen3-VL-Embedding-8B 58.3 ([MTEB results](https://github.com/embeddings-benchmark/results), ViDoRe V3 v1 tasks) | −11.6 |
 | image | Flickr30k 1k, text → image R@1 (5,000 captions) | 86.3 (nDCG@10 93.1) | Voyage multimodal-3.5 89.9, Gemini Embedding 2 89.1 ([Gemini paper](https://arxiv.org/pdf/2605.27295)) | −3.6 |
 | image | MS-COCO 5k, text → image R@1 (25,010 captions) | 39.4 (nDCG@10 55.8) ³ | Gemini Embedding 2 62.9, Voyage multimodal-3.5 58.1 ([Gemini paper](https://arxiv.org/pdf/2605.27295)); BLIP-ITM-large-COCO 58.6 ([MTEB results](https://github.com/embeddings-benchmark/results), M-BEIR COCO) | −23.5 ³ |
@@ -746,15 +751,16 @@ negatives, and a seeded random fill. The release zip (1.26 GB) is downloaded onc
 | `--full` | 500 | 34,779 (722 gold, 14,674 hard negatives, 20,000 random draws, some already in) | 2,958 s, 11.8 docs/s, 474k passages |
 
 ```bash
-# a server with a knowledge embedder (here EmbeddingGemma 2 behind vLLM), no server LLM needed
+# a server with a knowledge embedder (any OpenAI-compatible embeddings endpoint), no server LLM needed
 HINDSIGHT_API_LLM_PROVIDER=none HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER=openai \
-  HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BASE_URL=http://localhost:18765/v1 \
-  HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODEL=embeddinggemma-2 HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODALITIES=text \
+  HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BASE_URL=http://<embeddings-host>/v1 \
+  HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODEL=<embedding-model> HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODALITIES=text \
   hindsight-api
-# the agent: Gemma 4 on the dev cluster, Hermes from a checkout
-kubectl -n hindsight port-forward svc/hindsight-llm 18800:8000 &
+# the agent: any OpenAI-compatible endpoint, e.g. `vllm serve google/gemma-4-26b-a4b-it
+# --served-model-name gemma-4-26b-a4b`; Hermes from a checkout
 export HINDSIGHT_EVAL_HERMES_PYTHON=~/dev/hermes-agent/.venv/bin/python
-export HINDSIGHT_EVAL_AGENT_BASE_URL=http://localhost:18800/v1 HINDSIGHT_EVAL_AGENT_MODEL=gemma-4-26b-a4b
+export HINDSIGHT_EVAL_AGENT_BASE_URL=http://<llm-host>/v1 HINDSIGHT_EVAL_AGENT_MODEL=gemma-4-26b-a4b
+export HINDSIGHT_EVAL_AGENT_API_KEY=...   # only if the endpoint wants one
 export OPENAI_API_KEY=...   # the judge
 uv run --extra knowledge pytest evals/knowledge_agent --api-url http://localhost:8888 -s --output erb.json
 uv run --extra knowledge pytest evals/knowledge_agent --api-url ... --full --keep-banks -s --output erb-full.json
@@ -765,11 +771,19 @@ Knobs: `HINDSIGHT_EVAL_ERB_QUESTIONS` / `_DISTRACTORS` (-1 = the whole corpus) r
 `HINDSIGHT_EVAL_ERB_BANK` names the bank and `HINDSIGHT_EVAL_ERB_REUSE_BANK=1` skips the
 upload when it already holds the corpus (iterating on the agent); `HINDSIGHT_EVAL_ERB_WORK_DIR`
 keeps `agent.jsonl` (resumable: a rerun asks only the missing questions, so a re-score is free),
-`answers.jsonl` in upstream's format (score it with Onyx's own script too) and `scores.jsonl`.
+`answers.jsonl` in upstream's format (score it with Onyx's own script too) and `scores.jsonl`
+(written as each score completes and resumable the same way: a rerun judges only the questions
+missing from it, so a judge outage costs only those; delete it to re-score).
+`HINDSIGHT_EVAL_ERB_INGEST_TIMEOUT` (seconds, 12 h) bounds the wait for the corpus to be ready.
+Judge: `HINDSIGHT_EVAL_ERB_JUDGE_API_KEY` (falls back to `OPENAI_API_KEY`), `_JUDGE_MODEL`
+(`gpt-5.4`), `_JUDGE_EFFORT` (`medium`) and `_JUDGE_CONCURRENCY` (16 calls in flight); a model or
+effort other than upstream's makes the number incomparable with the leaderboard.
 Agent (defaults are the best run below): `HINDSIGHT_EVAL_AGENT_CONCURRENCY` (4), `_MAX_ITERATIONS`
 (24), `_MIN_TOOL_CALLS` (5: send one "research more" turn when an answer arrives after fewer tool
 calls or no full read; 0 = off), `_CHECK` (1: one self-review turn against the documents),
-`_PRELOAD` (4: start from a search for the question and its top 4 documents in full).
+`_PRELOAD` (4: start from a search for the question and its top 4 documents in full),
+`_API_KEY` (`none`), `_MAX_TOKENS` (4096 per reply), `_CONTEXT` (131072, the context length
+Hermes assumes for the model).
 
 **What moved the number** (default slice, 50 questions, Gemma 4 26B-A4B, judge GPT-5.4; ±1
 question is ±2 points, so read differences under ~5 as noise):

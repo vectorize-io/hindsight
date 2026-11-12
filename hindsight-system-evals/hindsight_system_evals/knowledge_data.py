@@ -8,9 +8,6 @@ dataset makes a half-finished download start over instead of scoring a partial c
 Every loader returns the full corpus a leaderboard number was measured on, and narrows only
 the QUERIES for a default run: a smaller corpus would make every query easier, and the
 number would stop meaning anything next to the leaderboard.
-
-The data layouts match ``hindsight-dev/benchmarks/knowledge_banks_mm`` (prepare_vidore.py,
-prepare_media.py), where the research numbers came from; this is the maintained copy.
 """
 
 from __future__ import annotations
@@ -25,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from hindsight_system_evals.beir import _read_beir_directory
+from hindsight_system_evals.beir import read_beir_directory
 
 CACHE = Path(os.getenv("HINDSIGHT_EVAL_KNOWLEDGE_CACHE") or Path.home() / ".cache" / "hindsight" / "knowledge-evals")
 
@@ -79,7 +76,6 @@ class RankedSuite:
     """Documents ranked against graded qrels: ViDoRe, BEIR, Flickr30k / COCO, MSR-VTT / MSVD."""
 
     name: str
-    media_type: MediaType
     items: tuple[FileItem | TextItem, ...]
     queries: tuple[RankedQuery, ...]
     #: Multi-page documents: the qrels id of each page, in page order (a hit on page n is that id).
@@ -124,7 +120,7 @@ def _read_qrels(path: Path) -> dict[str, dict[str, int]]:
 
 def _build_vidore(task: str, out: Path) -> None:
     """Each corpus page cut from its source PDF as a one-page PDF, so the server sees what a
-    user uploads: the page image AND its text layer (fused 50/50 by default). The page images
+    user uploads: the page image AND its text layer (fused by the server, text weighted 0.7 by default). The page images
     MTEB ships are not used — the server renders the page itself."""
     import pyarrow.parquet as pq
     import pypdfium2 as pdfium
@@ -195,7 +191,7 @@ def vidore(task: str, *, queries_per_language: int | None) -> RankedSuite:
         taken[lang] = taken.get(lang, 0) + 1
         queries.append(RankedQuery(id=row["id"], text=row["text"], group=lang, relevant=qrels[row["id"]]))
     items = tuple(FileItem(id=p.stem, path=p) for p in sorted((out / "pages").iterdir()))
-    return RankedSuite(name=f"vidore_{task}", media_type="document", items=items, queries=tuple(queries))
+    return RankedSuite(name=f"vidore_{task}", items=items, queries=tuple(queries))
 
 
 def _build_vidore_documents(task: str, out: Path) -> None:
@@ -244,9 +240,7 @@ def vidore_documents(task: str, *, queries_per_language: int | None) -> RankedSu
     out = _prepared(CACHE / "vidore" / f"{task}_documents", lambda d: _build_vidore_documents(task, d))
     page_ids = {doc: tuple(ids) for doc, ids in json.loads((out / "page_ids.json").read_text()).items()}
     items = tuple(FileItem(id=p.stem, path=p) for p in sorted((out / "docs").iterdir()))
-    return RankedSuite(
-        name=f"vidore_{task}_documents", media_type="document", items=items, queries=pages.queries, page_ids=page_ids
-    )
+    return RankedSuite(name=f"vidore_{task}_documents", items=items, queries=pages.queries, page_ids=page_ids)
 
 
 # --- BEIR text ----------------------------------------------------------------------------
@@ -261,16 +255,18 @@ def beir(name: str, *, queries: int | None) -> RankedSuite:
             bundle.extractall(out)
         archive.unlink()
 
-    data = _read_beir_directory(_prepared(CACHE / "beir" / name, build) / name)
+    data = read_beir_directory(_prepared(CACHE / "beir" / name, build) / name)
     kept = data.queries if queries is None else data.queries[:queries]
     items = tuple(
         # The file name's stem is the passage title the server embeds; a "/" would cut it short.
         TextItem(id=f"{name}-{d.id}", text=d.text, filename=f"{(d.title or d.id).replace('/', ' ')}.txt")
         for d in data.documents
+        # FiQA holds documents with no text: an empty passage can never be retrieved, and the
+        # text ingest refuses it (422), so it is left out rather than failing the whole upload.
+        if d.text.strip()
     )
     return RankedSuite(
         name=f"beir_{name}",
-        media_type="text",
         items=items,
         queries=tuple(
             RankedQuery(
@@ -329,7 +325,7 @@ def captioned_images(name: str, *, captions_per_image: int | None) -> RankedSuit
         for r in rows
         for n, caption in enumerate(json.loads(r["raw"])[:captions_per_image])
     )
-    return RankedSuite(name=name, media_type="image", items=items, queries=queries)
+    return RankedSuite(name=name, items=items, queries=queries)
 
 
 # --- video: MSR-VTT 1k-A and MSVD test ----------------------------------------------------------
@@ -366,7 +362,7 @@ def captioned_videos(name: str, *, captions_per_video: int | None) -> RankedSuit
             ([r["caption"]] if isinstance(r["caption"], str) else r["caption"])[:captions_per_video]
         )
     )
-    return RankedSuite(name=name, media_type="video", items=items, queries=queries)
+    return RankedSuite(name=name, items=items, queries=queries)
 
 
 # --- research: BRIGHT-Pro and BrowseComp-Plus ---------------------------------------------------
@@ -442,7 +438,7 @@ def bright_pro(domain: str, *, queries: int | None) -> RankedSuite:
         TextItem(id=_doc_id(str(d["id"])), text=str(d["content"]), filename=f"{_doc_id(str(d['id']))}.md")
         for d in documents
     )
-    return RankedSuite(name=f"bright_pro_{domain}", media_type="text", items=items, queries=tuple(ranked))
+    return RankedSuite(name=f"bright_pro_{domain}", items=items, queries=tuple(ranked))
 
 
 #: The key the dataset card publishes: every field but ``query_id`` is XOR-ed with SHA-256(canary).
@@ -501,10 +497,11 @@ def browsecomp_plus(*, queries: int | None) -> RankedSuite:
     items = tuple(TextItem(id=f"bc-{d['docid']}", text=str(d["text"]), filename=f"bc-{d['docid']}.md") for d in corpus)
     return RankedSuite(
         name="browsecomp_plus",
-        media_type="text",
         items=items,
         queries=tuple(
-            RankedQuery(id=f"bc-{r['id']}", text=str(r["text"]), group="all", relevant={f"bc-{d}": 1 for d in r["evidence"]})
+            RankedQuery(
+                id=f"bc-{r['id']}", text=str(r["text"]), group="all", relevant={f"bc-{d}": 1 for d in r["evidence"]}
+            )
             for r in kept
         ),
     )

@@ -13,11 +13,9 @@ from typing import Literal, Protocol
 import pytest
 from pydantic import BaseModel, Field
 
-EvalKind = Literal[
-    "knowledge_page", "delta_update", "reflect", "retain", "source_priority", "consolidation", "recall", "knowledge"
-]
+EvalKind = Literal["knowledge_page", "delta_update", "reflect", "retain", "source_priority", "consolidation", "recall"]
 #: The operation an eval grades: one test file each, ``evals/<operation>/test_<operation>.py``.
-Operation = Literal["retain", "recall", "consolidation", "reflect", "refresh_pages", "knowledge"]
+Operation = Literal["retain", "recall", "consolidation", "reflect", "refresh_pages"]
 
 #: ``kind`` predates operations and is the dashboard's contract, so it stays; this maps it.
 _OPERATION: dict[str, Operation] = {
@@ -28,7 +26,6 @@ _OPERATION: dict[str, Operation] = {
     "source_priority": "reflect",
     "knowledge_page": "refresh_pages",
     "delta_update": "refresh_pages",
-    "knowledge": "knowledge",
 }
 
 
@@ -85,6 +82,17 @@ class KnowledgeLatency(BaseModel):
     client_p95_ms: float
 
 
+class AgentLatency(BaseModel):
+    """An agent suite's time per question: the whole answer (every LLM and tool call), not one
+    search, so it is kept apart from ``KnowledgeLatency``."""
+
+    questions: int
+    #: Questions in flight at once. Above 1 the numbers include queueing.
+    concurrency: int
+    answer_p50_ms: float
+    answer_p95_ms: float
+
+
 class KnowledgeResult(BaseModel):
     """One knowledge-bank retrieval suite: scores, not a pass/fail.
 
@@ -94,14 +102,16 @@ class KnowledgeResult(BaseModel):
 
     category: str
     case: str
-    #: ``<provider>:<model>`` from the server's knowledge config, or ``grep`` for the baseline.
+    #: ``<provider>:<model>`` from the server's knowledge config.
     embedder: str
     corpus: int
     queries: int
     #: Percentages (x100), as the write-ups report them.
     metrics: dict[str, float]
     ingest: KnowledgeIngest | None = None
-    latency: KnowledgeLatency
+    #: Retrieval suites: one search's time. Agent suites report ``agent_latency`` instead.
+    latency: KnowledgeLatency | None = None
+    agent_latency: AgentLatency | None = None
 
 
 class RunReport(BaseModel):

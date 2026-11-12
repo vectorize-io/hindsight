@@ -24,11 +24,12 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from ..config import get_config
 from ..engine import bank_aliases
 from ..engine.db_utils import acquire_with_retry
+from ..engine.operation_metadata import KnowledgeIngestChildMetadata, KnowledgeIngestParentMetadata
 from ..engine.response_models import KnowledgeDocumentHit
 from ..engine.retain import bank_utils
 from ..engine.retain import timing as _timing
@@ -793,7 +794,11 @@ class KnowledgeService:
                     parent_id,
                     bank_id,
                     TASK_TYPE,
-                    json.dumps({"document_ids": [w.document_id for w in work], "num_sub_batches": len(children)}),
+                    json.dumps(
+                        KnowledgeIngestParentMetadata(
+                            document_ids=[w.document_id for w in work], num_sub_batches=len(children)
+                        ).to_dict()
+                    ),
                     "pending",
                 )
                 for i, child in enumerate(children, 1):
@@ -808,19 +813,19 @@ class KnowledgeService:
                     if depth:
                         payload["depth"] = depth
                     inject_task_trace_context(payload)
-                    meta = {
-                        "parent_operation_id": str(parent_id),
-                        "sub_batch_index": i,
-                        "total_sub_batches": len(children),
-                        "document_ids": [w.document_id for w in child],
-                    }
+                    meta = KnowledgeIngestChildMetadata(
+                        parent_operation_id=str(parent_id),
+                        sub_batch_index=i,
+                        total_sub_batches=len(children),
+                        document_ids=[w.document_id for w in child],
+                    )
                     await conn.execute(
                         f"INSERT INTO {table} (operation_id, bank_id, operation_type, result_metadata, status, "
                         "task_payload) VALUES ($1, $2, $3, $4, $5, $6::jsonb)",
                         child_id,
                         bank_id,
                         TASK_TYPE,
-                        json.dumps(meta),
+                        json.dumps(meta.to_dict()),
                         "pending",
                         json.dumps(payload),
                     )
@@ -1284,7 +1289,8 @@ class KnowledgeService:
                     ],
                 )
             logger.info(
-                f"Knowledge ingest {bank_id}: {len(kept)} documents, {sum(d.committed_passages for d in kept)} passages, "
+                f"Knowledge ingest {bank_id}: {len(kept)} documents, "
+                f"{sum(d.committed_passages for d in kept)} passages, "
                 f"{len(failed)} failed, in {time.perf_counter() - started:.1f}s, holding at most "
                 f"{budget.peak / 2**20:.0f} MB of passages"
             )
@@ -1731,7 +1737,10 @@ def _drafts_of(passages: list[ingest_strategy.OutputPassage]) -> list[media.Pass
     return drafts
 
 
-async def _split(fn: Any, *args: Any) -> Any:
+_T = TypeVar("_T")
+
+
+async def _split(fn: Callable[..., _T], *args: Any) -> _T:
     """Run a blocking step of splitting (opening a file, cutting its next passage) off the event
     loop, timed as the batch's ``split`` phase."""
     async with _timing.timed("split"):

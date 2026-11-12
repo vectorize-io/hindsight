@@ -2483,7 +2483,6 @@ export class ControlPlaneClient {
       q?: string;
       status?: DocumentStatus;
       media_type?: MediaType;
-      tags?: string[];
     },
     /** A background poll: its failures stay quiet instead of toasting every few seconds. */
     { quiet = false }: { quiet?: boolean } = {}
@@ -2495,7 +2494,6 @@ export class ControlPlaneClient {
     if (params.q) search.set("q", params.q);
     if (params.status) search.set("status", params.status);
     if (params.media_type) search.set("media_type", params.media_type);
-    for (const tag of params.tags ?? []) search.append("tags", tag);
     return this.fetchApi<{ documents: KnowledgeDocument[]; total: number }>(
       `${knowledgeApi(bankId, "documents")}?${search}`,
       { cache: "no-store" as RequestCache },

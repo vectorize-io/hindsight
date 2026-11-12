@@ -91,9 +91,8 @@ def knowledge_search(args: dict, **_: object) -> str:
         "top_k": min(200, top_k * 3),
         "neighbors": max(0, min(int(args.get("neighbors", 1)), 5)),
     }
-    for key in ("tags", "media_types"):
-        if args.get(key):
-            body[key] = args[key]
+    if args.get("tags"):
+        body["tags"] = args["tags"]
     response = _request("POST", f"{cfg.base}/search", json=body, headers=cfg.headers)
     if response.status_code >= 400:
         return f"search failed ({response.status_code}): {response.text[:300]}"
@@ -149,7 +148,7 @@ SCHEMAS = {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "What to look for, in natural language."},
-                "top_k": {"type": "integer", "description": "How many passages (1-50, default 10)."},
+                "top_k": {"type": "integer", "description": "How many documents (1-50, default 10)."},
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},

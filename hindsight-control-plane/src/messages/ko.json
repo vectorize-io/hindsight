@@ -2455,7 +2455,7 @@
       "documentsTitle": "문서",
       "documentsDescription": "이 뱅크의 파일과 텍스트입니다. 각 항목은 구절로 나뉘어 임베딩됩니다. 여기 아무 곳에나 파일을 놓으면 업로드됩니다.",
       "searchTitle": "검색",
-      "searchDescription": "텍스트, 이미지, 동영상 클립, 정확한 텍스트를 단독 또는 함께 써서 하나의 순위 목록으로 구절을 찾습니다."
+      "searchDescription": "텍스트, 이미지, 동영상 클립을 단독 또는 함께 써서 하나의 순위 목록으로 구절을 찾습니다."
     },
     "documents": {
       "filterPlaceholder": "파일 이름 또는 ID로 필터…",
@@ -2514,14 +2514,14 @@
       "originalUnsupported": "이 파일 형식은 브라우저에서 미리 볼 수 없습니다."
     },
     "search": {
-      "placeholder": "의미로 검색하세요. 예: API 키는 어떻게 교체하나요?",
+      "placeholder": "검색 (예: API 키를 교체하려면?)",
       "addMedia": "이미지 / 동영상",
       "mediaHint": "이미지나 MP4 클립을 붙여 넣거나, 놓거나, 선택해 검색하세요. 텍스트와 함께 써도 됩니다.",
       "imageQuery": "이 이미지로 검색 중",
       "videoQuery": "이 동영상으로 검색 중",
       "removeMedia": "제거",
       "notMedia": "검색어로는 이미지나 MP4 동영상만 사용할 수 있습니다",
-      "pastedMedia": "붙여 넣은 이미지",
+      "pastedMedia": "붙여 넣은 파일",
       "topK": "결과 수",
       "submit": "검색",
       "options": "옵션",
@@ -2530,7 +2530,7 @@
       "tagsAny": "하나라도",
       "tagsAll": "모두",
       "noResults": "이 검색과 일치하는 구절이 없습니다.",
-      "idle": "텍스트, 이미지, 동영상 클립, 정확한 텍스트 또는 그 조합으로 이 뱅크를 검색합니다.",
+      "idle": "텍스트, 이미지, 동영상 클립 또는 그 조합으로 이 뱅크를 검색합니다.",
       "openPassage": "문서에서 열기",
       "failed": "검색에 실패했습니다",
       "mediaTypes": "미디어 유형",

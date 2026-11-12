@@ -2455,7 +2455,7 @@
       "documentsTitle": "文件",
       "documentsDescription": "此庫中的檔案和文字。每份文件都會切分為段落並嵌入;將檔案拖放到此處任意位置即可上傳。",
       "searchTitle": "搜尋",
-      "searchDescription": "用文字、圖片、影片片段和精確文字(單獨或一起)尋找段落,結果為一個排序清單。"
+      "searchDescription": "用文字、圖片或影片片段(單獨或一起)尋找段落,結果為一個排序清單。"
     },
     "documents": {
       "filterPlaceholder": "依檔名或 ID 篩選…",
@@ -2514,14 +2514,14 @@
       "originalUnsupported": "此檔案類型無法在瀏覽器中預覽。"
     },
     "search": {
-      "placeholder": "依語意搜尋,例如:如何輪替 API 金鑰?",
+      "placeholder": "搜尋,例如:如何輪替 API 金鑰?",
       "addMedia": "圖片 / 影片",
       "mediaHint": "貼上、拖放或選擇一張圖片或一段 MP4 影片來搜尋,可單獨使用或搭配文字。",
       "imageQuery": "正在以此圖片搜尋",
       "videoQuery": "正在以此影片搜尋",
       "removeMedia": "移除",
       "notMedia": "只能使用圖片或 MP4 影片作為搜尋查詢",
-      "pastedMedia": "貼上的圖片",
+      "pastedMedia": "貼上的檔案",
       "topK": "結果數",
       "submit": "搜尋",
       "options": "選項",
@@ -2530,7 +2530,7 @@
       "tagsAny": "任一",
       "tagsAll": "全部",
       "noResults": "沒有符合此搜尋的段落。",
-      "idle": "用文字、圖片、影片片段、精確文字或它們的任意組合搜尋此庫。",
+      "idle": "用文字、圖片、影片片段或它們的任意組合搜尋此庫。",
       "openPassage": "在文件中開啟",
       "failed": "搜尋失敗",
       "mediaTypes": "媒體類型",

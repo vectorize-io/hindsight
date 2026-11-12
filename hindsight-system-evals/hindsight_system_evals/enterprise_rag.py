@@ -28,8 +28,6 @@ benchmark's mix (17 basic, 13 semantic, 4 intra-document, ... 1 high-level), as 
 from __future__ import annotations
 
 import argparse
-import asyncio
-import contextlib
 import os
 import random
 import re
@@ -44,6 +42,7 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel
 
+from hindsight_system_evals import knowledge
 from hindsight_system_evals.knowledge import KnowledgeApi
 from hindsight_system_evals.knowledge_data import CACHE, TextItem
 from hindsight_system_evals.report import KnowledgeIngest
@@ -55,7 +54,6 @@ SLICE_SEED = 20261105
 #: BM25 neighbours kept per question (question text) and per gold document (its title).
 HARD_PER_QUESTION = 20
 HARD_PER_GOLD = 10
-UPLOAD_BATCH = 100  # the text ingest's ceiling per request
 INGEST_TIMEOUT = float(os.getenv("HINDSIGHT_EVAL_ERB_INGEST_TIMEOUT", str(12 * 3600)))
 
 _DSID = re.compile(r"dsid_[0-9a-f]{32}")
@@ -159,7 +157,6 @@ class Subset:
     questions: list[Question]
     #: Gold, then hard negatives, then random fill; no duplicates.
     document_ids: list[str]
-    gold_ids: set[str]
 
 
 def subset(n_questions: int, n_random: int) -> Subset:
@@ -179,45 +176,22 @@ def subset(n_questions: int, n_random: int) -> Subset:
         pool = sorted(members)
         random.Random(SLICE_SEED).shuffle(pool)
         rest = pool[:n_random]
-    return Subset(questions=questions, document_ids=list(dict.fromkeys([*gold, *hard, *rest])), gold_ids=set(gold))
+    return Subset(questions=questions, document_ids=list(dict.fromkeys([*gold, *hard, *rest])))
 
 
 async def ingest(api: KnowledgeApi, bank_id: str, document_ids: Sequence[str]) -> KnowledgeIngest:
     """Write the documents as text, tagged with their source system, and wait until each is
-    ready or failed.
+    ready or failed (``knowledge.ingest``, documents read from the zip one batch at a time).
 
     Re-writing a document the bank already holds unchanged queues nothing, so pointing a run
     at a bank that already has the corpus (``HINDSIGHT_EVAL_ERB_BANK``) costs one upload pass,
     not a re-embed. The reported time is then the upload, and says so in ``passages_per_s``.
     """
-    with contextlib.suppress(httpx.HTTPStatusError):  # already there: re-ingest unchanged documents
-        await api.create_bank(bank_id)
-    started = time.perf_counter()
-    for n in range(0, len(document_ids), UPLOAD_BATCH):
-        batch = read_documents(document_ids[n : n + UPLOAD_BATCH])
-        await api.ingest_texts(
-            bank_id, [TextItem(id=d.id, text=d.text, filename=d.filename, tags=(d.source,)) for d in batch]
-        )
-    uploaded = time.perf_counter() - started
-    while True:
-        bank = await api.bank(bank_id)
-        if bank["ready_count"] + bank["failed_count"] >= len(document_ids):
-            break
-        if time.perf_counter() - started > INGEST_TIMEOUT:
-            raise TimeoutError(
-                f"{bank_id}: {bank['ready_count']}/{len(document_ids)} ready after {INGEST_TIMEOUT:.0f}s"
-            )
-        await asyncio.sleep(2.0)
-    wall = time.perf_counter() - started
-    return KnowledgeIngest(
-        documents=len(document_ids),
-        passages=bank["passage_count"],
-        failed=bank["failed_count"],
-        upload_s=round(uploaded, 2),
-        wall_s=round(wall, 2),
-        documents_per_s=round(len(document_ids) / wall, 3),
-        passages_per_s=round(bank["passage_count"] / wall, 3),
-    )
+
+    def load(ids: Sequence[str]) -> list[TextItem]:
+        return [TextItem(id=d.id, text=d.text, filename=d.filename, tags=(d.source,)) for d in read_documents(ids)]
+
+    return await knowledge.ingest(api, bank_id, document_ids, load, reuse_bank=True, timeout=INGEST_TIMEOUT)
 
 
 # --- building the slice -------------------------------------------------------------------

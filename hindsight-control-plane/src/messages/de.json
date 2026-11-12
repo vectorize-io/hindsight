@@ -2455,7 +2455,7 @@
       "documentsTitle": "Dokumente",
       "documentsDescription": "Dateien und Texte in dieser Bank. Jedes Dokument wird in Abschnitte zerlegt und eingebettet; zum Hochladen Dateien einfach hier ablegen.",
       "searchTitle": "Suche",
-      "searchDescription": "Finde Passagen mit Text, einem Bild, einem Videoclip und exaktem Text, einzeln oder zusammen, in einer Rangliste."
+      "searchDescription": "Finde Passagen mit Text, einem Bild oder einem Videoclip, einzeln oder zusammen, in einer Rangliste."
     },
     "documents": {
       "filterPlaceholder": "Nach Dateiname oder ID filtern…",
@@ -2514,14 +2514,14 @@
       "originalUnsupported": "Dieser Dateityp kann im Browser nicht angezeigt werden."
     },
     "search": {
-      "placeholder": "Nach Bedeutung suchen, z. B. Wie rotiere ich einen API-Schlüssel?",
+      "placeholder": "Suchen, z. B. wie rotiere ich einen API-Schlüssel?",
       "addMedia": "Bild / Video",
       "mediaHint": "Füge ein Bild oder einen MP4-Clip ein, lege ihn ab oder wähle ihn aus, um damit zu suchen, allein oder mit Text.",
       "imageQuery": "Suche mit diesem Bild",
       "videoQuery": "Suche mit diesem Video",
       "removeMedia": "Entfernen",
       "notMedia": "Nur ein Bild oder ein MP4-Video kann eine Suchanfrage sein",
-      "pastedMedia": "Eingefügtes Bild",
+      "pastedMedia": "Eingefügte Datei",
       "topK": "Ergebnisse",
       "submit": "Suchen",
       "options": "Optionen",
@@ -2530,7 +2530,7 @@
       "tagsAny": "Beliebig",
       "tagsAll": "Alle",
       "noResults": "Keine Abschnitte passen zu dieser Suche.",
-      "idle": "Durchsuche diese Bank mit Text, einem Bild, einem Videoclip, exaktem Text oder einer beliebigen Kombination.",
+      "idle": "Durchsuche diese Bank mit Text, einem Bild, einem Videoclip oder einer beliebigen Kombination.",
       "openPassage": "Im Dokument öffnen",
       "failed": "Suche fehlgeschlagen",
       "mediaTypes": "Medientypen",

@@ -2455,7 +2455,7 @@
       "documentsTitle": "Documentos",
       "documentsDescription": "Archivos y texto de este banco. Cada uno se divide en pasajes y se generan sus embeddings; suelta archivos en cualquier parte para subirlos.",
       "searchTitle": "Búsqueda",
-      "searchDescription": "Encuentra pasajes con texto, una imagen, un clip de vídeo y texto exacto, solos o juntos, en una sola lista ordenada."
+      "searchDescription": "Encuentra pasajes con texto, una imagen o un clip de vídeo, solos o juntos, en una sola lista ordenada."
     },
     "documents": {
       "filterPlaceholder": "Filtrar por nombre de archivo o id…",
@@ -2514,14 +2514,14 @@
       "originalUnsupported": "Este tipo de archivo no se puede previsualizar en el navegador."
     },
     "search": {
-      "placeholder": "Busca por significado, p. ej. ¿cómo roto una clave de API?",
+      "placeholder": "Buscar, p. ej. ¿cómo roto una clave de API?",
       "addMedia": "Imagen / vídeo",
       "mediaHint": "Pega, suelta o elige una imagen o un clip MP4 para buscar con él, solo o con texto.",
       "imageQuery": "Buscando con esta imagen",
       "videoQuery": "Buscando con este vídeo",
       "removeMedia": "Quitar",
       "notMedia": "Solo una imagen o un vídeo MP4 puede ser una consulta",
-      "pastedMedia": "Imagen pegada",
+      "pastedMedia": "Archivo pegado",
       "topK": "Resultados",
       "submit": "Buscar",
       "options": "Opciones",
@@ -2530,7 +2530,7 @@
       "tagsAny": "Cualquiera",
       "tagsAll": "Todas",
       "noResults": "Ningún pasaje coincide con esta búsqueda.",
-      "idle": "Busca en este banco con texto, una imagen, un clip de vídeo, texto exacto o cualquier combinación.",
+      "idle": "Busca en este banco con texto, una imagen, un clip de vídeo o cualquier combinación.",
       "openPassage": "Abrir en el documento",
       "failed": "La búsqueda falló",
       "mediaTypes": "Tipos de medio",
