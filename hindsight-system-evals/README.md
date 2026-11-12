@@ -601,7 +601,7 @@ from a knowledge bank, and lives in `evals/knowledge_agent` (next section).
 
 | category | cases | what a query is | main metric | leaderboard |
 |---|---|---|---|---|
-| `text` | `scifact` (default), `nfcorpus` (BEIR) | a scientific claim → the abstracts that support or refute it; a health topic → the papers on it | nDCG@10 | [MTEB](https://huggingface.co/spaces/mteb/leaderboard) (retrieval tasks SciFact, NFCorpus) |
+| `text` | `scifact` (default), `fiqa` (BEIR) | a scientific claim → the abstracts that support or refute it; a personal-finance question → the forum answers to it | nDCG@10 | [MTEB](https://huggingface.co/spaces/mteb/leaderboard) (retrieval tasks SciFact, FiQA2018) |
 | `pdf` | `hr` (default) + 7 more ViDoRe V3 tasks | a question in one of 6 languages → the pages of business PDFs that answer it; each source PDF uploaded whole | nDCG@10, per language and as MTEB's language mean | [MTEB, benchmark ViDoRe(v3)](https://huggingface.co/spaces/mteb/leaderboard); [ViDoRe V3 announcement](https://huggingface.co/blog/QuentinJG/introducing-vidore-v3) |
 | `image` | `flickr30k` (default, 1k test), `mscoco` (5k test) | a photo caption → the photo | recall@1 (also @5/@10, nDCG@10) | no live board for these splits: compare with the R@1 model papers report (MIEB on MTEB uses a larger pool, so its numbers are not comparable) |
 | `video` | `msrvtt` (default, 1k-A test), `msvd` (test) | a clip description → the clip (picture and soundtrack, cut into windows by the server) | nDCG@10, recall@1 | MMEB-V2 video retrieval, on the [MMEB leaderboard](https://huggingface.co/spaces/TIGER-Lab/MMEB-Leaderboard) (scored as Hit@1); vendors report nDCG@10 / R@1 in their papers |
@@ -652,7 +652,6 @@ benchmark; measured 2026-11-10/11):
 | category | dataset | Hindsight | best published | gap |
 |---|---|---|---|---|
 | text | SciFact, nDCG@10 | 84.2 | papr-embed-code-1-4b 86.8, MiniCPM-Embedding 86.6 ([MTEB results](https://github.com/embeddings-benchmark/results)); EmbeddingGemma 300M 78.7 | −2.6 |
-| text | NFCorpus, nDCG@10 | 37.1 | Conan-embedding-v2 55.7 ⁴, voyage-3-m-exp 47.0, NV-Embed-v2 45.0 ([MTEB results](https://github.com/embeddings-benchmark/results)); EmbeddingGemma 300M 39.2 | −18.6 (−9.9 to the next) |
 | pdf | ViDoRe V3, 8 public tasks, nDCG@10 | **54.8** (hr 57.7, computer_science 69.4, pharmaceuticals 57.6, finance_en 60.2, finance_fr 43.1, energy 61.2, physics 41.6, industrial 47.7) | EVIE-8B 66.4, pplx-embed-v2-late 9B 65.0, Nemotron ColEmbed VL 8B 63.5, Qwen3-VL-Embedding-8B 58.3 ([MTEB results](https://github.com/embeddings-benchmark/results), ViDoRe V3 v1 tasks) | −11.6 |
 | image | Flickr30k 1k, text → image R@1 (5,000 captions) | 86.3 (nDCG@10 93.1) | Voyage multimodal-3.5 89.9, Gemini Embedding 2 89.1 ([Gemini paper](https://arxiv.org/pdf/2605.27295)) | −3.6 |
 | image | MS-COCO 5k, text → image R@1 (25,010 captions) | 39.4 (nDCG@10 55.8) ³ | Gemini Embedding 2 62.9, Voyage multimodal-3.5 58.1 ([Gemini paper](https://arxiv.org/pdf/2605.27295)); BLIP-ITM-large-COCO 58.6 ([MTEB results](https://github.com/embeddings-benchmark/results), M-BEIR COCO) | −23.5 ³ |
@@ -669,8 +668,7 @@ so most of that gap is the agent model, not the search. 50 questions move a few 
 ³ COCO's files are named like `COCO_val2014_000000033753.jpg`, which still yields a title ("COCO val2014
 …"), the same noise that cost Flickr30k 13 points of R@1. A run without titles is pending.
 
-⁴ Conan-embedding-v2 is 9 points above every other MTEB entry on NFCorpus, an outlier worth treating
-with care. Targets are always other teams' published numbers; MTEB image and video entries use
+Targets are always other teams' published numbers; MTEB image and video entries use
 slightly different splits (noted per row), so read those gaps as approximate.
 
 **What each part of search is worth** (one change at a time on the banks above; `top_k` 10 is what an
@@ -681,13 +679,13 @@ agent asks for, 200 what the scoring asks for):
 | HNSW on `kb_passages.embedding` | every search | same scores as an exact scan (SciFact, HR, Flickr30k); exact time grows with the bank, 80 ms at 16k passages and 141 ms at 52k vs 2–4 ms | yes |
 | page text vectors (`kb_passage_vectors`: whole page text and 128-token units) | PDFs | HR 57.7 → 45.6 without any page text (units alone are worth 5.2, whole-page text 0.5) | yes |
 | HNSW on `kb_passage_vectors` (its own candidate lookup) | PDFs at agent-sized searches | HR at top_k 10: 57.7 → 56.9; no change at top_k 200, where the pool already covers the bank | yes |
-| GIN on `search_vector` (keyword candidates and IDF) | text with names, codes, rare words | SciFact 83.1 → 80.8 at top_k 10; HR −0.3; NFCorpus flat (37.2 without, 37.1 with); weights above 0.2 hurt | yes, with bounded IDF counts |
+| GIN on `search_vector` (keyword candidates and IDF) | text with names, codes, rare words | SciFact 83.1 → 80.8 at top_k 10; HR −0.3; weights above 0.2 hurt | yes, with bounded IDF counts |
 | document prior | multi-page PDFs | HR −1.0 | yes |
 | pg_trgm on `text` | only searches with an explicit `pattern` | not exercised by these benchmarks | only if pattern search must be fast on big banks |
 
 Two pipeline changes came out of this, both now defaults:
 
-- **Text passages of 256 tokens** (was 128): SciFact 83.7 → 84.2, NFCorpus flat, EnterpriseRAG search
+- **Text passages of 256 tokens** (was 128): SciFact 83.7 → 84.2, EnterpriseRAG search
   66.1 → 67.6 nDCG@10 (recall@10 77.1 → 81.5), agent 59.6 → 62.5, with half the passages. 512 led on
   SciFact alone (85.6) and lost 3 points on EnterpriseRAG's per-category mean.
 - **No title from a name with no word in it** (`1007129816.jpg`, `IMG_4821`, `video7020`): Flickr30k

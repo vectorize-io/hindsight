@@ -2043,8 +2043,8 @@ DEFAULT_KNOWLEDGE_PDF_BANDS = False
 # Keyword match weight, fused only for documents in the query's language (PDF_GEMMA.md: 0.2 best).
 DEFAULT_KNOWLEDGE_KEYWORD_WEIGHT = 0.2
 # Structure-aware passages. 128 was best on LegalBench-RAG at a fixed budget of returned text (CHUNKING.md);
-# 256 beat it on every benchmark launch uses (EmbeddingGemma 2): SciFact 83.7 -> 84.2 nDCG@10, NFCorpus
-# flat, EnterpriseRAG search 66.1 -> 67.6 (recall@10 77.1 -> 81.5), with half the passages. 512 led on
+# 256 beat it on every benchmark launch uses (EmbeddingGemma 2): SciFact 83.7 -> 84.2 nDCG@10,
+# EnterpriseRAG search 66.1 -> 67.6 (recall@10 77.1 -> 81.5), with half the passages. 512 led on
 # SciFact alone (85.6) and lost 3 points on EnterpriseRAG's per-category mean.
 DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS = 256
 # An async knowledge ingest is split into child operations of about this many bytes of stored files,

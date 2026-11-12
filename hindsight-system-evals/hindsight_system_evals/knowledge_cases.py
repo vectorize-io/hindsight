@@ -3,7 +3,7 @@ a public leaderboard, so a score sits next to the best published models.
 
 | category | dataset | leaderboard metric |
 |---|---|---|
-| ``text`` | BEIR SciFact, NFCorpus | nDCG@10 (MTEB) |
+| ``text`` | BEIR SciFact, FiQA-2018 | nDCG@10 (MTEB) |
 | ``pdf`` | ViDoRe V3, 8 public tasks | nDCG@10 (ViDoRe / MTEB) |
 | ``image`` | Flickr30k 1k and MS-COCO 5k test, text to image | recall@1/5/10 |
 | ``video`` | MSR-VTT 1k-A and MSVD test, text to video | nDCG@10, recall@1 |
@@ -148,7 +148,7 @@ def _bright_pro(domain: str) -> Callable[[Sizes], data.RankedSuite]:
 
 CASES: list[Case] = [
     Case("scifact", "text", _beir("scifact"), "text"),
-    Case("nfcorpus", "text", _beir("nfcorpus"), "text"),
+    Case("fiqa", "text", _beir("fiqa"), "text"),
     *(Case(t, "pdf", _vidore(t), "document") for t in data.VIDORE_TASKS),
     *(Case(name.split("_")[0], "image", _images(name), "image") for name in data.IMAGE_SETS),
     *(Case(name.split("_")[0], "video", _videos(name), "video") for name in data.VIDEO_SETS),
