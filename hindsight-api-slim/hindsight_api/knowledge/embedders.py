@@ -21,6 +21,7 @@ mp4 window) so an API provider can send them as they are and a local one decodes
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import threading
@@ -306,6 +307,32 @@ class GeminiEmbedder(KnowledgeEmbedder):
 
 
 _MEDIA_CONCURRENCY = 4  # media requests in flight per embed call (see OpenAIEmbedder.embed_documents)
+_IN_FLIGHT: dict[int, tuple[int, asyncio.Semaphore]] = {}
+
+
+@contextlib.asynccontextmanager
+async def _in_flight():
+    """One of this process's ``knowledge_embeddings_max_in_flight`` slots for a remote embedder request,
+    per event loop (a semaphore belongs to the loop it is used on). Time spent waiting for one is the
+    ``embed.wait_slot`` phase of the ingest batch it serves."""
+    from ..config import get_config
+
+    limit = get_config().knowledge_embeddings_max_in_flight
+    if limit <= 0:
+        yield
+        return
+    key = id(asyncio.get_running_loop())
+    held = _IN_FLIGHT.get(key)
+    if held is None or held[0] != limit:
+        held = _IN_FLIGHT[key] = (limit, asyncio.Semaphore(limit))
+    async with _timing.timed("embed.wait_slot"):
+        await held[1].acquire()
+    try:
+        yield
+    finally:
+        held[1].release()
+
+
 _TEXT_CONCURRENCY = 8  # text batches in flight per embed call, beside the media
 
 
@@ -327,7 +354,9 @@ class _RemoteEmbedder(KnowledgeEmbedder):
         from ..engine.remote_retry import RetryPolicy, acall_with_retry
 
         async def call() -> dict[str, Any]:
-            async with self._session.get().post(self._url, json=body) as response:
+            # The process-wide cap is taken per attempt, not around the retries: a request backing off
+            # before its next attempt must not hold a slot another could use.
+            async with _in_flight(), self._session.get().post(self._url, json=body) as response:
                 await raise_for_status(response)
                 # orjson: 768 floats per vector parse 4x faster than with json (0.03 ms against 0.12).
                 return await response.json(loads=orjson.loads)

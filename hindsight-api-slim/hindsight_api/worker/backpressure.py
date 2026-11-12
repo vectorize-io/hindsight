@@ -79,3 +79,23 @@ def is_append_conflict(exc: BaseException) -> bool:
             return True
         cur = cur.__cause__ or cur.__context__
     return False
+
+
+def is_upstream_rate_limit(exc: BaseException) -> bool:
+    """Is `exc` an upstream (an embedder, through its gateway) answering 429, "too many requests"?
+
+    Like a shedding store, it says nothing about the payload and clears as the upstream's load does —
+    but only after the call's own retries ran out, so the load lasted longer than they cover. Walks the
+    cause/context chain like the others; the status is read with `remote_retry.status_code_of`, which
+    knows the attribute each HTTP client keeps it on.
+    """
+    from ..engine.remote_retry import status_code_of
+
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if status_code_of(cur) == 429:
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False

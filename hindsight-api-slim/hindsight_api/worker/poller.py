@@ -33,7 +33,7 @@ from ..engine.permit_wait import excluding_permit_wait
 from ..engine.schema import fq_table_explicit as fq_table
 from ..metrics import OperationOutcome, get_metrics_collector
 from ..operation_runs import worker_task
-from .backpressure import is_append_conflict, is_store_backpressure
+from .backpressure import is_append_conflict, is_store_backpressure, is_upstream_rate_limit
 from .exceptions import DeferOperation, RetryTaskAt, format_task_error
 
 
@@ -60,11 +60,21 @@ from .stage import StageHolder, bind_holder
 _APPEND_CONFLICT_DEFER_BASE_SECONDS = 2.0
 _APPEND_CONFLICT_DEFER_MAX_SECONDS = 300.0
 _APPEND_CONFLICT_DEFER_COUNT_KEY = "append_conflict_defers"
+# How a knowledge ingest whose embedder kept answering 429 backs off. Reaching the worker means the
+# embedder's own retries (a minute of them) ran out, so the first redo waits longer than an append's,
+# and doubles (jittered, so the batches that hit it together do not come back together) up to the
+# same ceiling. Uncapped in count for the append's reason: an old pending operation with a rising
+# count is recoverable, a failed one loses the documents.
+_RATE_LIMIT_DEFER_BASE_SECONDS = 15.0
+_RATE_LIMIT_DEFER_COUNT_KEY = "rate_limit_defers"
+#: Task types whose 429s are deferred. Knowledge ingest only: an LLM can answer 429 for a quota that is
+#: used up, which never clears, so a retain's or a reflect's 429 keeps failing as before.
+_RATE_LIMIT_DEFERRED_TASKS = frozenset({"knowledge_ingest"})
 
 
-def _append_conflict_defer_seconds(defer_count: int) -> float:
+def _append_conflict_defer_seconds(defer_count: int, base: float = _APPEND_CONFLICT_DEFER_BASE_SECONDS) -> float:
     """Jittered exponential backoff for the ``defer_count``-th deferral (1-based)."""
-    delay = _APPEND_CONFLICT_DEFER_BASE_SECONDS * (2 ** max(0, defer_count - 1))
+    delay = base * (2 ** max(0, defer_count - 1))
     return min(delay, _APPEND_CONFLICT_DEFER_MAX_SECONDS) * random.uniform(0.5, 1.5)
 
 
@@ -1124,8 +1134,9 @@ class WorkerPoller:
             return
         logger.warning(f"Task {operation_id} scheduled for retry at {retry_at}: {error_message}")
 
-    async def _append_conflict_defer_count(self, task: ClaimedTask) -> int:
-        """How many times this task has already been deferred for a lost append race.
+    async def _append_conflict_defer_count(self, task: ClaimedTask, key: str = _APPEND_CONFLICT_DEFER_COUNT_KEY) -> int:
+        """How many times this task has already been deferred for a lost append race (or, with
+        ``key``, for another reason counted the same way).
 
         Only drives the backoff and the log line, so a read that fails is not worth failing the
         task over — it falls back to 0, i.e. the shortest delay.
@@ -1134,8 +1145,7 @@ class WorkerPoller:
         try:
             async with self._backend.acquire() as conn:
                 value = await conn.fetchval(
-                    f"SELECT result_metadata->>'{_APPEND_CONFLICT_DEFER_COUNT_KEY}' FROM {table} "
-                    "WHERE operation_id = $1",
+                    f"SELECT result_metadata->>'{key}' FROM {table} WHERE operation_id = $1",
                     task.operation_id,
                 )
             return int(value or 0)
@@ -1371,6 +1381,30 @@ class WorkerPoller:
                 )
                 reason = f"store backpressure: {str(e)[:400]}"
                 await self._write_terminal(task, "deferred", lambda: self._defer_all(task, retry_at, reason))
+                return
+            # An embedder still answering 429 after its own retries is the same shape of answer for a
+            # knowledge ingest: "not now". Failing it is what lost whole PDFs on a busy gateway; the
+            # batch commits nothing on a transient error, and a document it committed before is
+            # skipped on the redo, so deferring is safe.
+            if task_type in _RATE_LIMIT_DEFERRED_TASKS and is_upstream_rate_limit(e):
+                defers = await self._append_conflict_defer_count(task, _RATE_LIMIT_DEFER_COUNT_KEY) + 1
+                retry_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=_append_conflict_defer_seconds(defers, _RATE_LIMIT_DEFER_BASE_SECONDS)
+                )
+                logger.warning(
+                    "Task %s deferred until %s: upstream rate limit (deferral #%d, bank=%s): %s",
+                    task.operation_id,
+                    retry_at,
+                    defers,
+                    bank_id,
+                    str(e)[:200],
+                )
+                await self._defer_all(
+                    task,
+                    retry_at,
+                    f"upstream rate limit (deferral #{defers}): {str(e)[:400]}",
+                    {_RATE_LIMIT_DEFER_COUNT_KEY: defers},
+                )
                 return
             # An append that lost its race is the same shape of answer: "the document moved, read
             # it again". Nothing was written — the precondition rejects the write whole — so the

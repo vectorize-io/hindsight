@@ -1397,3 +1397,65 @@ async def test_a_new_content_type_ingests_the_same_file_again(api_client, kb):
     again = await _upload(api_client, kb, [("n.txt", b"red notes", "text/markdown")], [{"document_id": "n"}])
     assert again.json()["unchanged_document_ids"] == []
     assert (await api_client.get(f"{KB}/{kb}/documents/n")).json()["content_type"] == "text/markdown"
+
+
+@pytest.mark.xdist_group("worker_tests")
+async def test_a_rate_limited_embedder_defers_the_batch_instead_of_failing_it(
+    api_client, memory, kb, fake_embedder, counted, monkeypatch
+):
+    from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
+    from hindsight_api.worker import WorkerPoller
+    from hindsight_api.worker.poller import ClaimedTask
+
+    _, payloads = counted
+    items = [{"document_id": f"r{n}", "text": f"note {n} about red"} for n in range(3)]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items, "async": True})
+    assert r.status_code == 202, r.text
+    child = payloads[0]
+    service = get_knowledge_service(memory)
+    # Run the child again as the worker would, its documents back to pending, against an embedder that
+    # keeps answering 429 after its own retries.
+    await service.store.set_statuses(kb, [StatusUpdate(i["document_id"], "pending") for i in items])
+
+    async def busy(_items):
+        raise UpstreamHTTPError(429, "Too Many Requests", {}, "http://gateway/v1/embeddings")
+
+    monkeypatch.setattr(fake_embedder, "embed_documents", busy)
+    pool = await memory._get_pool()
+    poller = WorkerPoller(backend=await memory._get_backend(), worker_id="kb-worker", executor=memory.execute_task)
+
+    async def attempt(retry_count: int) -> dict:
+        await pool.execute(
+            "UPDATE async_operations SET status = 'processing', worker_id = 'kb-worker', claimed_at = now() "
+            "WHERE operation_id = $1",
+            uuid.UUID(child["operation_id"]),
+        )
+        await poller.execute_task(
+            ClaimedTask(
+                operation_id=child["operation_id"], task_dict={**child, "_retry_count": retry_count}, schema=None
+            )
+        )
+        assert await poller.wait_for_active_tasks(timeout=30.0)
+        row = await pool.fetchrow(
+            "SELECT status, retry_count, result_metadata FROM async_operations WHERE operation_id = $1",
+            uuid.UUID(child["operation_id"]),
+        )
+        meta = row["result_metadata"]
+        return {**dict(row), "result_metadata": json.loads(meta) if isinstance(meta, str) else meta}
+
+    # On its last retry, too: a rate limit is "not now", not a failure, so nothing is used up or lost.
+    row = await attempt(retry_count=3)
+    assert row["status"] == "pending" and (row["retry_count"] or 0) == 0, row
+    assert row["result_metadata"]["rate_limit_defers"] == 1
+    assert {d.status for d in (await service.store.get_documents(kb, [i["document_id"] for i in items])).values()} == {
+        "pending"
+    }
+    assert (await attempt(retry_count=0))["result_metadata"]["rate_limit_defers"] == 2  # counted, and backing off
+
+    # Anything else still uses up a retry, as before.
+    async def broken(_items):
+        raise UpstreamHTTPError(500, "Internal Server Error", {}, "http://gateway/v1/embeddings")
+
+    monkeypatch.setattr(fake_embedder, "embed_documents", broken)
+    row = await attempt(retry_count=0)
+    assert row["status"] == "pending" and row["retry_count"] == 1, row

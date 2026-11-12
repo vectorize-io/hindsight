@@ -227,3 +227,29 @@ async def test_a_text_only_embedder_ingests_pdfs_from_their_text_layer(api_clien
     assert all(i.modality == "text" for call in fake_embedder.calls for i in call)
     described = (await api_client.get(f"{KB}/config")).json()["media_types"]
     assert described == ["document", "text"]
+
+
+async def test_remote_embedder_requests_in_flight_are_capped_across_callers(monkeypatch):
+    import asyncio
+
+    from hindsight_api.config import clear_config_cache
+    from hindsight_api.knowledge import embedders
+
+    monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT", "3")
+    clear_config_cache()
+    try:
+        now = peak = 0
+
+        async def one() -> None:
+            nonlocal now, peak
+            async with embedders._in_flight():
+                now += 1
+                peak = max(peak, now)
+                await asyncio.sleep(0.01)
+                now -= 1
+
+        await asyncio.gather(*(one() for _ in range(20)))
+        assert peak == 3
+    finally:
+        monkeypatch.delenv("HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT")
+        clear_config_cache()

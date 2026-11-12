@@ -98,3 +98,25 @@ def test_a_cycle_in_the_chain_terminates():
     a.__cause__ = b
     b.__cause__ = a
     assert is_store_backpressure(a) is False
+
+
+# --- an upstream's 429 -----------------------------------------------------------------------
+
+
+def test_an_upstream_429_is_recognised_through_wrapping_and_nothing_else_is():
+    from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
+    from hindsight_api.worker.backpressure import is_upstream_rate_limit
+
+    def raised(status: int) -> BaseException:
+        try:
+            try:
+                raise UpstreamHTTPError(status, "busy", {}, "http://gateway/v1/embeddings")
+            except Exception as inner:
+                raise RuntimeError("embed round failed") from inner
+        except Exception as outer:
+            return outer
+
+    assert is_upstream_rate_limit(raised(429))
+    assert not is_upstream_rate_limit(raised(500))
+    assert not is_upstream_rate_limit(raised(400))
+    assert not is_upstream_rate_limit(ValueError("429 in a message is not a status"))

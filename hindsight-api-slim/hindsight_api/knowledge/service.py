@@ -1302,8 +1302,13 @@ class KnowledgeService:
             pending = [d for d in docs if d.work.document_id not in committed]
             for d in pending:
                 await self._delete_keys(d.media_keys)
-            status: DocumentStatus = "pending" if retries_left else "failed"
-            note = f"retrying after: {exc!r}" if retries_left else repr(exc)
+            # An embedder still rate-limiting is deferred by the worker, not failed (worker/backpressure.py),
+            # so its documents stay on their way whatever the retries left.
+            from ..worker.backpressure import is_upstream_rate_limit
+
+            on_its_way = retries_left or is_upstream_rate_limit(exc)
+            status: DocumentStatus = "pending" if on_its_way else "failed"
+            note = f"retrying after: {exc!r}" if on_its_way else repr(exc)
             await self.store.set_statuses(
                 bank_id, [StatusUpdate(d.work.document_id, status, note[:2000], d.work.storage_key) for d in pending]
             )

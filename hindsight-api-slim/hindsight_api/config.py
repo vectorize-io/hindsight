@@ -977,6 +977,7 @@ ENV_KNOWLEDGE_EMBEDDINGS_BASE_URL = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BASE_URL
 ENV_KNOWLEDGE_EMBEDDINGS_MODALITIES = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODALITIES"
 ENV_KNOWLEDGE_EMBEDDINGS_DEVICE = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_DEVICE"
 ENV_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE"
+ENV_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT"
 # Media types (document, image, audio, video, text) this server refuses to ingest, comma-separated,
 # whatever its embedder could embed: e.g. "video,audio" to skip the cost of decoding clips.
 ENV_KNOWLEDGE_DISABLED_MEDIA_TYPES = "HINDSIGHT_API_KNOWLEDGE_DISABLED_MEDIA_TYPES"
@@ -2026,6 +2027,11 @@ DEFAULT_KNOWLEDGE_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-2"
 DEFAULT_KNOWLEDGE_EMBEDDINGS_VOYAGE_MODEL = "voyage-multimodal-3.5"
 DEFAULT_KNOWLEDGE_EMBEDDINGS_COHERE_MODEL = "embed-v4.0"
 DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE = 32  # 8 left a GPU embedder idle between requests; 64 ran fine on dev
+# Requests to a remote knowledge embedder in flight at once from this process, across every ingest
+# batch and search. Each batch already caps its own, but a worker runs many batches, and their sum is
+# what the embedder (and any proxy in front of it) sees: past what it takes, it answers 429 and the
+# requests only come back later. 0 removes the cap.
+DEFAULT_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT = 16
 DEFAULT_KNOWLEDGE_IMAGE_TOKENS = 280  # EmbeddingGemma 2 vision token budget per image (70..1120)
 DEFAULT_KNOWLEDGE_MAX_FILE_MB = 500
 DEFAULT_KNOWLEDGE_MAX_MEDIA_SECONDS = 7200  # 2h of audio/video per file
@@ -4300,6 +4306,7 @@ class HindsightConfig:
     knowledge_embeddings_modalities: str = "text,image"  # openai provider: what the remote model embeds
     knowledge_embeddings_device: str | None = None  # None: auto (cuda, mps, cpu)
     knowledge_embeddings_batch_size: int = DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE
+    knowledge_embeddings_max_in_flight: int = DEFAULT_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT
     knowledge_disabled_media_types: frozenset[str] = frozenset()
     #: The "text" knowledge provider's own embeddings config (HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_*),
     #: or None to use the memory banks' embedder.
@@ -5789,6 +5796,9 @@ class HindsightConfig:
             knowledge_embeddings_modalities=os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_MODALITIES, "text,image").lower(),
             knowledge_embeddings_batch_size=int(
                 os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE, str(DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE))
+            ),
+            knowledge_embeddings_max_in_flight=int(
+                os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT, str(DEFAULT_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT))
             ),
             knowledge_image_tokens=int(os.getenv(ENV_KNOWLEDGE_IMAGE_TOKENS, str(DEFAULT_KNOWLEDGE_IMAGE_TOKENS))),
             knowledge_disabled_media_types=_parse_knowledge_media_types(os.getenv(ENV_KNOWLEDGE_DISABLED_MEDIA_TYPES)),
