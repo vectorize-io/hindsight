@@ -1092,8 +1092,10 @@ _POOR_TEXT_QUALITY = 0.5
 _POOR_TEXT_WEIGHT = 0.3
 #: Each passage gains this share of its document's best candidate score: the right PDF first, then the
 #: page. +0.4 nDCG@10 over 8 ViDoRe V3 tasks, +1.0 on physics (PDF_GEMMA.md round 7; flat for 0.5-0.7).
-#: 0.75 with sentence vectors: +0.1 on ViDoRe hr and computer_science over 0.5 (Gemini Embedding 2).
-DOCUMENT_PRIOR = 0.75
+#: 0.75 with sentence vectors: +0.1 on ViDoRe hr and computer_science over 0.5 (Gemini Embedding 2). 1.0, the
+#: page and its document's best counting equally, ties 0.75 on hr for both EmbeddingGemma 2 and Gemini, so
+#: it is the plain average with nothing left to tune per model.
+DOCUMENT_PRIOR = 1.0
 
 
 def text_quality(text: str | None) -> float:

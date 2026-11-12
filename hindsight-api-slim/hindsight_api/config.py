@@ -2034,8 +2034,10 @@ DEFAULT_KNOWLEDGE_AUDIO_WINDOW_SECONDS = 60
 DEFAULT_KNOWLEDGE_VIDEO_WINDOW_SECONDS = 30
 DEFAULT_KNOWLEDGE_MEDIA_OVERLAP_SECONDS = 5
 DEFAULT_KNOWLEDGE_PDF_PAGE_PIXELS = 1536  # Longest side of a rendered PDF page
-# A PDF page's score = (1 - w) * image score + w * text-layer score (PDF_GEMMA.md: 0.6 best on ViDoRe V3)
-DEFAULT_KNOWLEDGE_PDF_TEXT_WEIGHT = 0.6
+# A PDF page's score = (1 - w) * image score + w * best text score (its chunks, sentences, page text).
+# 0.6 was best on ViDoRe V3 before sentence vectors (PDF_GEMMA.md). With them, ViDoRe hr peaks at 0.7-0.8 on
+# both EmbeddingGemma 2 and Gemini Embedding 2 and is flat over 0.6-0.8: one value that holds across models.
+DEFAULT_KNOWLEDGE_PDF_TEXT_WEIGHT = 0.7
 # Three sharper horizontal band crops per PDF page as extra vectors: +0.4 nDCG@10 for half the ingest speed.
 DEFAULT_KNOWLEDGE_PDF_BANDS = False
 # Keyword match weight, fused only for documents in the query's language (PDF_GEMMA.md: 0.2 best).
