@@ -18,11 +18,11 @@ OpenBot memory is not persistent in the same way. It lives inside a thread, and 
 
 ## TL;DR
 
-- Connect an OpenBot agent to a Hindsight **bank** over MCP, by adding one URL MCP server
+- Hindsight is now a connectable **App** in OpenBot's Apps marketplace, or you can add it as a URL MCP server by hand
 - Point an agent at a bank and it gets `recall`, `retain`, `sync_retain` and `reflect`, plus mental-model and document tools
 - Memory outlives the thread, survives context compaction, and survives restarts
 - Every agent pointed at the **same bank reads the same memory**, so what Codex learns, Claude knows
-- Setup is a URL and a header
+- Setup is a click and a sign-in from the marketplace, or a URL and a header by hand
 - Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io/signup) or a self-hosted server
 
 ---
@@ -57,7 +57,11 @@ Two things are worth separating here. The MCP connection is a **capability**: yo
 
 ## Set it up in two minutes
 
-In OpenBot, open the **Local** server's settings → **MCP** → **Connect to a custom MCP**, pick **Streamable HTTP**, and enter the server URL and an `Authorization` header:
+**Update, November 2026.** Hindsight now ships as a connectable App in OpenBot's Apps marketplace, which did not exist when this post went up. Open **Apps**, find **Hindsight**, and select **Connect**. You are not asked for a URL. Sign in to Hindsight Cloud in the browser, or choose **Use an API key instead** and paste a key. Then enable the app for the agents that should share the memory. There is a walkthrough of the launch in [Hindsight Is Now an App in OpenBot](/blog/2026/11/12/hindsight-openbot-app).
+
+One difference worth knowing: the listing connects to Hindsight's **multi-bank** address, so agents name a bank on each call rather than having it fixed by the URL. Tell each agent which bank to use, or it falls back to one called `default`.
+
+To pin a connection to exactly one bank, add it by hand instead. In OpenBot, open the **Local** server's settings → **MCP** → **Connect to a custom MCP**, pick **Streamable HTTP**, and enter the server URL and an `Authorization` header:
 
 ```
 URL:    https://api.hindsight.vectorize.io/mcp/<bank>/
@@ -116,7 +120,9 @@ The `<bank>` segment of the URL is the scope, and it is the main design decision
 - **One bank per team** suits context that outlives any single project, like review standards or release process.
 - **One bank per agent** is available if you want isolation, but it gives up the shared layer, which is the reason to run this at all.
 
-Because the bank is part of the URL, each connection is scoped to exactly one bank, and agents never have to pass a `bank_id`. Changing the scope means changing the server entry, not a setting buried inside the agent.
+When you add the server by hand, the bank is part of the URL, so each connection is scoped to exactly one bank and agents never have to pass a `bank_id`. Changing the scope means changing the server entry, not a setting buried inside the agent.
+
+The marketplace App works the other way round: one connection reaches every bank in the account, and the agent names the bank per call. That is more flexible and less safe, because an agent that names no bank quietly writes to `default` instead of the bank you meant.
 
 ---
 
@@ -145,7 +151,7 @@ The real fix is upstream. There is an open feature request ([#3682](https://gith
 ## Next steps
 
 - **[Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io/signup)** and generate a key, which takes about a minute
-- Add the Hindsight MCP URL in OpenBot's Local server settings (**MCP → Connect to a custom MCP**)
+- Install Hindsight from OpenBot's **Apps** marketplace, or add the MCP URL by hand in the Local server settings (**MCP → Connect to a custom MCP**)
 - Enable the Hindsight Memory skill on the agents you care about
 - Read the [OpenBot integration reference](https://hindsight.vectorize.io/sdks/integrations/openbot) for the full tool list and self-hosting detail
 - Point two different agents at one bank and run the walkthrough above

@@ -40,18 +40,24 @@ Two things follow:
 
 ### Via the OpenBot marketplace (recommended)
 
-Open **Apps** in OpenBot, find **Hindsight**, and click **Connect**. You'll be asked for two values:
+Open the marketplace from the storefront button at the bottom of OpenBot's **left rail** (it is not in the main navigation), then open **Apps**, find **Hindsight**, and click **Connect** ([listing on the web](https://openbot.run/plugins/hindsight)). You are not asked for a URL: the listing is pinned to Hindsight Cloud's multi-bank address, `https://api.hindsight.vectorize.io/mcp`. Choose how to authenticate:
 
-| Field   | Value                                                               |
-| ------- | ------------------------------------------------------------------- |
-| MCP URL | `https://api.hindsight.vectorize.io/mcp/<bank>/` (replace `<bank>`) |
-| API key | Your Hindsight Cloud API key (`hsk_…`)                              |
+| Option          | What happens                                                                                                                 |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Sign in**     | Sign in to Hindsight Cloud in the browser and pick the organization OpenBot may use. An Owner or Admin has to approve it.      |
+| **Use an API key instead** | Paste a key (`hsk_…`) from the [Connect page](https://ui.hindsight.vectorize.io/connect). OpenBot stores it encrypted. |
 
-Enable the app for the agents that should share the memory.
+Then enable the app for the agents that should share the memory.
+
+:::note Banks work differently on this path
+Because the listing connects to the **multi-bank** address, agents also get `list_banks`, `create_bank` and `get_bank_stats`, and every memory tool takes an optional `bank_id`. Tell each agent which bank to use, in its instructions or in the task. An agent that names no bank gets one called `default`, created on first use, and memories there are not visible from other banks.
+
+If you want a connection locked to a single bank, with no `bank_id` to pass and no way to reach another bank, add it manually instead.
+:::
 
 ### Add it manually as a custom MCP server
 
-You can wire Hindsight up today without the marketplace listing. In OpenBot's **server settings**, add a URL MCP server:
+Use this when you want one connection scoped to exactly one bank, or when you are self-hosting. In OpenBot's **server settings**, add a URL MCP server:
 
 - **URL**: `https://api.hindsight.vectorize.io/mcp/<bank>/`
 - **Header**: `Authorization: Bearer hsk_…`
@@ -70,10 +76,14 @@ Then use `http://localhost:8888/mcp/<bank>/` as the MCP URL. A local server with
 
 ## Choosing a bank
 
-The bank is part of the MCP URL (`/mcp/<bank>/`), so each connection is scoped to exactly one bank — agents never have to pass a `bank_id`.
+How the bank is chosen depends on which path you used above.
+
+**Manual setup.** The bank is part of the MCP URL (`/mcp/<bank>/`), so each connection is scoped to exactly one bank — agents never have to pass a `bank_id`.
 
 - **Team memory** — give every agent the same URL (e.g. `/mcp/team/`).
 - **Per-agent memory** — give each agent its own URL (e.g. `/mcp/research-bot/`, `/mcp/ops-bot/`).
+
+**Marketplace listing.** The connection reaches every bank in the account, and the agent names the bank on each call. Put the bank in the agent's instructions, otherwise it falls back to `default`.
 
 See the [MCP server reference](/developer/mcp-server) for the full tool list and bank-selection rules.
 
