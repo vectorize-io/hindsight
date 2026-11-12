@@ -185,6 +185,15 @@ async def _seed_bank(conn: asyncpg.Connection, bank_id: str) -> list[uuid.UUID]:
             "(bank_id, document_id, idx, modality, text, embedding) VALUES ($1, 'kb-doc', 0, 'text', 't', ",
         ),
         ("kb_passage_vectors", "(bank_id, document_id, idx, role, n, embedding) VALUES ($1, 'kb-doc', 0, 'unit', 0, "),
+        # The pieces of a document too big to ingest in one go, staged until it commits.
+        (
+            "kb_staged_passages",
+            "(bank_id, document_id, idx, modality, text, embedding) VALUES ($1, 'kb-doc', 0, 'text', 't', ",
+        ),
+        (
+            "kb_staged_passage_vectors",
+            "(bank_id, document_id, idx, role, n, embedding) VALUES ($1, 'kb-doc', 0, 'unit', 0, ",
+        ),
     ):
         width = await conn.fetchval(
             "SELECT atttypmod FROM pg_attribute WHERE attrelid = $1::regclass AND attname = 'embedding'", table
