@@ -388,14 +388,24 @@ export function Constellation({
     }
     const clusterOrder = [...clusterMembers.keys()];
     const clusterCentroid = new Map<string, { cx: number; cy: number; r: number }>();
-    const clusterRingR = Math.sqrt(Math.max(count, 1)) * 60;
+    // Clusters sit along an Archimedean spiral (r = b·θ), each one a blob-width further
+    // along the curve than the previous, so consecutive clusters stay neighbours (callers
+    // order related clusters together) and many clusters pack into a disc. The turns are
+    // spaced by the largest blob so they never overlap. (Previously one ring of radius
+    // √n·60: with dozens of clusters that was a thin necklace with an empty middle.)
+    const blobRadius = (k: string) => 22 + Math.sqrt(clusterMembers.get(k)!.length) * 18;
+    const CLUSTER_GAP = 30;
+    const maxBlobR = clusterOrder.reduce((m, k) => Math.max(m, blobRadius(k)), 0);
+    const spiralB = (2 * maxBlobR + CLUSTER_GAP) / (2 * Math.PI);
+    let theta = clusterOrder.length > 1 ? Math.PI : 0;
+    let prevR = 0;
     clusterOrder.forEach((k, ci) => {
-      const a = (ci / Math.max(clusterOrder.length, 1)) * Math.PI * 2;
-      const members = clusterMembers.get(k)!;
-      const blobR = 22 + Math.sqrt(members.length) * 18;
+      const blobR = blobRadius(k);
+      if (ci > 0) theta += (prevR + blobR + CLUSTER_GAP) / Math.max(spiralB * theta, 1);
+      prevR = blobR;
       clusterCentroid.set(k, {
-        cx: Math.cos(a) * clusterRingR,
-        cy: Math.sin(a) * clusterRingR,
+        cx: Math.cos(theta) * spiralB * theta,
+        cy: Math.sin(theta) * spiralB * theta,
         r: blobR,
       });
     });
@@ -524,6 +534,8 @@ export function Constellation({
       b: number;
       color: string;
       type: string;
+      /** Joins two different clusters: drawn as a visible bridge, not a faint thread. */
+      bridge: boolean;
     }> = [];
     const byNode = new Map<number, number[]>();
 
@@ -540,7 +552,10 @@ export function Constellation({
         DEFAULT_NODE_COLOR;
 
       const idx = linksIdx.length;
-      linksIdx.push({ a: ai, b: bi, color, type: link.type || "semantic" });
+      const ka = clusterKeys?.[ai];
+      const kb = clusterKeys?.[bi];
+      const bridge = ka != null && kb != null && ka !== kb;
+      linksIdx.push({ a: ai, b: bi, color, type: link.type || "semantic", bridge });
 
       if (!byNode.has(ai)) byNode.set(ai, []);
       if (!byNode.has(bi)) byNode.set(bi, []);
@@ -705,7 +720,9 @@ export function Constellation({
       // without flickering (one global sine, not per-link — stays calm).
       const shimmer = 1 + 0.18 * Math.sin(time * 0.6);
       const baseAlpha = (0.06 + Math.min(zoom * 0.04, 0.1)) * shimmer;
-      ctx.lineWidth = 0.4;
+      // Links between clusters carry the structure (which groups relate), so they stay
+      // readable at rest; links inside a cluster are texture and stay faint.
+      const bridgeAlpha = 0.35 * shimmer;
 
       for (const link of linksWithIndices) {
         if (linksDrawn >= maxLinks) break;
@@ -723,7 +740,8 @@ export function Constellation({
           continue;
 
         ctx.strokeStyle = link.color;
-        ctx.globalAlpha = baseAlpha;
+        ctx.globalAlpha = link.bridge ? bridgeAlpha : baseAlpha;
+        ctx.lineWidth = link.bridge ? 1.2 : 0.4;
 
         const midX = (ax + bx) / 2 + (by - ay) * 0.08;
         const midY = (ay + by) / 2 - (bx - ax) * 0.08;
@@ -766,9 +784,18 @@ export function Constellation({
           my = cy + cluster.wcy * zoom;
         }
 
-        const pad = 26;
+        // Padding scales with zoom (20 world units, 4–26px on screen): a fixed 26px pad
+        // swelled every blob far past its neighbours once a many-cluster view was zoomed
+        // out to fit, and the spiral's gaps vanished under overlapping hulls.
+        const pad = Math.max(4, Math.min(26, 20 * zoom));
         let rad = pad;
-        ctx.fillStyle = hexToRgba(cluster.color, isDark ? 0.1 : 0.08);
+        // Soft glow: denser at the cluster's centre, fading toward its edge.
+        let reach = pad;
+        for (const [x, y] of pts) reach = Math.max(reach, Math.hypot(x - mx, y - my) + pad);
+        const glow = ctx.createRadialGradient(mx, my, 0, mx, my, reach);
+        glow.addColorStop(0, hexToRgba(cluster.color, isDark ? 0.2 : 0.16));
+        glow.addColorStop(1, hexToRgba(cluster.color, isDark ? 0.05 : 0.04));
+        ctx.fillStyle = glow;
         ctx.strokeStyle = hexToRgba(cluster.color, 0.35);
         ctx.lineWidth = 1.25;
         ctx.beginPath();
@@ -778,17 +805,25 @@ export function Constellation({
           for (const [x, y] of pts) rad = Math.max(rad, Math.hypot(x - mx, y - my) + pad);
           ctx.arc(mx, my, rad, 0, Math.PI * 2);
         } else {
-          const hull = convexHull(pts);
-          for (let j = 0; j < hull.length; j++) {
-            // Push each vertex outward from the centroid for a rounded, padded blob.
-            const [hx, hy] = hull[j];
+          // Push each hull vertex outward from the centroid, then run a closed curve
+          // through the edge midpoints with the vertices as control points: a smooth,
+          // rounded blob instead of a straight-edged polygon.
+          const ring = convexHull(pts).map(([hx, hy]) => {
             const dx = hx - mx;
             const dy = hy - my;
             const d = Math.hypot(dx, dy) || 1;
-            const ex = hx + (dx / d) * pad;
-            const ey = hy + (dy / d) * pad;
-            if (j === 0) ctx.moveTo(ex, ey);
-            else ctx.lineTo(ex, ey);
+            return [hx + (dx / d) * pad, hy + (dy / d) * pad] as [number, number];
+          });
+          const mid = (j: number): [number, number] => {
+            const [ax, ay] = ring[j % ring.length];
+            const [bx, by] = ring[(j + 1) % ring.length];
+            return [(ax + bx) / 2, (ay + by) / 2];
+          };
+          const [sx0, sy0] = mid(ring.length - 1);
+          ctx.moveTo(sx0, sy0);
+          for (let j = 0; j < ring.length; j++) {
+            const [qx, qy] = mid(j);
+            ctx.quadraticCurveTo(ring[j][0], ring[j][1], qx, qy);
           }
           ctx.closePath();
         }
@@ -1163,11 +1198,21 @@ export function Constellation({
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
+      const s = stateRef.current;
       const factor = e.deltaY > 0 ? 0.9 : 1.1;
-      stateRef.current.targetZoom = Math.max(
-        0.03,
-        Math.min(8, stateRef.current.targetZoom * factor)
-      );
+      const zoom = Math.max(0.03, Math.min(8, s.targetZoom * factor));
+      // Keep the world point under the cursor fixed: screen = W/2 + pan + world·zoom.
+      // Applied at once rather than eased — easing zoom and pan separately lets the
+      // point slide away mid-animation. (Previously only the zoom changed, so the view
+      // always zoomed about the centre, not where the cursor was.)
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left - s.W / 2;
+      const my = e.clientY - rect.top - s.H / 2;
+      const wx = (mx - s.panX) / s.zoom;
+      const wy = (my - s.panY) / s.zoom;
+      s.zoom = s.targetZoom = zoom;
+      s.panX = s.targetPanX = mx - wx * zoom;
+      s.panY = s.targetPanY = my - wy * zoom;
     };
 
     const updateTooltip = (mx: number, my: number) => {
@@ -1495,8 +1540,10 @@ export function Constellation({
       parts.push(`<rect width="${W}" height="${H}" fill="url(#hs-glow)"/>`);
 
       // --- Links: exactly as the UI canvas draws them in the no-hover state
-      // (thin 0.4px colored quadratic curves at a faint, zoom-derived alpha) ---
+      // (thin 0.4px colored quadratic curves at a faint, zoom-derived alpha; links
+      // between clusters as 1.2px bridges at 0.35) ---
       const linkParts: string[] = [];
+      const bridgeParts: string[] = [];
       const maxLinks = 6000;
       let drawn = 0;
       for (const link of linksWithIndices) {
@@ -1507,7 +1554,7 @@ export function Constellation({
         const byp = sy[link.b];
         const midX = (axp + bxp) / 2 + (byp - ayp) * 0.08;
         const midY = (ayp + byp) / 2 - (bxp - axp) * 0.08;
-        linkParts.push(
+        (link.bridge ? bridgeParts : linkParts).push(
           `<path d="M${f(axp)} ${f(ayp)} Q${f(midX)} ${f(midY)} ${f(bxp)} ${f(byp)}" stroke="${link.color}"/>`
         );
         drawn++;
@@ -1516,6 +1563,7 @@ export function Constellation({
       parts.push(
         `<g fill="none" stroke-width="0.4" opacity="${a(linkAlpha)}">${linkParts.join("")}</g>`
       );
+      parts.push(`<g fill="none" stroke-width="1.2" opacity="0.35">${bridgeParts.join("")}</g>`);
 
       // --- Nodes: exactly as the UI canvas draws them (solid heat dot, opacity
       // by link count, plus a translucent halo for hubs) — minus hover effects ---

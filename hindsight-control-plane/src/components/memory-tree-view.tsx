@@ -99,6 +99,9 @@ export function treeConstellation(files: MemoryTreeFile[]): GraphData {
   const hub = new Map(topics.map((f) => [f.path, f.observations[0].id]));
   const nodes: GraphData["nodes"] = [];
   const links: GraphData["links"] = [];
+  // Related lists are not symmetric (each topic keeps its own top few), so dedupe by pair
+  // rather than keeping only the lexically-first side, which dropped one-sided links.
+  const bridged = new Set<string>();
   for (const f of topics) {
     const center = f.observations[0].id;
     for (const o of f.observations) {
@@ -107,8 +110,10 @@ export function treeConstellation(files: MemoryTreeFile[]): GraphData {
     }
     for (const r of f.related) {
       const other = hub.get(r);
-      // Each pair once: related links are symmetric in spirit, listed from both ends.
-      if (other && f.path < r) links.push({ source: center, target: other, type: "related" });
+      const pair = [f.path, r].sort().join("|");
+      if (!other || bridged.has(pair)) continue;
+      bridged.add(pair);
+      links.push({ source: center, target: other, type: "related", color: "#94a3b8" });
     }
   }
   return { nodes, links };

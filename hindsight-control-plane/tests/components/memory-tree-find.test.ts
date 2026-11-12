@@ -41,7 +41,8 @@ describe("memory tree find", () => {
 
 describe("memory tree constellation", () => {
   it("makes one star per observation, tied to its topic's hub and bridged to related topics", () => {
-    const a = { ...topic("gemma/vllm.md", ["a0", "a1"]), related: ["postgres.md"] };
+    // Only one side lists the relation: the bridge must still be drawn.
+    const a = topic("gemma/vllm.md", ["a0", "a1"]);
     const c = { ...topic("postgres.md", ["c0"]), related: ["gemma/vllm.md"] };
     const g = treeConstellation([a, c, { ...topic("README.md", ["r"]), kind: "readme" }]);
     expect(g.nodes.map((n) => [n.id, n.group])).toEqual([
@@ -51,7 +52,7 @@ describe("memory tree constellation", () => {
     ]);
     expect(g.links.map((l) => [l.source, l.target, l.type])).toEqual([
       ["gemma/vllm.md-0", "gemma/vllm.md-1", "topic"],
-      ["gemma/vllm.md-0", "postgres.md-0", "related"],
+      ["postgres.md-0", "gemma/vllm.md-0", "related"],
     ]);
   });
 });
