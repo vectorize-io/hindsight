@@ -1337,13 +1337,13 @@ class OpenAICompatibleLLM(LLMInterface):
                     },
                 }
             else:
-                # Soft enforcement: json_object, with the schema in the prompt. Or, with
-                # ENV_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA, the backend enforces the schema
-                # itself and the prompt carries none: Gemma 4 on vLLM, decoding under a
-                # grammar with that schema text in front of it, answered retain with an empty
-                # or schema-shaped reply 38 times in 120 and with neither 2 in 120.
+                # Soft enforcement: the schema in the prompt, plus json_object, or, with
+                # ENV_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA, the schema enforced by the backend.
+                # The prompt keeps the schema either way: a grammar forces only the required
+                # fields, and without the text Gemma 4 never wrote the optional ones it is not
+                # told about (event dates on 0 of 390 facts, 252 of 402 with the text).
                 enforce = schema is not None and self._supports_json_mode(scope) and self._enforces_schema()
-                if schema is not None and not enforce:
+                if schema is not None:
                     schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
 
                     if call_params["messages"] and call_params["messages"][0].get("role") == "system":

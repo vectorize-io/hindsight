@@ -272,7 +272,7 @@ async def test_openai_compatible_json_mode_picks_soft_path(provider, override, e
 @pytest.mark.parametrize("enforce,expected_type", [(False, "json_object"), (True, "json_schema")])
 @pytest.mark.asyncio
 async def test_openai_compatible_soft_path_can_enforce_the_schema(enforce, expected_type):
-    """With enforcement on, the soft path sends the schema as-is (not strict) instead of json_object, and not in the prompt."""
+    """With enforcement on, the soft path sends the schema as-is (not strict) instead of json_object, and in the prompt."""
     from hindsight_api.config import _get_raw_config
 
     cfg = dataclasses.replace(_get_raw_config(), llm_openai_compatible_enforce_schema=enforce)
@@ -286,9 +286,8 @@ async def test_openai_compatible_soft_path_can_enforce_the_schema(enforce, expec
         await llm.call(messages=[{"role": "user", "content": "Did it work?"}], response_format=_Resp, max_retries=0)
     rf = create.call_args.kwargs["response_format"]
     assert rf["type"] == expected_type
-    # Enforced, the schema is the backend's job and stays out of the prompt; otherwise the prompt carries it.
-    in_prompt = "valid JSON matching this schema" in create.call_args.kwargs["messages"][0]["content"]
-    assert in_prompt is not enforce
+    # The prompt carries the schema either way: a grammar forces only the required fields.
+    assert "valid JSON matching this schema" in create.call_args.kwargs["messages"][0]["content"]
     if enforce:
         assert rf["json_schema"]["strict"] is False
         assert rf["json_schema"]["schema"] == provider_json_schema(_Resp)
@@ -298,7 +297,7 @@ async def test_openai_compatible_soft_path_can_enforce_the_schema(enforce, expec
     "scope,expected_type,schema_in_prompt",
     [
         ("retain_extract_facts", None, True),  # retain writes freely, schema in the prompt
-        ("consolidation", "json_schema", False),  # everything else stays enforced
+        ("consolidation", "json_schema", True),  # everything else stays enforced
     ],
 )
 @pytest.mark.asyncio
