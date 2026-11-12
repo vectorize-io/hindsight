@@ -10,7 +10,7 @@ hide_table_of_contents: true
 
 ![Hindsight is now a connectable app in OpenBot's Apps marketplace](/img/blog/hindsight-openbot-app.png)
 
-Hindsight is now a connectable **App in OpenBot's Apps marketplace**. Open **Apps**, find Hindsight, select **Connect**, and every agent on your machine can share one long-term memory.
+Hindsight is now a connectable **App in OpenBot's Apps marketplace**. Open the marketplace from the storefront button at the bottom of OpenBot's left rail, find Hindsight, select **Connect**, and every agent on your machine can share one long-term memory.
 
 That last part is the whole point, so here is the problem it solves.
 
@@ -62,7 +62,11 @@ What your agents retain goes to your own Hindsight Cloud account.
 
 ## How to connect it
 
-Open **Apps** in OpenBot, find **Hindsight**, and select **Connect**. The listing is also browsable on the web at [openbot.run/plugins/hindsight](https://openbot.run/plugins/hindsight).
+The marketplace is not in the main navigation. It opens from the storefront button at the **bottom of the left rail**, under your servers and above the help button:
+
+<img src="/img/blog/openbot-marketplace-button.png" alt="OpenBot's marketplace button, a storefront icon in the bottom left rail" width="44" height="44" />
+
+Click it, open **Apps**, find **Hindsight**, and select **Connect**. The listing is also browsable on the web at [openbot.run/plugins/hindsight](https://openbot.run/plugins/hindsight).
 
 You have two ways in, and neither asks you for a URL.
 

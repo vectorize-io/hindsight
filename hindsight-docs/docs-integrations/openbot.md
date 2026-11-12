@@ -40,7 +40,7 @@ Two things follow:
 
 ### Via the OpenBot marketplace (recommended)
 
-Open **Apps** in OpenBot, find **Hindsight**, and click **Connect** ([listing on the web](https://openbot.run/plugins/hindsight)). You are not asked for a URL: the listing is pinned to Hindsight Cloud's multi-bank address, `https://api.hindsight.vectorize.io/mcp`. Choose how to authenticate:
+Open the marketplace from the storefront button at the bottom of OpenBot's **left rail** (it is not in the main navigation), then open **Apps**, find **Hindsight**, and click **Connect** ([listing on the web](https://openbot.run/plugins/hindsight)). You are not asked for a URL: the listing is pinned to Hindsight Cloud's multi-bank address, `https://api.hindsight.vectorize.io/mcp`. Choose how to authenticate:
 
 | Option          | What happens                                                                                                                 |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
