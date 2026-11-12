@@ -1072,7 +1072,13 @@ def is_reference_page(text: str | None) -> bool:
 
 def page_text_weight(text: str | None, text_weight: float) -> float:
     """The text side's weight for one page: lower when its text layer is junk (round 7: +0.3 nDCG@10)."""
-    return _POOR_TEXT_WEIGHT if text_quality(text) < _POOR_TEXT_QUALITY else text_weight
+    return page_text_weight_for_quality(text_quality(text), text_weight)
+
+
+def page_text_weight_for_quality(quality: float, text_weight: float) -> float:
+    """``page_text_weight`` from a page's ``text_quality``, for a store that works it out once, when the
+    page is written, rather than with a regex over every candidate's text at search time."""
+    return _POOR_TEXT_WEIGHT if quality < _POOR_TEXT_QUALITY else text_weight
 
 
 def with_document_prior(document_ids: list[str], scores: list[float]) -> list[float]:
