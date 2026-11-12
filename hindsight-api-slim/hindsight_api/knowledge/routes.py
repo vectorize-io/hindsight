@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import get_config
 from ..engine.aiohttp_session import UpstreamHTTPError
+from ..engine.memories.base import StoreWriteUnavailable
 from ..extensions.operation_validator import OperationValidationError
 from ..models import RequestContext
 from .service import (
@@ -314,6 +315,16 @@ def _content_type(upload: UploadFile) -> str:
 
 
 def _http_error(exc: Exception) -> HTTPException:
+    # A store shedding the call (indexing behind its writers) is "not now": 503 with Retry-After, as for
+    # a memory bank, not a 500 that tells a bulk ingest its request is broken. The chain is walked
+    # because the store's error usually arrives wrapped.
+    cur: BaseException | None = exc
+    seen: set[int] = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, StoreWriteUnavailable):
+            return HTTPException(status_code=503, detail=str(cur), headers={"Retry-After": str(cur.retry_after)})
+        cur = cur.__cause__ or cur.__context__
     if isinstance(exc, KnowledgeBankError):
         return HTTPException(status_code=exc.status_code, detail=str(exc))
     if isinstance(exc, OperationValidationError):

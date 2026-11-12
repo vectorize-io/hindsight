@@ -103,7 +103,7 @@ from ..metrics import get_metrics_collector
 from ..schema_context import _current_bank_id, _current_schema, get_current_schema
 from ..tracing import create_operation_span, extract_task_trace_context, inject_task_trace_context
 from ..utils import mask_network_location
-from ..worker.backpressure import RATE_LIMIT_DEFERRED_TASKS, is_upstream_rate_limit
+from ..worker.backpressure import RATE_LIMIT_DEFERRED_TASKS, is_store_backpressure, is_upstream_rate_limit
 from ..worker.exceptions import DeferOperation, RetryTaskAt, format_task_error
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
@@ -5311,6 +5311,12 @@ class MemoryEngine(MemoryEngineInterface):
                     # The embedder still rate-limiting after its own retries: not a failure, and not a
                     # retry to count. Passed up as is for the poller to defer, with its own backoff and
                     # count (worker/poller.py, worker/backpressure.RATE_LIMIT_DEFERRED_TASKS).
+                    raise
+                if task_type in RATE_LIMIT_DEFERRED_TASKS and is_store_backpressure(e):
+                    # The store shedding the write while its indexing catches up: the poller defers that
+                    # without counting a retry (worker/backpressure.py), but only if it sees it. Turned
+                    # into a counted RetryTaskAt here, a long ingest's batches used up their retries on a
+                    # backlog that clears by itself, and the poller saw it only on the last one.
                     raise
                 # exc_info, not a bare print_exc(): the traceback is the only pointer
                 # to the offending call site, and under production log volume the

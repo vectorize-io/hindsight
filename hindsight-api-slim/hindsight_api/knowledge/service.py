@@ -1331,9 +1331,9 @@ class KnowledgeService:
                 await self._delete_keys(d.media_keys)
             # An embedder still rate-limiting is deferred by the worker, not failed (worker/backpressure.py),
             # so its documents stay on their way whatever the retries left.
-            from ..worker.backpressure import is_upstream_rate_limit
+            from ..worker.backpressure import is_store_backpressure, is_upstream_rate_limit
 
-            on_its_way = retries_left or is_upstream_rate_limit(exc)
+            on_its_way = retries_left or is_upstream_rate_limit(exc) or is_store_backpressure(exc)
             status: DocumentStatus = "pending" if on_its_way else "failed"
             note = f"retrying after: {exc!r}" if on_its_way else repr(exc)
             await self.store.set_statuses(

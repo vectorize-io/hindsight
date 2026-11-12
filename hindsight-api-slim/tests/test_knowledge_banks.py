@@ -1525,3 +1525,55 @@ async def test_a_rate_limited_embedder_defers_the_batch_instead_of_failing_it(
     monkeypatch.setattr(fake_embedder, "embed_documents", broken)
     row = await attempt(retry_count=0)
     assert row["status"] == "pending" and row["retry_count"] == 1, row
+
+
+async def test_a_store_shedding_an_upload_answers_503_with_retry_after(api_client, memory, kb, monkeypatch):
+    from hindsight_api.engine.memories.base import StoreWriteUnavailable
+
+    store = get_knowledge_service(memory).store
+
+    async def shed(*_a, **_k):
+        raise StoreWriteUnavailable("fold behind: the bank's indexing is behind its writers")
+
+    monkeypatch.setattr(store, "put_documents", shed)
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "s", "text": "x"}], "async": True})
+    # "Not now", which a bulk ingest retries, rather than a 500 that says the request is broken.
+    assert r.status_code == 503 and r.headers["retry-after"] == "30", r.text
+
+
+@pytest.mark.xdist_group("worker_tests")
+async def test_a_store_shedding_a_batch_defers_it_without_using_a_retry(
+    api_client, memory, kb, fake_embedder, counted, monkeypatch
+):
+    from hindsight_api.worker import WorkerPoller
+    from hindsight_api.worker.poller import ClaimedTask
+
+    _, payloads = counted
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "b", "text": "red"}], "async": True})
+    assert r.status_code == 202, r.text
+    child = payloads[0]
+    service = get_knowledge_service(memory)
+    await service.store.set_statuses(kb, [StatusUpdate("b", "pending")])
+
+    async def shed(*_a, **_k):
+        raise RuntimeError("Write: fold behind: un-folded tail holds 15603736 bytes, over the write bound")
+
+    monkeypatch.setattr(service.store, "replace_passages", shed)
+    pool = await memory._get_pool()
+    await pool.execute(
+        "UPDATE async_operations SET status = 'processing', worker_id = 'kb-worker', claimed_at = now() "
+        "WHERE operation_id = $1",
+        uuid.UUID(child["operation_id"]),
+    )
+    poller = WorkerPoller(backend=await memory._get_backend(), worker_id="kb-worker", executor=memory.execute_task)
+    await poller.execute_task(
+        ClaimedTask(operation_id=child["operation_id"], task_dict={**child, "_retry_count": 0}, schema=None)
+    )
+    assert await poller.wait_for_active_tasks(timeout=30.0)
+    row = await pool.fetchrow(
+        "SELECT status, retry_count FROM async_operations WHERE operation_id = $1", uuid.UUID(child["operation_id"])
+    )
+    # Deferred, not retried: the backlog clears by itself, and a counted retry is how a long ingest's
+    # batches ran out of attempts while it did.
+    assert row["status"] == "pending" and (row["retry_count"] or 0) == 0, dict(row)
+    assert (await service.store.get_documents(kb, ["b"]))["b"].status == "pending"
