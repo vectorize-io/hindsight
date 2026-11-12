@@ -187,6 +187,11 @@ class KnowledgeTimeseriesResponse(BaseModel):
 class KnowledgeSearchRequest(BaseModel):
     query: str | None = Field(default=None, description="Text query.")
     query_image: str | None = Field(default=None, description="Base64 image to search with (alone or with text).")
+    query_video: str | None = Field(
+        default=None,
+        description="Base64 MP4 clip to search with. Text, image and video can be combined: they are "
+        "embedded together as one query.",
+    )
     top_k: int = Field(default=10, ge=1, le=200)
     tags: list[str] | None = None
     tags_match: Literal["any", "all"] = Field(default="any", title="Knowledge Tags Match")
@@ -641,7 +646,7 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
     @router.post(
         "/{bank_id}/search",
         response_model=KnowledgeSearchResponse,
-        summary="Search passages by meaning (text or image query) and exact text",
+        summary="Search passages by meaning (text, image or video query, alone or combined) and exact text",
         operation_id="search_knowledge_bank",
     )
     async def search(
@@ -652,6 +657,10 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
             image = base64.b64decode(body.query_image, validate=True) if body.query_image else None
         except (binascii.Error, ValueError) as exc:
             raise HTTPException(status_code=400, detail="query_image must be base64") from exc
+        try:
+            video = base64.b64decode(body.query_video, validate=True) if body.query_video else None
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="query_video must be base64") from exc
         filters = SearchFilters(
             tags=body.tags,
             tags_match=body.tags_match,
@@ -664,6 +673,7 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
                 SearchRequest(
                     query=body.query,
                     query_image=image,
+                    query_video=video,
                     top_k=body.top_k,
                     filters=filters,
                     neighbors=body.neighbors,

@@ -87,6 +87,8 @@ export interface KnowledgeSearchResult extends KnowledgePassage {
 export interface KnowledgeSearchRequest {
   query?: string;
   query_image?: string;
+  /** Base64 MP4 clip; combined with the text and the image into one query. */
+  query_video?: string;
   top_k: number;
   tags?: string[];
   tags_match?: "any" | "all";

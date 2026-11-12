@@ -11,6 +11,7 @@ from hindsight_api.config import HindsightConfig, clear_config_cache
 from hindsight_api.knowledge.embedders import (
     CohereEmbedder,
     EmbedInput,
+    OpenAIEmbedder,
     TextEmbedder,
     UnsupportedModalityError,
     VoyageEmbedder,
@@ -253,3 +254,42 @@ async def test_remote_embedder_requests_in_flight_are_capped_across_callers(monk
     finally:
         monkeypatch.delenv("HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT")
         clear_config_cache()
+
+
+# --- mixed queries -----------------------------------------------------------------------------------
+
+
+async def test_a_query_with_text_image_and_video_is_one_input_and_one_vector():
+    handler, seen = _recorder(lambda body: {"data": [{"index": 0, "embedding": [3.0, 4.0]}]})
+    async with stub_server(handler) as base_url:
+        openai = OpenAIEmbedder(
+            "m",
+            base_url=base_url + "/v1",
+            api_key=None,
+            dimensions=None,
+            modalities=frozenset({"text", "image", "video"}),
+            batch_size=8,
+        )
+        assert await openai.embed_query("red car", PNG, MP4) == [0.6, 0.8]
+        voyage = VoyageEmbedder("m", api_key="k", base_url=base_url, dimensions=None, batch_size=8)
+        await voyage.embed_query("red car", PNG, MP4)
+    (content,) = (m["content"] for m in seen[0][1]["messages"])
+    assert [c["type"] for c in content] == ["image_url", "video_url", "text"]
+    assert content[1]["video_url"]["url"].startswith("data:video/mp4;base64,")
+    assert [c["type"] for c in seen[1][1]["inputs"][0]["content"]] == ["text", "image_base64", "video_base64"]
+
+
+async def test_a_video_query_is_refused_by_a_model_without_video():
+    cohere = CohereEmbedder("m", api_key="k", base_url="http://unused", dimensions=None, batch_size=8)
+    with pytest.raises(UnsupportedModalityError):
+        await cohere.embed_query("q", None, MP4)
+    images_only = OpenAIEmbedder(
+        "m",
+        base_url="http://unused/v1",
+        api_key=None,
+        dimensions=None,
+        modalities=frozenset({"text", "image"}),
+        batch_size=8,
+    )
+    with pytest.raises(UnsupportedModalityError):
+        await images_only.embed_query(None, None, MP4)

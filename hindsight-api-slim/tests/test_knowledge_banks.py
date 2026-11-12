@@ -65,10 +65,16 @@ class FakeEmbedder(KnowledgeEmbedder):
         self.calls.append(items)
         return [self._one(i) for i in items]
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        """One vector for the whole query, as the real models give: here the sum of its parts."""
+        parts = [self._text(text)] if text else []
         if image is not None:
-            return self._one(EmbedInput(modality="image", data=image))
-        return self._norm(self._text(text or ""))
+            parts.append(self._one(EmbedInput(modality="image", data=image)))
+        if video is not None:
+            parts.append(self._one(EmbedInput(modality="video", data=video)))
+        return self._norm([sum(xs) for xs in zip(*parts)] if parts else self._text(""))
 
 
 def _png(color: tuple[int, int, int], size: tuple[int, int] = (64, 64)) -> bytes:
@@ -406,6 +412,17 @@ async def test_audio_and_video_passages_carry_their_time_ranges_and_clips(api_cl
     assert (hit["document_id"], hit["media_type"], hit["start_ms"]) == ("demo", "video", 0)
     clip = await api_client.get(hit["passage_url"])
     assert clip.status_code == 200 and clip.headers["content-type"] == "video/mp4" and len(clip.content) > 1000
+    # A clip is a query too, alone or with text and an image: all of them make one vector.
+    import base64
+
+    clip64 = base64.b64encode(_tone(3, video=True)).decode()
+    assert (await _search(api_client, kb, query_video=clip64, top_k=1))[0]["document_id"] == "demo"
+    both = await _search(
+        api_client, kb, query="video", query_image=base64.b64encode(_png((255, 0, 0))).decode(), query_video=clip64
+    )
+    assert both[0]["document_id"] == "demo"
+    bad = await api_client.post(f"{KB}/{kb}/search", json={"query_video": "not base64!"})
+    assert bad.status_code == 400 and "query_video" in bad.text
 
 
 async def test_reflect_recall_tool_returns_linked_documents_as_the_authority(api_client, memory, kb, request_context):

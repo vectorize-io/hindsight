@@ -86,8 +86,13 @@ class KnowledgeEmbedder(ABC):
         """One vector per passage, in order."""
 
     @abstractmethod
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
-        """The vector a search compares passages against."""
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        """The vector a search compares passages against. Text, an image and a video can come together:
+        they go to the model as one interleaved input and come back as one vector, the way these models
+        embed a mixed query (Gemini Embedding 2, Voyage multimodal, Cohere v4 and EmbeddingGemma 2 all
+        take one). Averaging separately embedded parts would weigh them by hand instead of by the model."""
 
 
 class LocalGemmaEmbedder(KnowledgeEmbedder):
@@ -200,13 +205,26 @@ class LocalGemmaEmbedder(KnowledgeEmbedder):
 
         return await asyncio.to_thread(run)
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
-        if image is not None:
-            inp: Any = {"image": media.open_image(image)}
-            if text:
-                inp["text"] = f"{_QUERY_PREFIX}{text} <|image|>"
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        if image is None and video is None:
+            inp: Any = f"{_QUERY_PREFIX}{text or ''}"
         else:
-            inp = f"{_QUERY_PREFIX}{text or ''}"
+            inp = {}
+            placeholders = ""
+            if image is not None:
+                inp["image"], placeholders = media.open_image(image), "<|image|>"
+            if video is not None:
+                # Picture and soundtrack, as a video passage is embedded (see _model_input).
+                inp["video"] = media.decode_video_frames(video)
+                placeholders += "<|video|>"
+                pcm = media.decode_audio_pcm(video, required=False)
+                if pcm is not None and pcm.size:
+                    inp["audio"] = {"array": pcm, "sampling_rate": media.PCM_RATE}
+                    placeholders += "<|audio|>"
+            if text:
+                inp["text"] = f"{_QUERY_PREFIX}{text} {placeholders}"
         vectors = await asyncio.to_thread(self._encode, [inp])
         return vectors[0]
 
@@ -295,7 +313,9 @@ class GeminiEmbedder(KnowledgeEmbedder):
     async def embed_documents(self, items: list[EmbedInput]) -> list[list[float]]:
         return await self._embed([self._content(item) for item in items])
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
         from google.genai import types
 
         parts = []
@@ -303,6 +323,8 @@ class GeminiEmbedder(KnowledgeEmbedder):
             parts.append(types.Part.from_text(text=f"{_QUERY_PREFIX}{text}"))
         if image is not None:
             parts.append(types.Part.from_bytes(data=image, mime_type=media.sniff_image_mime(image)))
+        if video is not None:
+            parts.append(types.Part.from_bytes(data=video, mime_type="video/mp4"))
         return (await self._embed([types.Content(parts=parts)]))[0]
 
 
@@ -503,14 +525,17 @@ class OpenAIEmbedder(_RemoteEmbedder):
         )
         return [v for v in out if v is not None]
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
-        if image is None:
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        if image is None and video is None:
             return (await self._post({"input": [f"{_QUERY_PREFIX}{text or ''}"]}, 1))[0]
-        if "image" not in self.modalities:
-            raise UnsupportedModalityError(f"{self.model} does not embed images")
-        content: list[dict[str, Any]] = [
-            {"type": "image_url", "image_url": {"url": _data_url(image, media.sniff_image_mime(image))}}
-        ]
+        _require(self, image=image, video=video)
+        content: list[dict[str, Any]] = []
+        if image is not None:
+            content.append({"type": "image_url", "image_url": {"url": _data_url(image, media.sniff_image_mime(image))}})
+        if video is not None:
+            content.append({"type": "video_url", "video_url": {"url": _data_url(video, "video/mp4")}})
         if text:
             content.append({"type": "text", "text": f"{_QUERY_PREFIX}{text}"})
         return (await self._post({"messages": [{"role": "user", "content": content}]}, 1))[0]
@@ -565,10 +590,14 @@ class VoyageEmbedder(_RemoteEmbedder):
     async def embed_documents(self, items: list[EmbedInput]) -> list[list[float]]:
         return await self._embed([self._content(item) for item in items], "document")
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
         content: list[dict[str, Any]] = [{"type": "text", "text": text}] if text else []
         if image is not None:
             content.append({"type": "image_base64", "image_base64": _data_url(image, media.sniff_image_mime(image))})
+        if video is not None:
+            content.append({"type": "video_base64", "video_base64": _data_url(video, "video/mp4")})
         return (await self._embed([content], "query"))[0]
 
 
@@ -623,7 +652,10 @@ class CohereEmbedder(_RemoteEmbedder):
     async def embed_documents(self, items: list[EmbedInput]) -> list[list[float]]:
         return await self._embed([self._input(item) for item in items], "search_document")
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        _require(self, image=image, video=video)
         content: list[dict[str, Any]] = [{"type": "text", "text": text}] if text else []
         if image is not None:
             content.append({"type": "image_url", "image_url": {"url": _data_url(image, media.sniff_image_mime(image))}})
@@ -667,9 +699,11 @@ class TextEmbedder(KnowledgeEmbedder):
         backend = await self._backend()
         return await backend.encode_documents([_titled(i.text or "", i.title) for i in items])
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
-        if image is not None:
-            raise UnsupportedModalityError("image queries need a multimodal knowledge embedder")
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        if image is not None or video is not None:
+            raise UnsupportedModalityError("image and video queries need a multimodal knowledge embedder")
         backend = await self._backend()
         return (await backend.encode_query([text or ""]))[0]
 
@@ -684,6 +718,13 @@ def _text_embedder(own: HindsightConfig | None, memory_embeddings: Embeddings) -
 
 class UnsupportedModalityError(ValueError):
     """The configured embedder cannot embed this kind of content."""
+
+
+def _require(embedder: KnowledgeEmbedder, *, image: bytes | None, video: bytes | None) -> None:
+    """Refuse a query medium the model does not embed, before any request is made."""
+    for name, data in (("image", image), ("video", video)):
+        if data is not None and name not in embedder.modalities:
+            raise UnsupportedModalityError(f"{embedder.model} does not embed {name}s")
 
 
 def create_knowledge_embedder(config: ConfigLike, memory_embeddings: Embeddings) -> KnowledgeEmbedder:

@@ -47,10 +47,17 @@ import {
 
 const NEIGHBOR_OPTIONS = [0, 1, 2];
 
-interface QueryImage {
+interface QueryMedia {
   base64: string;
   previewUrl: string;
   name: string;
+}
+
+/** What a dropped, pasted or chosen file can be in a query: an image or an MP4 clip. */
+function queryKind(file: File): "image" | "video" | null {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type === "video/mp4") return "video";
+  return null;
 }
 
 export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
@@ -60,7 +67,9 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
   const [query, setQuery] = React.useState("");
   // "exact" runs grep: the words as written (codes, ids), on text only — no image, no filters.
   const [mode, setMode] = React.useState<"meaning" | "exact">("meaning");
-  const [image, setImage] = React.useState<QueryImage | null>(null);
+  // An image and a clip can be in the same query, with the text: the server embeds them as one.
+  const [image, setImage] = React.useState<QueryMedia | null>(null);
+  const [video, setVideo] = React.useState<QueryMedia | null>(null);
   const [topK, setTopK] = React.useState(10);
   const [neighbors, setNeighbors] = React.useState(1);
   const [showFilters, setShowFilters] = React.useState(false);
@@ -74,26 +83,34 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
   const [dragOver, setDragOver] = React.useState(false);
   const fileRef = React.useRef<HTMLInputElement>(null);
 
-  // Free the preview's object URL when the image is replaced or the panel unmounts.
+  // Free a preview's object URL when it is replaced or the panel unmounts.
   React.useEffect(() => {
     if (!image) return;
     return () => URL.revokeObjectURL(image.previewUrl);
   }, [image]);
+  React.useEffect(() => {
+    if (!video) return;
+    return () => URL.revokeObjectURL(video.previewUrl);
+  }, [video]);
 
-  const setImageFile = async (file: File) => {
-    if (!file.type.startsWith("image/")) {
+  const setMediaFile = async (file: File) => {
+    const kind = queryKind(file);
+    if (!kind) {
       toast.warning(t("notAnImage"));
       return;
     }
-    setImage({
+    const media = {
       base64: await fileToBase64(file),
       previewUrl: URL.createObjectURL(file),
       name: file.name || t("pastedImage"),
-    });
+    };
+    (kind === "image" ? setImage : setVideo)(media);
   };
 
   const canSearch =
-    (mode === "exact" ? query.trim() !== "" : query.trim() !== "" || image !== null) && !searching;
+    (mode === "exact"
+      ? query.trim() !== ""
+      : query.trim() !== "" || image !== null || video !== null) && !searching;
   const activeFilters = parseTags(tags).length + mediaTypes.length;
 
   const search = async () => {
@@ -107,6 +124,7 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
       neighbors,
       ...(query.trim() ? (exact ? { pattern: query.trim() } : { query: query.trim() }) : {}),
       ...(image && !exact ? { query_image: image.base64 } : {}),
+      ...(video && !exact ? { query_video: video.base64 } : {}),
       ...(parsedTags.length ? { tags: parsedTags, tags_match: tagsMatch } : {}),
       ...(mediaTypes.length ? { media_types: mediaTypes } : {}),
     };
@@ -133,10 +151,10 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
         )}
         // An image pasted or dropped anywhere on the form becomes the query image.
         onPaste={(e) => {
-          const file = Array.from(e.clipboardData.files).find((f) => f.type.startsWith("image/"));
+          const file = Array.from(e.clipboardData.files).find((f) => queryKind(f) !== null);
           if (file) {
             e.preventDefault();
-            setImageFile(file);
+            setMediaFile(file);
           }
         }}
         onDragOver={(e) => {
@@ -150,7 +168,7 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
           setDragOver(false);
           if (!file) return;
           e.preventDefault();
-          setImageFile(file);
+          setMediaFile(file);
         }}
       >
         <form
@@ -248,33 +266,51 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/mp4"
           className="hidden"
           data-testid="kb-search-image-input"
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) setImageFile(file);
+            if (file) setMediaFile(file);
             e.target.value = "";
           }}
         />
 
-        {image ? (
-          <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-2">
-            <img src={image.previewUrl} alt="" className="h-16 w-16 rounded object-cover" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{image.name}</p>
-              <p className="text-xs text-muted-foreground">{t("imageQuery")}</p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 p-0"
-              onClick={() => setImage(null)}
-              aria-label={t("removeImage")}
-              title={t("removeImage")}
-            >
-              <X className="h-4 w-4" />
-            </Button>
+        {image || video ? (
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                [image, t("imageQuery"), () => setImage(null)],
+                [video, t("videoQuery"), () => setVideo(null)],
+              ] as const
+            ).map(([m, label, clear], n) =>
+              m ? (
+                <div
+                  key={n}
+                  className="flex min-w-0 max-w-full flex-1 items-center gap-3 rounded-lg border border-border bg-muted/30 p-2 sm:max-w-sm"
+                >
+                  {m === video ? (
+                    <video src={m.previewUrl} muted className="h-16 w-16 rounded object-cover" />
+                  ) : (
+                    <img src={m.previewUrl} alt="" className="h-16 w-16 rounded object-cover" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{m.name}</p>
+                    <p className="text-xs text-muted-foreground">{label}</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    onClick={clear}
+                    aria-label={t("removeImage")}
+                    title={t("removeImage")}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : null
+            )}
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">{t("imageHint")}</p>

@@ -178,6 +178,8 @@ class SearchRequest:
     # Exact text (case-insensitive; a POSIX regular expression when `regex`): passages containing it
     # rank first. Alone, without a query, it ranks documents by how many of their passages match.
     pattern: str | None = None
+    # An MP4 clip to search with, alone or with the text and the image: all of them make one vector.
+    query_video: bytes | None = None
     regex: bool = False
 
 
@@ -1536,16 +1538,18 @@ class KnowledgeService:
 
     async def _search(self, bank_id: str, request: SearchRequest) -> list[SearchHit]:
         pattern = request.pattern if (request.pattern or "").strip() else None
-        has_query = bool((request.query or "").strip()) or request.query_image is not None
+        has_query = (
+            bool((request.query or "").strip()) or request.query_image is not None or request.query_video is not None
+        )
         if not has_query and pattern is None:
-            raise KnowledgeBankError("search needs a query, a query_image or a pattern")
+            raise KnowledgeBankError("search needs a query, a query_image, a query_video or a pattern")
         try:
             if not has_query and pattern is not None:
                 return await self.store.grep(
                     bank_id, pattern, top_k=request.top_k, filters=request.filters, regex=request.regex
                 )
             try:
-                vector = await self.embedder.embed_query(request.query, request.query_image)
+                vector = await self.embedder.embed_query(request.query, request.query_image, request.query_video)
             except UnsupportedModalityError as exc:
                 raise KnowledgeBankError(str(exc), 415) from exc
             return await self.store.search(
