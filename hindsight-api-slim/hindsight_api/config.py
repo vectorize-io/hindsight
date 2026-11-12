@@ -993,6 +993,7 @@ ENV_KNOWLEDGE_PDF_BANDS = "HINDSIGHT_API_KNOWLEDGE_PDF_BANDS"
 ENV_KNOWLEDGE_KEYWORD_WEIGHT = "HINDSIGHT_API_KNOWLEDGE_KEYWORD_WEIGHT"
 ENV_KNOWLEDGE_TEXT_PASSAGE_TOKENS = "HINDSIGHT_API_KNOWLEDGE_TEXT_PASSAGE_TOKENS"
 ENV_KNOWLEDGE_INGEST_CHILD_BYTES = "HINDSIGHT_API_KNOWLEDGE_INGEST_CHILD_BYTES"
+ENV_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB = "HINDSIGHT_API_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB"
 ENV_KNOWLEDGE_STORE_EXTENSION = "HINDSIGHT_API_KNOWLEDGE_STORE_EXTENSION"
 # Knowledge-bank ingestion strategies (knowledge/ingest_strategy.py): named mappings of file types to
 # the extension that pre-processes them (JSON, {name: {file_type: {"extension": "module:Class",
@@ -2047,8 +2048,14 @@ DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS = 256
 # An async knowledge ingest is split into child operations of about this many bytes of stored files,
 # each its own worker task, so one big upload spreads across every free slot. Bytes, because the
 # passage count is only known once a file is split; a file over the budget is a child on its own.
-# 64 KiB of text is ~200 passages: enough to keep a batch's embed rounds in flight full.
-DEFAULT_KNOWLEDGE_INGEST_CHILD_BYTES = 64 * 1024
+# A batch's memory is bounded by the budget below, not by its size, so a child can be big: 1 MiB is
+# ~3,000 text passages, or a few PDFs.
+DEFAULT_KNOWLEDGE_INGEST_CHILD_BYTES = 1024 * 1024
+# Bytes of cut-but-uncommitted passages (text, files, vectors) one knowledge ingest batch may hold, as
+# RETAIN_MEMORY_BUDGET_MB bounds a retain: at the budget the batch commits what it has and waits. One
+# document is always held whole (its passages are replaced in one write), so a single document over the
+# budget still goes through. Budget for WORKER_MAX_SLOTS concurrent batches. 0 turns it off.
+DEFAULT_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB = 128
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
 DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves storage)
 DEFAULT_STORE_DOCUMENT_TEXT = True  # Persist raw source text in documents.original_text / chunks.chunk_text
@@ -4308,6 +4315,7 @@ class HindsightConfig:
     knowledge_keyword_weight: float = DEFAULT_KNOWLEDGE_KEYWORD_WEIGHT
     knowledge_text_passage_tokens: int = DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS
     knowledge_ingest_child_bytes: int = DEFAULT_KNOWLEDGE_INGEST_CHILD_BYTES
+    knowledge_ingest_memory_budget_mb: int = DEFAULT_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB
     knowledge_store_extension: str | None = None
     ingest_strategies: dict | None = None
     ingest_default_strategy: str | None = None
@@ -5811,6 +5819,9 @@ class HindsightConfig:
             ),
             knowledge_ingest_child_bytes=int(
                 os.getenv(ENV_KNOWLEDGE_INGEST_CHILD_BYTES, str(DEFAULT_KNOWLEDGE_INGEST_CHILD_BYTES))
+            ),
+            knowledge_ingest_memory_budget_mb=int(
+                os.getenv(ENV_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB, str(DEFAULT_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB))
             ),
             knowledge_store_extension=os.getenv(ENV_KNOWLEDGE_STORE_EXTENSION) or None,
             ingest_strategies=_parse_ingest_strategies(os.getenv(ENV_INGEST_STRATEGIES)),

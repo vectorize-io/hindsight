@@ -6,6 +6,7 @@ reflect reads from a linked bank — not the model. Retrieval quality is measure
 hindsight-dev/benchmarks/knowledge_banks_mm.
 """
 
+import asyncio
 import io
 import json
 import math
@@ -1072,6 +1073,91 @@ async def test_a_sync_ingest_is_still_processed_in_one_batch(api_client, kb, fak
     assert r.is_success and not any(r.json()["operation_ids"]), r.text
     # Nothing queued: the five documents are one batch, written once, however small the budget.
     assert payloads == [] and counts["replace_passages"] == 1
+
+
+@pytest.fixture
+def memory_budget_mb(monkeypatch):
+    """Sets the knowledge-ingest memory budget, and leaves the config as it found it."""
+    from hindsight_api.config import clear_config_cache
+
+    def set_budget(n: int) -> None:
+        monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB", str(n))
+        clear_config_cache()
+
+    yield set_budget
+    monkeypatch.delenv("HINDSIGHT_API_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB", raising=False)
+    clear_config_cache()
+
+
+def _peak_mb(caplog) -> int:
+    line = next(m.getMessage() for m in caplog.records if "holding at most" in m.getMessage())
+    return int(line.split("holding at most ")[1].split(" MB")[0])
+
+
+async def test_finished_documents_commit_in_groups_as_they_finish(api_client, kb, fake_embedder, counted):
+    from hindsight_api.knowledge import service as service_module
+
+    counts, _ = counted
+    parts = service_module._COMMIT_GROUP_PASSAGES // 10  # passages per document, under the early-commit size
+    assert parts < service_module._EARLY_COMMIT_PASSAGES
+    text = "\n\n".join(f"# Part {n}\n\npassage {n} about red" for n in range(parts))
+    items = [{"document_id": f"g{n}", "text": text + f" {n}"} for n in range(12)]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.is_success, r.text
+    # 11 documents fill a group, which commits while the last one is cut; that one commits at the end.
+    assert counts["replace_passages"] == 2
+    page = (await api_client.get(f"{KB}/{kb}/documents", params={"status": "ready", "limit": 1})).json()
+    assert page["total"] == 12
+
+
+async def test_a_batch_over_its_memory_budget_commits_as_it_goes_and_stays_under_it(
+    api_client, kb, fake_embedder, counted, memory_budget_mb, caplog
+):
+    counts, _ = counted
+    memory_budget_mb(1)
+    # 60 documents of ~60 KB of text: ~3.6 MB of passages against a 1 MB budget.
+    items = [{"document_id": f"m{n}", "text": f"note {n} about red " + "word " * 12_000} for n in range(60)]
+    with caplog.at_level("INFO", logger="hindsight_api.knowledge.service"):
+        r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.is_success, r.text
+    assert counts["replace_passages"] >= 4  # committed in pieces, not once at the end
+    assert _peak_mb(caplog) <= 1
+    page = (await api_client.get(f"{KB}/{kb}/documents", params={"status": "ready", "limit": 1})).json()
+    assert page["total"] == 60
+
+
+async def test_one_document_over_the_memory_budget_still_goes_through(
+    api_client, kb, fake_embedder, memory_budget_mb, caplog
+):
+    memory_budget_mb(1)
+    big = {"document_id": "big", "text": "a long report about red " + "word " * 400_000}  # ~2 MB
+    with caplog.at_level("INFO", logger="hindsight_api.knowledge.service"):
+        r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [big]})
+    assert r.is_success, r.text
+    # Held whole, since its passages are replaced in one write: the budget admits it rather than wait forever.
+    assert _peak_mb(caplog) >= 2
+    assert (await api_client.get(f"{KB}/{kb}/documents/big")).json()["status"] == "ready"
+
+
+async def test_a_failed_round_stops_a_splitter_waiting_for_memory(
+    api_client, kb, fake_embedder, memory_budget_mb, monkeypatch
+):
+    memory_budget_mb(1)
+    real = fake_embedder.embed_documents
+    calls = {"n": 0}
+
+    async def flaky(items):
+        calls["n"] += 1
+        if calls["n"] >= 2:  # down from the second round on: nothing more commits, so nothing frees room
+            raise RuntimeError("embedder down")
+        return await real(items)
+
+    monkeypatch.setattr(fake_embedder, "embed_documents", flaky)
+    items = [{"document_id": f"f{n}", "text": f"note {n} about red " + "word " * 12_000} for n in range(40)]
+    # The round's failure ends the batch (and reaches the caller); without it the splitter would wait
+    # for room nobody frees, and this would time out.
+    with pytest.raises(RuntimeError, match="embedder down"):
+        await asyncio.wait_for(api_client.post(f"{KB}/{kb}/ingest", json={"items": items}), timeout=60)
 
 
 async def test_a_retried_batch_skips_the_documents_it_already_committed(api_client, memory, kb, fake_embedder, counted):

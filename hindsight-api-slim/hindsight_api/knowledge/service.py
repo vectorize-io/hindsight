@@ -20,7 +20,7 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -95,6 +95,15 @@ _PASSAGE_FILE_CONCURRENCY = 8
 _EMBED_ROUNDS_IN_FLIGHT = 4
 #: A document with at least this many passages commits on its own as soon as they are embedded.
 _EARLY_COMMIT_PASSAGES = 2 * _EMBED_ROUND
+#: Passages that commit together: a batch's finished documents are written in groups of about this many
+#: as they finish, not all at the end, so what a batch holds does not grow with how many documents it has.
+_COMMIT_GROUP_PASSAGES = 256
+#: What one vector is estimated to cost before it is embedded (768 dimensions as a Python list of floats,
+#: ~25 KB); corrected to its real size once it is.
+_VECTOR_BYTES_ESTIMATE = 25_000
+#: Vectors a passage with a file (a PDF page, a clip) is estimated to carry before it is embedded: a page is
+#: its image, bands, text units and sentences.
+_FILE_PASSAGE_VECTORS_ESTIMATE = 24
 #: Documents in one child of an async ingest, however small: a child is one store read, status write
 #: and passage write, and many tiny documents would make those writes the batch.
 _CHILD_DOCUMENTS = 100
@@ -285,6 +294,63 @@ def _work(entry: _Entry, saved: _Saved) -> _Work:
     )
 
 
+def _vector_bytes(vector: list[float]) -> int:
+    return 56 + 32 * len(vector)  # the list, plus a pointer and a float object per dimension
+
+
+def _passage_estimate(draft: media.PassageDraft) -> int:
+    vectors = _FILE_PASSAGE_VECTORS_ESTIMATE if draft.data is not None else 1
+    return len(draft.data or b"") + len(draft.text or "") + vectors * _VECTOR_BYTES_ESTIMATE
+
+
+def _passage_bytes(draft: media.PassageDraft, vectors: list[list[float]]) -> int:
+    return len(draft.data or b"") + len(draft.text or "") + sum(_vector_bytes(v) for v in vectors)
+
+
+class _MemoryBudget:
+    """The bytes of cut-but-uncommitted passages (their text, file and vectors) one batch may hold, as
+    retain bounds its extracted-but-unwritten facts: the splitter reserves a passage's cost before queueing
+    it, and a document's commit gives its share back. Under the budget nothing waits; at it the splitter
+    does, which is the batch throttling itself rather than the worker being killed for its memory.
+
+    It cannot deadlock: before waiting, the splitter starts what can free room (the queued round, the
+    finished documents' commit), and a reservation is admitted whatever its size when everything held is
+    the document being cut, since that document must be held whole to commit (its passages are replaced
+    in one write). A limit of 0 turns the budget off."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.held = 0
+        self.peak = 0
+        self._freed = asyncio.Event()
+        self._failed: BaseException | None = None
+
+    def _fits(self, n: int, own: int) -> bool:
+        return self.limit <= 0 or self.held + n <= self.limit or self.held <= own
+
+    async def reserve(self, n: int, own: int, make_room: Callable[[], Awaitable[None]]) -> None:
+        if not self._fits(n, own):
+            await make_room()
+            async with _timing.timed("split.wait_memory"):
+                while not self._fits(n, own):
+                    if self._failed is not None:
+                        raise self._failed
+                    self._freed.clear()
+                    await self._freed.wait()
+        self.adjust(n)
+
+    def fail(self, exc: BaseException) -> None:
+        """A round failed: what it held will not be committed, so a splitter waiting for room stops."""
+        self._failed = exc
+        self._freed.set()
+
+    def adjust(self, delta: int) -> None:
+        self.held += delta
+        self.peak = max(self.peak, self.held)
+        if delta < 0:
+            self._freed.set()
+
+
 def _children(work: list[_Work], budget: int) -> list[list[_Work]]:
     """Pack an async ingest's documents, in order, into children of about ``budget`` bytes and at most
     ``_CHILD_DOCUMENTS`` documents. A document is never split across children, and one over the budget
@@ -321,6 +387,10 @@ class _InFlight:
     committing: bool = False
     #: Its files' background writes (see ``_embed_round``).
     saves: list[asyncio.Task[None]] = field(default_factory=list)
+    #: Bytes it holds against the batch's memory budget, given back once it is committed; and how many
+    #: passages it committed, kept for the batch's log line after its passages are dropped.
+    reserved: int = 0
+    committed_passages: int = 0
 
 
 @dataclass
@@ -330,10 +400,12 @@ class _Waiting:
     doc: _InFlight
     draft: media.PassageDraft
     index: int
+    #: What it reserved against the memory budget when queued: an estimate, corrected once embedded.
+    cost: int = 0
 
 
 #: Writes one passage's file for a document in the background (see ``KnowledgeService._embed_round``).
-_SaveFile = Callable[[_InFlight, str, media.PassageDraft], None]
+_SaveFile = Callable[[_InFlight, str, media.PassageDraft], Awaitable[None]]
 
 
 @dataclass
@@ -994,10 +1066,14 @@ class KnowledgeService:
         committed: set[str] = set()
         rounds: list[asyncio.Task[None]] = []
         slots = asyncio.Semaphore(_EMBED_ROUNDS_IN_FLIGHT)
+        budget = _MemoryBudget(get_config().knowledge_ingest_memory_budget_mb * 1024 * 1024)
 
         async def run_round(batch: list[_Waiting]) -> None:
             try:
-                await self._embed_round(batch, save)
+                await self._embed_round(batch, save, budget.adjust)
+            except BaseException as exc:
+                budget.fail(exc)
+                raise
             finally:
                 slots.release()
 
@@ -1015,14 +1091,22 @@ class KnowledgeService:
         file_slots = asyncio.Semaphore(_PASSAGE_FILE_CONCURRENCY)
 
         async def write(key: str, data: bytes, mime: str | None) -> None:
-            async with file_slots, _timing.timed("media.write"):
-                await self._engine._file_storage.store(file_data=data, key=key, metadata={"content_type": mime or ""})
+            try:
+                async with _timing.timed("media.write"):
+                    await self._engine._file_storage.store(
+                        file_data=data, key=key, metadata={"content_type": mime or ""}
+                    )
+            finally:
+                file_slots.release()
 
-        def save(doc: _InFlight, key: str, draft: media.PassageDraft) -> None:
+        async def save(doc: _InFlight, key: str, draft: media.PassageDraft) -> None:
             """Write a passage's file in the background; its key is noted first, so a failed write's
-            siblings are still cleaned up."""
+            siblings are still cleaned up. The slot is taken before the write is started, so writes that
+            fall behind hold the round back instead of piling their files up in memory."""
             assert draft.data is not None
             doc.media_keys.append(key)
+            async with _timing.timed("media.wait_slot"):
+                await file_slots.acquire()
             doc.saves.append(asyncio.create_task(write(key, draft.data, draft.mime)))
 
         def saves_of(group: list[_InFlight]) -> list[asyncio.Task[None]]:
@@ -1040,8 +1124,18 @@ class KnowledgeService:
                 if d.error is None and not d.split and not d.passages:
                     d.error = media.MediaError("the file holds nothing to search")
             done = [d for d in group if d.error is None and not d.split]
-            if not done:
-                return
+            try:
+                if done:
+                    await write_passages(done)
+            finally:
+                # Committed (or failed): its passages are not needed any more, and nor is their memory.
+                for d in group:
+                    d.committed_passages = len(d.passages)
+                    d.passages, d.done = [], {}
+                    budget.adjust(-d.reserved)
+                    d.reserved = 0
+
+        async def write_passages(done: list[_InFlight]) -> None:
             t0 = time.perf_counter()
             languages = [detect_language("\n".join(p.text or "" for p in d.passages)) for d in done]
             _timing.record("language", time.perf_counter() - t0, calls=len(done))
@@ -1066,9 +1160,29 @@ class KnowledgeService:
                 derived = await self.store.derived_documents(bank_id, was_split)
                 await self._delete_trees(bank_id, [c for children in derived.values() for c in children])
 
-        async def commit_when_embedded(doc: _InFlight, its_rounds: list[asyncio.Task[None]]) -> None:
-            await asyncio.gather(*its_rounds)
-            await commit([doc])
+        async def commit_when_embedded(group: list[_InFlight]) -> None:
+            await asyncio.gather(*{id(t): t for d in group for t in d.rounds}.values())
+            await commit(group)
+
+        waiting: list[_Waiting] = []
+        finished: list[_InFlight] = []  # cut and queued, not yet committing
+
+        async def flush_round() -> None:
+            if waiting:
+                batch = list(waiting)
+                waiting.clear()
+                await launch(batch)
+
+        async def commit_finished() -> None:
+            """Start the commit of every document cut so far: it runs once their rounds are embedded,
+            while the next documents are cut."""
+            await flush_round()
+            if finished:
+                group = list(finished)
+                finished.clear()
+                for d in group:
+                    d.committing = True  # now, so the batch's final commit never takes it too
+                early.append(asyncio.create_task(commit_when_embedded(group)))
 
         async def settle() -> None:
             """Wait for every round; re-raise the first transient error once all have stopped, so the
@@ -1080,7 +1194,6 @@ class KnowledgeService:
                 raise errors[0]
 
         try:
-            waiting: list[_Waiting] = []
             for doc in docs:
                 try:
                     drafts = await self._open(bank_id, doc, caller or {}, depth)
@@ -1095,28 +1208,28 @@ class KnowledgeService:
                     # A document an embed round refused stops here: its remaining passages (a long
                     # video's windows) would only be cut to be thrown away.
                     while doc.error is None and (draft := await _split(_next_draft, drafts)) is not None:
-                        waiting.append(_Waiting(doc, draft, doc.queued))
+                        cost = _passage_estimate(draft)
+                        await budget.reserve(cost, doc.reserved, commit_finished)
+                        doc.reserved += cost
+                        waiting.append(_Waiting(doc, draft, doc.queued, cost))
                         doc.queued += 1
                         if len(waiting) >= _EMBED_ROUND:
-                            await launch(waiting)
-                            waiting = []
+                            await flush_round()
                 except ValueError as exc:
                     doc.error = exc
                 finally:
                     # Close the splitter now, off the event loop, rather than whenever it is collected.
                     await _split(_close_drafts, drafts)
-                if doc.error is None and doc.queued >= _EARLY_COMMIT_PASSAGES:
-                    # A big document (a long PDF, a video) commits as soon as its passages are embedded,
-                    # while the next documents are still being cut: writing a batch's every vector at the
-                    # end, in one go, was a third of a PDF batch's ingest with nothing else running.
-                    # Small documents still commit together at the end, in one write for the batch.
-                    if waiting:
-                        await launch(waiting)
-                        waiting = []
-                    doc.committing = True  # now, so the batch's final commit never takes it too
-                    early.append(asyncio.create_task(commit_when_embedded(doc, list(doc.rounds))))
-            if waiting:
-                await launch(waiting)
+                finished.append(doc)
+                # Finished documents commit as soon as they are embedded, while the next ones are cut, in
+                # groups: a big document (a long PDF, a video) on its own, small ones together. Writing a
+                # batch's every vector at the end held them all at once, and was a third of a PDF batch's
+                # ingest with nothing else running.
+                if (doc.error is None and doc.queued >= _EARLY_COMMIT_PASSAGES) or sum(
+                    d.queued for d in finished
+                ) >= _COMMIT_GROUP_PASSAGES:
+                    await commit_finished()
+            await flush_round()
             await settle()
             # Whatever did not commit early commits here, together.
             await commit([d for d in docs if not d.committing])
@@ -1134,8 +1247,9 @@ class KnowledgeService:
                     ],
                 )
             logger.info(
-                f"Knowledge ingest {bank_id}: {len(kept)} documents, {sum(len(d.passages) for d in kept)} passages, "
-                f"{len(failed)} failed, in {time.perf_counter() - started:.1f}s"
+                f"Knowledge ingest {bank_id}: {len(kept)} documents, {sum(d.committed_passages for d in kept)} passages, "
+                f"{len(failed)} failed, in {time.perf_counter() - started:.1f}s, holding at most "
+                f"{budget.peak / 2**20:.0f} MB of passages"
             )
         except Exception as exc:
             # No round, file write or early commit may still be running when the cleanup deletes files.
@@ -1188,7 +1302,9 @@ class KnowledgeService:
             self._check_passage_modality(d.modality)
         return iter(emitted)
 
-    async def _embed_round(self, waiting: list[_Waiting], save: _SaveFile) -> None:
+    async def _embed_round(
+        self, waiting: list[_Waiting], save: _SaveFile, adjust: Callable[[int], None] = lambda _: None
+    ) -> None:
         """Embed one round of passages, from any documents, in one call, and hand each to its document. A
         permanent error is narrowed to the documents it comes from, embedding each one's share alone.
         Each passage's file is handed to ``save``, which writes it in the background: the round does not
@@ -1207,18 +1323,22 @@ class KnowledgeService:
                 return
             # By identity: an _InFlight is a mutable dataclass, so it has no hash to dedupe on.
             for doc in {id(w.doc): w.doc for w in live}.values():
-                await self._embed_round([w for w in live if w.doc is doc], save)
+                await self._embed_round([w for w in live if w.doc is doc], save, adjust)
             return
         keys = {id(w): f"{w.doc.media_prefix}{w.index}.{w.draft.extension}" for w in live if w.draft.data is not None}
         for w in live:
             if id(w) in keys:
-                save(w.doc, keys[id(w)], w.draft)
+                await save(w.doc, keys[id(w)], w.draft)
         cursor = 0
         for w, plan in zip(live, plans, strict=True):
             mine = embedded[cursor : cursor + len(plan)]
             cursor += len(plan)
             doc, draft, index = w.doc, w.draft, w.index
             key = keys.get(id(w))
+            # The estimate it reserved, corrected to what its vectors really weigh.
+            actual = _passage_bytes(draft, mine)
+            adjust(actual - w.cost)
+            doc.reserved += actual - w.cost
             doc.done[index] = KnowledgePassage(
                 index=index,
                 modality=draft.modality,
