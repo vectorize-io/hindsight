@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import asyncpg
@@ -182,6 +183,103 @@ async def test_reembed_rebuilds_every_vector_and_guards_old_model_writes(pg0_db_
         )
     finally:
         await side.close()
+        await conn.close()
+
+
+class InterruptedEmbeddings(HashEmbeddings):
+    """Embeds ``batches`` batches, then fails: a run stopped half way."""
+
+    def __init__(self, batches: int):
+        super().__init__()
+        self.batches = batches
+        self.calls = 0
+
+    async def encode(self, texts: list[str]) -> list[list[float]]:
+        self.calls += 1
+        if self.calls > self.batches:
+            raise RuntimeError("run stopped")
+        return await super().encode(texts)
+
+
+class SameSizeEmbeddings(HashEmbeddings):
+    """Another model with the same dimension: its vectors differ for the same text."""
+
+    model_name = "hash-8-v2"
+
+    async def encode(self, texts: list[str]) -> list[list[float]]:
+        return [vector(f"v2 {t}") for t in texts]
+
+
+async def _assert_every_vector_from(
+    conn: asyncpg.Connection, s: str, ids: dict[str, str], vector_of: Callable[[str], list[float]]
+) -> None:
+    fact = fact_embedding_text(
+        fact_type="world",
+        text="Bob met Alice",
+        entities=["Bob", "Alice"],
+        occurred_start=datetime(2024, 6, 3, tzinfo=UTC),
+        occurred_end=None,
+        mentioned_at=None,
+    )
+    assert await _stored(conn, s, "memory_units", ids["fact"]) == pytest.approx(vector_of(fact))
+    assert await _stored(conn, s, "memory_units", ids["obs"]) == pytest.approx(vector_of("Bob and Alice are friends"))
+    assert await _stored(conn, s, "memory_units", ids["other"]) == pytest.approx(vector_of("The sky is blue"))
+    assert await _stored(conn, s, "mental_models", "mm1") == pytest.approx(vector_of("Friends Bob and Alice"))
+    assert await _stored(conn, s, "mental_models", "mm1", "b2") == pytest.approx(vector_of("Weather It rains"))
+
+
+async def _filled(conn: asyncpg.Connection, s: str, table: str) -> int:
+    return await conn.fetchval(f"SELECT count(*) FROM {s}.{table} WHERE embedding_next IS NOT NULL")
+
+
+@pytest.mark.asyncio
+# One batch is one row: stopped in the memory units, or after them in the mental models.
+@pytest.mark.parametrize(("batches", "units", "models"), [(1, 1, 0), (4, 3, 1)])
+async def test_a_resumed_run_with_another_model_of_the_same_size_drops_the_first_models_vectors(
+    pg0_db_url, schema, batches, units, models
+):
+    conn = await asyncpg.connect(pg0_db_url)
+    try:
+        ids = await _seed(conn, schema)
+        stopping = InterruptedEmbeddings(batches)
+        with pytest.raises(Exception) as stopped:
+            await reembed_schema(conn, pg0_db_url, schema, stopping, batch_size=1, concurrency=1)
+        assert stopped.group_contains(Exception, match="run stopped")
+        assert (await _filled(conn, schema, "memory_units"), await _filled(conn, schema, "mental_models")) == (
+            units,
+            models,
+        )
+
+        # The operator picks another model of the same size and re-runs.
+        result = await reembed_schema(conn, pg0_db_url, schema, SameSizeEmbeddings(), batch_size=1, concurrency=1)
+        assert result.status == "swapped"
+        await _assert_every_vector_from(conn, schema, ids, lambda t: vector(f"v2 {t}"))
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_after_the_swap_with_another_model_is_refused_until_finish(pg0_db_url, schema):
+    conn = await asyncpg.connect(pg0_db_url)
+    try:
+        ids = await _seed(conn, schema)
+        first = HashEmbeddings()
+        assert (await reembed_schema(conn, pg0_db_url, schema, first)).status == "swapped"
+
+        # Before --finish, reembed runs again with another model (changed, or a stale environment).
+        other = SameSizeEmbeddings()
+        with pytest.raises(RuntimeError, match="already swapped to test:hash-8:8") as refused:
+            await reembed_schema(conn, pg0_db_url, schema, other)
+        assert "test:hash-8-v2:8" in str(refused.value)
+        # Nothing moved: the vectors are still the first model's.
+        await _assert_every_vector_from(conn, schema, ids, vector)
+        assert (await reembed_schema(conn, pg0_db_url, schema, first)).status == "already swapped"
+
+        # As the error says: --finish, then the other model re-embeds from scratch.
+        await finish_schema(conn, schema)
+        assert (await reembed_schema(conn, pg0_db_url, schema, other)).status == "swapped"
+        await _assert_every_vector_from(conn, schema, ids, lambda t: vector(f"v2 {t}"))
+    finally:
         await conn.close()
 
 
