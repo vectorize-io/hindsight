@@ -957,13 +957,15 @@ def counted(memory, monkeypatch):
             return await _real(*args, **kwargs)
 
         monkeypatch.setattr(store, name, spy)
-    submit = memory._submit_async_operation
+    # Every queued task reaches the task backend, whichever path wrote its row.
+    submit = memory._task_backend.submit_task
 
-    async def submit_spy(*args, **kwargs):
-        payloads.append(kwargs["task_payload"])
-        return await submit(*args, **kwargs)
+    async def submit_spy(payload, *args, **kwargs):
+        if payload.get("type") == "knowledge_ingest":
+            payloads.append(payload)
+        return await submit(payload, *args, **kwargs)
 
-    monkeypatch.setattr(memory, "_submit_async_operation", submit_spy)
+    monkeypatch.setattr(memory._task_backend, "submit_task", submit_spy)
     return counts, payloads
 
 
@@ -1007,6 +1009,69 @@ async def test_a_bad_document_fails_alone_and_a_sync_ingest_reports_it(api_clien
     statuses = {d: (await api_client.get(f"{KB}/{kb}/documents/{d}")).json()["status"] for d in ("ok1", "bad", "ok2")}
     assert statuses == {"ok1": "ready", "bad": "failed", "ok2": "ready"}
     assert (await _search(api_client, kb, query="blue"))[0]["document_id"] == "ok2"
+
+
+@pytest.fixture
+def child_bytes(monkeypatch):
+    """Sets the async-ingest child budget, and leaves the config as it found it."""
+
+    from hindsight_api.config import clear_config_cache
+
+    def set_budget(n: int) -> None:
+        monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_INGEST_CHILD_BYTES", str(n))
+        clear_config_cache()
+
+    yield set_budget
+    monkeypatch.delenv("HINDSIGHT_API_KNOWLEDGE_INGEST_CHILD_BYTES", raising=False)
+    clear_config_cache()
+
+
+async def test_an_async_ingest_is_one_parent_split_into_children_by_size(
+    api_client, memory, kb, fake_embedder, counted, child_bytes
+):
+    _, payloads = counted
+    child_bytes(100)
+    small = [{"document_id": f"s{n}", "text": f"small note {n} " + "x" * 20} for n in range(6)]  # 33 B each
+    big = {"document_id": "big", "text": "big " * 100}  # 400 B: over the budget
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [*small[:3], big, *small[3:]], "async": True})
+    assert r.status_code == 202, r.text
+    # Every document reports the one parent operation.
+    parent = r.json()["operation_ids"][0]
+    assert set(r.json()["operation_ids"]) == {parent}
+    # Children keep the documents in order, never split one, and a document over the budget is alone.
+    assert [[d["document_id"] for d in p["documents"]] for p in payloads] == [
+        ["s0", "s1", "s2"],
+        ["big"],
+        ["s3", "s4", "s5"],
+    ]
+    assert {p["operation_id"] for p in payloads}.isdisjoint({parent})
+    page = (await api_client.get(f"{KB}/{kb}/documents", params={"status": "ready", "limit": 1})).json()
+    assert page["total"] == 7
+    # The parent completes once its children have, as a batch retain's does.
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.engine.schema import fq_table
+
+    async with acquire_with_retry(await memory._get_backend()) as conn:
+        rows = await conn.fetch(
+            f"SELECT operation_id, status, result_metadata FROM {fq_table('async_operations')} WHERE bank_id = $1",
+            kb,
+        )
+    by_id = {str(row["operation_id"]): row for row in rows}
+    assert by_id[parent]["status"] == "completed"
+    for p in payloads:
+        meta = by_id[p["operation_id"]]["result_metadata"]
+        meta = json.loads(meta) if isinstance(meta, str) else meta
+        assert meta["parent_operation_id"] == parent and by_id[p["operation_id"]]["status"] == "completed"
+
+
+async def test_a_sync_ingest_is_still_processed_in_one_batch(api_client, kb, fake_embedder, counted, child_bytes):
+    counts, payloads = counted
+    child_bytes(10)
+    items = [{"document_id": f"n{n}", "text": f"note {n} about green"} for n in range(5)]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.is_success and not any(r.json()["operation_ids"]), r.text
+    # Nothing queued: the five documents are one batch, written once, however small the budget.
+    assert payloads == [] and counts["replace_passages"] == 1
 
 
 async def test_a_retried_batch_skips_the_documents_it_already_committed(api_client, memory, kb, fake_embedder, counted):

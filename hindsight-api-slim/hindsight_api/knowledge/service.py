@@ -46,6 +46,7 @@ from ..extensions.operation_validator import (
     KnowledgeBankWriteOperation,
     OperationValidationError,
 )
+from ..tracing import inject_task_trace_context
 from . import ingest_strategy, media
 from .embedders import (
     EmbedInput,
@@ -94,6 +95,9 @@ _PASSAGE_FILE_CONCURRENCY = 8
 _EMBED_ROUNDS_IN_FLIGHT = 4
 #: A document with at least this many passages commits on its own as soon as they are embedded.
 _EARLY_COMMIT_PASSAGES = 2 * _EMBED_ROUND
+#: Documents in one child of an async ingest, however small: a child is one store read, status write
+#: and passage write, and many tiny documents would make those writes the batch.
+_CHILD_DOCUMENTS = 100
 
 
 #: Passages reflect's recall tool reads from a memory bank's linked knowledge banks. Fixed: a per-bank
@@ -243,6 +247,9 @@ class _Work:
     strategy: str | None = None
     handler: ingest_strategy.Handler | None = None
     was_split: bool = False
+    #: The stored file's size, which sizes the child operations an async ingest is split into. Not in
+    #: the payload: a worker has the file itself.
+    size: int = 0
 
     def to_payload(self) -> dict[str, Any]:
         out: dict[str, Any] = {"document_id": self.document_id, "storage_key": self.storage_key}
@@ -268,7 +275,29 @@ class _Work:
 
 
 def _work(entry: _Entry, saved: _Saved) -> _Work:
-    return _Work(entry.document_id, saved.storage_key, entry.plan.strategy, entry.plan.handler, saved.was_split)
+    return _Work(
+        entry.document_id,
+        saved.storage_key,
+        entry.plan.strategy,
+        entry.plan.handler,
+        saved.was_split,
+        len(entry.item.data),
+    )
+
+
+def _children(work: list[_Work], budget: int) -> list[list[_Work]]:
+    """Pack an async ingest's documents, in order, into children of about ``budget`` bytes and at most
+    ``_CHILD_DOCUMENTS`` documents. A document is never split across children, and one over the budget
+    is a child on its own: it is processed in one batch either way."""
+    out: list[list[_Work]] = []
+    size = 0
+    for w in work:
+        if not out or size + w.size > budget or len(out[-1]) >= _CHILD_DOCUMENTS:
+            out.append([])
+            size = 0
+        out[-1].append(w)
+        size += w.size
+    return out
 
 
 @dataclass
@@ -667,19 +696,71 @@ class KnowledgeService:
         )
 
     async def _queue(self, bank_id: str, work: list[_Work], caller: dict[str, Any], depth: int = 0) -> str:
-        """Queue one operation that processes every stored document of ``work``; returns its id. One task
-        row and one operation row however many documents, like an async retain of a batch."""
-        payload: dict[str, Any] = {"documents": [w.to_payload() for w in work], **caller}
-        if depth:
-            payload["depth"] = depth
-        op = await self._engine._submit_async_operation(
-            bank_id=bank_id,
-            operation_type=TASK_TYPE,
-            task_type=TASK_TYPE,
-            task_payload=payload,
-            result_metadata={"document_ids": [w.document_id for w in work]},
-        )
-        return str(op["operation_id"])
+        """Queue an async ingest as one parent operation and its children, and return the parent's id.
+
+        Always a parent, even for one child, so an async ingest has one shape to track: the parent has no
+        task of its own and completes (or fails) once every child has, like a batch retain's. Each child
+        is a worker task over a slice of the documents (see ``_children``), so a big upload spreads across
+        free slots, and a retry redoes one child, not the whole upload."""
+        children = _children(work, get_config().knowledge_ingest_child_bytes)
+        parent_id = uuid.uuid4()
+        payloads: list[dict[str, Any]] = []
+        backend = await self._engine._get_backend()
+        table = fq_table("async_operations")
+        # Parent and children in one transaction, as a batch retain's are: a parent written without its
+        # children would be pending forever (no task runs it, no child ever completes it).
+        async with acquire_with_retry(backend) as conn:
+            async with conn.transaction():
+                if await conn.fetchval(f"SELECT 1 FROM {fq_table('banks')} WHERE bank_id = $1", bank_id) is None:
+                    raise KnowledgeBankError(f"knowledge bank '{bank_id}' not found", status_code=404)
+                await conn.execute(
+                    f"INSERT INTO {table} (operation_id, bank_id, operation_type, result_metadata, status) "
+                    "VALUES ($1, $2, $3, $4, $5)",
+                    parent_id,
+                    bank_id,
+                    TASK_TYPE,
+                    json.dumps({"document_ids": [w.document_id for w in work], "num_sub_batches": len(children)}),
+                    "pending",
+                )
+                for i, child in enumerate(children, 1):
+                    child_id = uuid.uuid4()
+                    payload: dict[str, Any] = {
+                        "type": TASK_TYPE,
+                        "operation_id": str(child_id),
+                        "bank_id": bank_id,
+                        "documents": [w.to_payload() for w in child],
+                        **caller,
+                    }
+                    if depth:
+                        payload["depth"] = depth
+                    inject_task_trace_context(payload)
+                    meta = {
+                        "parent_operation_id": str(parent_id),
+                        "sub_batch_index": i,
+                        "total_sub_batches": len(children),
+                        "document_ids": [w.document_id for w in child],
+                    }
+                    await conn.execute(
+                        f"INSERT INTO {table} (operation_id, bank_id, operation_type, result_metadata, status, "
+                        "task_payload) VALUES ($1, $2, $3, $4, $5, $6::jsonb)",
+                        child_id,
+                        bank_id,
+                        TASK_TYPE,
+                        json.dumps(meta),
+                        "pending",
+                        json.dumps(payload),
+                    )
+                    payloads.append(payload)
+        if len(children) > 1:
+            logger.info(
+                f"Knowledge ingest {bank_id}: {len(work)} documents queued as {len(children)} child operations "
+                f"of {parent_id}"
+            )
+        # After the commit: a synchronous task backend (tests) runs each task right here, against rows
+        # it must be able to see.
+        for payload in payloads:
+            await self._engine._task_backend.submit_task(payload)
+        return str(parent_id)
 
     async def _save(self, bank_id: str, entries: list[_Entry]) -> list[_Saved | None]:
         """Store checked files as pending documents; None for one that is unchanged. One read and one write
