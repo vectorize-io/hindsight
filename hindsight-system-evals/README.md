@@ -619,7 +619,7 @@ page), and the list is scored against the right documents:
 - **recall@k**: the share of right documents in the top *k* (for an image: is the photo in the
   top 1, 5, 10).
 
-Scores, ingest rate and search latency (client and server p50/p95) go to `--output` under
+Scores, ingest rate and search latency (p50/p95, timed by the client) go to `--output` under
 `knowledge`; `eval-table` prints them per case, one column per run. The asserts only catch a
 broken pipeline (a failed document, a query with no results).
 
@@ -681,7 +681,6 @@ agent asks for, 200 what the scoring asks for):
 | HNSW on `kb_passage_vectors` (its own candidate lookup) | PDFs at agent-sized searches | HR at top_k 10: 57.7 → 56.9; no change at top_k 200, where the pool already covers the bank | yes |
 | GIN on `search_vector` (keyword candidates and IDF) | text with names, codes, rare words | SciFact 83.1 → 80.8 at top_k 10; HR −0.3; weights above 0.2 hurt | yes, with bounded IDF counts |
 | document prior | multi-page PDFs | HR −1.0 | yes |
-| pg_trgm on `text` | only searches with an explicit `pattern` | not exercised by these benchmarks | only if pattern search must be fast on big banks |
 
 Two pipeline changes came out of this, both now defaults:
 
@@ -706,18 +705,18 @@ number lines up with the
 [leaderboard](https://huggingface.co/spaces/onyx-dot-app/EnterpriseRAG-Bench-Leaderboard).
 The knowledge bank does retrieval with no LLM; the agent is
 [Hermes](https://github.com/NousResearch/hermes-agent) driving any OpenAI-compatible model,
-with three tools from the `hindsight_knowledge` plugin
+with two tools from the `hindsight_knowledge` plugin
 (`hindsight_system_evals/knowledge_agent/hindsight_knowledge/`, a regular Hermes plugin):
 
 | tool | what it does |
 |---|---|
 | `knowledge_search` | the bank's search (`top_k`, `tags`, `neighbors`), hits grouped by document, each headed by its document id |
-| `knowledge_grep` | the bank's exact-text search (search with only a `pattern`, a regular expression, falling back to plain text), documents ranked by matching passages, with the matching lines; for identifiers, code names, ticket keys, numbers |
 | `knowledge_read` | a document's original text by id, in pages |
 
-All three call the server; the plugin keeps no copy of the bank. (Earlier runs below fused a
-BM25 over a local copy of the bank's text into search; once grep and keyword scoring moved to
-the server, that blend found the right documents as often as the server's search alone, 36 vs
+Both call the server; the plugin keeps no copy of the bank. A `knowledge_grep` tool (exact text
+as a regular expression) was dropped with the search's `pattern` parameter; results below that
+predate the drop had it. (Earlier runs fused a BM25 over a local copy of the bank's text into
+search; once keyword scoring moved to the server, that blend found the right documents as often as the server's search alone, 36 vs
 35 questions with a gold document in the top 4, so it was removed.)
 
 The model is any OpenAI-compatible endpoint, or a Hermes provider with `--provider` /

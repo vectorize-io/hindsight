@@ -83,9 +83,6 @@ class KnowledgeLatency(BaseModel):
     concurrency: int
     client_p50_ms: float
     client_p95_ms: float
-    #: The server's own ``took_ms`` (query embedding plus the vector search); ``None`` for grep.
-    server_p50_ms: float | None = None
-    server_p95_ms: float | None = None
 
 
 class KnowledgeResult(BaseModel):

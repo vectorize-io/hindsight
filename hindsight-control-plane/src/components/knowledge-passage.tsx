@@ -150,21 +150,6 @@ export function PassageMedia({
   );
 }
 
-function ScoreBar({ score }: { score: number }) {
-  const t = useTranslations("knowledgeBanks.search");
-  const pct = Math.max(0, Math.min(1, score)) * 100;
-  return (
-    <div className="flex items-center gap-2" title={t("scoreHelp")}>
-      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full bg-primary/70" style={{ width: `${pct}%` }} />
-      </div>
-      <span className="font-mono text-xs tabular-nums text-muted-foreground">
-        {score.toFixed(3)}
-      </span>
-    </div>
-  );
-}
-
 /**
  * A text hit: the passage that matched, and on demand the context around it (its
  * neighbouring passages, merged by the server) with the hit highlighted inside it.
@@ -281,7 +266,6 @@ export function SearchResultCard({
           <span className="tabular-nums">
             <PassageLocation passage={result} />
           </span>
-          <ScoreBar score={result.score} />
         </div>
         {result.tags.length > 0 && (
           <div className="flex flex-wrap gap-1">

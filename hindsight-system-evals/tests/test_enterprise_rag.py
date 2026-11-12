@@ -112,7 +112,7 @@ def _plugin(monkeypatch: pytest.MonkeyPatch):
 
 def test_plugin_search_heads_each_hit_with_its_document_id_not_a_number(monkeypatch: pytest.MonkeyPatch) -> None:
     plugin = _plugin(monkeypatch)
-    hit = lambda d, text: {"document_id": d, "filename": f"{d}.txt", "text": text, "score": 0.5, "tags": []}  # noqa: E731
+    hit = lambda d, text: {"document_id": d, "filename": f"{d}.txt", "text": text, "tags": []}  # noqa: E731
     monkeypatch.setattr(
         plugin, "_request", lambda *a, **k: _Reply(200, {"results": [hit("dsid_a", "x"), hit("dsid_b", "y")]})
     )
@@ -122,37 +122,3 @@ def test_plugin_search_heads_each_hit_with_its_document_id_not_a_number(monkeypa
     assert not any(line.startswith("[") for line in lines)
 
 
-def test_plugin_grep_groups_the_servers_matches_by_document(monkeypatch: pytest.MonkeyPatch) -> None:
-    plugin = _plugin(monkeypatch)
-    sent: list[dict] = []
-    Reply = _Reply
-
-    def request(method: str, url: str, **kwargs: object) -> Reply:
-        body = kwargs["json"]
-        assert url.endswith("/search")  # exact text is search with only a pattern
-        sent.append(body)
-        if body["regex"] and body["pattern"].startswith("("):
-            return Reply(400, {"detail": "invalid regular expression: parentheses not balanced"})
-        hit = lambda d, text, n: {"document_id": d, "filename": f"{d}.txt", "text": text, "score": n}  # noqa: E731
-        return Reply(
-            200,
-            {
-                "results": [
-                    hit("d1", "intro\nWe added stream.timebox_finalized.", 2),
-                    hit("d1", "timebox_finalized fires at the limit", 2),
-                    hit("d2", "see timebox_finalized", 1),
-                ]
-            },
-        )
-
-    monkeypatch.setattr(plugin, "_request", request)
-    out = plugin.knowledge_grep({"pattern": "timebox_finalized|timebox-finalized"})
-    assert sent[-1] == {"pattern": "timebox_finalized|timebox-finalized", "regex": True, "top_k": 200, "neighbors": 0}
-    lines = out.splitlines()
-    assert lines[0].startswith("2 documents match")
-    assert lines[2] == "d1 | d1.txt | 2 matching passages"
-    assert lines[3:5] == ["    We added stream.timebox_finalized.", "    timebox_finalized fires at the limit"]
-    assert lines[5] == "d2 | d2.txt | 1 matching passages"
-    # A "regex" the server rejects is retried as plain text.
-    plugin.knowledge_grep({"pattern": "(timebox"})
-    assert [b["regex"] for b in sent[-2:]] == [True, False]

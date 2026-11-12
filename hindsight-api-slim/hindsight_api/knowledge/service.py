@@ -26,8 +26,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import asyncpg
-
 from ..config import get_config
 from ..engine import bank_aliases
 from ..engine.db_utils import acquire_with_retry
@@ -175,12 +173,8 @@ class SearchRequest:
     # Text hits come back with this many passages on each side as `context`; hits whose windows
     # overlap in one document are merged into the best one (CHUNKING.md: ±1 was the step that paid).
     neighbors: int = 1
-    # Exact text (case-insensitive; a POSIX regular expression when `regex`): passages containing it
-    # rank first. Alone, without a query, it ranks documents by how many of their passages match.
-    pattern: str | None = None
     # An MP4 clip to search with, alone or with the text and the image: all of them make one vector.
     query_video: bytes | None = None
-    regex: bool = False
 
 
 @dataclass
@@ -1537,34 +1531,24 @@ class KnowledgeService:
         return await self._with_context(bank_id, await self._search(bank_id, request), request.neighbors)
 
     async def _search(self, bank_id: str, request: SearchRequest) -> list[SearchHit]:
-        pattern = request.pattern if (request.pattern or "").strip() else None
         has_query = (
             bool((request.query or "").strip()) or request.query_image is not None or request.query_video is not None
         )
-        if not has_query and pattern is None:
-            raise KnowledgeBankError("search needs a query, a query_image, a query_video or a pattern")
+        if not has_query:
+            raise KnowledgeBankError("search needs a query, a query_image or a query_video")
         try:
-            if not has_query and pattern is not None:
-                return await self.store.grep(
-                    bank_id, pattern, top_k=request.top_k, filters=request.filters, regex=request.regex
-                )
-            try:
-                vector = await self.embedder.embed_query(request.query, request.query_image, request.query_video)
-            except UnsupportedModalityError as exc:
-                raise KnowledgeBankError(str(exc), 415) from exc
-            return await self.store.search(
-                bank_id,
-                vector,
-                top_k=request.top_k,
-                filters=request.filters,
-                text_weight=get_config().knowledge_pdf_text_weight,
-                query_text=request.query,
-                keyword_weight=get_config().knowledge_keyword_weight,
-                pattern=pattern,
-                regex=request.regex,
-            )
-        except asyncpg.InvalidRegularExpressionError as exc:
-            raise KnowledgeBankError(f"invalid regular expression: {exc}") from exc
+            vector = await self.embedder.embed_query(request.query, request.query_image, request.query_video)
+        except UnsupportedModalityError as exc:
+            raise KnowledgeBankError(str(exc), 415) from exc
+        return await self.store.search(
+            bank_id,
+            vector,
+            top_k=request.top_k,
+            filters=request.filters,
+            text_weight=get_config().knowledge_pdf_text_weight,
+            query_text=request.query,
+            keyword_weight=get_config().knowledge_keyword_weight,
+        )
 
     async def _with_context(self, bank_id: str, hits: list[SearchHit], neighbors: int) -> list[SearchResultItem]:
         """Expand text hits to their neighbouring passages, merging overlapping windows per document."""
@@ -1678,7 +1662,7 @@ async def documents_for_memory_bank(
                 page=r.page,
                 start_ms=r.start_ms,
                 end_ms=r.end_ms,
-                score=r.score,
+                score=linked.hit.score,
                 passage_url=r.passage_url,
                 document_url=r.document_url,
                 tags=r.tags,

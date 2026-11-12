@@ -493,7 +493,16 @@ async def test_knowledge_banks_are_hidden_when_the_flag_is_off(api_client, memor
     await api_client.delete(f"/v1/default/banks/{mem_bank}")
 
 
-async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, kb, monkeypatch):
+async def _scored(memory, bank_id: str, query: str) -> list:
+    """The ranked hits with their scores: the search response carries ranks only."""
+    from hindsight_api.knowledge.service import SearchRequest
+    from hindsight_api.knowledge.store import SearchFilters
+
+    request = SearchRequest(query=query, query_image=None, top_k=10, filters=SearchFilters())
+    return await get_knowledge_service(memory)._search(bank_id, request)
+
+
+async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, memory, kb, monkeypatch):
     from hindsight_api.config import clear_config_cache
 
     # 200+ characters of words: a real text layer (a near-empty one leans on the image).
@@ -504,12 +513,13 @@ async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, 
     # Text weight 0: the score is the page image (+ bands) alone, which says nothing about invoices to the fake.
     monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT", "0")
     clear_config_cache()
-    assert (await _search(api_client, kb, query="invoice"))[0]["score"] < 0.5
+    assert (await _scored(memory, kb, "invoice"))[0].score < 0.5
     # The default weight brings in the page's text layer (whole page and 128-token units).
     monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT", "0.6")
     clear_config_cache()
-    top = (await _search(api_client, kb, query="invoice"))[0]
-    assert top["score"] > 0.5 and top["text"] == text and top["page"] == 1
+    top = (await _scored(memory, kb, "invoice"))[0]
+    assert top.score > 0.5 and top.passage.text == text and top.passage.page == 1
+    assert "score" not in (await _search(api_client, kb, query="invoice"))[0]
 
 
 def test_page_score_follows_the_recipe():
@@ -716,41 +726,14 @@ async def test_keyword_matches_count_only_for_documents_in_the_query_language(ap
     # en-miss shares only "gateway"; the French page shares the code but not the query's
     # language, so it gets no keyword credit at all.
     assert [h["document_id"] for h in hits] == ["en-hit", "en-miss", "fr-hit"]
-    assert hits[0]["score"] > hits[1]["score"] > hits[2]["score"]
 
 
-async def test_search_by_pattern_finds_exact_text_and_ranks_it_above_meaning(api_client, kb):
-    r = await api_client.post(
-        f"{KB}/{kb}/ingest",
-        json={
-            "items": [
-                {"document_id": "a", "text": "Retry on err-4417.\n\nDiscount is 50% off."},
-                {"document_id": "b", "text": "ERR-4417 means the token expired."},
-                {"document_id": "c", "text": "Nothing to see; 50 percent here."},
-            ]
-        },
-    )
-    assert r.status_code == 200, r.text
-
-    async def search(**body) -> list[str]:
-        r = await api_client.post(f"{KB}/{kb}/search", json=body)
-        assert r.status_code == 200, r.text
-        return [h["document_id"] for h in r.json()["results"]]
-
-    # A pattern alone: case-insensitive, documents with more matching passages first.
-    assert await search(pattern="ERR-4417") == ["a", "b"]
-    assert await search(pattern="err-4417|50 percent", regex=True) == ["a", "b", "c"]
-    assert await search(pattern="50%") == ["a"]  # % is literal, not a wildcard
-    assert await search(pattern="err-4417", document_ids=["b"]) == ["b"]
-    bad = await api_client.post(f"{KB}/{kb}/search", json={"pattern": "(unclosed", "regex": True})
-    assert bad.status_code == 400 and "invalid regular expression" in bad.text
-    assert (await api_client.post(f"{KB}/{kb}/search", json={})).status_code == 400
-    assert (await api_client.post(f"{KB}/kb-missing/search", json={"pattern": "x"})).status_code == 404
-
-    # With a query, the passage containing the pattern ranks above every passage that is only
-    # similar in meaning, and a document without it still comes back after it.
-    ranked = await search(query="token expired", pattern="50 percent", top_k=3)
-    assert ranked[0] == "c" and "b" in ranked[1:]
+async def test_a_search_needs_a_query_and_a_bank(api_client, kb):
+    r = await api_client.post(f"{KB}/{kb}/search", json={})
+    assert r.status_code == 400 and "query" in r.text
+    assert (await api_client.post(f"{KB}/kb-missing/search", json={"query": "x"})).status_code == 404
+    body = (await api_client.post(f"{KB}/{kb}/search", json={"query": "x"})).json()
+    assert set(body) == {"results"}  # ranks, no timing and no scores
 
 
 def test_running_headers_and_footers_are_not_embedded():
@@ -821,9 +804,9 @@ def test_a_reference_page_is_demoted_without_squashing_the_other_scores():
     # the keyword fusion stretched the dense range so far that keywords alone decided the real pages.
     dense = [0.80, 0.70, 0.79]
     keyword = [1.0, 3.0, 9.0]
-    scores = final_scores(dense, keyword, 0.2, matched=[False] * 3, reference=[False, False, True])
+    scores = final_scores(dense, keyword, 0.2, reference=[False, False, True])
     assert scores[0] > scores[1] > scores[2]  # dense still ranks the real pages; the list goes last
-    same = final_scores(dense, keyword, 0.2, matched=[False] * 3, reference=[False] * 3)
+    same = final_scores(dense, keyword, 0.2, reference=[False] * 3)
     assert scores[:2] == same[:2]  # the demotion does not move anyone else
 
 

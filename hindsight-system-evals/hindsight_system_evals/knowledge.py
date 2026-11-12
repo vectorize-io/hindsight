@@ -115,9 +115,9 @@ class KnowledgeApi:
                 break
         return docs
 
-    async def search(self, bank_id: str, query: str, top_k: int) -> tuple[list[SearchHit], float]:
+    async def search(self, bank_id: str, query: str, top_k: int) -> list[SearchHit]:
         body = await self._call("POST", f"/{bank_id}/search", json={"query": query, "top_k": top_k, "neighbors": 0})
-        return [SearchHit(r["document_id"], r.get("page")) for r in body["results"]], float(body["took_ms"])
+        return [SearchHit(r["document_id"], r.get("page")) for r in body["results"]]
 
 
 async def embedder_name(api: KnowledgeApi) -> str:
@@ -196,7 +196,6 @@ class Searched:
     query_id: str
     results: list[SearchHit]
     client_ms: float
-    server_ms: float
 
 
 async def search_all(api: KnowledgeApi, bank_id: str, calls: Sequence[SearchCall]) -> list[Searched]:
@@ -210,7 +209,7 @@ async def search_all(api: KnowledgeApi, bank_id: str, calls: Sequence[SearchCall
             async with gate:
                 t = time.perf_counter()
                 try:
-                    hits, took = await api.search(bank_id, call.text, call.top_k)
+                    hits = await api.search(bank_id, call.text, call.top_k)
                 except (httpx.HTTPStatusError, httpx.TransportError) as exc:
                     status = getattr(getattr(exc, "response", None), "status_code", 503)
                     if attempt == SEARCH_RETRIES or status < 500:
@@ -218,7 +217,7 @@ async def search_all(api: KnowledgeApi, bank_id: str, calls: Sequence[SearchCall
                     hits = None
                 ms = (time.perf_counter() - t) * 1000
             if hits is not None:
-                return Searched(call.query_id, hits, ms, took)
+                return Searched(call.query_id, hits, ms)
             await asyncio.sleep(2.0 * (attempt + 1))
         raise AssertionError("unreachable")
 
@@ -232,14 +231,11 @@ def percentile(values: Sequence[float], p: float) -> float:
 
 def latency(searched: Sequence[Searched]) -> KnowledgeLatency:
     client = [s.client_ms for s in searched]
-    server = [s.server_ms for s in searched]
     return KnowledgeLatency(
         searches=len(searched),
         concurrency=SEARCH_CONCURRENCY,
         client_p50_ms=round(percentile(client, 50), 1),
         client_p95_ms=round(percentile(client, 95), 1),
-        server_p50_ms=round(percentile(server, 50), 1),
-        server_p95_ms=round(percentile(server, 95), 1),
     )
 
 

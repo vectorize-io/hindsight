@@ -76,7 +76,6 @@ export interface KnowledgeSearchResult extends KnowledgePassage {
   document_id: string;
   filename: string | null;
   tags: string[];
-  score: number;
   document_url: string;
   /** Text hits: the hit merged with its neighbouring passages (see `neighbors`). */
   context?: string | null;
@@ -96,15 +95,11 @@ export interface KnowledgeSearchRequest {
   media_types?: MediaType[];
   /** Passages on each side of a text hit to return as `context` (0..5, server default 1). */
   neighbors?: number;
-  /** Exact text (case-insensitive); alone, documents with the most matching passages come first. */
-  pattern?: string;
-  /** Treat `pattern` as a POSIX regular expression. */
-  regex?: boolean;
 }
 
+/** Results best first: the server sends ranks, not scores (they mean nothing across queries). */
 export interface KnowledgeSearchResponse {
   results: KnowledgeSearchResult[];
-  took_ms: number;
 }
 
 export interface KnowledgeIngestResponse {

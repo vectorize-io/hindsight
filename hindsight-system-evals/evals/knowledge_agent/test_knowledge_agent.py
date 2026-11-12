@@ -1,7 +1,7 @@
 """An agent over a knowledge bank, scored on EnterpriseRAG-Bench the way its leaderboard is.
 
 The knowledge bank does retrieval with no LLM; this puts an agent on top (Hermes, with the
-``hindsight_knowledge`` plugin's search / grep / read tools) and grades its answers with the
+``hindsight_knowledge`` plugin's search / read tools) and grades its answers with the
 benchmark's own judge and metric (``enterprise_rag_scoring``), so the number lines up with
 https://huggingface.co/spaces/onyx-dot-app/EnterpriseRAG-Bench-Leaderboard.
 

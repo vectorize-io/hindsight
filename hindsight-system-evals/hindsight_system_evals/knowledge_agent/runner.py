@@ -36,12 +36,10 @@ SYSTEM_PROMPT = """\
 You answer questions about the internal documents of Redwood Inference, a company that sells AI model \
 inference. Every document is in a knowledge base: Slack messages, Gmail threads, Linear and Jira tickets, \
 Google Drive files, HubSpot CRM records, Fireflies meeting transcripts, GitHub pull requests and Confluence \
-pages. You have three tools:
+pages. You have two tools:
 
 - knowledge_search: finds passages by meaning. Each hit shows its document id, filename (the source system \
 and folder) and the text around the match.
-- knowledge_grep: finds documents containing an exact string or regular expression. Use it for identifiers, \
-code names, ticket keys, metric or config names, people, customers and numbers named in the question.
 - knowledge_read: reads a whole document by id.
 
 How to work (follow every step; skipping them is the most common way to get the answer wrong):
@@ -49,8 +47,8 @@ How to work (follow every step; skipping them is the most common way to get the 
 2. Then search at least twice more with different wordings: the documents use internal jargon and project \
 code names that the question paraphrases, so also try how the document itself would phrase it (its likely \
 title, the team, the system, the customer).
-3. knowledge_grep every specific term the question names: identifiers, code names, ticket keys, metric or \
-config names, people, customers, numbers, dates (short variants joined with |).
+3. Search for every specific term the question names: identifiers, code names, ticket keys, metric or \
+config names, people, customers, numbers, dates.
 4. Many documents look alike: drafts and updated copies, the same topic for another customer, team, region, \
 version or date. knowledge_read the two to four most promising documents in full and pick the one that \
 matches every qualifier in the question. A search snippet alone is never enough to answer.
@@ -76,7 +74,7 @@ OUT_OF_BUDGET = (
 #: model tends to answer from the first plausible hit; the benchmark plants near-copies of
 #: documents with changed facts, so the first hit is often the decoy.
 VERIFY = (
-    "Before this answer is final, check it. Search again with different wording, knowledge_grep the specific "
+    "Before this answer is final, check it. Search again with different wording, search for the specific "
     "names, numbers and identifiers in the question, and knowledge_read in full every document you rely on and "
     "any near-copy of it. Look for a document that matches the question's qualifiers more exactly or is more "
     "recent. Then write the complete final answer, ending with the `Sources:` line."

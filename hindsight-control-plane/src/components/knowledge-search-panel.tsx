@@ -1,9 +1,7 @@
 "use client";
 
 // One search over a knowledge bank: text, an image and an MP4 clip in any combination make one
-// query (the server embeds them together), ranked in one list across every media type. Exact text
-// is not a separate mode: it rides along as `pattern`, and passages containing it rank first; alone,
-// it ranks documents by how many of their passages contain it.
+// query (the server embeds them together), ranked in one list across every media type.
 import * as React from "react";
 import { useTranslations } from "next-intl";
 import {
@@ -67,8 +65,6 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
   const [query, setQuery] = React.useState("");
   const [image, setImage] = React.useState<QueryMedia | null>(null);
   const [video, setVideo] = React.useState<QueryMedia | null>(null);
-  const [pattern, setPattern] = React.useState("");
-  const [regex, setRegex] = React.useState(false);
   const [topK, setTopK] = React.useState(10);
   const [neighbors, setNeighbors] = React.useState(1);
   const [showOptions, setShowOptions] = React.useState(false);
@@ -77,6 +73,8 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
   const [mediaTypes, setMediaTypes] = React.useState<MediaType[]>([]);
   const [searching, setSearching] = React.useState(false);
   const [response, setResponse] = React.useState<KnowledgeSearchResponse | null>(null);
+  // Timed here: the response carries no timing.
+  const [tookMs, setTookMs] = React.useState(0);
   const [viewMode, setViewMode] = React.useState<"results" | "json">("results");
   const [error, setError] = React.useState<string | null>(null);
   const [dragOver, setDragOver] = React.useState(false);
@@ -106,9 +104,9 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
     (kind === "image" ? setImage : setVideo)(media);
   };
 
-  const hasQuery = query.trim() !== "" || image !== null || video !== null || pattern.trim() !== "";
+  const hasQuery = query.trim() !== "" || image !== null || video !== null;
   const canSearch = hasQuery && !searching;
-  const activeOptions = parseTags(tags).length + mediaTypes.length + (pattern.trim() ? 1 : 0);
+  const activeOptions = parseTags(tags).length + mediaTypes.length;
 
   const search = async () => {
     if (!canSearch) return;
@@ -119,14 +117,15 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
       ...(query.trim() ? { query: query.trim() } : {}),
       ...(image ? { query_image: image.base64 } : {}),
       ...(video ? { query_video: video.base64 } : {}),
-      ...(pattern.trim() ? { pattern: pattern.trim(), ...(regex ? { regex: true } : {}) } : {}),
       ...(parsedTags.length ? { tags: parsedTags, tags_match: tagsMatch } : {}),
       ...(mediaTypes.length ? { media_types: mediaTypes } : {}),
     };
     setSearching(true);
     setError(null);
+    const started = performance.now();
     try {
       setResponse(await client.searchKnowledgeBank(bankId, body));
+      setTookMs(performance.now() - started);
     } catch (e) {
       // Shown as a banner over the results, with the server's reason: a 503 says the
       // embedder is unreachable, which is not something a toast should hide.
@@ -296,23 +295,6 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
           {showOptions && (
             <div className="mt-3 grid gap-4 md:grid-cols-2">
               <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="kb-search-pattern">{t("exactText")}</Label>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Input
-                    id="kb-search-pattern"
-                    value={pattern}
-                    onChange={(e) => setPattern(e.target.value)}
-                    placeholder="ERR-4417"
-                    className="min-w-0 flex-1"
-                  />
-                  <label className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm">
-                    <Checkbox checked={regex} onCheckedChange={(c) => setRegex(c === true)} />
-                    {t("regex")}
-                  </label>
-                </div>
-                <p className="text-xs text-muted-foreground">{t("exactTextHelp")}</p>
-              </div>
-              <div className="min-w-0 space-y-1.5">
                 <Label htmlFor="kb-search-tags">{t("tags")}</Label>
                 <div className="flex gap-2">
                   <Input
@@ -413,7 +395,7 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">{tRecall("durationLabel")}</span>
-              <span className="font-semibold">{(response.took_ms / 1000).toFixed(2)}s</span>
+              <span className="font-semibold">{(tookMs / 1000).toFixed(2)}s</span>
             </div>
             <div className="flex-1" />
             <div className="flex gap-1 bg-muted p-1 rounded-lg">

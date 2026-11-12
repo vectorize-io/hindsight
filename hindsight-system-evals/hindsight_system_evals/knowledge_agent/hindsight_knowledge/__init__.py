@@ -1,14 +1,13 @@
-"""Hermes plugin: search, read and grep a Hindsight knowledge bank.
+"""Hermes plugin: search and read a Hindsight knowledge bank.
 
-Three tools, the loop PipesHub's agent runs on EnterpriseRAG-Bench (search, exact-match
-lookup, full-document reading), all served by the knowledge-bank API:
+Two tools, served by the knowledge-bank API:
 
 * ``knowledge_search`` — the bank's search: meaning, with keyword matches (BM25 weights)
-  fused in by the server, hits grouped per document;
-* ``knowledge_read`` — a document's original text, by id, in pages;
-* ``knowledge_grep`` — the bank's grep: a case-insensitive regular expression over every
-  passage's text, documents with the most matches first. An exact identifier ("ENG-4512",
-  "stream.timebox_finalized") is what meaning search ranks worst.
+  fused in by the server, hits grouped per document, best first;
+* ``knowledge_read`` — a document's original text, by id, in pages.
+
+A third, ``knowledge_grep`` (the search's exact-text ``pattern``, as a regular expression), went
+with that parameter: no retrieval benchmark used it.
 
 The plugin used to mirror the whole bank to disk and run its own BM25 and ripgrep over the
 copy; the server does both now, and the plugin's BM25 blend found the gold documents no more
@@ -25,7 +24,6 @@ this repo.
 from __future__ import annotations
 
 import os
-import re
 import sys
 import time
 from dataclasses import dataclass
@@ -38,9 +36,6 @@ TOOLSET = "hindsight_knowledge"
 #: thousand characters; a model that wants more reads the document.
 HIT_CHARS = int(os.getenv("HINDSIGHT_KNOWLEDGE_HIT_CHARS", "1200"))
 READ_CHARS = int(os.getenv("HINDSIGHT_KNOWLEDGE_READ_CHARS", "12000"))
-GREP_SNIPPET_CHARS = 240
-#: Passages a grep asks the server for; grouped into documents here.
-GREP_PASSAGES = 200
 
 
 @dataclass(frozen=True)
@@ -113,7 +108,7 @@ def knowledge_search(args: dict, **_: object) -> str:
     for document_id, hits in list(by_document.items())[:top_k]:
         first = hits[0]
         tags = ",".join(first.get("tags") or [])
-        lines.append(f"{document_id} | {first.get('filename') or ''} | tags={tags} | score={first['score']:.3f}")
+        lines.append(f"{document_id} | {first.get('filename') or ''} | tags={tags}")
         budget = HIT_CHARS
         for hit in hits[:2]:
             text = (hit.get("context") or hit.get("text") or "").strip()
@@ -139,40 +134,6 @@ def knowledge_read(args: dict, **_: object) -> str:
     if offset + len(page) < len(text):
         header += f" (more: offset={offset + len(page)})"
     return f"{header}\n\n{page}"
-
-
-def knowledge_grep(args: dict, **_: object) -> str:
-    """The bank's exact-text search (search with only a pattern), grouped by document (most matches
-    first), with
-    each document's first matching lines."""
-    cfg = _config()
-    pattern = args["pattern"]
-    limit = max(1, min(int(args.get("max_results") or 15), 50))
-    body = {"pattern": pattern, "regex": True, "top_k": GREP_PASSAGES, "neighbors": 0}
-    response = _request("POST", f"{cfg.base}/search", json=body, headers=cfg.headers)
-    if response.status_code == 400 and "regular expression" in response.text:
-        # A model's "regex" with an unbalanced bracket is meant literally.
-        response = _request("POST", f"{cfg.base}/search", json={**body, "regex": False}, headers=cfg.headers)
-    if response.status_code >= 400:
-        return f"grep failed ({response.status_code}): {response.text[:300]}"
-    by_document: dict[str, list[dict]] = {}
-    for hit in response.json()["results"]:
-        by_document.setdefault(hit["document_id"], []).append(hit)
-    if not by_document:
-        return f"No document matches {pattern!r}."
-    try:
-        matcher = re.compile(pattern, re.IGNORECASE)
-    except re.error:
-        matcher = re.compile(re.escape(pattern), re.IGNORECASE)
-    lines = [f"{len(by_document)} documents match {pattern!r}; top {min(limit, len(by_document))} by matches:", ""]
-    for document_id, hits in list(by_document.items())[:limit]:
-        lines.append(f"{document_id} | {hits[0].get('filename') or ''} | {int(hits[0]['score'])} matching passages")
-        shown = [line.strip() for hit in hits for line in (hit.get("text") or "").splitlines() if matcher.search(line)][
-            :2
-        ]
-        for line in shown:
-            lines.append("    " + (line[:GREP_SNIPPET_CHARS] + " …" if len(line) > GREP_SNIPPET_CHARS else line))
-    return "\n".join(lines)
 
 
 SCHEMAS = {
@@ -206,8 +167,7 @@ SCHEMAS = {
     "knowledge_read": {
         "name": "knowledge_read",
         "description": (
-            "Read a document's full original text by its document id (from knowledge_search or "
-            "knowledge_grep). Long documents come in pages: pass the offset the header gives to continue."
+            "Read a document's full original text by its document id (from knowledge_search). Long documents come in pages: pass the offset the header gives to continue."
         ),
         "parameters": {
             "type": "object",
@@ -218,26 +178,9 @@ SCHEMAS = {
             "required": ["document_id"],
         },
     },
-    "knowledge_grep": {
-        "name": "knowledge_grep",
-        "description": (
-            "Find documents containing an exact string or regular expression (case-insensitive), e.g. an "
-            "identifier, code name, ticket key, metric name, person's name or number. Returns matching "
-            "document ids ranked by match count, with the matching lines. Use alternation for variants: "
-            "'timebox|time-box'."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "pattern": {"type": "string", "description": "Regular expression (case-insensitive)."},
-                "max_results": {"type": "integer", "description": "Documents to return (1-50, default 15)."},
-            },
-            "required": ["pattern"],
-        },
-    },
 }
 
-HANDLERS = {"knowledge_search": knowledge_search, "knowledge_read": knowledge_read, "knowledge_grep": knowledge_grep}
+HANDLERS = {"knowledge_search": knowledge_search, "knowledge_read": knowledge_read}
 
 
 def register(ctx) -> None:  # noqa: ANN001 - Hermes' PluginContext, not importable from here

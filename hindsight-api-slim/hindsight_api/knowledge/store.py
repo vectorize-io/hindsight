@@ -241,26 +241,8 @@ class KnowledgeStore(ABC):
         text_weight: float = 0.6,
         query_text: str | None = None,
         keyword_weight: float = 0.2,
-        pattern: str | None = None,
-        regex: bool = False,
     ) -> list[SearchHit]:
-        """Best passages, each scored from all its vectors (``page_score``), keyword matches fused in.
-        With ``pattern``, passages containing it are candidates too and rank above every passage that
-        does not (``EXACT_MATCH_BONUS``)."""
-
-    @abstractmethod
-    async def grep(
-        self,
-        bank_id: str,
-        pattern: str,
-        *,
-        top_k: int,
-        filters: SearchFilters,
-        regex: bool = False,
-    ) -> list[SearchHit]:
-        """Search by ``pattern`` alone: passages whose text contains it (case-insensitive; a POSIX regular
-        expression when ``regex``). Documents with the most matching passages first, each in passage
-        order; a hit's score is how many of its document's passages match."""
+        """Best passages, each scored from all its vectors (``page_score``), keyword matches fused in."""
 
     @abstractmethod
     async def bank_stats(self, bank_ids: list[str]) -> dict[str, BankStats]: ...
@@ -790,8 +772,6 @@ class PostgresKnowledgeStore(KnowledgeStore):
         text_weight: float = 0.6,
         query_text: str | None = None,
         keyword_weight: float = 0.2,
-        pattern: str | None = None,
-        regex: bool = False,
     ) -> list[SearchHit]:
         """Two stages. (1) Candidate passages: the nearest primary vectors, the nearest extra vectors
         (a page's bands, text, text units), and — when the query's language is known — the best keyword
@@ -835,15 +815,6 @@ class PostgresKnowledgeStore(KnowledgeStore):
             """
 
         arms = [nearest("kb_passages"), nearest("kb_passage_vectors")]
-        if pattern:
-            # Exact text is its own candidate arm: a code or id that meaning search ranks low (or not
-            # at all) still reaches stage 2, where it wins. This replaced a separate /grep endpoint.
-            params.append(_match_value(pattern, regex))
-            arms.append(f"""
-                SELECT x.document_id, x.idx FROM {fq_table("kb_passages")} x
-                JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
-                WHERE x.bank_id = $2{where} AND {_text_match("x.text", f"${len(params)}", regex)} LIMIT {pool}
-            """)
         if language:
             arms.append(f"""
                 SELECT x.document_id, x.idx FROM {fq_table("kb_passages")} x
@@ -903,17 +874,12 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     "$7::float8[]) t(w, idf) WHERE p.search_vector @@ to_tsquery('simple', quote_literal(t.w))) "
                     "ELSE 0 END"
                 )
-            matched = "false"
-            if pattern:
-                stage_params.append(_match_value(pattern, regex))
-                matched = _text_match("p.text", f"${len(stage_params)}", regex)
             rows = await conn.fetch(
                 f"""
                 WITH c AS (SELECT * FROM unnest($3::text[], $4::int[]) AS c(document_id, idx))
                 SELECT {", ".join(f"p.{col.strip()}" for col in _PASSAGE_COLUMNS.split(","))},
                        {", ".join(f"d.{col.strip()}" for col in _DOC_COLUMNS.split(",") if col.strip() != "document_id")},
                        p.document_id, 1 - {self._distance("$1")} AS score, {keyword} AS keyword,
-                       coalesce({matched}, false) AS matched,
                        (SELECT array_agg(v.role || ':' || (1 - {self._distance("$1", "v")})::text)
                         FROM {fq_table("kb_passage_vectors")} v
                         WHERE v.bank_id = p.bank_id AND v.document_id = p.document_id AND v.idx = p.idx
@@ -961,7 +927,6 @@ class PostgresKnowledgeStore(KnowledgeStore):
             dense,
             [float(r["keyword"] or 0.0) for r in rows],
             keyword_weight,
-            matched=[bool(r["matched"]) for r in rows],
             reference=[r["page"] is not None and is_reference_page(r["text"]) for r in rows],
         )
         hits = [
@@ -969,46 +934,6 @@ class PostgresKnowledgeStore(KnowledgeStore):
         ]
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits[:top_k]
-
-    async def grep(
-        self,
-        bank_id: str,
-        pattern: str,
-        *,
-        top_k: int,
-        filters: SearchFilters,
-        regex: bool = False,
-    ) -> list[SearchHit]:
-        match = _text_match("p.text", "$2", regex)
-        params: list[Any] = [bank_id, _match_value(pattern, regex), top_k]
-        where = ""
-        if filters.document_ids:
-            params.append(filters.document_ids)
-            where += f" AND p.document_id = ANY(${len(params)}::text[])"
-        if filters.media_types:
-            params.append(filters.media_types)
-            where += f" AND d.media_type = ANY(${len(params)}::text[])"
-        if filters.tags:
-            params.append(filters.tags)
-            op = "@>" if filters.tags_match == "all" else "&&"
-            where += f" AND d.tags {op} ${len(params)}::text[]"
-        # ponytail: a sequential ILIKE scan; add a pg_trgm GIN index on text when banks grow past ~1M passages.
-        async with acquire_with_retry(await self._pool()) as conn:
-            rows = await conn.fetch(
-                f"""
-                SELECT * FROM (
-                    SELECT {", ".join(f"p.{col.strip()}" for col in _PASSAGE_COLUMNS.split(","))},
-                           {", ".join(f"d.{col.strip()}" for col in _DOC_COLUMNS.split(",") if col.strip() != "document_id")},
-                           p.document_id, count(*) OVER (PARTITION BY p.document_id) AS matches
-                    FROM {fq_table("kb_passages")} p
-                    JOIN {fq_table("kb_documents")} d ON d.bank_id = p.bank_id AND d.document_id = p.document_id
-                    WHERE p.bank_id = $1 AND {match}{where}
-                ) m
-                ORDER BY matches DESC, document_id, idx LIMIT $3
-                """,
-                *params,
-            )
-        return [SearchHit(passage=_passage(r), document=_document(r), score=float(r["matches"])) for r in rows]
 
     async def timeseries(self, bank_id: str, *, since: datetime, trunc: str) -> list[TimeBucket]:
         if trunc not in ("hour", "day"):
@@ -1144,31 +1069,15 @@ def _or_tsquery(config: str, text: str) -> str:
 #: Where a query word's document frequency stops being counted (see the IDF in ``search``).
 _DF_CAP = 50_000
 
-#: Added to the score of a passage that contains the search's ``pattern``. Fused scores stay within
-#: [0, 1], so every exact match ranks above every passage that is only similar in meaning.
-EXACT_MATCH_BONUS = 1.0
 
-
-def _match_value(pattern: str, regex: bool) -> str:
-    """The SQL parameter for ``pattern``: as is for a regex, else escaped and wrapped for ILIKE."""
-    if regex:
-        return pattern
-    return "%" + pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-
-
-def _text_match(column: str, placeholder: str, regex: bool) -> str:
-    return f"{column} ~* {placeholder}" if regex else f"{column} ILIKE {placeholder}"
-
-
-def final_scores(
-    dense: list[float], keyword: list[float], weight: float, *, matched: list[bool], reference: list[bool]
-) -> list[float]:
-    """Dense fused with keywords, then the exact-match bonus and the reference-list demotion. The demotion
-    comes after the fusion: inside it, a page at -1 stretched the min-max range of the dense scores, so
-    keywords alone ordered the rest (ViDoRe hr English: 58.8 nDCG@10 instead of 67.2)."""
+def final_scores(dense: list[float], keyword: list[float], weight: float, *, reference: list[bool]) -> list[float]:
+    """Dense fused with keywords, then the reference-list demotion. The demotion comes after the fusion:
+    inside it, a page at -1 stretched the min-max range of the dense scores, so keywords alone ordered
+    the rest (ViDoRe hr English: 58.8 nDCG@10 instead of 67.2). An exact-text bonus (`pattern`) and a
+    grep-only search lived here too; no benchmark used them and they were dropped."""
     return [
-        score + (EXACT_MATCH_BONUS if m else 0.0) - (REFERENCE_PENALTY if ref else 0.0)
-        for score, m, ref in zip(fuse_keyword(dense, keyword, weight), matched, reference, strict=True)
+        score - (REFERENCE_PENALTY if ref else 0.0)
+        for score, ref in zip(fuse_keyword(dense, keyword, weight), reference, strict=True)
     ]
 
 
