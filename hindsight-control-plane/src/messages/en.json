@@ -2455,10 +2455,10 @@
       "documentsTitle": "Documents",
       "documentsDescription": "Files and text in this bank. Each is split into passages and embedded; drop files anywhere here to upload them.",
       "searchTitle": "Search",
-      "searchDescription": "Find passages by meaning, with a text query, an image, or both."
+      "searchDescription": "Find passages with text, an image, a video clip and exact text, alone or together, in one ranked list."
     },
     "documents": {
-      "filterPlaceholder": "Filter by name, title or id…",
+      "filterPlaceholder": "Filter by file name or id…",
       "kindFilter": "Filter by kind",
       "statusFilter": "Filter by status",
       "allKinds": "All kinds",
@@ -2515,26 +2515,26 @@
     },
     "search": {
       "placeholder": "Search by meaning, e.g. how do I rotate an API key?",
-      "addImage": "Image / video",
-      "imageHint": "Paste, drop or choose an image or an MP4 clip to search with, alone or with text.",
-      "modeMeaning": "By meaning",
-      "modeExact": "Exact text",
-      "modeHelp": "Exact text finds passages that contain the words as written (codes, ids, names). It reads text only: text files and the PDF text layer.",
+      "addMedia": "Image / video",
+      "mediaHint": "Paste, drop or choose an image or an MP4 clip to search with, alone or with text.",
       "imageQuery": "Searching with this image",
       "videoQuery": "Searching with this video",
-      "removeImage": "Remove",
-      "notAnImage": "Only an image or an MP4 video can be a search query",
-      "pastedImage": "Pasted image",
+      "removeMedia": "Remove",
+      "notMedia": "Only an image or an MP4 video can be a search query",
+      "pastedMedia": "Pasted image",
       "topK": "Results",
       "submit": "Search",
-      "filters": "Filters",
+      "options": "Options",
+      "exactText": "Exact text",
+      "exactTextHelp": "Passages containing it rank first: codes, ids, names. Alone, documents with the most matches come first. Reads text only.",
+      "regex": "Regular expression",
       "tags": "Tags",
       "tagsMatch": "Tag match",
       "tagsAny": "Any",
       "tagsAll": "All",
       "noResults": "No passages match this search.",
-      "idle": "Search the passages of this bank by text or by an image.",
-      "scoreHelp": "Cosine similarity between the query and the passage",
+      "idle": "Search this bank by text, an image, a video clip, exact text, or any mix of them.",
+      "scoreHelp": "Relevance: similarity to the query, raised by keyword matches; above 1 when the passage contains the exact text",
       "openPassage": "Open in document",
       "failed": "Search failed",
       "mediaTypes": "Media types",
@@ -2601,7 +2601,7 @@
       "textTokens": "Text passage size (tokens)",
       "seconds": "{count, plural, one {# second} other {# seconds}}",
       "linkTitle": "Memory banks",
-      "linkDescription": "Memory banks that link this bank get its passages back from recall, as the authority.",
+      "linkDescription": "Reflect on a memory bank that links this bank also searches it, and treats its documents as the authority.",
       "linkHowTo": "Link it from a memory bank: open the memory bank, then Bank Configuration → Configuration → Knowledge banks.",
       "delete": "Delete bank",
       "mediaTypes": "Media types it can write"
@@ -2622,7 +2622,9 @@
       "tagsFor": "Tags for {name}",
       "uploaded": "{count, plural, one {# file uploaded} other {# files uploaded}}. Search finds it once ingestion is done.",
       "someFailed": "{count, plural, one {# file failed} other {# files failed}} to upload",
-      "written": "Document added. It becomes searchable once it is ready."
+      "written": "Document added and searchable.",
+      "unchanged": "{count, plural, one {# file} other {# files}} unchanged: already ingested as is.",
+      "writtenUnchanged": "Unchanged: this document is already ingested as is."
     }
   }
 }

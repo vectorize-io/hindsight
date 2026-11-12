@@ -2464,10 +2464,10 @@ export class ControlPlaneClient {
     });
   }
 
-  async createKnowledgeBank(bankId: string, name?: string) {
+  async createKnowledgeBank(bankId: string) {
     return this.fetchApi<KnowledgeBank>(knowledgeApi(), {
       method: "POST",
-      body: JSON.stringify({ bank_id: bankId, ...(name ? { name } : {}) }),
+      body: JSON.stringify({ bank_id: bankId }),
     });
   }
 
@@ -2483,6 +2483,7 @@ export class ControlPlaneClient {
       q?: string;
       status?: DocumentStatus;
       media_type?: MediaType;
+      tags?: string[];
     },
     /** A background poll: its failures stay quiet instead of toasting every few seconds. */
     { quiet = false }: { quiet?: boolean } = {}
@@ -2494,6 +2495,7 @@ export class ControlPlaneClient {
     if (params.q) search.set("q", params.q);
     if (params.status) search.set("status", params.status);
     if (params.media_type) search.set("media_type", params.media_type);
+    for (const tag of params.tags ?? []) search.append("tags", tag);
     return this.fetchApi<{ documents: KnowledgeDocument[]; total: number }>(
       `${knowledgeApi(bankId, "documents")}?${search}`,
       { cache: "no-store" as RequestCache },
@@ -2523,9 +2525,10 @@ export class ControlPlaneClient {
       tags: string[];
     }
   ) {
-    return this.fetchApi<KnowledgeIngestResponse>(knowledgeApi(bankId, "documents"), {
+    // Text ingest is POST /ingest with `items`, processed in the request by default (no /documents POST).
+    return this.fetchApi<KnowledgeIngestResponse>(knowledgeApi(bankId, "ingest"), {
       method: "POST",
-      body: JSON.stringify({ documents: [doc] }),
+      body: JSON.stringify({ items: [doc] }),
     });
   }
 

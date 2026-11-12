@@ -2455,10 +2455,10 @@
       "documentsTitle": "文档",
       "documentsDescription": "此库中的文件和文本。每个文档都会被切分为段落并嵌入;将文件拖放到此处任意位置即可上传。",
       "searchTitle": "搜索",
-      "searchDescription": "通过文本查询、图片或两者,按语义查找段落。"
+      "searchDescription": "用文本、图片、视频片段和精确文本(单独或一起)查找段落,结果为一个排序列表。"
     },
     "documents": {
-      "filterPlaceholder": "按名称、标题或 ID 筛选…",
+      "filterPlaceholder": "按文件名或 ID 筛选…",
       "kindFilter": "按类型筛选",
       "statusFilter": "按状态筛选",
       "allKinds": "所有类型",
@@ -2515,26 +2515,26 @@
     },
     "search": {
       "placeholder": "按语义搜索,例如:如何轮换 API 密钥?",
-      "addImage": "图片 / 视频",
-      "imageHint": "粘贴、拖放或选择一张图片或一段 MP4 视频进行搜索,可单独使用或配合文本。",
-      "modeMeaning": "按含义",
-      "modeExact": "精确文本",
-      "modeHelp": "精确文本查找原样包含这些词的段落（代码、ID、名称）。只读取文本：文本文件和 PDF 的文本层。",
+      "addMedia": "图片 / 视频",
+      "mediaHint": "粘贴、拖放或选择一张图片或一段 MP4 视频进行搜索,可单独使用或配合文本。",
       "imageQuery": "正在用此图片搜索",
       "videoQuery": "正在用此视频搜索",
-      "removeImage": "移除",
-      "notAnImage": "只能使用图片或 MP4 视频作为搜索查询",
-      "pastedImage": "粘贴的图片",
+      "removeMedia": "移除",
+      "notMedia": "只能使用图片或 MP4 视频作为搜索查询",
+      "pastedMedia": "粘贴的图片",
       "topK": "结果数",
       "submit": "搜索",
-      "filters": "筛选",
+      "options": "选项",
+      "exactText": "精确文本",
+      "exactTextHelp": "包含它的段落排在最前:代码、ID、名称。单独使用时,匹配最多的文档排在前面。只读取文本。",
+      "regex": "正则表达式",
       "tags": "标签",
       "tagsMatch": "标签匹配",
       "tagsAny": "任一",
       "tagsAll": "全部",
       "noResults": "没有与此搜索匹配的段落。",
-      "idle": "通过文本或图片搜索此库中的段落。",
-      "scoreHelp": "查询与段落之间的余弦相似度",
+      "idle": "用文本、图片、视频片段、精确文本或它们的任意组合搜索此库。",
+      "scoreHelp": "相关度:与查询的相似度,关键词匹配会提高它;段落包含精确文本时大于 1",
       "openPassage": "在文档中打开",
       "failed": "搜索失败",
       "mediaTypes": "媒体类型",
@@ -2601,7 +2601,7 @@
       "textTokens": "文本段落大小(token)",
       "seconds": "{count, plural, other {# 秒}}",
       "linkTitle": "记忆库",
-      "linkDescription": "关联此库的记忆库在召回时会获得其中的段落,作为权威来源。",
+      "linkDescription": "链接了此库的记忆库在 reflect 时也会搜索它,并以其文档为准。",
       "linkHowTo": "从记忆库中关联:打开记忆库,然后进入 库配置 → 配置 → 文档库。",
       "delete": "删除库",
       "mediaTypes": "可写入的媒体类型"
@@ -2622,7 +2622,9 @@
       "tagsFor": "{name} 的标签",
       "uploaded": "{count, plural, other {已上传 # 个文件}}。就绪后即可搜索。",
       "someFailed": "{count, plural, other {# 个文件}}上传失败",
-      "written": "文档已添加。就绪后即可搜索。"
+      "written": "文档已添加,可以搜索。",
+      "unchanged": "{count, plural, other {# 个文件}}未变化:已按原样导入。",
+      "writtenUnchanged": "未变化:此文档已按原样导入。"
     }
   }
 }

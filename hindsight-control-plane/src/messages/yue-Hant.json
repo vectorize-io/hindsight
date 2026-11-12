@@ -2455,10 +2455,10 @@
       "documentsTitle": "文件",
       "documentsDescription": "呢個庫入面嘅檔案同文字。每份文件都會切分成段落再嵌入;將檔案拖放到呢度任何位置就可以上傳。",
       "searchTitle": "搜尋",
-      "searchDescription": "用文字查詢、圖片或者兩樣一齊,按語意搵段落。"
+      "searchDescription": "用文字、圖片、影片片段同精確文字(單獨或者一齊)搵段落,結果係一個排好序嘅清單。"
     },
     "documents": {
-      "filterPlaceholder": "按名稱、標題或者 ID 篩選…",
+      "filterPlaceholder": "用檔名或者 ID 篩選…",
       "kindFilter": "按類型篩選",
       "statusFilter": "按狀態篩選",
       "allKinds": "所有類型",
@@ -2515,26 +2515,26 @@
     },
     "search": {
       "placeholder": "按意思搜尋,例如:點樣輪換 API 金鑰?",
-      "addImage": "圖片 / 影片",
-      "imageHint": "貼上、拖放或者揀一張圖片或者一段 MP4 影片嚟搜尋,可以單獨用或者配埋文字。",
-      "modeMeaning": "按意思",
-      "modeExact": "精確文字",
-      "modeHelp": "精確文字會搵出原文包含呢啲字嘅段落（代碼、ID、名稱）。只讀文字：文字檔同PDF嘅文字層。",
+      "addMedia": "圖片 / 影片",
+      "mediaHint": "貼上、拖放或者揀一張圖片或者一段 MP4 影片嚟搜尋,可以單獨用或者配埋文字。",
       "imageQuery": "用緊呢張圖片搜尋",
       "videoQuery": "用緊呢段影片搜尋",
-      "removeImage": "移除",
-      "notAnImage": "淨係可以用圖片或者 MP4 影片做搜尋查詢",
-      "pastedImage": "貼上嘅圖片",
+      "removeMedia": "移除",
+      "notMedia": "淨係可以用圖片或者 MP4 影片做搜尋查詢",
+      "pastedMedia": "貼上嘅圖片",
       "topK": "結果數",
       "submit": "搜尋",
-      "filters": "篩選",
+      "options": "選項",
+      "exactText": "精確文字",
+      "exactTextHelp": "有佢嘅段落排最前:代碼、ID、名。單獨用嘅話,符合得最多嘅文件排前面。淨係讀文字。",
+      "regex": "正規表示式",
       "tags": "標籤",
       "tagsMatch": "標籤配對",
       "tagsAny": "任何一個",
       "tagsAll": "全部",
       "noResults": "冇段落符合呢個搜尋。",
-      "idle": "用文字或者圖片搜尋呢個庫嘅段落。",
-      "scoreHelp": "查詢同段落之間嘅餘弦相似度",
+      "idle": "用文字、圖片、影片片段、精確文字或者佢哋嘅任何組合搜尋呢個庫。",
+      "scoreHelp": "相關度:同查詢嘅相似度,關鍵字符合會提高佢;段落有精確文字嘅時候大過 1",
       "openPassage": "喺文件入面打開",
       "failed": "搜尋失敗",
       "mediaTypes": "媒體類型",
@@ -2601,7 +2601,7 @@
       "textTokens": "文字段落大小(token)",
       "seconds": "{count, plural, other {# 秒}}",
       "linkTitle": "記憶庫",
-      "linkDescription": "關聯咗呢個庫嘅記憶庫喺召回時會攞到入面嘅段落,作為權威來源。",
+      "linkDescription": "連結咗呢個庫嘅記憶庫喺 reflect 嘅時候都會搜尋佢,並以佢嘅文件為準。",
       "linkHowTo": "喺記憶庫度關聯:打開記憶庫,然後去 庫設定 → 設定 → 文件庫。",
       "delete": "刪除庫",
       "mediaTypes": "可以寫入嘅媒體類型"
@@ -2622,7 +2622,9 @@
       "tagsFor": "{name} 嘅標籤",
       "uploaded": "{count, plural, other {已上載 # 個檔案}}。準備好之後就搜尋得到。",
       "someFailed": "{count, plural, other {# 個檔案}}上載失敗",
-      "written": "文件已加入。準備好之後就搜尋得到。"
+      "written": "文件已加入,可以搜尋。",
+      "unchanged": "{count, plural, other {# 個檔案}}冇變:已經原樣匯入咗。",
+      "writtenUnchanged": "冇變:呢份文件已經原樣匯入咗。"
     }
   }
 }
