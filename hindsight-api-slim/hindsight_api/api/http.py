@@ -6,6 +6,7 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
+import dataclasses
 import gc
 import json
 import logging
@@ -806,6 +807,46 @@ class EntityListItem(BaseModel):
     first_seen: str | None = None
     last_seen: str | None = None
     metadata: dict[str, Any] | None = None
+
+
+class MemoryTreeObservation(BaseModel):
+    """An observation as the memory tree lists it."""
+
+    id: str
+    text: str
+    proof_count: int = Field(description="How many source memories back it.")
+    occurred_start: datetime | None = None
+    occurred_end: datetime | None = None
+    mentioned_at: datetime | None = None
+    updated_at: datetime | None = None
+    tags: list[str]
+
+
+class MemoryTreeFile(BaseModel):
+    """A markdown file in the memory tree: a folder's README or one topic."""
+
+    path: str = Field(description="Path from the tree root, e.g. `gemma/vllm.md` or `gemma/README.md`.")
+    name: str
+    kind: Literal["readme", "topic"] = Field(
+        description="`readme`: a folder's overview and best-supported observations. `topic`: every observation in one topic."
+    )
+    title: str
+    observation_count: int = Field(description="Observations in the topic, or in the whole folder for a README.")
+    about: list[str] = Field(description="The entities that set this topic apart from its siblings.")
+    related: list[str] = Field(description="Paths of related topic files elsewhere in the tree.")
+    observations: list[MemoryTreeObservation] = Field(description="What the file lists, best-supported first.")
+    content: str = Field(description="The same file as markdown, with dates and source counts on every line.")
+
+
+class MemoryTreeFolder(BaseModel):
+    """A topic folder in the memory tree."""
+
+    path: str = Field(description="Path from the tree root; empty for the root.")
+    name: str
+    title: str = Field(description="Human-readable topic name.")
+    observation_count: int
+    folders: list["MemoryTreeFolder"]
+    files: list[MemoryTreeFile]
 
 
 class EntityListResponse(BaseModel):
@@ -6130,6 +6171,35 @@ def _register_routes(app: FastAPI):
             raise
         except Exception as e:
             raise _internal_error(e, f"/v1/default/banks/{bank_id}/entities")
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/memory-tree",
+        response_model=MemoryTreeFolder,
+        summary="Get the memory tree",
+        description=(
+            "The bank's observations laid out as a bounded tree of topic folders, built without an LLM. "
+            "Observations are grouped by the entities they are about. Each topic is one file listing every "
+            "observation in it; each folder has a `README.md` with its topics and best-supported observations. "
+            "Experimental."
+        ),
+        operation_id="get_memory_tree",
+        tags=["Memory"],
+        responses=_BANK_NOT_FOUND_RESPONSES,
+    )
+    async def api_get_memory_tree(
+        bank_id: str,
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Return the memory tree for a bank."""
+        try:
+            tree = await app.state.memory.get_memory_tree(bank_id, request_context=request_context)
+            return MemoryTreeFolder.model_validate(dataclasses.asdict(tree))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/memory-tree")
 
     @app.get(
         "/v1/default/banks/{bank_id}/entities/graph",

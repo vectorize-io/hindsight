@@ -185,7 +185,9 @@
     "cloneIncludeBankConfigHint": "Config overrides, directives and webhooks — the copy will call the same webhook endpoints.",
     "cloneIncludeHistory": "History",
     "cloneIncludeHistoryHint": "Audit log and LLM request traces.",
-    "cloneNothingSelected": "Choose at least one thing to copy."
+    "cloneNothingSelected": "Choose at least one thing to copy.",
+    "memoryTree": "Observations",
+    "memoryTreeDescription": "Observations grouped into topics automatically, without an LLM. Each topic is a file with all of its facts; each folder's README gives an overview."
   },
   "bankProfile": {
     "noBankSelected": "No Bank Selected",
@@ -2697,5 +2699,24 @@
         }
       }
     }
+  },
+  "memoryTree": {
+    "empty": "No observations in this bank yet.",
+    "pickFile": "Pick a file on the left.",
+    "findPlaceholder": "Find in memories (text or regex)",
+    "clearFind": "Clear",
+    "noMatches": "No matches.",
+    "matchSummary": "{matches, plural, one {# match} other {# matches}} in {files, plural, one {# file} other {# files}}",
+    "matchesInFile": "{shown} of {total} match",
+    "observationCount": "{count, plural, one {# observation} other {# observations}}",
+    "sources": "{count, plural, one {# source} other {# sources}}",
+    "updated": "updated {when}",
+    "related": "Related:",
+    "topics": "Topics",
+    "bestSupported": "Best supported",
+    "observations": "Observations",
+    "filesMode": "Files",
+    "constellationMode": "Constellation",
+    "sourcesLegend": "sources"
   }
 }

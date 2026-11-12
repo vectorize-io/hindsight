@@ -4042,6 +4042,142 @@ export type MemoryTimeseriesBucket = {
 };
 
 /**
+ * MemoryTreeFile
+ *
+ * A markdown file in the memory tree: a folder's README or one topic.
+ */
+export type MemoryTreeFile = {
+  /**
+   * Path
+   *
+   * Path from the tree root, e.g. `gemma/vllm.md` or `gemma/README.md`.
+   */
+  path: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Kind
+   *
+   * `readme`: a folder's overview and best-supported observations. `topic`: every observation in one topic.
+   */
+  kind: "readme" | "topic";
+  /**
+   * Title
+   */
+  title: string;
+  /**
+   * Observation Count
+   *
+   * Observations in the topic, or in the whole folder for a README.
+   */
+  observation_count: number;
+  /**
+   * About
+   *
+   * The entities that set this topic apart from its siblings.
+   */
+  about: Array<string>;
+  /**
+   * Related
+   *
+   * Paths of related topic files elsewhere in the tree.
+   */
+  related: Array<string>;
+  /**
+   * Observations
+   *
+   * What the file lists, best-supported first.
+   */
+  observations: Array<MemoryTreeObservation>;
+  /**
+   * Content
+   *
+   * The same file as markdown, with dates and source counts on every line.
+   */
+  content: string;
+};
+
+/**
+ * MemoryTreeFolder
+ *
+ * A topic folder in the memory tree.
+ */
+export type MemoryTreeFolder = {
+  /**
+   * Path
+   *
+   * Path from the tree root; empty for the root.
+   */
+  path: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Title
+   *
+   * Human-readable topic name.
+   */
+  title: string;
+  /**
+   * Observation Count
+   */
+  observation_count: number;
+  /**
+   * Folders
+   */
+  folders: Array<MemoryTreeFolder>;
+  /**
+   * Files
+   */
+  files: Array<MemoryTreeFile>;
+};
+
+/**
+ * MemoryTreeObservation
+ *
+ * An observation as the memory tree lists it.
+ */
+export type MemoryTreeObservation = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Text
+   */
+  text: string;
+  /**
+   * Proof Count
+   *
+   * How many source memories back it.
+   */
+  proof_count: number;
+  /**
+   * Occurred Start
+   */
+  occurred_start?: string | null;
+  /**
+   * Occurred End
+   */
+  occurred_end?: string | null;
+  /**
+   * Mentioned At
+   */
+  mentioned_at?: string | null;
+  /**
+   * Updated At
+   */
+  updated_at?: string | null;
+  /**
+   * Tags
+   */
+  tags: Array<string>;
+};
+
+/**
  * MemoryUnitListItem
  *
  * One row of the memory-unit listing.
@@ -8267,6 +8403,46 @@ export type ListEntitiesResponses = {
 };
 
 export type ListEntitiesResponse = ListEntitiesResponses[keyof ListEntitiesResponses];
+
+export type GetMemoryTreeData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/banks/{bank_id}/memory-tree";
+};
+
+export type GetMemoryTreeErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetMemoryTreeError = GetMemoryTreeErrors[keyof GetMemoryTreeErrors];
+
+export type GetMemoryTreeResponses = {
+  /**
+   * Successful Response
+   */
+  200: MemoryTreeFolder;
+};
+
+export type GetMemoryTreeResponse = GetMemoryTreeResponses[keyof GetMemoryTreeResponses];
 
 export type GetEntityGraphData = {
   body?: never;

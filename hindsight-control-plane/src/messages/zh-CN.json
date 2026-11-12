@@ -185,7 +185,9 @@
     "cloneIncludeBankConfigHint": "配置覆盖、指令和 Webhook——副本会调用相同的 Webhook 端点。",
     "cloneIncludeHistory": "历史",
     "cloneIncludeHistoryHint": "审计日志和 LLM 请求追踪。",
-    "cloneNothingSelected": "请至少选择一项要复制的内容。"
+    "cloneNothingSelected": "请至少选择一项要复制的内容。",
+    "memoryTree": "观察",
+    "memoryTreeDescription": "自动将观察按主题分组为文件夹，不使用 LLM。每个文件夹都有摘要；每个末端文件夹列出所有记忆。"
   },
   "bankProfile": {
     "noBankSelected": "未选择记忆库",
@@ -2697,5 +2699,24 @@
         }
       }
     }
+  },
+  "memoryTree": {
+    "empty": "此库还没有观察。",
+    "pickFile": "请在左侧选择一个文件。",
+    "findPlaceholder": "在记忆中查找（文本或正则）",
+    "clearFind": "清除",
+    "noMatches": "没有匹配。",
+    "matchSummary": "{files} 个文件中有 {matches} 处匹配",
+    "matchesInFile": "{total} 条中有 {shown} 条匹配",
+    "observationCount": "{count} 条观察",
+    "sources": "{count} 个来源",
+    "updated": "{when}更新",
+    "related": "相关：",
+    "topics": "主题",
+    "bestSupported": "支持最多",
+    "observations": "观察",
+    "filesMode": "文件",
+    "constellationMode": "星图",
+    "sourcesLegend": "来源"
   }
 }

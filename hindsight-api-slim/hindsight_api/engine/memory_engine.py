@@ -707,6 +707,7 @@ if TYPE_CHECKING:
     from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse, AuditLogSummary
     from .memories import MemoriesExtension, MemoryScopeWatermark, ReflectFreshness
     from .memories.base import AttachmentRef, EntityResolverHandle, StoredMemory
+    from .memory_tree import TreeFolder
     from .prompt_preview import PromptPreview
     from .retain.attachment_content import AttachmentOccurrence, LoadedAttachment, RetainAttachment
     from .retain.attachment_store import StoredAttachment
@@ -16869,6 +16870,43 @@ class MemoryEngine(MemoryEngineInterface):
                 limit=limit,
                 offset=offset,
             )
+
+    async def get_memory_tree(self, bank_id: str, *, request_context: "RequestContext") -> "TreeFolder":
+        """The bank's observations as a bounded tree of topic folders (see ``memory_tree``). No LLM.
+
+        # ponytail: scans every observation and rebuilds on each call (~0.2s for 2.5k observations).
+        # Cache by the bank's last write, or persist the tree, once banks are large.
+        """
+        from .memories import get_memories
+        from .memory_tree import TreeObservation, build_memory_tree
+
+        await self._authenticate_tenant(request_context)
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_MEMORY_UNITS, request_context)
+        await self._require_bank_exists(bank_id)
+        store = get_memories()
+        async with self._store_read_conn(bank_id) as conn:
+            units = await store._scan_all_memories(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=["observation"], tag_groups=tag_scope or None
+            )
+            # An observation inherits its source memories' entities.
+            entity_map = await store.entity_map_for_units(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[u.unit_id for u in units]
+            )
+        observations = [
+            TreeObservation(
+                id=u.unit_id,
+                text=u.text,
+                proof_count=u.proof_count or 1,
+                entities=[e["canonical_name"] for e in entity_map.get(u.unit_id, [])],
+                occurred_start=u.occurred_start,
+                occurred_end=u.occurred_end,
+                mentioned_at=u.mentioned_at,
+                updated_at=u.updated_at,
+                tags=list(u.tags or []),
+            )
+            for u in units
+        ]
+        return build_memory_tree(observations, bank_title=bank_id)
 
     async def get_entity_graph(
         self,

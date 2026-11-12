@@ -185,7 +185,9 @@
     "cloneIncludeBankConfigHint": "Surcharges de configuration, directives et webhooks — la copie appellera les mêmes points de terminaison.",
     "cloneIncludeHistory": "Historique",
     "cloneIncludeHistoryHint": "Journal d'audit et traces des requêtes LLM.",
-    "cloneNothingSelected": "Choisissez au moins un élément à copier."
+    "cloneNothingSelected": "Choisissez au moins un élément à copier.",
+    "memoryTree": "Observations",
+    "memoryTreeDescription": "Observations regroupées automatiquement en dossiers par sujet, sans LLM. Chaque dossier a un résumé ; chaque feuille liste toutes ses mémoires."
   },
   "bankProfile": {
     "noBankSelected": "Aucune banque sélectionnée",
@@ -2697,5 +2699,24 @@
         }
       }
     }
+  },
+  "memoryTree": {
+    "empty": "Cette banque n'a pas encore d'observations.",
+    "pickFile": "Choisissez un fichier à gauche.",
+    "findPlaceholder": "Chercher dans les mémoires (texte ou regex)",
+    "clearFind": "Effacer",
+    "noMatches": "Aucun résultat.",
+    "matchSummary": "{matches, plural, one {# résultat} other {# résultats}} dans {files, plural, one {# fichier} other {# fichiers}}",
+    "matchesInFile": "{shown} sur {total} correspondent",
+    "observationCount": "{count, plural, one {# observation} other {# observations}}",
+    "sources": "{count, plural, one {# source} other {# sources}}",
+    "updated": "mis à jour {when}",
+    "related": "Liés :",
+    "topics": "Sujets",
+    "bestSupported": "Les mieux étayées",
+    "observations": "Observations",
+    "filesMode": "Fichiers",
+    "constellationMode": "Constellation",
+    "sourcesLegend": "sources"
   }
 }

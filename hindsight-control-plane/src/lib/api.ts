@@ -76,6 +76,39 @@ export interface WebhookHttpConfig {
   params: Record<string, string>;
 }
 
+export interface MemoryTreeObservation {
+  id: string;
+  text: string;
+  proof_count: number;
+  occurred_start?: string | null;
+  occurred_end?: string | null;
+  mentioned_at?: string | null;
+  updated_at?: string | null;
+  tags: string[];
+}
+
+export interface MemoryTreeFile {
+  path: string;
+  name: string;
+  /** `readme`: a folder's overview. `topic`: every observation in one topic. */
+  kind: "readme" | "topic";
+  title: string;
+  observation_count: number;
+  about: string[];
+  related: string[];
+  observations: MemoryTreeObservation[];
+  content: string;
+}
+
+export interface MemoryTreeFolder {
+  path: string;
+  name: string;
+  title: string;
+  observation_count: number;
+  folders: MemoryTreeFolder[];
+  files: MemoryTreeFile[];
+}
+
 export interface PageNode {
   id: string;
   kind: "folder" | "page";
@@ -946,6 +979,13 @@ export class ControlPlaneClient {
       limit: number;
       offset: number;
     }>(`/api/entities?${queryParams}`);
+  }
+
+  /** The bank's observations as a tree of topic folders (experimental, no LLM). */
+  async getMemoryTree(bankId: string) {
+    return this.fetchApi<MemoryTreeFolder>(
+      `/api/memory-tree?bank_id=${encodeURIComponent(bankId)}`
+    );
   }
 
   /**

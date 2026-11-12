@@ -185,7 +185,9 @@
     "cloneIncludeBankConfigHint": "Sobrescritas de configuração, diretivas e webhooks — a cópia chamará os mesmos endpoints.",
     "cloneIncludeHistory": "Histórico",
     "cloneIncludeHistoryHint": "Log de auditoria e rastros de requisições ao LLM.",
-    "cloneNothingSelected": "Escolha pelo menos um item para copiar."
+    "cloneNothingSelected": "Escolha pelo menos um item para copiar.",
+    "memoryTree": "Observações",
+    "memoryTreeDescription": "Observações agrupadas automaticamente em pastas por tema, sem LLM. Cada pasta tem um resumo; cada folha lista todas as suas memórias."
   },
   "bankProfile": {
     "noBankSelected": "Nenhum Banco Selecionado",
@@ -2697,5 +2699,24 @@
         }
       }
     }
+  },
+  "memoryTree": {
+    "empty": "Este banco ainda não tem observações.",
+    "pickFile": "Escolha um arquivo à esquerda.",
+    "findPlaceholder": "Buscar nas memórias (texto ou regex)",
+    "clearFind": "Limpar",
+    "noMatches": "Nenhum resultado.",
+    "matchSummary": "{matches, plural, one {# resultado} other {# resultados}} em {files, plural, one {# arquivo} other {# arquivos}}",
+    "matchesInFile": "{shown} de {total} correspondem",
+    "observationCount": "{count, plural, one {# observação} other {# observações}}",
+    "sources": "{count, plural, one {# fonte} other {# fontes}}",
+    "updated": "atualizado {when}",
+    "related": "Relacionados:",
+    "topics": "Tópicos",
+    "bestSupported": "Mais bem fundamentadas",
+    "observations": "Observações",
+    "filesMode": "Arquivos",
+    "constellationMode": "Constelação",
+    "sourcesLegend": "fontes"
   }
 }

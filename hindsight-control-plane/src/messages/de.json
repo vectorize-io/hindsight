@@ -185,7 +185,9 @@
     "cloneIncludeBankConfigHint": "Konfigurations-Overrides, Direktiven und Webhooks – die Kopie ruft dieselben Webhook-Endpunkte auf.",
     "cloneIncludeHistory": "Verlauf",
     "cloneIncludeHistoryHint": "Audit-Protokoll und LLM-Anfrage-Traces.",
-    "cloneNothingSelected": "Wähle mindestens etwas zum Kopieren aus."
+    "cloneNothingSelected": "Wähle mindestens etwas zum Kopieren aus.",
+    "memoryTree": "Beobachtungen",
+    "memoryTreeDescription": "Beobachtungen automatisch in Themenordner gruppiert, ohne LLM. Jeder Ordner hat eine Zusammenfassung; jedes Blatt listet alle seine Erinnerungen."
   },
   "bankProfile": {
     "noBankSelected": "Keine Bank ausgewählt",
@@ -2697,5 +2699,24 @@
         }
       }
     }
+  },
+  "memoryTree": {
+    "empty": "Diese Bank hat noch keine Beobachtungen.",
+    "pickFile": "Wähle links eine Datei.",
+    "findPlaceholder": "In Erinnerungen suchen (Text oder Regex)",
+    "clearFind": "Leeren",
+    "noMatches": "Keine Treffer.",
+    "matchSummary": "{matches, plural, one {# Treffer} other {# Treffer}} in {files, plural, one {# Datei} other {# Dateien}}",
+    "matchesInFile": "{shown} von {total} passen",
+    "observationCount": "{count, plural, one {# Beobachtung} other {# Beobachtungen}}",
+    "sources": "{count, plural, one {# Quelle} other {# Quellen}}",
+    "updated": "aktualisiert {when}",
+    "related": "Verwandt:",
+    "topics": "Themen",
+    "bestSupported": "Am besten belegt",
+    "observations": "Beobachtungen",
+    "filesMode": "Dateien",
+    "constellationMode": "Konstellation",
+    "sourcesLegend": "Quellen"
   }
 }

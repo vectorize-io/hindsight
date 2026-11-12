@@ -185,7 +185,9 @@
     "cloneIncludeBankConfigHint": "設定の上書き、ディレクティブ、Webhook。コピーも同じ Webhook エンドポイントを呼び出します。",
     "cloneIncludeHistory": "履歴",
     "cloneIncludeHistoryHint": "監査ログと LLM リクエストのトレース。",
-    "cloneNothingSelected": "コピーする対象を 1 つ以上選んでください。"
+    "cloneNothingSelected": "コピーする対象を 1 つ以上選んでください。",
+    "memoryTree": "観察",
+    "memoryTreeDescription": "観察をLLMなしで自動的にトピック別フォルダにまとめます。各フォルダに要約があり、各末端フォルダにはすべてのメモリが一覧されます。"
   },
   "bankProfile": {
     "noBankSelected": "バンクが選択されていません",
@@ -2697,5 +2699,24 @@
         }
       }
     }
+  },
+  "memoryTree": {
+    "empty": "このバンクにはまだ観察がありません。",
+    "pickFile": "左のファイルを選択してください。",
+    "findPlaceholder": "メモリを検索（テキストまたは正規表現）",
+    "clearFind": "クリア",
+    "noMatches": "一致なし。",
+    "matchSummary": "{files}ファイルで{matches}件一致",
+    "matchesInFile": "{total}件中{shown}件が一致",
+    "observationCount": "{count}件の観察",
+    "sources": "{count}件のソース",
+    "updated": "{when}に更新",
+    "related": "関連:",
+    "topics": "トピック",
+    "bestSupported": "最も裏付けのある観察",
+    "observations": "観察",
+    "filesMode": "ファイル",
+    "constellationMode": "コンステレーション",
+    "sourcesLegend": "ソース"
   }
 }

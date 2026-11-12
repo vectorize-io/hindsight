@@ -168,6 +168,9 @@ import type {
   GetMemoryData,
   GetMemoryErrors,
   GetMemoryResponses,
+  GetMemoryTreeData,
+  GetMemoryTreeErrors,
+  GetMemoryTreeResponses,
   GetMentalModelData,
   GetMentalModelErrors,
   GetMentalModelHistoryData,
@@ -633,6 +636,19 @@ export const listEntities = <ThrowOnError extends boolean = false>(
 ) =>
   (options.client ?? client).get<ListEntitiesResponses, ListEntitiesErrors, ThrowOnError>({
     url: "/v1/default/banks/{bank_id}/entities",
+    ...options,
+  });
+
+/**
+ * Get the memory tree
+ *
+ * The bank's observations laid out as a bounded tree of topic folders, built without an LLM. Observations are grouped by the entities they are about. Each topic is one file listing every observation in it; each folder has a `README.md` with its topics and best-supported observations. Experimental.
+ */
+export const getMemoryTree = <ThrowOnError extends boolean = false>(
+  options: Options<GetMemoryTreeData, ThrowOnError>
+) =>
+  (options.client ?? client).get<GetMemoryTreeResponses, GetMemoryTreeErrors, ThrowOnError>({
+    url: "/v1/default/banks/{bank_id}/memory-tree",
     ...options,
   });
 

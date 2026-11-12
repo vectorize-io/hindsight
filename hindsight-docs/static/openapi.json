@@ -1510,6 +1510,68 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/memory-tree": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Get the memory tree",
+        "description": "The bank's observations laid out as a bounded tree of topic folders, built without an LLM. Observations are grouped by the entities they are about. Each topic is one file listing every observation in it; each folder has a `README.md` with its topics and best-supported observations. Experimental.",
+        "operationId": "get_memory_tree",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryTreeFolder"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/entities/graph": {
       "get": {
         "tags": [
@@ -15670,6 +15732,208 @@
         ],
         "title": "MemoryTimeseriesBucket",
         "description": "One bucket in the memory ingestion time-series."
+      },
+      "MemoryTreeFile": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Path from the tree root, e.g. `gemma/vllm.md` or `gemma/README.md`."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "readme",
+              "topic"
+            ],
+            "title": "Kind",
+            "description": "`readme`: a folder's overview and best-supported observations. `topic`: every observation in one topic."
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count",
+            "description": "Observations in the topic, or in the whole folder for a README."
+          },
+          "about": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "About",
+            "description": "The entities that set this topic apart from its siblings."
+          },
+          "related": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Related",
+            "description": "Paths of related topic files elsewhere in the tree."
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryTreeObservation"
+            },
+            "type": "array",
+            "title": "Observations",
+            "description": "What the file lists, best-supported first."
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "The same file as markdown, with dates and source counts on every line."
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "name",
+          "kind",
+          "title",
+          "observation_count",
+          "about",
+          "related",
+          "observations",
+          "content"
+        ],
+        "title": "MemoryTreeFile",
+        "description": "A markdown file in the memory tree: a folder's README or one topic."
+      },
+      "MemoryTreeFolder": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Path from the tree root; empty for the root."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Human-readable topic name."
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count"
+          },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryTreeFolder"
+            },
+            "type": "array",
+            "title": "Folders"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryTreeFile"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "name",
+          "title",
+          "observation_count",
+          "folders",
+          "files"
+        ],
+        "title": "MemoryTreeFolder",
+        "description": "A topic folder in the memory tree."
+      },
+      "MemoryTreeObservation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "proof_count": {
+            "type": "integer",
+            "title": "Proof Count",
+            "description": "How many source memories back it."
+          },
+          "occurred_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Start"
+          },
+          "occurred_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred End"
+          },
+          "mentioned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mentioned At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "proof_count",
+          "tags"
+        ],
+        "title": "MemoryTreeObservation",
+        "description": "An observation as the memory tree lists it."
       },
       "MemoryUnitListItem": {
         "properties": {
