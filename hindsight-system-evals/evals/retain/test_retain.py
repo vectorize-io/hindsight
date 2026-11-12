@@ -145,56 +145,55 @@ class LanguageCase:
 
 
 LANGUAGE_CASES = (
-        # The shape that regressed: an English agent transcript dense with numbers,
-        # tool names and paths, which leaves the language less obvious than prose.
-        LanguageCase(
-            id="en-coding-session",
-            language="English",
-            context="coding agent session",
-            content=(
-                "user: run the full validation on the selected work and tell me what passed\n"
-                "assistant: Fresh validation complete. Server: 230 passed, 52 skipped. Portal production build "
-                "succeeded and 55 portal tests passed (I reran with the newer installed Node runtime because the "
-                "initial build picked up Node 17 from the shell). 17 shared native security checks passed, 9 "
-                "customer security checks passed, Admin iOS simulator build succeeded (needed an approved "
-                "temporary directory because the sandbox restricts Xcode's output dir). Fixed five "
-                "whitespace-only issues and updated the deployment record to remove a stale status. The "
-                "prior-agent recovery report still needs independent verification.\n"
-            ),
+    # The shape that regressed: an English agent transcript dense with numbers,
+    # tool names and paths, which leaves the language less obvious than prose.
+    LanguageCase(
+        id="en-coding-session",
+        language="English",
+        context="coding agent session",
+        content=(
+            "user: run the full validation on the selected work and tell me what passed\n"
+            "assistant: Fresh validation complete. Server: 230 passed, 52 skipped. Portal production build "
+            "succeeded and 55 portal tests passed (I reran with the newer installed Node runtime because the "
+            "initial build picked up Node 17 from the shell). 17 shared native security checks passed, 9 "
+            "customer security checks passed, Admin iOS simulator build succeeded (needed an approved "
+            "temporary directory because the sandbox restricts Xcode's output dir). Fixed five "
+            "whitespace-only issues and updated the deployment record to remove a stale status. The "
+            "prior-agent recovery report still needs independent verification.\n"
         ),
-        LanguageCase(
-            id="en-git-commit",
-            language="English",
-            context="git commit-message history (last 1)",
-            content=(
-                "commit 196b69f\nDate: Wed Sep 9 2026\n\n    Initialize Codex git baseline\n\n"
-                "    Co-authored-by: Codex <noreply@openai.com>\n"
-            ),
+    ),
+    LanguageCase(
+        id="en-git-commit",
+        language="English",
+        context="git commit-message history (last 1)",
+        content=(
+            "commit 196b69f\nDate: Wed Sep 9 2026\n\n    Initialize Codex git baseline\n\n"
+            "    Co-authored-by: Codex <noreply@openai.com>\n"
         ),
-        LanguageCase(
-            id="it-coding-session",
-            language="Italian",
-            context="sessione di un coding agent",
-            content=(
-                "user: esegui la validazione completa sul lavoro selezionato e dimmi cosa è passato\n"
-                "assistant: Validazione completata. Server: 230 test passati, 52 saltati. La build di produzione "
-                "del portale è riuscita e sono passati 55 test del portale (ho rilanciato con il runtime Node più "
-                "recente perché la prima build aveva preso Node 17 dalla shell). Sono passati i 17 controlli di "
-                "sicurezza nativi condivisi e i 9 controlli di sicurezza del cliente. Ho corretto cinque problemi "
-                "di soli spazi e aggiornato il registro di deploy.\n"
-            ),
+    ),
+    LanguageCase(
+        id="it-coding-session",
+        language="Italian",
+        context="sessione di un coding agent",
+        content=(
+            "user: esegui la validazione completa sul lavoro selezionato e dimmi cosa è passato\n"
+            "assistant: Validazione completata. Server: 230 test passati, 52 saltati. La build di produzione "
+            "del portale è riuscita e sono passati 55 test del portale (ho rilanciato con il runtime Node più "
+            "recente perché la prima build aveva preso Node 17 dalla shell). Sono passati i 17 controlli di "
+            "sicurezza nativi condivisi e i 9 controlli di sicurezza del cliente. Ho corretto cinque problemi "
+            "di soli spazi e aggiornato il registro di deploy.\n"
         ),
-        LanguageCase(
-            id="ja-personal-note",
-            language="Japanese",
-            context="",
-            content=(
-                "田中さんは先週東京から大阪に引っ越しました。新しい職場はパナソニックで、毎朝電車で通勤しています。"
-                "週末は奈良で書道を教えています。"
-            ),
+    ),
+    LanguageCase(
+        id="ja-personal-note",
+        language="Japanese",
+        context="",
+        content=(
+            "田中さんは先週東京から大阪に引っ越しました。新しい職場はパナソニックで、毎朝電車で通勤しています。"
+            "週末は奈良で書道を教えています。"
         ),
+    ),
 )
-
 
 
 @dataclass
@@ -312,47 +311,46 @@ class FidelityCase:
 
 
 FIDELITY_CASES = (
-        FidelityCase(
-            id="date-borrowed-from-nearby-subject",
-            category="no_invention",
-            document=(
-                "Fieldwork planning note.\n\n"
-                "The project has a target start of September 14.\n"
-                "Customer notifications must be completed before fieldwork begins.\n"
-                "The equipment audit finished last quarter."
-            ),
-            must_extract="customer notifications have to be completed before fieldwork begins",
-            subject="the customer notifications",
-            must_not_carry="carries a date or deadline of its own, such as September 14",
+    FidelityCase(
+        id="date-borrowed-from-nearby-subject",
+        category="no_invention",
+        document=(
+            "Fieldwork planning note.\n\n"
+            "The project has a target start of September 14.\n"
+            "Customer notifications must be completed before fieldwork begins.\n"
+            "The equipment audit finished last quarter."
         ),
-        FidelityCase(
-            id="owner-borrowed-from-nearby-subject",
-            category="no_invention",
-            document=(
-                "Migration status.\n\n"
-                "Priya owns the schema migration and signed off on the rollback plan.\n"
-                "The connection-pool limit still needs to be raised before launch.\n"
-                "Both items are tracked in the launch checklist."
-            ),
-            must_extract="the connection-pool limit still needs to be raised before launch",
-            subject="raising the connection-pool limit",
-            must_not_carry="names a person as its owner, assignee, or the one responsible, such as Priya",
+        must_extract="customer notifications have to be completed before fieldwork begins",
+        subject="the customer notifications",
+        must_not_carry="carries a date or deadline of its own, such as September 14",
+    ),
+    FidelityCase(
+        id="owner-borrowed-from-nearby-subject",
+        category="no_invention",
+        document=(
+            "Migration status.\n\n"
+            "Priya owns the schema migration and signed off on the rollback plan.\n"
+            "The connection-pool limit still needs to be raised before launch.\n"
+            "Both items are tracked in the launch checklist."
         ),
-        FidelityCase(
-            id="place-borrowed-from-nearby-subject",
-            category="no_invention",
-            document=(
-                "Operations digest.\n\n"
-                "The Rotterdam depot switched to the new intake process in June.\n"
-                "Night-shift handovers are now recorded in writing.\n"
-                "Fuel costs were flat across the network."
-            ),
-            must_extract="night-shift handovers are now recorded in writing",
-            subject="the written night-shift handovers",
-            must_not_carry="ties them to a named location, such as the Rotterdam depot",
+        must_extract="the connection-pool limit still needs to be raised before launch",
+        subject="raising the connection-pool limit",
+        must_not_carry="names a person as its owner, assignee, or the one responsible, such as Priya",
+    ),
+    FidelityCase(
+        id="place-borrowed-from-nearby-subject",
+        category="no_invention",
+        document=(
+            "Operations digest.\n\n"
+            "The Rotterdam depot switched to the new intake process in June.\n"
+            "Night-shift handovers are now recorded in writing.\n"
+            "Fuel costs were flat across the network."
         ),
+        must_extract="night-shift handovers are now recorded in writing",
+        subject="the written night-shift handovers",
+        must_not_carry="ties them to a named location, such as the Rotterdam depot",
+    ),
 )
-
 
 
 async def _extracted_facts(client: Hindsight, bank_id: str) -> str:

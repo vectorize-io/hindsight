@@ -27,8 +27,8 @@ signal to re-run, not proof of a regression.
 ## What it evaluates
 
 One test file per operation, `evals/<operation>/test_<operation>.py`: `retain`,
-`recall`, `consolidation`, `reflect`, `refresh-pages` (and `misc/` for the
-coding-agents metric). Run one operation with `uv run pytest evals/recall`.
+`recall`, `consolidation`, `reflect`, `refresh-pages`, `knowledge` (knowledge-bank
+retrieval, opt-in: see below), `knowledge_agent` (an agent over a knowledge bank on EnterpriseRAG-Bench, opt-in) and `misc/` for the coding-agents metric. Run one operation with `uv run pytest evals/recall`.
 
 **Every case has a category**, and its test id is `<category>/<case id>`
 (`test_retain[temporal/no-event-date]`). That is the syntax:
@@ -591,6 +591,234 @@ To A/B a server setting, `HINDSIGHT_EVAL_SET_<X>=v` reaches the server as
 ```bash
 HINDSIGHT_EVAL_SET_LLM_PROMPT_CACHE_ENABLED=false uv run pytest evals/refresh-pages -k benchmark_cost
 ```
+
+### Knowledge banks — `evals/knowledge/test_knowledge.py`
+
+Five categories, each on datasets with a public leaderboard, so every score sits next to the
+best published systems. Four measure **retrieval** (search alone, no LLM; the model under test
+is the server's knowledge embedder); the fifth, **agent use**, measures an agent answering
+from a knowledge bank, and lives in `evals/knowledge_agent` (next section).
+
+| category | cases | what a query is | main metric | leaderboard |
+|---|---|---|---|---|
+| `text` | `scifact` (default), `nfcorpus` (BEIR) | a scientific claim → the abstracts that support or refute it; a health topic → the papers on it | nDCG@10 | [MTEB](https://huggingface.co/spaces/mteb/leaderboard) (retrieval tasks SciFact, NFCorpus) |
+| `pdf` | `hr` (default) + 7 more ViDoRe V3 tasks | a question in one of 6 languages → the pages of business PDFs that answer it; each source PDF uploaded whole | nDCG@10, per language and as MTEB's language mean | [MTEB, benchmark ViDoRe(v3)](https://huggingface.co/spaces/mteb/leaderboard); [ViDoRe V3 announcement](https://huggingface.co/blog/QuentinJG/introducing-vidore-v3) |
+| `image` | `flickr30k` (default, 1k test), `mscoco` (5k test) | a photo caption → the photo | recall@1 (also @5/@10, nDCG@10) | no live board for these splits: compare with the R@1 model papers report (MIEB on MTEB uses a larger pool, so its numbers are not comparable) |
+| `video` | `msrvtt` (default, 1k-A test), `msvd` (test) | a clip description → the clip (picture and soundtrack, cut into windows by the server) | nDCG@10, recall@1 | MMEB-V2 video retrieval, on the [MMEB leaderboard](https://huggingface.co/spaces/TIGER-Lab/MMEB-Leaderboard) (scored as Hit@1); vendors report nDCG@10 / R@1 in their papers |
+| `research` | `brightpro_<domain>` (7 StackExchange domains), `browsecomp_plus` | a question that needs reasoning → the passages covering each of its aspects; a hard research question → the evidence web pages | alpha-nDCG@25 (BRIGHT-Pro); nDCG@10, recall@100 on evidence documents (BrowseComp-Plus) | [BRIGHT-Pro paper](https://arxiv.org/abs/2605.04018) Table 2; [BrowseComp-Plus paper](https://arxiv.org/abs/2508.06600) Table 2. These rank retrieval *systems*, so a Hindsight number is a fair system score |
+| agent use | `evals/knowledge_agent` | a business question → an answer, judged | overall (completeness when correct, else 0) | [EnterpriseRAG-Bench](https://huggingface.co/spaces/onyx-dot-app/EnterpriseRAG-Bench-Leaderboard) |
+
+**How retrieval is scored.** Each dataset gives its queries and, per query, the right
+documents (graded). Every query goes through `asearch_knowledge_bank`; the results become a
+list of documents in the order of their best passage (a hit on page *n* of a PDF counts as that
+page), and the list is scored against the right documents:
+
+- **nDCG@10**: 100 when every right document is in the top 10 and in the best order, lower as
+  they rank lower or are missing. Linear gain, as `trec_eval` computes it, which is what MTEB,
+  BEIR and ViDoRe report (`retrieval_metrics.py`, cross-checked against `pytrec_eval`).
+- **recall@k**: the share of right documents in the top *k* (for an image: is the photo in the
+  top 1, 5, 10).
+
+Scores, ingest rate and search latency (client and server p50/p95) go to `--output` under
+`knowledge`; `eval-table` prints them per case, one column per run. The asserts only catch a
+broken pipeline (a failed document, a query with no results).
+
+**Small by default, the leaderboard number with `--full`.** The corpus is always whole (a
+smaller pool makes every query easier); a default run only cuts the queries: SciFact 100,
+ViDoRe 17 per language (~100 per task), one caption per photo or clip. `--full` asks every query.
+
+```bash
+cd hindsight-system-evals
+uv sync --extra knowledge                     # pyarrow, pypdfium2, pillow, huggingface_hub, bm25s
+HINDSIGHT_EVAL_LLM_PROVIDER=none uv run --extra knowledge pytest evals/knowledge \
+  --api-url http://localhost:8888 --output gemma.json                       # one case per category
+uv run --extra knowledge pytest evals/knowledge --api-url ... -k "pdf/"     # one category
+uv run --extra knowledge pytest evals/knowledge --api-url ... --full --output gemma-full.json
+uv run eval-table gemma.json pplx.json                                       # compare embedders
+```
+
+Compare embedders one server per run. A server this package starts takes them as
+`HINDSIGHT_EVAL_SET_KNOWLEDGE_EMBEDDINGS_PROVIDER` / `_MODEL` / `_BASE_URL` / `_MODALITIES`
+(they reach it as `HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_*`); with `--api-url`, start the server
+with those settings yourself. A case whose media type the embedder cannot write is skipped.
+Data is downloaded on first use into `$HINDSIGHT_EVAL_KNOWLEDGE_CACHE` (default
+`~/.cache/hindsight/knowledge-evals`, outside the repo; all eight ViDoRe tasks are a few GB).
+Without the `knowledge` extra every case skips, which is why the nightly job does not run them.
+
+**Where we are against the best published systems** (EmbeddingGemma 2 on the dev GPU, the shipped
+pipeline, every query of each test set unless noted; "published" = measured by the vendor or the
+benchmark; measured 2026-11-10/11):
+
+| category | dataset | Hindsight | best published | gap |
+|---|---|---|---|---|
+| text | SciFact, nDCG@10 | 84.2 | papr-embed-code-1-4b 86.8, MiniCPM-Embedding 86.6 ([MTEB results](https://github.com/embeddings-benchmark/results)); EmbeddingGemma 300M 78.7 | −2.6 |
+| text | NFCorpus, nDCG@10 | 37.1 | Conan-embedding-v2 55.7 ⁴, voyage-3-m-exp 47.0, NV-Embed-v2 45.0 ([MTEB results](https://github.com/embeddings-benchmark/results)); EmbeddingGemma 300M 39.2 | −18.6 (−9.9 to the next) |
+| pdf | ViDoRe V3, 8 public tasks, nDCG@10 | **54.8** (hr 57.7, computer_science 69.4, pharmaceuticals 57.6, finance_en 60.2, finance_fr 43.1, energy 61.2, physics 41.6, industrial 47.7) | EVIE-8B 66.4, pplx-embed-v2-late 9B 65.0, Nemotron ColEmbed VL 8B 63.5, Qwen3-VL-Embedding-8B 58.3 ([MTEB results](https://github.com/embeddings-benchmark/results), ViDoRe V3 v1 tasks) | −11.6 |
+| image | Flickr30k 1k, text → image R@1 (5,000 captions) | 86.3 (nDCG@10 93.1) | Voyage multimodal-3.5 89.9, Gemini Embedding 2 89.1 ([Gemini paper](https://arxiv.org/pdf/2605.27295)) | −3.6 |
+| image | MS-COCO 5k, text → image R@1 (25,010 captions) | 39.4 (nDCG@10 55.8) ³ | Gemini Embedding 2 62.9, Voyage multimodal-3.5 58.1 ([Gemini paper](https://arxiv.org/pdf/2605.27295)); BLIP-ITM-large-COCO 58.6 ([MTEB results](https://github.com/embeddings-benchmark/results), M-BEIR COCO) | −23.5 ³ |
+| video | MSR-VTT 1k-A, nDCG@10 / R@1 (1,000 queries) | 65.5 / 50.1 | Qwen3-VL-Embedding-8B 74.0 / 59.8 ([MTEB results](https://github.com/embeddings-benchmark/results), 879 of the 1k clips); Gemini Embedding 2 nDCG@10 68.0 ([Gemini paper](https://arxiv.org/pdf/2605.27295)) | −8.5 / −9.7 |
+| video | MSVD test, nDCG@10 / R@1 | not measured yet | Qwen3-VL-Embedding-8B 87.6 / 75.3 ([MTEB results](https://github.com/embeddings-benchmark/results), first caption per clip) | — |
+| research | BRIGHT-Pro, 7 domains, alpha-nDCG@25 (739 queries, 526k passages) | not measured yet | BGE-Reasoner-8B 68.0, DIVER-4B-1020 63.7; EmbeddingGemma 300M 39.4, BM25 40.3 ([BRIGHT-Pro paper](https://arxiv.org/abs/2605.04018)) | — |
+| research | BrowseComp-Plus, evidence nDCG@10 / recall@100 (830 queries, 100k documents) | not measured yet | Qwen3-Embedding-8B 20.3 / 47.7, BM25 1.6 / 4.7 ([BrowseComp-Plus paper](https://arxiv.org/abs/2508.06600)); end to end, gpt-5 + Qwen3-Embedding-8B 70.1% accuracy | — |
+| agent use | EnterpriseRAG-Bench, overall (default 50 questions) | 62.5 ² (Gemma 4 26B-A4B); search alone: nDCG@10 67.6, recall@10 81.5 | PipesHub 93.24 ([leaderboard](https://huggingface.co/spaces/onyx-dot-app/EnterpriseRAG-Bench-Leaderboard)) | −30.7 ² |
+
+² On a 3.7k-document slice, easier than the leaderboard's 512k, with a 4B-active open model; on the
+15 questions Gemma 4 missed of the default 50, Codex `gpt-6-astra` scored 69.9 against Gemma's ~10,
+so most of that gap is the agent model, not the search. 50 questions move a few points run to run.
+
+³ COCO's files are named like `COCO_val2014_000000033753.jpg`, which still yields a title ("COCO val2014
+…"), the same noise that cost Flickr30k 13 points of R@1. A run without titles is pending.
+
+⁴ Conan-embedding-v2 is 9 points above every other MTEB entry on NFCorpus, an outlier worth treating
+with care. Targets are always other teams' published numbers; MTEB image and video entries use
+slightly different splits (noted per row), so read those gaps as approximate.
+
+**What each part of search is worth** (one change at a time on the banks above; `top_k` 10 is what an
+agent asks for, 200 what the scoring asks for):
+
+| part | where it pays | without it | keep? |
+|---|---|---|---|
+| HNSW on `kb_passages.embedding` | every search | same scores as an exact scan (SciFact, HR, Flickr30k); exact time grows with the bank, 80 ms at 16k passages and 141 ms at 52k vs 2–4 ms | yes |
+| page text vectors (`kb_passage_vectors`: whole page text and 128-token units) | PDFs | HR 57.7 → 45.6 without any page text (units alone are worth 5.2, whole-page text 0.5) | yes |
+| HNSW on `kb_passage_vectors` (its own candidate lookup) | PDFs at agent-sized searches | HR at top_k 10: 57.7 → 56.9; no change at top_k 200, where the pool already covers the bank | yes |
+| GIN on `search_vector` (keyword candidates and IDF) | text with names, codes, rare words | SciFact 83.1 → 80.8 at top_k 10; HR −0.3; NFCorpus flat (37.2 without, 37.1 with); weights above 0.2 hurt | yes, with bounded IDF counts |
+| document prior | multi-page PDFs | HR −1.0 | yes |
+| pg_trgm on `text` | only searches with an explicit `pattern` | not exercised by these benchmarks | only if pattern search must be fast on big banks |
+
+Two pipeline changes came out of this, both now defaults:
+
+- **Text passages of 256 tokens** (was 128): SciFact 83.7 → 84.2, NFCorpus flat, EnterpriseRAG search
+  66.1 → 67.6 nDCG@10 (recall@10 77.1 → 81.5), agent 59.6 → 62.5, with half the passages. 512 led on
+  SciFact alone (85.6) and lost 3 points on EnterpriseRAG's per-category mean.
+- **No title from a name with no word in it** (`1007129816.jpg`, `IMG_4821`, `video7020`): Flickr30k
+  R@1 79.8 → 93.3 on one caption per photo. MSR-VTT did not move.
+
+What did not move a score: the PDF text weight on physics (41.3 at 0.4, 41.6 at 0.6, 41.0 at 0.8),
+ef_search 40 vs 200, video at twice the frames (65.6 vs 65.3; this MSR-VTT copy has no soundtrack).
+The gaps left on physics, video and agent answers are the embedding model and the agent model, not
+the indexes.
+
+### Knowledge agent — `evals/knowledge_agent/test_knowledge_agent.py`
+
+An **agent on top of a knowledge bank**, scored on
+[EnterpriseRAG-Bench](https://github.com/onyx-dot-app/EnterpriseRAG-Bench) (Onyx; 500 questions
+over 511,963 synthetic documents of one company, across Slack, Gmail, Linear, Drive, HubSpot,
+Fireflies, GitHub, Jira and Confluence) with **the benchmark's own judge and metric**, so the
+number lines up with the
+[leaderboard](https://huggingface.co/spaces/onyx-dot-app/EnterpriseRAG-Bench-Leaderboard).
+The knowledge bank does retrieval with no LLM; the agent is
+[Hermes](https://github.com/NousResearch/hermes-agent) driving any OpenAI-compatible model,
+with three tools from the `hindsight_knowledge` plugin
+(`hindsight_system_evals/knowledge_agent/hindsight_knowledge/`, a regular Hermes plugin):
+
+| tool | what it does |
+|---|---|
+| `knowledge_search` | the bank's search (`top_k`, `tags`, `neighbors`), hits grouped by document, each headed by its document id |
+| `knowledge_grep` | the bank's exact-text search (search with only a `pattern`, a regular expression, falling back to plain text), documents ranked by matching passages, with the matching lines; for identifiers, code names, ticket keys, numbers |
+| `knowledge_read` | a document's original text by id, in pages |
+
+All three call the server; the plugin keeps no copy of the bank. (Earlier runs below fused a
+BM25 over a local copy of the bank's text into search; once grep and keyword scoring moved to
+the server, that blend found the right documents as often as the server's search alone, 36 vs
+35 questions with a gold document in the top 4, so it was removed.)
+
+The model is any OpenAI-compatible endpoint, or a Hermes provider with `--provider` /
+`HINDSIGHT_EVAL_AGENT_PROVIDER` (e.g. `openai-codex`, credentials from `hermes model`). Each
+question's whole conversation is kept in `<work dir>/agent.traces/<question id>.json`: which
+documents the agent searched, read and trusted is what a wrong answer is diagnosed from.
+
+**Scoring** (`hindsight_system_evals/enterprise_rag_scoring.py`) is a port of upstream's
+`metrics_based_eval.py`, prompts verbatim, judge **GPT-5.4 at medium reasoning** as upstream
+(needs `OPENAI_API_KEY`): citations stripped, the three-run gold-set correction when the agent
+cites other documents, then **correctness** (holistic), **completeness** (each gold fact),
+**recall** of gold documents and **invalid extra documents**. The leaderboard's rank column,
+**overall**, is completeness when correct, else 0. One difference: the correction judge sees
+each document as the release's text file, where upstream shows its JSON record.
+
+**The corpus is a slice** (`fixtures/enterprise-rag-slice.json`, cut by
+`python -m hindsight_system_evals.enterprise_rag build`): questions in an order where every
+prefix keeps the benchmark's category mix, and per question its BM25 hard negatives over all
+512k documents (for the question and for each gold title — the near-copies with changed facts
+the benchmark plants). A run takes the first N questions, their gold documents and hard
+negatives, and a seeded random fill. The release zip (1.26 GB) is downloaded once into
+`$HINDSIGHT_EVAL_KNOWLEDGE_CACHE/enterprise-rag`.
+
+| mode | questions | documents | ingest (EmbeddingGemma 2 on the dev cluster, shared) |
+|---|---|---|---|
+| default | 50 | 3,702 (75 gold, 1,632 hard negatives, 2,000 random draws, some already in) | 412 s, 9 docs/s, 51.9k passages |
+| `--full` | 500 | 34,779 (722 gold, 14,674 hard negatives, 20,000 random draws, some already in) | 2,958 s, 11.8 docs/s, 474k passages |
+
+```bash
+# a server with a knowledge embedder (here EmbeddingGemma 2 behind vLLM), no server LLM needed
+HINDSIGHT_API_LLM_PROVIDER=none HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER=openai \
+  HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BASE_URL=http://localhost:18765/v1 \
+  HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODEL=embeddinggemma-2 HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODALITIES=text \
+  hindsight-api
+# the agent: Gemma 4 on the dev cluster, Hermes from a checkout
+kubectl -n hindsight port-forward svc/hindsight-llm 18800:8000 &
+export HINDSIGHT_EVAL_HERMES_PYTHON=~/dev/hermes-agent/.venv/bin/python
+export HINDSIGHT_EVAL_AGENT_BASE_URL=http://localhost:18800/v1 HINDSIGHT_EVAL_AGENT_MODEL=gemma-4-26b-a4b
+export OPENAI_API_KEY=...   # the judge
+uv run --extra knowledge pytest evals/knowledge_agent --api-url http://localhost:8888 -s --output erb.json
+uv run --extra knowledge pytest evals/knowledge_agent --api-url ... --full --keep-banks -s --output erb-full.json
+uv run eval-table erb.json erb-full.json
+```
+
+Knobs: `HINDSIGHT_EVAL_ERB_QUESTIONS` / `_DISTRACTORS` (-1 = the whole corpus) resize the slice;
+`HINDSIGHT_EVAL_ERB_BANK` names the bank and `HINDSIGHT_EVAL_ERB_REUSE_BANK=1` skips the
+upload when it already holds the corpus (iterating on the agent); `HINDSIGHT_EVAL_ERB_WORK_DIR`
+keeps `agent.jsonl` (resumable: a rerun asks only the missing questions, so a re-score is free),
+`answers.jsonl` in upstream's format (score it with Onyx's own script too) and `scores.jsonl`.
+Agent (defaults are the best run below): `HINDSIGHT_EVAL_AGENT_CONCURRENCY` (4), `_MAX_ITERATIONS`
+(24), `_MIN_TOOL_CALLS` (5: send one "research more" turn when an answer arrives after fewer tool
+calls or no full read; 0 = off), `_CHECK` (1: one self-review turn against the documents),
+`_PRELOAD` (4: start from a search for the question and its top 4 documents in full).
+
+**What moved the number** (default slice, 50 questions, Gemma 4 26B-A4B, judge GPT-5.4; ±1
+question is ±2 points, so read differences under ~5 as noise):
+
+| run | change | overall | correct | complete | recall | LLM calls / q | prompt tokens / q |
+|---|---|---|---|---|---|---|---|
+| e01 | baseline: three tools, plain prompt | 45.5 | 52 | 58.8 | 60.3 | 3.7 | 27k |
+| e02 | research protocol in the prompt; search hits grouped per document | 50.3 | 56 | 65.1 | 58.4 | 3.8 | 28k |
+| e03 | + one "research more" turn when an answer comes after < 5 tool calls or no full read | 52.0 | 58 | 64.6 | 66.6 | 6.8 | 69k |
+| e04 | + **hybrid search** (bank meaning ranking fused with BM25) | 59.9 | 64 | 73.1 | 62.9 | 6.6 | 58k |
+| e05 | e04 + start from the question's top 4 documents in full | 60.6 | 70 | 70.2 | 51.5 | 4.9 | 85k |
+| e06 | e04 + one **self-review turn** (every figure checked against the text read) | 67.0 | 74 | 76.0 | 70.5 | 7.7 | 73k |
+| e07 | e04 + preload 4 + self-review (**the defaults**) | **70.8** | 80 | 75.7 | 61.6 | 6.3 | 119k |
+| e08 | e06 with the nudge at < 8 tool calls | 58.8 | 66 | 68.8 | 65.8 | 8.0 | 83k |
+| e09 | e07 with 8 preloaded documents | 66.8 | 72 | 74.3 | 59.2 | 5.9 | 149k |
+| e10 | e07 again (run-to-run noise) | 68.7 | 76 | 73.8 | 63.7 | 6.3 | 112k |
+
+What moved it: hybrid search (+8: exact names, numbers and code names that meaning search
+ranks low), the self-review turn (+7: the agent re-reads and fixes figures it took from a
+near-copy) and starting from full documents rather than snippets. Prompt rules alone did
+little: Gemma kept answering after one search whatever the prompt said, so the levers that
+worked are the ones the harness enforces. e06 vs e08 and e07 vs e10 show the noise: ±5 on 50
+questions. What still fails, by category: `project_related` and `completeness` (an answer built
+from several documents of one project), `semantic` (paraphrased questions where a near-copy
+with changed figures outranks the gold), and the one `high_level` question.
+
+**At scale** (`--full`, the defaults, Gemma 4 26B-A4B at 6 questions in flight, judge GPT-5.4):
+
+| questions | overall | correctness | completeness | recall | invalid extras | LLM calls / q | tokens / q (in / out) | latency p50 / p95 |
+|---|---|---|---|---|---|---|---|---|
+| 500 over 34,779 documents | **66.9** | 72.4 | 73.9 | 56.3 | 0.27 | 6.3 | 114k / 0.9k | 24 s / 51 s |
+
+By category (overall): basic 83.5, miscellaneous 85.1, intra-document 82.5, conflicting 82.3,
+constrained 76.3, info-not-found 70.0, semantic 53.2, high-level 51.7, project-related 24.8,
+completeness 17.0. The questions that need several documents assembled (project-related,
+completeness) are where the gap to the leaderboard top is; single-document questions are close.
+Besides the agent's calls, each question costs one search and four document reads before the
+first LLM call (`_PRELOAD`), and the judge spent 3,520 GPT-5.4 calls (2.3M input, 0.7M output
+tokens) on 500 questions.
+
+**The numbers to beat** (leaderboard, all 500 questions over the full 512k corpus, judge GPT-5.4):
+PipesHub 93.24, Neurond AI 92.74, codos.ai 92.64, Mixedbread (+ Opus 5) 86.58, OpenAI File
+Search 61.03, BM25 + GPT-5.4 50.60, Azure AI Search 48.42, Vertex AI Search 41.87. A slice
+number is **not** a leaderboard number: the slice holds every gold document's hard negatives
+but 7% of the corpus (`--full`) or 0.7% (default), so retrieval is easier than on 512k; the
+agent model is a 4B-active open model where the top entries run frontier models.
 
 ## The corpus
 

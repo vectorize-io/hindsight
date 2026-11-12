@@ -565,7 +565,8 @@ async def test_an_unreachable_remote_embedder_is_a_503_not_a_crash(api_client, k
 
 
 async def test_text_hits_come_back_with_neighbours_and_overlapping_windows_merge(api_client, kb):
-    paragraphs = [f"Paragraph {i}: " + ("invoice " if i in (4, 5) else "filler ") * 90 for i in range(10)]
+    # Each paragraph fills one passage at the default size (256 tokens), so passage i is paragraph i.
+    paragraphs = [f"Paragraph {i}: " + ("invoice " if i in (4, 5) else "filler ") * 180 for i in range(10)]
     r = await api_client.post(
         f"{KB}/{kb}/ingest",
         json={"items": [{"document_id": "long", "text": "\n\n".join(paragraphs), "filename": "long.md"}]},
@@ -757,6 +758,10 @@ def test_the_file_name_is_the_title_unless_it_was_made_up_from_the_id():
     assert title("doc-1", "footstep_gravel_03.wav") == "footstep gravel 03"
     assert title("3f2a", "3f2a.md") is None  # the name a text write gets when it has none
     assert title("x", None) is None
+    # A name with no word in it says nothing about the content (Flickr30k: R@1 79.8 with it, 93.3 without).
+    for meaningless in ("1007129816.jpg", "IMG_4821.JPG", "video7020.mp4", "scan_003.pdf", "deadbeef01.png"):
+        assert title("x", meaningless) is None, meaningless
+    assert title("x", "face.png") == "face"  # a short word that happens to be hex is still a word
 
 
 def test_pdf_page_text_is_packed_by_whole_lines():
@@ -768,6 +773,40 @@ def test_pdf_page_text_is_packed_by_whole_lines():
     assert [line for u in units for line in u.split("\n")] == lines  # whole lines, in order, none lost
     long = " ".join(["word"] * 200)
     assert all(count_tokens(u) <= 40 for u in media.pack_lines(long, tokens=40))
+
+
+def test_pdf_sentences_reference_pages_and_text_batches():
+    from hindsight_api.knowledge.embedders import _token_batches
+    from hindsight_api.knowledge.store import is_reference_page
+
+    text = "Employment rose sharply in 2023 across the EU.\nThe share of tempo-\nrary contracts fell to 12.6% (from 15.9%).\nShort.\nAnother sentence follows with enough words to stand alone."
+    assert media.sentences(text) == [
+        "Employment rose sharply in 2023 across the EU.",
+        "The share of temporary contracts fell to 12.6% (from 15.9%).",  # joined across the line break
+        "Short. Another sentence follows with enough words to stand alone.",  # too short alone: merged forward
+    ]
+    references = "\n".join(f"Author {i}, A. ({2000 + i}), 'A title', Journal, vol. {i}, pp. 1-9." for i in range(8))
+    assert is_reference_page(references)
+    assert not is_reference_page("The employment rate (2023) rose.\n" + "Prose without citations here.\n" * 6)
+    # Batches are cut by size, not count: many short sentences share a request, a long page text does not.
+    short = [(i, "s" * 100) for i in range(60)]
+    assert [len(b) for b in _token_batches(short, 8)] == [60]
+    long = [(i, "p" * 5000) for i in range(3)]
+    assert [len(b) for b in _token_batches(long, 8)] == [1, 1, 1]
+    assert sum(len(b) for b in _token_batches([(i, "x") for i in range(200)], 8)) == 200  # nothing lost past the cap
+
+
+def test_a_reference_page_is_demoted_without_squashing_the_other_scores():
+    from hindsight_api.knowledge.store import final_scores
+
+    # Two real pages, the better one with fewer keyword hits, and a reference list. Demoting the list inside
+    # the keyword fusion stretched the dense range so far that keywords alone decided the real pages.
+    dense = [0.80, 0.70, 0.79]
+    keyword = [1.0, 3.0, 9.0]
+    scores = final_scores(dense, keyword, 0.2, matched=[False] * 3, reference=[False, False, True])
+    assert scores[0] > scores[1] > scores[2]  # dense still ranks the real pages; the list goes last
+    same = final_scores(dense, keyword, 0.2, matched=[False] * 3, reference=[False] * 3)
+    assert scores[:2] == same[:2]  # the demotion does not move anyone else
 
 
 def test_pages_lean_on_the_image_when_their_text_is_junk_and_on_their_document():
@@ -1100,11 +1139,14 @@ async def test_a_refused_document_stops_being_split(api_client, kb, fake_embedde
 
     monkeypatch.setattr(service_module, "_next_draft", counting)
     monkeypatch.setattr(fake_embedder, "embed_documents", refuse)
-    text = "\n\n".join(f"# Part {n}\n\npassage {n}" for n in range(5 * _EMBED_ROUND))
+    rounds = 4 * (service_module._EMBED_ROUNDS_IN_FLIGHT + 1)
+    text = "\n\n".join(f"# Part {n}\n\npassage {n}" for n in range(rounds * _EMBED_ROUND))
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "long", "text": text}]})
     assert r.status_code == 400, r.text
-    # One round pulled, then refused: the other four rounds' passages were never cut.
-    assert pulled["n"] == _EMBED_ROUND
+    # The splitter runs ahead of the embedder by at most the rounds in flight; once the first round is
+    # refused it stops, so most of the document's passages were never cut.
+    assert pulled["n"] <= (service_module._EMBED_ROUNDS_IN_FLIGHT + 1) * _EMBED_ROUND + 1
+    assert pulled["n"] < rounds * _EMBED_ROUND // 2
 
 
 async def test_a_new_content_type_ingests_the_same_file_again(api_client, kb):

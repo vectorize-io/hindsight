@@ -280,6 +280,15 @@ _DOC_COLUMNS = (
     "passage_count, tags, created_at, updated_at, language, source_document_id"
 )
 _PASSAGE_COLUMNS = "idx, modality, text, page, start_ms, end_ms, media_key"
+#: The extra vectors that find candidates (and so sit in the HNSW index); the rest only rescore them.
+RESCORE_ONLY_ROLES = ("sentence",)
+#: How many of the best pages so far are rescored with their sentence vectors (stage 3 of ``search``).
+#: 50 kept the gain of 100 within 0.05 nDCG@10 on ViDoRe hr and computer_science, for half the work.
+RESCORE_POOL = 50
+#: Most candidates one arm of stage 1 returns (see ``search``); never fewer than ``top_k``.
+#: 300 kept ViDoRe hr nDCG@10 (65.68 vs 65.59 uncapped) and halved its search time (Gemini Embedding 2).
+CANDIDATE_POOL_CAP = 300
+CANDIDATE_ROLES_SQL = "role NOT IN (" + ", ".join(f"'{r}'" for r in RESCORE_ONLY_ROLES) + ")"
 
 
 class PostgresKnowledgeStore(KnowledgeStore):
@@ -333,6 +342,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         f"banks and write them again."
                     )
                 await conn.execute(f"DROP INDEX IF EXISTS {fq_table(f'idx_{table_name}_embedding')}")
+                await conn.execute(f"DROP INDEX IF EXISTS {fq_table(f'idx_{table_name}_candidates')}")
                 await conn.execute(f"ALTER TABLE {passages} ALTER COLUMN embedding TYPE vector({dimension})")
             if dimension <= _VECTOR_INDEX_MAX:
                 using = "hnsw (embedding vector_cosine_ops)"
@@ -341,7 +351,17 @@ class PostgresKnowledgeStore(KnowledgeStore):
             else:
                 using = None
                 logger.warning(f"Knowledge passages at {dimension} dims cannot be indexed; search scans")
-            if using:
+            if using and table_name == "kb_passage_vectors":
+                # Sentence vectors only rescore pages that the other vectors found, so they stay out of the
+                # HNSW graph: four times the rows in it made a ViDoRe hr ingest 2.7x slower and search 2x.
+                # The search's candidate arm repeats this predicate, or the planner cannot use the index.
+                await conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{table_name}_candidates ON {passages} USING {using} "
+                    f"WHERE {CANDIDATE_ROLES_SQL}"
+                )
+                # The full index it replaces (until pipeline 10) would still pay every sentence insert.
+                await conn.execute(f"DROP INDEX IF EXISTS {fq_table(f'idx_{table_name}_embedding')}")
+            elif using:
                 # ponytail: one global HNSW index; per-bank partial indexes if one tenant holds many big banks.
                 await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding ON {passages} USING {using}")
 
@@ -492,7 +512,9 @@ class PostgresKnowledgeStore(KnowledgeStore):
         table = fq_table("kb_passages")
         # A fixed five statements in one transaction, however many documents: the old passages must be
         # gone before the new ones (same primary keys) go in, which one statement with data-modifying
-        # CTEs cannot order. The inserts are executemany, pipelined in one round trip each.
+        # CTEs cannot order. The inserts are executemany, pipelined in one round trip each. Vectors go as
+        # binary float arrays cast to vector, not as their text: formatting and parsing 768 floats as text
+        # cost 0.29 ms a vector against 0.08 (a ViDoRe hr ingest writes ~23k of them).
         async with acquire_with_retry(await self._pool()) as conn:
             async with conn.transaction():
                 # Locked, so an ingest of a newer version cannot swap the file between this check and the
@@ -533,7 +555,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         p.start_ms,
                         p.end_ms,
                         p.media_key,
-                        str(p.embedding),
+                        p.embedding,
                         text_search_config(i.language),
                     )
                     for i in items
@@ -544,13 +566,13 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         f"""
                         INSERT INTO {table} (bank_id, document_id, idx, modality, text, page, start_ms, end_ms,
                             media_key, embedding, search_vector)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector,
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::real[]::vector,
                                 to_tsvector($11::regconfig, coalesce($5, '')))
                         """,
                         rows,
                     )
                 extras = [
-                    (bank_id, i.document_id, p.index, v.role, v.n, str(v.embedding))
+                    (bank_id, i.document_id, p.index, v.role, v.n, v.embedding)
                     for i in items
                     for p in i.passages
                     for v in p.extra_vectors
@@ -558,7 +580,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 if extras:
                     await conn.executemany(
                         f"INSERT INTO {fq_table('kb_passage_vectors')} (bank_id, document_id, idx, role, n, "
-                        "embedding) VALUES ($1, $2, $3, $4, $5, $6::vector)",
+                        "embedding) VALUES ($1, $2, $3, $4, $5, $6::real[]::vector)",
                         extras,
                     )
                 await conn.execute(
@@ -687,7 +709,9 @@ class PostgresKnowledgeStore(KnowledgeStore):
             op = "@>" if filters.tags_match == "all" else "&&"
             where += f" AND d.tags {op} ${len(params)}::text[]"
         # ponytail: fixed candidate pool; widen it (or move stage 1 to a token-level index) at 10M+ rows.
-        params.append(max(100, top_k * 10))
+        # Capped: past the HNSW scan width a bigger LIMIT makes the iterative scan walk on, and at 1000 per
+        # arm (top_k 100) stage 1 took 266 ms of a 410 ms ViDoRe hr search; at 300 it takes 10 ms.
+        params.append(max(100, min(top_k * 10, CANDIDATE_POOL_CAP), top_k))
         pool = f"${len(params)}"
         language = detect_language(query_text) if query_text and keyword_weight > 0 else None
         if language:
@@ -700,10 +724,11 @@ class PostgresKnowledgeStore(KnowledgeStore):
         docs = fq_table("kb_documents")
 
         def nearest(table: str) -> str:
+            roles = f" AND {CANDIDATE_ROLES_SQL.replace('role', 'x.role')}" if table == "kb_passage_vectors" else ""
             return f"""
                 SELECT x.document_id, x.idx FROM {fq_table(table)} x
                 JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
-                WHERE x.bank_id = $2{where}
+                WHERE x.bank_id = $2{where}{roles}
                 ORDER BY {self._distance("$1", "x")} LIMIT {pool}
             """
 
@@ -747,19 +772,23 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 # BM25's IDF: a query word scores ln(1 + (N - df + 0.5) / (df + 0.5)) over the bank's
                 # passages in that language, so rare words (names, codes) count and common ones barely do.
                 # ts_rank_cd alone has no IDF and lost 0.2 nDCG@10 on ViDoRe hr where this gains 0.4.
-                # ponytail: one df count per query word (GIN, ~20 ms at 1K pages); cache dfs per bank or
-                # read them from pg_stats (engine/search/bm25_term_selection.py) past ~1M passages.
+                # N comes from the documents' passage counts, not from counting passages: that count
+                # grew with the bank (40 ms at 52k passages, seconds at 10M). Each df stops at
+                # _DF_CAP matches: a word in that many passages scores near 0 either way, and the
+                # GIN count of a common word otherwise also grows with the bank. Same scores below it.
                 terms = await conn.fetch(
                     f"""
                     WITH w AS (SELECT DISTINCT unnest(tsvector_to_array(to_tsvector($2::regconfig, $3))) AS w),
-                         n AS (SELECT count(*)::float8 AS n FROM {fq_table("kb_passages")} x
-                               JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
-                               WHERE x.bank_id = $1 AND d.language = $4)
-                    SELECT w.w, ln(1 + (n.n - df.df + 0.5) / (df.df + 0.5)) AS idf FROM w, n,
-                      LATERAL (SELECT count(*)::float8 AS df FROM {fq_table("kb_passages")} x
+                         n AS (SELECT coalesce(sum(d.passage_count), 0)::float8 AS n FROM {docs} d
+                               WHERE d.bank_id = $1 AND d.language = $4)
+                    SELECT w.w, ln(1 + greatest(n.n - df.df, 0) / (df.df + 0.5) + 0.5 / (df.df + 0.5)) AS idf
+                    FROM w, n,
+                      LATERAL (SELECT count(*)::float8 AS df FROM (
+                               SELECT 1 FROM {fq_table("kb_passages")} x
                                JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
                                WHERE x.bank_id = $1 AND d.language = $4
-                                 AND x.search_vector @@ to_tsquery('simple', quote_literal(w.w))) df
+                                 AND x.search_vector @@ to_tsquery('simple', quote_literal(w.w))
+                               LIMIT {_DF_CAP}) m) df
                     """,
                     bank_id,
                     text_search_config(language),
@@ -785,25 +814,54 @@ class PostgresKnowledgeStore(KnowledgeStore):
                        coalesce({matched}, false) AS matched,
                        (SELECT array_agg(v.role || ':' || (1 - {self._distance("$1", "v")})::text)
                         FROM {fq_table("kb_passage_vectors")} v
-                        WHERE v.bank_id = p.bank_id AND v.document_id = p.document_id AND v.idx = p.idx) AS extra
+                        WHERE v.bank_id = p.bank_id AND v.document_id = p.document_id AND v.idx = p.idx
+                          AND {CANDIDATE_ROLES_SQL.replace("role", "v.role")}) AS extra
                 FROM c
                 JOIN {fq_table("kb_passages")} p ON p.bank_id = $2 AND p.document_id = c.document_id AND p.idx = c.idx
                 JOIN {docs} d ON d.bank_id = p.bank_id AND d.document_id = p.document_id
                 """,
                 *stage_params,
             )
-        dense = with_document_prior(
-            [r["document_id"] for r in rows],
-            [
-                page_score(float(r["score"]), _role_scores(r["extra"]), page_text_weight(r["text"], text_weight))
-                for r in rows
-            ],
+            roles = [_role_scores(r["extra"]) for r in rows]
+            first = [
+                page_score(float(r["score"]), ro, page_text_weight(r["text"], text_weight))
+                for r, ro in zip(rows, roles, strict=True)
+            ]
+            # Stage 3: the best pages so far gain their sentence vectors. Scoring every candidate with
+            # ~30 sentence vectors each cost a ViDoRe hr search 1.8x; the top RESCORE_POOL hold the gold.
+            top = sorted(range(len(rows)), key=lambda i: first[i], reverse=True)[: max(top_k, RESCORE_POOL)]
+            top = [i for i in top if rows[i]["page"] is not None]
+            if top:
+                found = await conn.fetch(
+                    f"""
+                    SELECT v.document_id, v.idx, max(1 - {self._distance("$1", "v")}) AS best
+                    FROM {fq_table("kb_passage_vectors")} v
+                    JOIN unnest($3::text[], $4::int[]) AS c(document_id, idx)
+                      ON v.document_id = c.document_id AND v.idx = c.idx
+                    WHERE v.bank_id = $2 AND v.role IN ({", ".join(f"'{r}'" for r in RESCORE_ONLY_ROLES)})
+                    GROUP BY v.document_id, v.idx
+                    """,
+                    str(vector),
+                    bank_id,
+                    [rows[i]["document_id"] for i in top],
+                    [rows[i]["idx"] for i in top],
+                )
+                best = {(f["document_id"], f["idx"]): float(f["best"]) for f in found}
+                for i in top:
+                    sentence = best.get((rows[i]["document_id"], rows[i]["idx"]))
+                    if sentence is not None:
+                        roles[i]["sentence"] = [sentence]
+                        first[i] = page_score(
+                            float(rows[i]["score"]), roles[i], page_text_weight(rows[i]["text"], text_weight)
+                        )
+        dense = with_document_prior([r["document_id"] for r in rows], first)
+        scores = final_scores(
+            dense,
+            [float(r["keyword"] or 0.0) for r in rows],
+            keyword_weight,
+            matched=[bool(r["matched"]) for r in rows],
+            reference=[r["page"] is not None and is_reference_page(r["text"]) for r in rows],
         )
-        keywords = [float(r["keyword"] or 0.0) for r in rows]
-        scores = [
-            score + (EXACT_MATCH_BONUS if r["matched"] else 0.0)
-            for r, score in zip(rows, fuse_keyword(dense, keywords, keyword_weight), strict=True)
-        ]
         hits = [
             SearchHit(passage=_passage(r), document=_document(r), score=sc) for r, sc in zip(rows, scores, strict=True)
         ]
@@ -915,12 +973,13 @@ def _role_scores(raw: list[str] | None) -> dict[str, list[float]]:
 def page_score(primary: float, roles: dict[str, list[float]], text_weight: float) -> float:
     """A passage's score from all its vectors (PDF_GEMMA.md, EmbeddingGemma 2 on ViDoRe V3).
 
-    A PDF page: image = mean(whole page, best band); text = best of (whole page text, best 128-token
-    unit); score = (1 - w) * image + w * text, w = 0.6. That beat one blended page vector by ~7 nDCG@10.
+    A PDF page: image = mean(whole page, best band); text = best of (its 128-token units, its sentences
+    once the page is in the rescored top, and a whole-page text vector where an older ingest stored one);
+    score = (1 - w) * image + w * text, w = 0.6. That beat one blended page vector by ~7 nDCG@10.
     Every other passage has only its primary vector, so its score is that vector's similarity.
     """
     image = 0.5 * primary + 0.5 * max(roles["band"]) if roles.get("band") else primary
-    texts = roles.get("page_text", []) + roles.get("unit", [])
+    texts = roles.get("page_text", []) + roles.get("unit", []) + roles.get("sentence", [])
     if not texts:
         return image
     return (1 - text_weight) * image + text_weight * max(texts)
@@ -931,7 +990,8 @@ _POOR_TEXT_QUALITY = 0.5
 _POOR_TEXT_WEIGHT = 0.3
 #: Each passage gains this share of its document's best candidate score: the right PDF first, then the
 #: page. +0.4 nDCG@10 over 8 ViDoRe V3 tasks, +1.0 on physics (PDF_GEMMA.md round 7; flat for 0.5-0.7).
-DOCUMENT_PRIOR = 0.5
+#: 0.75 with sentence vectors: +0.1 on ViDoRe hr and computer_science over 0.5 (Gemini Embedding 2).
+DOCUMENT_PRIOR = 0.75
 
 
 def text_quality(text: str | None) -> float:
@@ -940,6 +1000,18 @@ def text_quality(text: str | None) -> float:
     if chars < 200:
         return 0.0
     return sum(len(w) for w in re.findall(r"[^\W\d_]{3,}", text or "")) / chars
+
+
+_CITATION = re.compile(r"\((19|20)\d\d[a-z]?\)|\bvol\.|\bpp\.|\bdoi\b|https?://|\bet al\b|\bISBN\b|\bISSN\b", re.I)
+#: A page this share of whose lines are citations is a reference list: on ViDoRe hr 5% of the candidates
+#: and 0.1% of the gold pages. Its titles match every query on their topic, and it answers none.
+_REFERENCE_LINES = 0.3
+REFERENCE_PENALTY = 1.0
+
+
+def is_reference_page(text: str | None) -> bool:
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    return len(lines) >= 5 and sum(bool(_CITATION.search(line)) for line in lines) / len(lines) > _REFERENCE_LINES
 
 
 def page_text_weight(text: str | None, text_weight: float) -> float:
@@ -965,6 +1037,9 @@ def _or_tsquery(config: str, text: str) -> str:
     )
 
 
+#: Where a query word's document frequency stops being counted (see the IDF in ``search``).
+_DF_CAP = 50_000
+
 #: Added to the score of a passage that contains the search's ``pattern``. Fused scores stay within
 #: [0, 1], so every exact match ranks above every passage that is only similar in meaning.
 EXACT_MATCH_BONUS = 1.0
@@ -979,6 +1054,18 @@ def _match_value(pattern: str, regex: bool) -> str:
 
 def _text_match(column: str, placeholder: str, regex: bool) -> str:
     return f"{column} ~* {placeholder}" if regex else f"{column} ILIKE {placeholder}"
+
+
+def final_scores(
+    dense: list[float], keyword: list[float], weight: float, *, matched: list[bool], reference: list[bool]
+) -> list[float]:
+    """Dense fused with keywords, then the exact-match bonus and the reference-list demotion. The demotion
+    comes after the fusion: inside it, a page at -1 stretched the min-max range of the dense scores, so
+    keywords alone ordered the rest (ViDoRe hr English: 58.8 nDCG@10 instead of 67.2)."""
+    return [
+        score + (EXACT_MATCH_BONUS if m else 0.0) - (REFERENCE_PENALTY if ref else 0.0)
+        for score, m, ref in zip(fuse_keyword(dense, keyword, weight), matched, reference, strict=True)
+    ]
 
 
 def fuse_keyword(dense: list[float], keyword: list[float], weight: float) -> list[float]:

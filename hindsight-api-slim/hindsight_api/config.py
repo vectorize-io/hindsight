@@ -1126,6 +1126,7 @@ WORKER_SLOT_TYPE_DEFAULTS: dict[str, int] = {
     "import_bank": 0,
     "export_bank": 0,
     "clone_bank": 0,
+    "knowledge_ingest": 0,
 }
 
 
@@ -2022,7 +2023,7 @@ DEFAULT_KNOWLEDGE_EMBEDDINGS_LOCAL_MODEL = "google/embeddinggemma-2"
 DEFAULT_KNOWLEDGE_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-2"
 DEFAULT_KNOWLEDGE_EMBEDDINGS_VOYAGE_MODEL = "voyage-multimodal-3.5"
 DEFAULT_KNOWLEDGE_EMBEDDINGS_COHERE_MODEL = "embed-v4.0"
-DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE = 8
+DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE = 32  # 8 left a GPU embedder idle between requests; 64 ran fine on dev
 DEFAULT_KNOWLEDGE_IMAGE_TOKENS = 280  # EmbeddingGemma 2 vision token budget per image (70..1120)
 DEFAULT_KNOWLEDGE_MAX_FILE_MB = 500
 DEFAULT_KNOWLEDGE_MAX_MEDIA_SECONDS = 7200  # 2h of audio/video per file
@@ -2037,7 +2038,11 @@ DEFAULT_KNOWLEDGE_PDF_TEXT_WEIGHT = 0.6
 DEFAULT_KNOWLEDGE_PDF_BANDS = False
 # Keyword match weight, fused only for documents in the query's language (PDF_GEMMA.md: 0.2 best).
 DEFAULT_KNOWLEDGE_KEYWORD_WEIGHT = 0.2
-DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS = 128  # structure-aware; best on LegalBench-RAG (CHUNKING.md)
+# Structure-aware passages. 128 was best on LegalBench-RAG at a fixed budget of returned text (CHUNKING.md);
+# 256 beat it on every benchmark launch uses (EmbeddingGemma 2): SciFact 83.7 -> 84.2 nDCG@10, NFCorpus
+# flat, EnterpriseRAG search 66.1 -> 67.6 (recall@10 77.1 -> 81.5), with half the passages. 512 led on
+# SciFact alone (85.6) and lost 3 points on EnterpriseRAG's per-category mean.
+DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS = 256
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
 DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves storage)
 DEFAULT_STORE_DOCUMENT_TEXT = True  # Persist raw source text in documents.original_text / chunks.chunk_text

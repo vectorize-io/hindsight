@@ -28,6 +28,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+import orjson
+
 from . import media
 
 if TYPE_CHECKING:
@@ -303,6 +305,7 @@ class GeminiEmbedder(KnowledgeEmbedder):
 
 
 _MEDIA_CONCURRENCY = 4  # media requests in flight per embed call (see OpenAIEmbedder.embed_documents)
+_TEXT_CONCURRENCY = 8  # text batches in flight per embed call, beside the media
 
 
 class _RemoteEmbedder(KnowledgeEmbedder):
@@ -325,7 +328,8 @@ class _RemoteEmbedder(KnowledgeEmbedder):
         async def call() -> dict[str, Any]:
             async with self._session.get().post(self._url, json=body) as response:
                 await raise_for_status(response)
-                return await response.json()
+                # orjson: 768 floats per vector parse 4x faster than with json (0.03 ms against 0.12).
+                return await response.json(loads=orjson.loads)
 
         # A dropped connection or a 5xx must not fail a whole document's ingest: retry transient errors
         # with the memory banks' embedding policy, with more budget since ingest is not latency-bound.
@@ -341,6 +345,31 @@ class _RemoteEmbedder(KnowledgeEmbedder):
         if vectors and not self.dimension:
             self.dimension = len(vectors[0])
         return vectors
+
+
+#: A batch holds up to ``batch_size`` times this many characters, and never more than this many inputs.
+#: 800 is what one input carried on average (8 inputs, a page text plus its 128-token units, were ~6.4k
+#: characters on ViDoRe hr); the default batch size of 32 makes that ~25k characters a request. Counting inputs alone sent sentences (~40 tokens) 8 to a request. Twice this (fewer, bigger
+#: requests) helped a remote embedder but cost a GPU-bound one 12%: more batches in flight instead
+#: (``_TEXT_CONCURRENCY``) serves both.
+_BATCH_UNIT_CHARS = 800
+_MAX_BATCH_INPUTS = 64
+
+
+def _token_batches(texts: list[tuple[int, str]], batch_size: int) -> list[list[tuple[int, str]]]:
+    budget = max(1, batch_size) * _BATCH_UNIT_CHARS
+    batches: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] = []
+    size = 0
+    for item in texts:
+        if current and (size + len(item[1]) > budget or len(current) >= _MAX_BATCH_INPUTS):
+            batches.append(current)
+            current, size = [], 0
+        current.append(item)
+        size += len(item[1])
+    if current:
+        batches.append(current)
+    return batches
 
 
 def _data_url(data: bytes, mime: str) -> str:
@@ -415,21 +444,31 @@ class OpenAIEmbedder(_RemoteEmbedder):
         texts = [
             (i, _document_text(item.text or "", item.title)) for i, item in enumerate(items) if item.modality == "text"
         ]
-        for start in range(0, len(texts), self._batch_size):
-            chunk = texts[start : start + self._batch_size]
-            for (i, _), vector in zip(
-                chunk, await self._post({"input": [t for _, t in chunk]}, len(chunk)), strict=True
-            ):
-                out[i] = vector
-        media_items = [(i, item) for i, item in enumerate(items) if item.modality != "text"]
-        # One request per media passage, a few at a time: firing a document's every page at once
-        # (times every document ingesting) flooded the server and its proxy, and each reset sent a
-        # whole document back to the retry queue. A server batches on its side; more in flight buys nothing.
-        for start in range(0, len(media_items), _MEDIA_CONCURRENCY):
-            chunk = media_items[start : start + _MEDIA_CONCURRENCY]
-            vectors = await asyncio.gather(*(self._embed_media(item) for _, item in chunk))
+        # One request per media passage and one per text batch, a few in flight at once: firing a
+        # document's every page at once (times every document ingesting) flooded the server and its
+        # proxy, and each reset sent a whole document back to the retry queue. They used to go in fixed
+        # groups (texts one batch at a time, then media four at a time, each group waiting on its
+        # slowest); a slot now frees as soon as its request returns. Text batches have their own, wider
+        # gate: a PDF page now sends several (units, sentences), each small and quick for the model, so
+        # against a remote embedder they wait on the network, not on compute. Media keep the narrow gate
+        # that stopped the resets.
+        slots = asyncio.Semaphore(_MEDIA_CONCURRENCY)
+        text_slots = asyncio.Semaphore(_TEXT_CONCURRENCY)
+
+        async def text_batch(chunk: list[tuple[int, str]]) -> None:
+            async with text_slots:
+                vectors = await self._post({"input": [t for _, t in chunk]}, len(chunk))
             for (i, _), vector in zip(chunk, vectors, strict=True):
                 out[i] = vector
+
+        async def one_media(i: int, item: EmbedInput) -> None:
+            async with slots:
+                out[i] = await self._embed_media(item)
+
+        await asyncio.gather(
+            *(text_batch(chunk) for chunk in _token_batches(texts, self._batch_size)),
+            *(one_media(i, item) for i, item in enumerate(items) if item.modality != "text"),
+        )
         return [v for v in out if v is not None]
 
     async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:

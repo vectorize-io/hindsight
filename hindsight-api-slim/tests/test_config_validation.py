@@ -987,10 +987,12 @@ def test_worker_reserved_slots_parse(monkeypatch):
 
     monkeypatch.setenv("HINDSIGHT_API_LLM_PROVIDER", "mock")
     monkeypatch.setenv("HINDSIGHT_API_WORKER_RETAIN_RESERVED_SLOTS", "2")
+    monkeypatch.setenv("HINDSIGHT_API_WORKER_KNOWLEDGE_INGEST_RESERVED_SLOTS", "1")
 
     config = HindsightConfig.from_env()
 
     assert config.worker_slot_reservations["retain"] == 2
+    assert config.worker_slot_reservations["knowledge_ingest"] == 1
 
 
 def test_worker_legacy_max_slots_is_deprecated_alias_for_reserved(monkeypatch, caplog):

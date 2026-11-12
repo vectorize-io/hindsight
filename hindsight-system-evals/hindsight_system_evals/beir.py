@@ -25,9 +25,9 @@ from __future__ import annotations
 import json
 import os
 import random
-from typing import TypeVar
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -106,9 +106,7 @@ def load_beir_slice() -> BeirSlice:
 
 def _read_fixture(path: Path) -> BeirSlice:
     if not path.exists():
-        raise RuntimeError(
-            f"{path} is missing. Cut it with: uv run python -m hindsight_system_evals.beir build"
-        )
+        raise RuntimeError(f"{path} is missing. Cut it with: uv run python -m hindsight_system_evals.beir build")
     payload = json.loads(path.read_text(encoding="utf-8"))
     return BeirSlice(
         name=payload["name"],
@@ -189,9 +187,7 @@ def _read_beir_directory(directory: Path, *, split: str = "test") -> BeirSlice:
     queries = {row.id: row for row in _read_jsonl(directory / "queries.jsonl", _QueryRow)}
     return BeirSlice(
         name=directory.name,
-        documents=tuple(
-            BeirDocument(id=row.id, title=row.title, text=row.text) for _, row in sorted(corpus.items())
-        ),
+        documents=tuple(BeirDocument(id=row.id, title=row.title, text=row.text) for _, row in sorted(corpus.items())),
         queries=tuple(
             # Gold documents absent from the corpus are dropped: they would hold a
             # perfect run below 1.0 for a reason that is not Hindsight's. BEIR's own

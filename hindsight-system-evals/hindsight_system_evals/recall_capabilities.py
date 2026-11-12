@@ -41,7 +41,6 @@ from hindsight_client_api.models.recall_result import RecallResult
 from hindsight_system_evals.pages import SettleFn
 from hindsight_system_evals.recall_haystack import haystack_items
 
-
 #: One archive per case: its own memories as extraction (and consolidation) wrote them.
 CASE_BANKS = Path(__file__).resolve().parents[1] / "fixtures" / "recall-cases"
 CASE_BANKS_MANIFEST = CASE_BANKS / "manifest.json"

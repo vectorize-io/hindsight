@@ -96,8 +96,7 @@ _GUIDE_FACTS = [
     ),
     _guide(
         "g-approvals",
-        "A pull request needs two approvals from engineers outside the author's own team before it can "
-        "be merged.",
+        "A pull request needs two approvals from engineers outside the author's own team before it can be merged.",
     ),
     _guide(
         "g-postmortem",
@@ -110,8 +109,7 @@ _GUIDE_FACTS = [
     ),
     _guide(
         "g-deploy-window",
-        "Production deploys run Monday to Thursday. A Friday deploy requires written approval from the "
-        "on-call lead.",
+        "Production deploys run Monday to Thursday. A Friday deploy requires written approval from the on-call lead.",
     ),
     _guide(
         "g-oncall",
@@ -309,9 +307,7 @@ _QUESTIONS = [
             "deploys run Monday to Thursday with a Friday deploy needing the on-call lead's written "
             "approval."
         ),
-        must_not_claim=(
-            "the payments team may not deploy on a Friday, or that Friday deploys need no approval at all"
-        ),
+        must_not_claim=("the payments team may not deploy on a Friday, or that Friday deploys need no approval at all"),
     ),
 ]
 
@@ -398,8 +394,7 @@ options for the reader to choose between."""
 #: The mission form. A mission REPLACES the agent's default role rather than adding
 #: to it, so it has to say what the agent is before it says how to rank.
 MISSION = (
-    "You are a reflection agent that answers questions by reasoning over retrieved memories.\n\n"
-    + SOURCE_PRECEDENCE
+    "You are a reflection agent that answers questions by reasoning over retrieved memories.\n\n" + SOURCE_PRECEDENCE
 )
 
 

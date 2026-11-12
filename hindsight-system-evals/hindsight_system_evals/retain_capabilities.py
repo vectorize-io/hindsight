@@ -384,7 +384,9 @@ CASES: tuple[Case, ...] = (
             "A fact names Ravi and identifies him as the user's manager.",
         ),
         # The whole line counts: a trailing 'She got a job in Leeds.' after 'Tamsin, the user's roommate' is resolved.
-        traps=("A fact line mentions 'my roommate', 'she' or 'my manager' and nowhere on that whole line names the person.",),
+        traps=(
+            "A fact line mentions 'my roommate', 'she' or 'my manager' and nowhere on that whole line names the person.",
+        ),
     ),
     # ── Who did it: fact type and speaker attribution ────────────────────────────
     Case(

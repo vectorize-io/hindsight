@@ -20,7 +20,7 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -78,11 +78,21 @@ logger = logging.getLogger(__name__)
 TASK_TYPE = "knowledge_ingest"
 KIND = "knowledge"
 # Bumped whenever splitting changes what a file becomes, so rewriting an unchanged file re-splits it.
-_PIPELINE_VERSION = 9  # 9: PDF page units pack whole lines (as benchmarked)
+_PIPELINE_VERSION = 10  # 10: PDF pages also get sentence vectors; 9: units pack whole lines
 # How many passages are embedded and stored per round, so a 2h video never sits in memory whole.
 _EMBED_ROUND = 16
 #: Files an ingest saves at once.
 _FILE_SAVE_CONCURRENCY = 16
+#: Passage files (page images, clips) an ingest writes at once, in the background of its embed rounds.
+#: Lower than the upload's: these run alongside the rounds' vector commits, and 16 at once stalled a
+#: local Postgres long enough for its other queries to time out.
+_PASSAGE_FILE_CONCURRENCY = 8
+#: Embed rounds in flight at once while the next passages are cut. One round at a time left the
+#: splitter, the embedder and the file writes taking turns: a 1,110-page PDF batch spent ~40 s
+#: rendering, ~40 s writing page images one by one and the embed calls, end to end, never at once.
+_EMBED_ROUNDS_IN_FLIGHT = 4
+#: A document with at least this many passages commits on its own as soon as they are embedded.
+_EARLY_COMMIT_PASSAGES = 2 * _EMBED_ROUND
 
 
 #: Passages reflect's recall tool reads from a memory bank's linked knowledge banks. Fixed: a per-bank
@@ -272,6 +282,15 @@ class _InFlight:
     media_keys: list[str] = field(default_factory=list)
     error: Exception | None = None
     split: bool = False
+    #: Passages are queued in order and embedded by rounds that may finish out of order: each is
+    #: given its index when queued and lands here, and ``passages`` is put together once all are in.
+    queued: int = 0
+    done: dict[int, KnowledgePassage] = field(default_factory=dict)
+    #: The embed rounds holding this document's passages, and whether its commit has started.
+    rounds: list[asyncio.Task[None]] = field(default_factory=list)
+    committing: bool = False
+    #: Its files' background writes (see ``_embed_round``).
+    saves: list[asyncio.Task[None]] = field(default_factory=list)
 
 
 @dataclass
@@ -280,6 +299,11 @@ class _Waiting:
 
     doc: _InFlight
     draft: media.PassageDraft
+    index: int
+
+
+#: Writes one passage's file for a document in the background (see ``KnowledgeService._embed_round``).
+_SaveFile = Callable[[_InFlight, str, media.PassageDraft], None]
 
 
 @dataclass
@@ -761,9 +785,10 @@ class KnowledgeService:
         self, draft: media.PassageDraft, document: KnowledgeDocument, title: str | None
     ) -> list[_Embedding]:
         """The vectors one passage is stored as. A PDF page (PDF_GEMMA.md): the whole page image at 560
-        vision tokens with the file name, three overlapping horizontal bands at 280, the page text and its
-        128-token units, all titled with the file name. Anything else: one vector, with the asset's name and
-        tags in the same input (GAME_ASSETS.md)."""
+        vision tokens with the file name, three overlapping horizontal bands at 280, the page text's 128-token
+        units and its sentences, all titled with the file name (a text-only model also gets the whole page
+        text, as the primary vector). Anything else: one vector, with the asset's name and tags in the same
+        input (GAME_ASSETS.md)."""
         if (
             draft.page is not None
             and document.media_type == "document"
@@ -773,9 +798,11 @@ class KnowledgeService:
             # A text-only model: the page is found by its text layer alone (a scanned page by its title).
             page_text = draft.embed_text or draft.text or ""
             units = media.pack_lines(page_text, tokens=media.PDF_TEXT_UNIT_TOKENS) if page_text else []
-            return [_Embedding(None, 0, EmbedInput(modality="text", text=page_text, title=title))] + [
-                _Embedding("unit", n, EmbedInput(modality="text", text=u, title=title)) for n, u in enumerate(units)
-            ]
+            return (
+                [_Embedding(None, 0, EmbedInput(modality="text", text=page_text, title=title))]
+                + [_Embedding("unit", n, EmbedInput(modality="text", text=u, title=title)) for n, u in enumerate(units)]
+                + (_sentence_vectors(page_text, title) if page_text else [])
+            )
         if draft.page is not None and document.media_type == "document" and draft.modality == "image":
             out = [
                 _Embedding(
@@ -799,11 +826,14 @@ class KnowledgeService:
                 for n, band in enumerate(draft.bands)
             ]
             if draft.embed_text and "text" in self.embedder.modalities:
-                out.append(_Embedding("page_text", 0, EmbedInput(modality="text", text=draft.embed_text, title=title)))
+                # No whole-page text vector next to the sentences: its best match is nearly always a unit's
+                # or a sentence's (ViDoRe hr -0.24, computer_science +0.06 nDCG@10 without it), and it was
+                # half the text a page embedded, so dropping it pays for most of the sentences.
                 units = media.pack_lines(draft.embed_text, tokens=media.PDF_TEXT_UNIT_TOKENS)
                 out += [
                     _Embedding("unit", n, EmbedInput(modality="text", text=u, title=title)) for n, u in enumerate(units)
                 ]
+                out += _sentence_vectors(draft.embed_text, title)
             return out
         return [
             _Embedding(
@@ -855,41 +885,53 @@ class KnowledgeService:
         )
         started = time.perf_counter()
         committed: set[str] = set()
-        try:
-            waiting: list[_Waiting] = []
-            for doc in docs:
-                try:
-                    drafts = await self._open(bank_id, doc, caller or {}, depth)
-                except ValueError as exc:
-                    doc.error = exc
-                    continue
-                if drafts is None:  # split into files, each its own document now, and itself ready
-                    doc.split = True
-                    committed.add(doc.work.document_id)
-                    continue
-                try:
-                    # A document an embed round refused stops here: its remaining passages (a long
-                    # video's windows) would only be cut to be thrown away.
-                    while doc.error is None and (draft := await asyncio.to_thread(_next_draft, drafts)) is not None:
-                        waiting.append(_Waiting(doc, draft))
-                        if len(waiting) >= _EMBED_ROUND:
-                            await self._embed_round(waiting)
-                            waiting = []
-                except ValueError as exc:
-                    doc.error = exc
-                finally:
-                    # Close the splitter now, off the event loop, rather than whenever it is collected.
-                    await asyncio.to_thread(_close_drafts, drafts)
-            if waiting:
-                await self._embed_round(waiting)
-            for doc in docs:
-                if doc.error is None and not doc.split and not doc.passages:
-                    doc.error = media.MediaError("the file holds nothing to search")
+        rounds: list[asyncio.Task[None]] = []
+        slots = asyncio.Semaphore(_EMBED_ROUNDS_IN_FLIGHT)
 
-            done = [d for d in docs if d.error is None and not d.split]
-            # The store commits each one only while it still holds the file this batch read: one replaced
-            # or deleted meanwhile is skipped (it used to be re-read here first, which left a gap between
-            # the check and the write), and its passages belong to nobody.
+        async def run_round(batch: list[_Waiting]) -> None:
+            try:
+                await self._embed_round(batch, save)
+            finally:
+                slots.release()
+
+        async def launch(batch: list[_Waiting]) -> None:
+            await slots.acquire()  # at most _EMBED_ROUNDS_IN_FLIGHT; the splitter waits for a free one
+            task = asyncio.create_task(run_round(batch))
+            rounds.append(task)
+            for doc in {id(w.doc): w.doc for w in batch}.values():
+                doc.rounds.append(task)
+
+        early: list[asyncio.Task[None]] = []
+        file_slots = asyncio.Semaphore(_PASSAGE_FILE_CONCURRENCY)
+
+        async def write(key: str, data: bytes, mime: str | None) -> None:
+            async with file_slots:
+                await self._engine._file_storage.store(file_data=data, key=key, metadata={"content_type": mime or ""})
+
+        def save(doc: _InFlight, key: str, draft: media.PassageDraft) -> None:
+            """Write a passage's file in the background; its key is noted first, so a failed write's
+            siblings are still cleaned up."""
+            assert draft.data is not None
+            doc.media_keys.append(key)
+            doc.saves.append(asyncio.create_task(write(key, draft.data, draft.mime)))
+
+        def saves_of(group: list[_InFlight]) -> list[asyncio.Task[None]]:
+            return [t for d in group for t in d.saves]
+
+        async def commit(group: list[_InFlight]) -> None:
+            """Write these documents' passages in one go; each is marked ready, or failed when it held
+            nothing. The store commits each one only while it still holds the file this batch read: one
+            replaced or deleted meanwhile is skipped (it used to be re-read here first, which left a gap
+            between the check and the write), and its passages belong to nobody."""
+            await asyncio.gather(*saves_of(group))  # a document commits once its files are all written
+            for d in group:
+                d.committing = True
+                d.passages = [d.done[i] for i in sorted(d.done)]
+                if d.error is None and not d.split and not d.passages:
+                    d.error = media.MediaError("the file holds nothing to search")
+            done = [d for d in group if d.error is None and not d.split]
+            if not done:
+                return
             replaced = await self.store.replace_passages(
                 bank_id,
                 [
@@ -907,13 +949,70 @@ class KnowledgeService:
                 if d.work.document_id in skipped:
                     await self._delete_keys(d.media_keys)
             kept = [d for d in done if d.work.document_id not in skipped]
-            committed |= {d.work.document_id for d in kept}
+            committed.update(d.work.document_id for d in kept)
             await self._delete_keys(replaced.stale_media_keys)
             # Only a document that used to be split can have split-out documents to drop now.
             was_split = [d.work.document_id for d in kept if d.work.was_split]
             if was_split:
                 derived = await self.store.derived_documents(bank_id, was_split)
                 await self._delete_trees(bank_id, [c for children in derived.values() for c in children])
+
+        async def commit_when_embedded(doc: _InFlight, its_rounds: list[asyncio.Task[None]]) -> None:
+            await asyncio.gather(*its_rounds)
+            await commit([doc])
+
+        async def settle() -> None:
+            """Wait for every round; re-raise the first transient error once all have stopped, so the
+            cleanup below never deletes a file a round is still writing."""
+            results = await asyncio.gather(*rounds, return_exceptions=True)
+            rounds.clear()
+            errors = [r for r in results if isinstance(r, BaseException)]
+            if errors:
+                raise errors[0]
+
+        try:
+            waiting: list[_Waiting] = []
+            for doc in docs:
+                try:
+                    drafts = await self._open(bank_id, doc, caller or {}, depth)
+                except ValueError as exc:
+                    doc.error = exc
+                    continue
+                if drafts is None:  # split into files, each its own document now, and itself ready
+                    doc.split = True
+                    committed.add(doc.work.document_id)
+                    continue
+                try:
+                    # A document an embed round refused stops here: its remaining passages (a long
+                    # video's windows) would only be cut to be thrown away.
+                    while doc.error is None and (draft := await asyncio.to_thread(_next_draft, drafts)) is not None:
+                        waiting.append(_Waiting(doc, draft, doc.queued))
+                        doc.queued += 1
+                        if len(waiting) >= _EMBED_ROUND:
+                            await launch(waiting)
+                            waiting = []
+                except ValueError as exc:
+                    doc.error = exc
+                finally:
+                    # Close the splitter now, off the event loop, rather than whenever it is collected.
+                    await asyncio.to_thread(_close_drafts, drafts)
+                if doc.error is None and doc.queued >= _EARLY_COMMIT_PASSAGES:
+                    # A big document (a long PDF, a video) commits as soon as its passages are embedded,
+                    # while the next documents are still being cut: writing a batch's every vector at the
+                    # end, in one go, was a third of a PDF batch's ingest with nothing else running.
+                    # Small documents still commit together at the end, in one write for the batch.
+                    if waiting:
+                        await launch(waiting)
+                        waiting = []
+                    doc.committing = True  # now, so the batch's final commit never takes it too
+                    early.append(asyncio.create_task(commit_when_embedded(doc, list(doc.rounds))))
+            if waiting:
+                await launch(waiting)
+            await settle()
+            # Whatever did not commit early commits here, together.
+            await commit([d for d in docs if not d.committing])
+            await asyncio.gather(*early)  # an early commit's error propagates like any other
+            kept = [d for d in docs if d.work.document_id in committed]
             failed = [d for d in docs if d.error is not None]
             for d in failed:
                 await self._delete_keys(d.media_keys)
@@ -930,6 +1029,9 @@ class KnowledgeService:
                 f"{len(failed)} failed, in {time.perf_counter() - started:.1f}s"
             )
         except Exception as exc:
+            # No round, file write or early commit may still be running when the cleanup deletes files.
+            await asyncio.gather(*rounds, *early, return_exceptions=True)
+            await asyncio.gather(*saves_of(docs), return_exceptions=True)
             # Transient: nothing of what is not committed is kept. Until the retries run out a document is
             # still on its way, so it stays pending with the error noted (it used to be marked failed at
             # once, and clients waiting for ready/failed gave up on it).
@@ -976,9 +1078,12 @@ class KnowledgeService:
             self._check_passage_modality(d.modality)
         return iter(emitted)
 
-    async def _embed_round(self, waiting: list[_Waiting]) -> None:
+    async def _embed_round(self, waiting: list[_Waiting], save: _SaveFile) -> None:
         """Embed one round of passages, from any documents, in one call, and hand each to its document. A
-        permanent error is narrowed to the documents it comes from, embedding each one's share alone."""
+        permanent error is narrowed to the documents it comes from, embedding each one's share alone.
+        Each passage's file is handed to ``save``, which writes it in the background: the round does not
+        wait for it (a round that waited held its slot through the file writes and left the embedder idle
+        most of the time); the document's commit does."""
         live = [w for w in waiting if w.doc.error is None]
         if not live:
             return
@@ -991,35 +1096,28 @@ class KnowledgeService:
                 return
             # By identity: an _InFlight is a mutable dataclass, so it has no hash to dedupe on.
             for doc in {id(w.doc): w.doc for w in live}.values():
-                await self._embed_round([w for w in live if w.doc is doc])
+                await self._embed_round([w for w in live if w.doc is doc], save)
             return
+        keys = {id(w): f"{w.doc.media_prefix}{w.index}.{w.draft.extension}" for w in live if w.draft.data is not None}
+        for w in live:
+            if id(w) in keys:
+                save(w.doc, keys[id(w)], w.draft)
         cursor = 0
         for w, plan in zip(live, plans, strict=True):
             mine = embedded[cursor : cursor + len(plan)]
             cursor += len(plan)
-            doc, draft = w.doc, w.draft
-            index = len(doc.passages)
-            key = None
-            if draft.data is not None:
-                key = f"{doc.media_prefix}{index}.{draft.extension}"
-                await self._engine._file_storage.store(
-                    file_data=draft.data, key=key, metadata={"content_type": draft.mime or ""}
-                )
-                doc.media_keys.append(key)
-            doc.passages.append(
-                KnowledgePassage(
-                    index=index,
-                    modality=draft.modality,
-                    text=draft.text,
-                    page=draft.page,
-                    start_ms=draft.start_ms,
-                    end_ms=draft.end_ms,
-                    media_key=key,
-                    embedding=mine[0],
-                    extra_vectors=[
-                        RoleVector(e.role, e.n, v) for e, v in zip(plan[1:], mine[1:], strict=True) if e.role
-                    ],
-                )
+            doc, draft, index = w.doc, w.draft, w.index
+            key = keys.get(id(w))
+            doc.done[index] = KnowledgePassage(
+                index=index,
+                modality=draft.modality,
+                text=draft.text,
+                page=draft.page,
+                start_ms=draft.start_ms,
+                end_ms=draft.end_ms,
+                media_key=key,
+                embedding=mine[0],
+                extra_vectors=[RoleVector(e.role, e.n, v) for e, v in zip(plan[1:], mine[1:], strict=True) if e.role],
             )
 
     async def _write_derived(
@@ -1308,13 +1406,44 @@ async def documents_for_memory_bank(
     return out
 
 
+#: Letter runs in a file name that say nothing about its content: what cameras, phones, screen
+#: recorders and exporters name files (``IMG_4821``, ``DSC01234``, ``video7020``, ``scan_003``).
+_GENERIC_NAME_WORDS = frozenset(
+    "img image images dsc dscn dscf pxl mvimg vid video videos mov clip photo pic picture frame scan "
+    "screenshot screen recording rec audio sound track file untitled copy final new export output".split()
+)
+
+
+def _sentence_vectors(text: str, title: str | None) -> list[_Embedding]:
+    """A PDF page's sentences, one vector each. A fact is one sentence, and a 128-token unit dilutes it
+    with its neighbours: on ViDoRe hr and computer_science (Gemini Embedding 2) adding the page's best
+    sentence gained +1.3 and +1.0 nDCG@10. Pairs of neighbouring sentences added +0.55 and +0.06 more
+    but embedded every sentence twice again (hr ingest +53% instead of about +25%), so they were dropped."""
+    return [
+        _Embedding("sentence", n, EmbedInput(modality="text", text=s, title=title))
+        for n, s in enumerate(media.sentences(text))
+    ]
+
+
 def _title_hint(document: KnowledgeDocument) -> str | None:
     """The file name without its extension: the embedder's "title: ..." prompt slot. None for the name
     a text write gets when it has none (``<document_id>.md``): an id, often a UUID, is not a title. A
-    file named like its id (``report.pdf`` as ``report``) keeps it: the title is worth 2-10 nDCG@10."""
+    file named like its id (``report.pdf`` as ``report``) keeps it: the title is worth 2-10 nDCG@10.
+
+    None too when the name has no real word in it (a number, a hash, a camera name): on Flickr30k,
+    photos named ``1007129816.jpg`` embedded as "title: 1007129816" scored R@1 79.8; the image alone
+    scored 93.3. A named asset (``footstep_gravel_03``) still gets its title."""
     if not document.filename or document.filename == f"{document.document_id}.md":
         return None
     stem = Path(document.filename).stem
+    words = [
+        w
+        for w in re.findall(r"[^\W\d_]{3,}", stem)
+        if w.lower() not in _GENERIC_NAME_WORDS
+        and not re.fullmatch(r"[0-9a-fA-F]{8,}", w)  # a hash, not "face" or "bed"
+    ]
+    if not words:
+        return None
     return re.sub(r"[_\-]+", " ", stem).strip()  # "footstep_gravel_03" reads as words
 
 

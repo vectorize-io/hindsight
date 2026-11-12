@@ -13,9 +13,11 @@ from typing import Literal, Protocol
 import pytest
 from pydantic import BaseModel, Field
 
-EvalKind = Literal["knowledge_page", "delta_update", "reflect", "retain", "source_priority", "consolidation", "recall"]
+EvalKind = Literal[
+    "knowledge_page", "delta_update", "reflect", "retain", "source_priority", "consolidation", "recall", "knowledge"
+]
 #: The operation an eval grades: one test file each, ``evals/<operation>/test_<operation>.py``.
-Operation = Literal["retain", "recall", "consolidation", "reflect", "refresh_pages"]
+Operation = Literal["retain", "recall", "consolidation", "reflect", "refresh_pages", "knowledge"]
 
 #: ``kind`` predates operations and is the dashboard's contract, so it stays; this maps it.
 _OPERATION: dict[str, Operation] = {
@@ -26,6 +28,7 @@ _OPERATION: dict[str, Operation] = {
     "source_priority": "reflect",
     "knowledge_page": "refresh_pages",
     "delta_update": "refresh_pages",
+    "knowledge": "knowledge",
 }
 
 
@@ -40,7 +43,6 @@ class EvalRecord(BaseModel):
     page_id: str = ""
     #: The page's size after each wave; empty for a one-shot reflect answer.
     sizes: list[int] = Field(default_factory=list)
-
 
     @property
     def operation(self) -> Operation:
@@ -63,6 +65,48 @@ class ModelConfig(BaseModel):
     judge: ModelRef
 
 
+class KnowledgeIngest(BaseModel):
+    """Writing the corpus into a knowledge bank, upload to every document ready or failed."""
+
+    documents: int
+    passages: int
+    failed: int
+    upload_s: float
+    wall_s: float
+    documents_per_s: float
+    passages_per_s: float
+
+
+class KnowledgeLatency(BaseModel):
+    searches: int
+    #: Searches in flight at once. Above 1 the client numbers include queueing.
+    concurrency: int
+    client_p50_ms: float
+    client_p95_ms: float
+    #: The server's own ``took_ms`` (query embedding plus the vector search); ``None`` for grep.
+    server_p50_ms: float | None = None
+    server_p95_ms: float | None = None
+
+
+class KnowledgeResult(BaseModel):
+    """One knowledge-bank retrieval suite: scores, not a pass/fail.
+
+    Kept apart from ``EvalRecord`` on purpose: an nDCG is a number to compare across
+    embedders, and folding it into a correct/total count would throw that away.
+    """
+
+    category: str
+    case: str
+    #: ``<provider>:<model>`` from the server's knowledge config, or ``grep`` for the baseline.
+    embedder: str
+    corpus: int
+    queries: int
+    #: Percentages (x100), as the write-ups report them.
+    metrics: dict[str, float]
+    ingest: KnowledgeIngest | None = None
+    latency: KnowledgeLatency
+
+
 class RunReport(BaseModel):
     timestamp: str
     suite: str
@@ -82,6 +126,7 @@ class RunReport(BaseModel):
     #: Operation -> category -> counts: the table a model comparison reads (``eval-table``).
     by_category: dict[str, dict[str, KindSummary]] = Field(default_factory=dict)
     items: list[EvalRecord]
+    knowledge: list[KnowledgeResult] = Field(default_factory=list)
 
     def to_json(self) -> str:
         return self.model_dump_json(by_alias=True, indent=2)
@@ -124,3 +169,5 @@ def case_params(cases: Iterable[Categorised], minimum: Collection[str]) -> list[
 #: Filled by the evals as they finish; written once at session end. A failed
 #: assertion still records its outcome first, so a red run publishes what it saw.
 RECORDED: list[EvalRecord] = []
+#: The knowledge-bank suites' scores, written beside ``items`` at session end.
+KNOWLEDGE: list[KnowledgeResult] = []

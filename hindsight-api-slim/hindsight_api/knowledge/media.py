@@ -1,7 +1,7 @@
 """Multimodal chunking: a file becomes passages that are embedded as they are, never OCR'd.
 
 * PDF   -> one rendered page image per passage; its text layer is kept for display and embedded
-           alongside (the page text and its units, see ``KnowledgeService._vectors_to_embed``)
+           alongside (its units and sentences, see ``KnowledgeService._vectors_to_embed``)
 * image -> the image itself
 * audio -> fixed windows (m4a), with a small overlap
 * video -> fixed windows (mp4, picture + soundtrack), with a small overlap
@@ -12,6 +12,7 @@ Audio and video go through the ``ffmpeg`` binary, which must be on PATH.
 
 from __future__ import annotations
 
+import collections
 import io
 import json
 import math
@@ -22,6 +23,7 @@ import tempfile
 import threading
 from collections import Counter
 from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -126,8 +128,12 @@ def sniff_image_mime(data: bytes) -> str:
 
 
 def _png(image) -> bytes:
+    """Lossless, at zlib's default level. ``optimize=True`` (every filter tried, then level 9) cost
+    ~150-190 ms per 1536px page and was 80% of a PDF's ingest, for a file 2% smaller (468 vs 480 KB
+    on ViDoRe HR); the default level is the same pixels in ~25 ms. Level 1 was barely faster (22 ms)
+    and 33% bigger, which every file write and every embed request then pays for."""
     out = io.BytesIO()
-    image.save(out, format="PNG", optimize=True)
+    image.save(out, format="PNG")
     return out.getvalue()
 
 
@@ -193,6 +199,22 @@ PDF_TEXT_UNIT_TOKENS = 128
 _PDF_BANDS = ((0.0, 0.5), (0.25, 0.75), (0.5, 1.0))
 
 
+_PDF_LOOKAHEAD = 4
+_PNG_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="kb-png")
+
+
+def _page_png(sharp: Any, page_pixels: int, bands: bool) -> bytes:
+    image = sharp.copy() if bands else sharp  # with bands the full-size render is still being cropped
+    image.thumbnail((page_pixels, page_pixels))
+    return _png(image)
+
+
+def _band_pngs(sharp: Any) -> tuple[bytes, ...]:
+    return tuple(
+        _png(sharp.crop((0, int(a * sharp.height), sharp.width, int(b * sharp.height)))) for a, b in _PDF_BANDS
+    )
+
+
 def split_pdf(data: bytes, *, page_pixels: int, max_pages: int, bands: bool = False) -> Iterator[PassageDraft]:
     """One PNG per page, the longest side rendered at ``page_pixels``."""
     import pypdfium2 as pdfium
@@ -210,27 +232,33 @@ def split_pdf(data: bytes, *, page_pixels: int, max_pages: int, bands: bool = Fa
         # scored on it too (whole page and 128-token units), and it is what a reader gets back.
         texts = [_page_text(pdf, number) for number in range(page_count)]
         embed_texts = strip_repeated_lines(texts)
-        for number in range(page_count):
-            with _PDFIUM_LOCK:
-                page = pdf[number]
-                width, height = page.get_size()
-                scale = (max(page_pixels, PDF_BAND_PIXELS) if bands else page_pixels) / max(width, height, 1)
-                sharp = page.render(scale=scale).to_pil().convert("RGB")
-                page.close()
-            text = texts[number]
-            image = sharp.copy()
-            image.thumbnail((page_pixels, page_pixels))
-            crops = tuple(
-                _png(sharp.crop((0, int(a * sharp.height), sharp.width, int(b * sharp.height)))) for a, b in _PDF_BANDS
-            )
+        # Rendering goes through pdfium, one page at a time under its lock; encoding the PNGs does not
+        # (Pillow lets go of the GIL), so it runs on a few threads while the next pages render. Page by
+        # page in order it was half of a PDF's ingest; up to _PDF_LOOKAHEAD pages are held at once.
+        pending: collections.deque[tuple[int, Future[bytes], Future[tuple[bytes, ...]] | None]] = collections.deque()
+        number = 0
+        while number < page_count or pending:
+            while number < page_count and len(pending) < _PDF_LOOKAHEAD:
+                with _PDFIUM_LOCK:
+                    page = pdf[number]
+                    width, height = page.get_size()
+                    scale = (max(page_pixels, PDF_BAND_PIXELS) if bands else page_pixels) / max(width, height, 1)
+                    sharp = page.render(scale=scale).to_pil().convert("RGB")
+                    page.close()
+                # Bands only when asked: they used to be cut and encoded for every page and then dropped,
+                # three PNGs per page for nothing (half of a PDF's ingest time with bands off).
+                crops = _PNG_POOL.submit(_band_pngs, sharp) if bands else None
+                pending.append((number, _PNG_POOL.submit(_page_png, sharp, page_pixels, bands), crops))
+                number += 1
+            done, page_png, crops = pending.popleft()
             yield PassageDraft(
                 modality="image",
-                text=text,
-                data=_png(image),
+                text=texts[done],
+                data=page_png.result(),
                 mime="image/png",
-                page=number + 1,
-                bands=crops if bands else (),
-                embed_text=embed_texts[number],
+                page=done + 1,
+                bands=crops.result() if crops is not None else (),
+                embed_text=embed_texts[done],
             )
     finally:
         with _PDFIUM_LOCK:
@@ -241,7 +269,9 @@ def _page_text(pdf: Any, number: int) -> str | None:
     with _PDFIUM_LOCK:
         page = pdf[number]
         textpage = page.get_textpage()
-        text = textpage.get_text_range().strip() or None
+        # PDFium returns a soft hyphen as U+FFFE inside the word ("employ\ufffement"): 40% of ViDoRe hr
+        # pages had one, and every such word was lost to keyword search.
+        text = textpage.get_text_range().replace("\ufffe", "").strip() or None
         textpage.close()
         page.close()
     return text
@@ -279,6 +309,30 @@ def read_text(data: bytes, filename: str | None) -> str:
         except Exception as exc:
             raise MediaError(f"unreadable {ext} file: {exc}") from exc
     return data.decode("utf-8", errors="replace")
+
+
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9(\u201c\"])")
+#: A sentence shorter than this joins the next one: a heading or a figure label alone matches everything.
+_MIN_SENTENCE_WORDS = 8
+
+
+def sentences(text: str) -> list[str]:
+    """A page's text layer as sentences: line breaks of print joined (and words hyphenated across them),
+    split after ., ! or ? before a capital or a digit, short pieces merged forward."""
+    flat = re.sub(r"\s*\n\s*", " ", re.sub(r"-\n(?=[a-z])", "", text))
+    out: list[str] = []
+    current = ""
+    for part in _SENTENCE_END.split(flat):
+        current = f"{current} {part}".strip() if current else part.strip()
+        if len(current.split()) >= _MIN_SENTENCE_WORDS:
+            out.append(current)
+            current = ""
+    if current:
+        if out:
+            out[-1] = f"{out[-1]} {current}"
+        else:
+            out.append(current)
+    return out
 
 
 def pack_lines(text: str, *, tokens: int) -> list[str]:
