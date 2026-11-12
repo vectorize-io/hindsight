@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import statistics
@@ -27,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 from hindsight_system_evals.enterprise_rag import Question, ingest, subset
 from hindsight_system_evals.enterprise_rag_scoring import (
@@ -46,6 +48,19 @@ from hindsight_system_evals.target import Target
 LEADERBOARD = {"PipesHub": 93.24, "OpenAI File Search": 61.03, "Azure AI Search": 48.42}
 
 
+class _StoredScore(BaseModel):
+    """One line of ``scores.jsonl``: the score, and what it was a score of. A line is reused only when
+    both still match: the same judge, and the same answer with the same cited documents."""
+
+    judge: str
+    answer_key: str
+    score: QuestionScore
+
+
+def _answer_key(answer: AgentAnswer) -> str:
+    return hashlib.sha1("\x1f".join([answer.answer, *answer.document_ids]).encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class Scored:
     scores: list[QuestionScore]
@@ -56,16 +71,22 @@ class Scored:
 async def _score_all(questions: Sequence[Question], answers: Sequence[AgentAnswer], path: Path) -> Scored:
     """Score every answer, appending each score to ``path`` as it completes.
 
-    Resumable like ``agent.jsonl``: a question already in ``path`` is not judged again, so a
-    judge failure (or a killed run) costs only the questions it hit. Delete the file to
-    re-score from scratch.
+    Resumable like ``agent.jsonl``: an answer already scored by the same judge is not judged
+    again, so a judge failure (or a killed run) costs only the questions it hit. A new answer, or
+    another judge model or effort, is judged afresh. ``judge_calls`` and the judge tokens count
+    this run's calls only. Delete the file to re-score from scratch.
     """
+    judge = f"{JUDGE_MODEL}:{JUDGE_EFFORT}"
+    keys = {q.question_id: _answer_key(a) for q, a in zip(questions, answers, strict=True)}
     done: dict[str, QuestionScore] = {}
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                s = QuestionScore.model_validate_json(line)
-                done[s.question_id] = s
+            try:
+                stored = _StoredScore.model_validate_json(line)
+            except ValidationError:
+                continue  # blank, half-written by a killed run, or from before answers were keyed
+            if stored.judge == judge and keys.get(stored.score.question_id) == stored.answer_key:
+                done[stored.score.question_id] = stored.score
     failed: list[str] = []
 
     with path.open("a", encoding="utf-8") as out:
@@ -78,7 +99,8 @@ async def _score_all(questions: Sequence[Question], answers: Sequence[AgentAnswe
                 failed.append(q.question_id)
                 return
             done[q.question_id] = s
-            out.write(s.model_dump_json() + "\n")
+            line = _StoredScore(judge=judge, answer_key=keys[q.question_id], score=s)
+            out.write(line.model_dump_json() + "\n")
             out.flush()
 
         await asyncio.gather(*(one(q, a) for q, a in zip(questions, answers, strict=True) if q.question_id not in done))

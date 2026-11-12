@@ -332,10 +332,12 @@ class GeminiEmbedder(KnowledgeEmbedder):
 
 
 _MEDIA_CONCURRENCY = 4  # media requests in flight per embed call (see OpenAIEmbedder.embed_documents)
-# Keyed by the loop itself, weakly, so a closed loop's entry goes with it. It was keyed by
-# ``id(loop)``: ids are reused, so a new loop could pick up a stale semaphore bound to a dead one, and
-# the entries never went away. Each loop only reads and writes its own entry, from its own thread, so
-# single get/set calls under the GIL stay as safe across threads as the plain dict was.
+# Keyed by the loop itself, weakly. It was keyed by ``id(loop)``: ids are reused, so a new loop could
+# pick up a stale semaphore bound to a dead one. Each loop only reads and writes its own entry, from its
+# own thread, so single get/set calls under the GIL stay as safe across threads as the plain dict was.
+# ponytail: a semaphore that has ever made a caller wait holds its loop strongly, so that loop's entry
+# (and the loop) is not freed; a few bytes per short-lived loop, as before. Key a plain dict by loop and
+# drop it on loop close if processes that churn loops under contention ever show it.
 _IN_FLIGHT: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[int, asyncio.Semaphore]] = (
     weakref.WeakKeyDictionary()
 )

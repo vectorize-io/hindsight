@@ -71,7 +71,7 @@ async def test_a_sync_ingest_returns_once_every_document_is_searchable(kb, knowl
     assert (bank["document_count"], bank["ready_count"], bank["failed_count"]) == (3, 3, 0)
 
 
-async def test_an_async_ingest_is_one_operation_the_worker_finishes(client, kb, knowledge_bank):
+async def test_an_async_ingest_is_one_operation_the_worker_finishes_even_split_into_children(client, kb, knowledge_bank):
     # Over a child's byte budget (1 MiB by default): the notes fill one child and the manual, bigger than
     # the budget on its own, is a second, so the worker runs the upload as two children. The one operation
     # the caller holds completes only once both have. (A request carries at most 100 items, under the

@@ -1327,6 +1327,50 @@ async def test_a_document_that_fails_drops_what_it_staged(api_client, memory, kb
     assert (await store.list_passages(kb, ["d"]))["d"] == []
 
 
+async def test_a_file_replaced_while_its_ingest_reads_it_is_skipped_not_retried(
+    api_client, memory, kb, fake_embedder, monkeypatch
+):
+    from hindsight_api.knowledge import media
+    from hindsight_api.knowledge.service import _Work
+    from hindsight_api.knowledge.store import StatusUpdate
+
+    service = get_knowledge_service(memory)
+    store = service.store
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
+    assert r.status_code == 200, r.text
+    old_key = (await store.get_documents(kb, ["d"]))["d"].storage_key
+    await store.set_statuses(kb, [StatusUpdate("d", "pending", None, old_key)])  # as if its task were queued
+    real = memory._file_storage.retrieve
+    replaced = False
+
+    async def retrieve(key: str) -> bytes:
+        # The newer upload lands between the batch's check and its read, deleting the old file.
+        nonlocal replaced
+        if key == old_key and not replaced:
+            replaced = True
+            r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "new red"}]})
+            assert r.status_code == 200, r.text
+            raise FileNotFoundError(key)
+        return await real(key)
+
+    monkeypatch.setattr(memory._file_storage, "retrieve", retrieve)
+    await service.process_batch(kb, [_Work("d", old_key)])  # no error, so no retry
+    doc = (await store.get_documents(kb, ["d"]))["d"]
+    assert doc.status == "ready" and doc.storage_key != old_key
+    assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["new red"]
+
+    # Gone under the current version, the file cannot come back: the document fails, once.
+    await store.set_statuses(kb, [StatusUpdate("d", "pending", None, doc.storage_key)])
+
+    async def gone(key: str) -> bytes:
+        raise FileNotFoundError(key)
+
+    monkeypatch.setattr(memory._file_storage, "retrieve", gone)
+    with pytest.raises(media.MediaError):
+        await service.process_batch(kb, [_Work("d", doc.storage_key)])
+    assert (await store.get_documents(kb, ["d"]))["d"].status == "failed"
+
+
 async def test_renaming_a_file_ingests_it_again(api_client, kb):
     for name in ("a.md", "b.md"):
         r = await api_client.post(

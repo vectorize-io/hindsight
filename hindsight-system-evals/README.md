@@ -783,7 +783,9 @@ Agent (defaults are the best run below): `HINDSIGHT_EVAL_AGENT_CONCURRENCY` (4),
 calls or no full read; 0 = off), `_CHECK` (1: one self-review turn against the documents),
 `_PRELOAD` (4: start from a search for the question and its top 4 documents in full),
 `_API_KEY` (`none`), `_MAX_TOKENS` (4096 per reply), `_CONTEXT` (131072, the context length
-Hermes assumes for the model).
+Hermes assumes for the model), `_PROVIDER` (`custom`: any OpenAI-compatible `_BASE_URL`; or a Hermes
+provider such as `openai-codex`). `HINDSIGHT_KNOWLEDGE_DISABLE_<TOOL>` (e.g. `_KNOWLEDGE_READ`) takes
+one tool away from the agent, for ablations.
 
 **What moved the number** (default slice, 50 questions, Gemma 4 26B-A4B, judge GPT-5.4; ±1
 question is ±2 points, so read differences under ~5 as noise):

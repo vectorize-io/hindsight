@@ -1128,9 +1128,15 @@ class KnowledgeService:
             for d in group:
                 d.committing = True
                 d.passages = [d.done[i] for i in sorted(d.done)]
-                if d.error is None and not d.split and not d.passages and not d.staged:
+                if d.error is None and not d.split and not d.replaced and not d.passages and not d.staged:
                     d.error = media.MediaError("the file holds nothing to search")
-            done = [d for d in group if d.error is None and not d.split]
+            # A version replaced meanwhile has nothing of its own to commit: its newer task writes the document.
+            # What it already wrote (media of pieces staged before the store turned it away) is dropped here,
+            # as the store's skip below used to drop it.
+            done = [d for d in group if d.error is None and not d.split and not d.replaced]
+            for d in group:
+                if d.replaced:
+                    await self._delete_keys(d.media_keys)
             try:
                 if done:
                     await write_passages(done)
@@ -1235,6 +1241,20 @@ class KnowledgeService:
                     drafts = await self._open(bank_id, doc, caller or {}, depth)
                 except ValueError as exc:
                     doc.error = exc
+                    continue
+                except FileNotFoundError as exc:
+                    # A newer upload can replace the file between the check above and this read, and it
+                    # deletes the old one: this version is then superseded, and its newer task ingests it.
+                    # Retrying (what this did before) only read the missing file again until retries ran
+                    # out. Gone under the current version, the file cannot come back: the document fails.
+                    current = (await self.store.get_documents(bank_id, [doc.work.document_id])).get(
+                        doc.work.document_id
+                    )
+                    if current is None or current.storage_key != doc.work.storage_key:
+                        doc.replaced = True
+                        logger.info(f"Knowledge ingest skipped: {bank_id}/{doc.work.document_id} was replaced")
+                    else:
+                        doc.error = exc
                     continue
                 if drafts is None:  # split into files, each its own document now, and itself ready
                     doc.split = True

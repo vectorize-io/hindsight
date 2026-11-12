@@ -524,6 +524,9 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 # (their vectors cascade). They used to stay until the document's next ingest started over,
                 # and a failed document that was never ingested again kept them for ever. Only the rows the
                 # update reached: a failure of an older version must not drop what a newer one is staging.
+                # One case is left: the same task running twice at once (a worker's claim expired while
+                # the first copy still runs) — one copy failing drops the other's pieces. Restaging after
+                # a restart could always do that; the copy that commits then holds a short document.
                 failed = [r["document_id"] for r in rows if r["status"] == "failed"]
                 if failed:
                     await conn.execute(
