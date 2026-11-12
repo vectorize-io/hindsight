@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import asyncpg
@@ -209,7 +210,9 @@ class SameSizeEmbeddings(HashEmbeddings):
         return [vector(f"v2 {t}") for t in texts]
 
 
-async def _assert_every_vector_from(conn, s: str, ids: dict[str, str], vector_of) -> None:
+async def _assert_every_vector_from(
+    conn: asyncpg.Connection, s: str, ids: dict[str, str], vector_of: Callable[[str], list[float]]
+) -> None:
     fact = fact_embedding_text(
         fact_type="world",
         text="Bob met Alice",
@@ -225,7 +228,7 @@ async def _assert_every_vector_from(conn, s: str, ids: dict[str, str], vector_of
     assert await _stored(conn, s, "mental_models", "mm1", "b2") == pytest.approx(vector_of("Weather It rains"))
 
 
-async def _filled(conn, s: str, table: str) -> int:
+async def _filled(conn: asyncpg.Connection, s: str, table: str) -> int:
     return await conn.fetchval(f"SELECT count(*) FROM {s}.{table} WHERE embedding_next IS NOT NULL")
 
 
