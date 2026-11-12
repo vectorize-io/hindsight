@@ -165,6 +165,10 @@ class IngestResult:
     unchanged_document_ids: list[str] = field(default_factory=list)
 
 
+class _FileGone(Exception):
+    """The document's stored original is not there: replaced by a newer upload, or lost."""
+
+
 @dataclass
 class SearchRequest:
     query: str | None
@@ -1137,6 +1141,7 @@ class KnowledgeService:
             for d in group:
                 if d.replaced:
                     await self._delete_keys(d.media_keys)
+                    d.media_keys = []  # the transient cleanup must not delete them a second time
             try:
                 if done:
                     await write_passages(done)
@@ -1242,7 +1247,7 @@ class KnowledgeService:
                 except ValueError as exc:
                     doc.error = exc
                     continue
-                except FileNotFoundError as exc:
+                except _FileGone as exc:
                     # A newer upload can replace the file between the check above and this read, and it
                     # deletes the old one: this version is then superseded, and its newer task ingests it.
                     # Retrying (what this did before) only read the missing file again until retries ran
@@ -1347,7 +1352,12 @@ class KnowledgeService:
         """One document's passages to embed, as a lazy iterator; None when its strategy split it into files."""
         document, w = doc.document, doc.work
         async with _timing.timed("file.read"):
-            data = await self._engine._file_storage.retrieve(w.storage_key)
+            try:
+                data = await self._engine._file_storage.retrieve(w.storage_key)
+            except FileNotFoundError as exc:
+                # Only the stored original being gone means "superseded or lost" to the batch; a missing
+                # file further in (a splitter's helper, a temp file) stays an ordinary, retried error.
+                raise _FileGone(str(exc)) from exc
         if w.handler is None:
             # Splitting is blocking (pdfium, ffmpeg): it runs in a thread, one draft at a time.
             return await _split(self._drafts, document, data)

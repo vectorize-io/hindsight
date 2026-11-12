@@ -89,6 +89,9 @@ async def _score_all(questions: Sequence[Question], answers: Sequence[AgentAnswe
                 done[stored.score.question_id] = stored.score
     failed: list[str] = []
 
+    if path.exists() and path.stat().st_size and not path.read_bytes().endswith(b"\n"):
+        with path.open("a", encoding="utf-8") as out:
+            out.write("\n")  # a killed run's last line, cut short: the next score must not join it
     with path.open("a", encoding="utf-8") as out:
 
         async def one(q: Question, a: AgentAnswer) -> None:

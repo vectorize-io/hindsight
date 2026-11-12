@@ -1366,9 +1366,10 @@ async def test_a_file_replaced_while_its_ingest_reads_it_is_skipped_not_retried(
         raise FileNotFoundError(key)
 
     monkeypatch.setattr(memory._file_storage, "retrieve", gone)
-    with pytest.raises(media.MediaError):
-        await service.process_batch(kb, [_Work("d", doc.storage_key)])
-    assert (await store.get_documents(kb, ["d"]))["d"].status == "failed"
+    with pytest.raises(media.MediaError):  # with retries left, a transient error would leave it pending
+        await service.process_batch(kb, [_Work("d", doc.storage_key)], retries_left=True)
+    failed = (await store.get_documents(kb, ["d"]))["d"]
+    assert failed.status == "failed" and doc.storage_key in (failed.error or "")
 
 
 async def test_renaming_a_file_ingests_it_again(api_client, kb):
