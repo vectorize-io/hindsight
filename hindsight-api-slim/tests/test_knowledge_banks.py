@@ -967,6 +967,20 @@ def counted(memory, monkeypatch):
     return counts, payloads
 
 
+async def test_an_ingest_batch_reports_where_its_time_went(api_client, kb, fake_embedder, caplog):
+    items = [{"document_id": f"t{n}", "text": f"note {n} about blue"} for n in range(20)]
+    with caplog.at_level("INFO", logger="hindsight_api.engine.retain.timing"):
+        r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.is_success, r.text
+    lines = [m.getMessage() for m in caplog.records if "[knowledge_ingest-timing]" in m.getMessage()]
+    assert len(lines) == 1 and "docs=20" in lines[0], lines
+    # Every stage a batch passes through is attributed, with its round-trip count.
+    phases = dict(p.split("=", 1) for p in lines[0].split(" | ", 1)[1].split())
+    for phase in ("store.read", "store.status", "file.read", "split", "embed", "store.write", "language"):
+        assert phase in phases, (phase, lines[0])
+    assert phases["file.read"].split("/")[1] == "20c"  # one stored file read per document
+
+
 async def test_an_ingest_of_many_documents_costs_a_fixed_number_of_calls(api_client, kb, fake_embedder, counted):
     counts, payloads = counted
     items = [{"document_id": f"d{n}", "text": f"note {n} about red"} for n in range(100)]

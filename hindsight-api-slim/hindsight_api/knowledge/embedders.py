@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import orjson
 
+from ..engine.retain import timing as _timing
 from . import media
 
 if TYPE_CHECKING:
@@ -455,14 +456,16 @@ class OpenAIEmbedder(_RemoteEmbedder):
         slots = asyncio.Semaphore(_MEDIA_CONCURRENCY)
         text_slots = asyncio.Semaphore(_TEXT_CONCURRENCY)
 
+        # Each HTTP request is timed apart from the `embed` round it serves: a round slow because each
+        # request is slow and one slow because it makes many need opposite fixes.
         async def text_batch(chunk: list[tuple[int, str]]) -> None:
-            async with text_slots:
+            async with text_slots, _timing.timed("embed.request"):
                 vectors = await self._post({"input": [t for _, t in chunk]}, len(chunk))
             for (i, _), vector in zip(chunk, vectors, strict=True):
                 out[i] = vector
 
         async def one_media(i: int, item: EmbedInput) -> None:
-            async with slots:
+            async with slots, _timing.timed("embed.request"):
                 out[i] = await self._embed_media(item)
 
         await asyncio.gather(
