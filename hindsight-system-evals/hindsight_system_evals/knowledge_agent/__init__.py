@@ -12,7 +12,7 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 HERE = Path(__file__).resolve().parent
 RUNNER = HERE / "runner.py"
@@ -51,12 +51,7 @@ def answer_all(
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     out = work_dir / "agent.jsonl"
-    done = {}
-    if out.exists():
-        for line in out.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                answer = AgentAnswer.model_validate_json(line)
-                done[answer.question_id] = answer
+    done = _read_answers(out)
     todo = [q for q in questions if q.question_id not in done]
     if todo:
         pending = work_dir / "questions.jsonl"
@@ -69,11 +64,26 @@ def answer_all(
         if api_key:
             env["HINDSIGHT_KNOWLEDGE_API_KEY"] = api_key
         # stderr (one progress line per question) passes straight through to the pytest log.
+        # The runner appends: a killed run's cut-short last line must not swallow the first new answer.
+        if out.exists() and out.stat().st_size and not out.read_bytes().endswith(b"\n"):
+            with out.open("a", encoding="utf-8") as f:
+                f.write("\n")
         subprocess.run(
             [str(hermes_python()), str(RUNNER), "--questions", str(pending), "--out", str(out)], env=env, check=True
         )
-        for line in out.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                answer = AgentAnswer.model_validate_json(line)
-                done[answer.question_id] = answer
+        done |= _read_answers(out)
     return [done[q.question_id] for q in questions]
+
+
+def _read_answers(path: Path) -> dict[str, AgentAnswer]:
+    """The answers already in ``path``, by question; a line a killed run cut short is skipped (asked again)."""
+    answers: dict[str, AgentAnswer] = {}
+    if not path.exists():
+        return answers
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            answer = AgentAnswer.model_validate_json(line)
+        except ValidationError:
+            continue
+        answers[answer.question_id] = answer
+    return answers

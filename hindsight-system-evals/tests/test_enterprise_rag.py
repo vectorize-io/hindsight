@@ -133,3 +133,15 @@ def test_preload_reads_the_top_documents_of_the_plugins_own_search_output(monkey
     monkeypatch.setattr(plugin, "knowledge_read", lambda args: read.append(args["document_id"]) or "")
     opening = runner._opening(plugin, "q?", preload=4)
     assert read == [a, b] and "The full text of the top 2" in opening
+
+
+def test_a_resume_skips_the_answer_line_a_killed_run_cut_short(tmp_path: Path) -> None:
+    from hindsight_system_evals.knowledge_agent import AgentAnswer, _read_answers
+
+    good = AgentAnswer(
+        question_id="q1", answer="a", document_ids=[], llm_calls=1, prompt_tokens=1, completion_tokens=1,
+        tool_calls={}, seconds=1.0,
+    )  # fmt: skip
+    path = tmp_path / "agent.jsonl"
+    path.write_bytes((good.model_dump_json() + "\n").encode() + b'{"question_id": "q2", "answer": "caf\xc3')
+    assert list(_read_answers(path)) == ["q1"]  # q2 is asked again

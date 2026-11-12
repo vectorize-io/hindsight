@@ -79,8 +79,10 @@ async def _score_all(questions: Sequence[Question], answers: Sequence[AgentAnswe
     judge = f"{JUDGE_MODEL}:{JUDGE_EFFORT}"
     keys = {q.question_id: _answer_key(a) for q, a in zip(questions, answers, strict=True)}
     done: dict[str, QuestionScore] = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
+    # Cut short by a killed run, a line can end mid-character: replace it rather than fail the resume.
+    text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    if text:
+        for line in text.splitlines():
             try:
                 stored = _StoredScore.model_validate_json(line)
             except ValidationError:
@@ -89,10 +91,9 @@ async def _score_all(questions: Sequence[Question], answers: Sequence[AgentAnswe
                 done[stored.score.question_id] = stored.score
     failed: list[str] = []
 
-    if path.exists() and path.stat().st_size and not path.read_bytes().endswith(b"\n"):
-        with path.open("a", encoding="utf-8") as out:
-            out.write("\n")  # a killed run's last line, cut short: the next score must not join it
     with path.open("a", encoding="utf-8") as out:
+        if text and not text.endswith("\n"):
+            out.write("\n")  # a killed run's last line, cut short: the next score must not join it
 
         async def one(q: Question, a: AgentAnswer) -> None:
             try:
