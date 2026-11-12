@@ -91,8 +91,8 @@ class KnowledgeEmbedder(ABC):
     ) -> list[float]:
         """The vector a search compares passages against. Text, an image and a video can come together:
         they go to the model as one interleaved input and come back as one vector, the way these models
-        embed a mixed query (Gemini Embedding 2, Voyage multimodal, Cohere v4 and EmbeddingGemma 2 all
-        take one). Averaging separately embedded parts would weigh them by hand instead of by the model."""
+        embed a mixed query, rather than weighing separately embedded parts by hand. EmbeddingGemma 2
+        takes one medium per input, so there an image and a video are embedded apart (``_one_medium_each``)."""
 
 
 class LocalGemmaEmbedder(KnowledgeEmbedder):
@@ -208,6 +208,8 @@ class LocalGemmaEmbedder(KnowledgeEmbedder):
     async def embed_query(
         self, text: str | None, image: bytes | None = None, video: bytes | None = None
     ) -> list[float]:
+        if image is not None and video is not None:
+            return await _one_medium_each(self, text, image, video)
         if image is None and video is None:
             inp: Any = f"{_QUERY_PREFIX}{text or ''}"
         else:
@@ -531,6 +533,8 @@ class OpenAIEmbedder(_RemoteEmbedder):
         if image is None and video is None:
             return (await self._post({"input": [f"{_QUERY_PREFIX}{text or ''}"]}, 1))[0]
         _require(self, image=image, video=video)
+        if image is not None and video is not None:
+            return await _one_medium_each(self, text, image, video)
         content: list[dict[str, Any]] = []
         if image is not None:
             content.append({"type": "image_url", "image_url": {"url": _data_url(image, media.sniff_image_mime(image))}})
@@ -718,6 +722,15 @@ def _text_embedder(own: HindsightConfig | None, memory_embeddings: Embeddings) -
 
 class UnsupportedModalityError(ValueError):
     """The configured embedder cannot embed this kind of content."""
+
+
+async def _one_medium_each(embedder: KnowledgeEmbedder, text: str | None, image: bytes, video: bytes) -> list[float]:
+    """A query with an image and a video, for EmbeddingGemma 2, which embeds one medium per input (our
+    server answers 400 to two: "one request is one embedding"): the text with each medium, then the
+    normalized mean of the two vectors. An equal split, the one weight that needs no tuning; the
+    providers that take both in one input (Gemini, Voyage) get one."""
+    a, b = await asyncio.gather(embedder.embed_query(text, image), embedder.embed_query(text, None, video))
+    return media.l2_normalize([x + y for x, y in zip(a, b, strict=True)])
 
 
 def _require(embedder: KnowledgeEmbedder, *, image: bytes | None, video: bytes | None) -> None:

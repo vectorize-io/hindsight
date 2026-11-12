@@ -259,7 +259,7 @@ async def test_remote_embedder_requests_in_flight_are_capped_across_callers(monk
 # --- mixed queries -----------------------------------------------------------------------------------
 
 
-async def test_a_query_with_text_image_and_video_is_one_input_and_one_vector():
+async def test_a_query_with_text_image_and_video_is_one_vector():
     handler, seen = _recorder(lambda body: {"data": [{"index": 0, "embedding": [3.0, 4.0]}]})
     async with stub_server(handler) as base_url:
         openai = OpenAIEmbedder(
@@ -270,13 +270,17 @@ async def test_a_query_with_text_image_and_video_is_one_input_and_one_vector():
             modalities=frozenset({"text", "image", "video"}),
             batch_size=8,
         )
+        assert await openai.embed_query("red car", None, MP4) == [0.6, 0.8]
+        # EmbeddingGemma 2 embeds one medium per input: an image and a video go apart, then are averaged.
         assert await openai.embed_query("red car", PNG, MP4) == [0.6, 0.8]
         voyage = VoyageEmbedder("m", api_key="k", base_url=base_url, dimensions=None, batch_size=8)
         await voyage.embed_query("red car", PNG, MP4)
-    (content,) = (m["content"] for m in seen[0][1]["messages"])
-    assert [c["type"] for c in content] == ["image_url", "video_url", "text"]
-    assert content[1]["video_url"]["url"].startswith("data:video/mp4;base64,")
-    assert [c["type"] for c in seen[1][1]["inputs"][0]["content"]] == ["text", "image_base64", "video_base64"]
+    (video_only,) = (m["content"] for m in seen[0][1]["messages"])
+    assert [c["type"] for c in video_only] == ["video_url", "text"]
+    assert video_only[0]["video_url"]["url"].startswith("data:video/mp4;base64,")
+    mixed = sorted(tuple(c["type"] for c in body["messages"][0]["content"]) for _, body in seen[1:3])
+    assert mixed == [("image_url", "text"), ("video_url", "text")]
+    assert [c["type"] for c in seen[3][1]["inputs"][0]["content"]] == ["text", "image_base64", "video_base64"]
 
 
 async def test_a_video_query_is_refused_by_a_model_without_video():
