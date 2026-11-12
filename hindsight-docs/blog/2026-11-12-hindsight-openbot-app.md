@@ -14,6 +14,8 @@ Hindsight is now a connectable **App in OpenBot's Apps marketplace**. Open **App
 
 That last part is the whole point, so here is the problem it solves.
 
+![Hindsight listed in OpenBot's Apps marketplace under Productivity, beside Slack, Notion and Honcho](/img/blog/openbot-marketplace-apps.png)
+
 <!-- truncate -->
 
 ## Persistent agents, forgetful teams
@@ -38,6 +40,10 @@ Connecting the app adds [Hindsight](https://hindsight.vectorize.io) as an MCP se
 - **Recall** them by meaning, time and entity, so the right fact surfaces even when the words do not match
 - **Reflect** over everything it knows to form mental models
 
+![The Hindsight listing in OpenBot, showing its starter prompts for recall, retain and reflect](/img/blog/openbot-hindsight-listing.png)
+
+The listing ships with three starter prompts, one for each of those verbs, so you can try all three without writing anything yourself.
+
 The first two are what you expect from a memory. The third is the one worth trying first. Ask an agent to reflect on what it has seen of your last month of work and it reasons over the whole bank rather than retrieving the nearest few snippets, which is how you get "you keep reverting changes to the billing module on Fridays" instead of three loosely related search hits.
 
 Memories live in **banks**, and an agent can keep a bank per project or per person. Because this listing connects at the multi-bank address, agents also get `list_banks`, `create_bank` and `get_bank_stats`, and each memory tool takes an optional `bank_id`. Tell an agent which bank to use, in its instructions or in the task. An agent that names no bank gets one called `default`, created on first use, and memories there do not show up in other banks.
@@ -56,9 +62,21 @@ What your agents retain goes to your own Hindsight Cloud account.
 
 ## How to connect it
 
-Open **Apps** in OpenBot, find **Hindsight**, and select **Connect**.
+Open **Apps** in OpenBot, find **Hindsight**, and select **Connect**. The listing is also browsable on the web at [openbot.run/plugins/hindsight](https://openbot.run/plugins/hindsight).
 
-You have two ways in. Sign in to Hindsight Cloud in the browser and choose the organization OpenBot may use, which an Owner or an Admin of that organization has to approve. Or select **Use an API key instead** and paste a key from the Connect page of Hindsight Cloud. Keys start with `hsk_`, and OpenBot keeps them in encrypted storage.
+You have two ways in, and neither asks you for a URL.
+
+![OpenBot's Connect Hindsight dialog, offering browser sign-in or an API key](/img/blog/openbot-connect-hindsight.png)
+
+Sign in to Hindsight Cloud in the browser and pick the organization OpenBot may use. An Owner or an Admin of that organization has to approve it, and the approval screen is explicit about what you are granting: the client reaches the Hindsight MCP server for that organization with your authorized role, and sees your name and email address. Treat it with the same care as creating an API key, because that is effectively what it is.
+
+![Hindsight Cloud's Approve MCP Access screen, with the organization picker](/img/blog/openbot-approve-mcp.png)
+
+Or select **Use an API key instead** and paste a key from the Connect page of Hindsight Cloud. Keys start with `hsk_`, and OpenBot keeps them in encrypted storage.
+
+Either way you land here:
+
+![The Hindsight app in OpenBot showing a green Connected status](/img/blog/openbot-hindsight-connected.png)
 
 Then enable the app for the agents that should share the memory.
 
