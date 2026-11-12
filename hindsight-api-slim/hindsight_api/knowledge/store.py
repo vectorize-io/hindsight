@@ -94,6 +94,27 @@ class PassageReplacement:
     language: str | None = None
     #: Only while the document still holds this file (see ``StatusUpdate``); otherwise it is skipped.
     storage_key: str | None = None
+    #: Passages already staged for this version (see ``PassageStage``), committed with these: the document
+    #: ends up with ``staged + len(passages)``, numbered on from ``staged``. 0 when nothing was staged.
+    staged: int = 0
+
+
+@dataclass
+class PassageStage:
+    """A piece of a document's next version, written out of sight: a document too big to hold whole is
+    cut, embedded and staged in pieces, then committed with ``PassageReplacement(staged=n)``. Until that
+    commit, searches and reads see the version it replaces, whole."""
+
+    document_id: str
+    passages: list[KnowledgePassage]
+    #: The language the version will be committed with (a store may index a passage's text by it as it
+    #: is written); the commit must name the same one.
+    language: str | None = None
+    #: Only while the document still holds this file; otherwise the piece is skipped.
+    storage_key: str | None = None
+    #: Passages staged before this piece. 0 starts the version over: anything staged before for the
+    #: document (left by an ingest that never committed) is dropped first.
+    staged: int = 0
 
 
 @dataclass
@@ -177,9 +198,15 @@ class KnowledgeStore(ABC):
     async def set_statuses(self, bank_id: str, updates: list[StatusUpdate]) -> None: ...
 
     @abstractmethod
+    async def stage_passages(self, bank_id: str, items: list[PassageStage]) -> list[str]:
+        """Write each piece out of sight, for the document's next version (see ``PassageStage``). Returns
+        the documents skipped because they no longer hold the piece's ``storage_key`` (or are gone)."""
+
+    @abstractmethod
     async def replace_passages(self, bank_id: str, items: list[PassageReplacement]) -> PassagesReplaced:
-        """Swap each document's passages for the given ones and mark it ready; an item whose
-        ``storage_key`` the document no longer holds is skipped, and reported as such."""
+        """Swap each document's passages for the given ones, plus the ``staged`` ones staged before, and
+        mark it ready; an item whose ``storage_key`` the document no longer holds is skipped, and reported
+        as such. Whatever was staged for an item's document and not committed by it is dropped."""
 
     @abstractmethod
     async def list_passages(self, bank_id: str, document_ids: list[str]) -> dict[str, list[KnowledgePassage]]:
@@ -506,30 +533,100 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 [u.storage_key for u in updates],
             )
 
+    async def _held(self, conn: Any, bank_id: str, document_ids: list[str]) -> dict[str, str | None]:
+        """Each document's storage key, its row locked: an ingest of a newer version cannot swap the file
+        between this check and the writes after it. Locked in document_id order, as set_statuses and
+        put_documents take them, so two overlapping batches cannot deadlock on each other's rows."""
+        return {
+            r["document_id"]: r["storage_key"]
+            for r in await conn.fetch(
+                f"SELECT document_id, storage_key FROM {fq_table('kb_documents')} "
+                "WHERE bank_id = $1 AND document_id = ANY($2::text[]) ORDER BY document_id FOR UPDATE",
+                bank_id,
+                document_ids,
+            )
+        }
+
+    @staticmethod
+    async def _insert_passages(
+        conn: Any, bank_id: str, items: list[Any], table: str, vectors_table: str, languages: bool
+    ) -> None:
+        """The passages of ``items`` and their extra vectors, pipelined (executemany). Vectors go as binary
+        float arrays cast to vector, not as their text: formatting and parsing 768 floats as text cost
+        0.29 ms a vector against 0.08 (a ViDoRe hr ingest writes ~23k of them). ``languages``: also make
+        the keyword arm's search text, in the item's language (a staged piece has none yet)."""
+        rows = [
+            (
+                bank_id,
+                i.document_id,
+                p.index,
+                p.modality,
+                p.text,
+                p.page,
+                p.start_ms,
+                p.end_ms,
+                p.media_key,
+                p.embedding,
+                *((text_search_config(i.language),) if languages else ()),
+            )
+            for i in items
+            for p in i.passages
+        ]
+        if rows:
+            columns = "bank_id, document_id, idx, modality, text, page, start_ms, end_ms, media_key, embedding"
+            values = "$1, $2, $3, $4, $5, $6, $7, $8, $9, $10::real[]::vector"
+            if languages:
+                columns += ", search_vector"
+                values += ", to_tsvector($11::regconfig, coalesce($5, ''))"
+            await conn.executemany(f"INSERT INTO {table} ({columns}) VALUES ({values})", rows)
+        extras = [
+            (bank_id, i.document_id, p.index, v.role, v.n, v.embedding)
+            for i in items
+            for p in i.passages
+            for v in p.extra_vectors
+        ]
+        if extras:
+            await conn.executemany(
+                f"INSERT INTO {vectors_table} (bank_id, document_id, idx, role, n, embedding) "
+                "VALUES ($1, $2, $3, $4, $5, $6::real[]::vector)",
+                extras,
+            )
+
+    async def stage_passages(self, bank_id: str, items: list[PassageStage]) -> list[str]:
+        if not items:
+            return []
+        staged = fq_table("kb_staged_passages")
+        async with acquire_with_retry(await self._pool()) as conn:
+            async with conn.transaction():
+                held = await self._held(conn, bank_id, [i.document_id for i in items])
+
+                def holds(i: PassageStage) -> bool:
+                    return i.document_id in held and (i.storage_key is None or held[i.document_id] == i.storage_key)
+
+                skipped = [i.document_id for i in items if not holds(i)]
+                items = [i for i in items if holds(i)]
+                restart = [i.document_id for i in items if i.staged == 0]
+                if restart:  # a version starting over drops what an ingest that never committed left
+                    await conn.execute(
+                        f"DELETE FROM {staged} WHERE bank_id = $1 AND document_id = ANY($2::text[])", bank_id, restart
+                    )
+                await self._insert_passages(
+                    conn, bank_id, items, staged, fq_table("kb_staged_passage_vectors"), languages=False
+                )
+        return skipped
+
     async def replace_passages(self, bank_id: str, items: list[PassageReplacement]) -> PassagesReplaced:
         if not items:
             return PassagesReplaced()
         table = fq_table("kb_passages")
-        # A fixed five statements in one transaction, however many documents: the old passages must be
-        # gone before the new ones (same primary keys) go in, which one statement with data-modifying
-        # CTEs cannot order. The inserts are executemany, pipelined in one round trip each. Vectors go as
-        # binary float arrays cast to vector, not as their text: formatting and parsing 768 floats as text
-        # cost 0.29 ms a vector against 0.08 (a ViDoRe hr ingest writes ~23k of them).
+        staged_table = fq_table("kb_staged_passages")
+        # A fixed handful of statements in one transaction, however many documents: the old passages must
+        # be gone before the new ones (same primary keys) go in, which one statement with data-modifying
+        # CTEs cannot order. The inserts are executemany, pipelined in one round trip each.
         async with acquire_with_retry(await self._pool()) as conn:
             async with conn.transaction():
-                # Locked, so an ingest of a newer version cannot swap the file between this check and the
-                # writes below; an item for a file the document no longer holds is left out.
-                held = {
-                    r["document_id"]: r["storage_key"]
-                    for r in await conn.fetch(
-                        f"SELECT document_id, storage_key FROM {fq_table('kb_documents')} "
-                        # Locked in document_id order, as set_statuses and put_documents take them, so two
-                        # overlapping batches cannot deadlock on each other's rows.
-                        "WHERE bank_id = $1 AND document_id = ANY($2::text[]) ORDER BY document_id FOR UPDATE",
-                        bank_id,
-                        [i.document_id for i in items],
-                    )
-                }
+                # An item for a file the document no longer holds is left out.
+                held = await self._held(conn, bank_id, [i.document_id for i in items])
 
                 def holds(i: PassageReplacement) -> bool:
                     return i.document_id in held and (i.storage_key is None or held[i.document_id] == i.storage_key)
@@ -544,45 +641,50 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     bank_id,
                     document_ids,
                 )
-                rows = [
-                    (
-                        bank_id,
-                        i.document_id,
-                        p.index,
-                        p.modality,
-                        p.text,
-                        p.page,
-                        p.start_ms,
-                        p.end_ms,
-                        p.media_key,
-                        p.embedding,
-                        text_search_config(i.language),
-                    )
-                    for i in items
-                    for p in i.passages
-                ]
-                if rows:
-                    await conn.executemany(
+                # The pieces staged for these versions move in, with their search text made now that the
+                # language is known; then whatever is left staged for these documents is dropped.
+                with_staged = [i for i in items if i.staged]
+                moved: list[Any] = []
+                if with_staged:
+                    moved = await conn.fetch(
                         f"""
                         INSERT INTO {table} (bank_id, document_id, idx, modality, text, page, start_ms, end_ms,
                             media_key, embedding, search_vector)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::real[]::vector,
-                                to_tsvector($11::regconfig, coalesce($5, '')))
+                        SELECT s.bank_id, s.document_id, s.idx, s.modality, s.text, s.page, s.start_ms, s.end_ms,
+                            s.media_key, s.embedding, to_tsvector(u.config::regconfig, coalesce(s.text, ''))
+                        FROM {staged_table} s
+                        JOIN unnest($2::text[], $3::text[], $4::int[]) AS u(document_id, config, staged)
+                          ON s.document_id = u.document_id AND s.idx < u.staged
+                        WHERE s.bank_id = $1
+                        RETURNING document_id, media_key
                         """,
-                        rows,
+                        bank_id,
+                        [i.document_id for i in with_staged],
+                        [text_search_config(i.language) for i in with_staged],
+                        [i.staged for i in with_staged],
                     )
-                extras = [
-                    (bank_id, i.document_id, p.index, v.role, v.n, v.embedding)
-                    for i in items
-                    for p in i.passages
-                    for v in p.extra_vectors
-                ]
-                if extras:
-                    await conn.executemany(
-                        f"INSERT INTO {fq_table('kb_passage_vectors')} (bank_id, document_id, idx, role, n, "
-                        "embedding) VALUES ($1, $2, $3, $4, $5, $6::real[]::vector)",
-                        extras,
+                    await conn.execute(
+                        f"""
+                        INSERT INTO {fq_table("kb_passage_vectors")} (bank_id, document_id, idx, role, n, embedding)
+                        SELECT v.bank_id, v.document_id, v.idx, v.role, v.n, v.embedding
+                        FROM {fq_table("kb_staged_passage_vectors")} v
+                        JOIN unnest($2::text[], $3::int[]) AS u(document_id, staged)
+                          ON v.document_id = u.document_id AND v.idx < u.staged
+                        WHERE v.bank_id = $1
+                        """,
+                        bank_id,
+                        [i.document_id for i in with_staged],
+                        [i.staged for i in with_staged],
                     )
+                await conn.execute(
+                    f"DELETE FROM {staged_table} WHERE bank_id = $1 AND document_id = ANY($2::text[])",
+                    bank_id,
+                    document_ids,
+                )
+                await self._insert_passages(conn, bank_id, items, table, fq_table("kb_passage_vectors"), languages=True)
+                moved_count: dict[str, int] = {}
+                for r in moved:
+                    moved_count[r["document_id"]] = moved_count.get(r["document_id"], 0) + 1
                 await conn.execute(
                     f"UPDATE {fq_table('kb_documents')} d SET status = 'ready', error = NULL, "
                     "passage_count = u.passage_count, language = u.language, updated_at = now() "
@@ -590,10 +692,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     "WHERE d.bank_id = $1 AND d.document_id = u.document_id",
                     bank_id,
                     document_ids,
-                    [len(i.passages) for i in items],
+                    [moved_count.get(i.document_id, 0) + len(i.passages) for i in items],
                     [i.language for i in items],
                 )
-        new_keys = {p.media_key for i in items for p in i.passages}
+        new_keys = {p.media_key for i in items for p in i.passages} | {r["media_key"] for r in moved}
         return PassagesReplaced(
             stale_media_keys=[r["media_key"] for r in old if r["media_key"] and r["media_key"] not in new_keys],
             skipped_document_ids=skipped,

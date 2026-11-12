@@ -63,6 +63,7 @@ from .store import (
     KnowledgePassage,
     KnowledgeStore,
     PassageReplacement,
+    PassageStage,
     RoleVector,
     SearchFilters,
     SearchHit,
@@ -391,6 +392,11 @@ class _InFlight:
     #: passages it committed, kept for the batch's log line after its passages are dropped.
     reserved: int = 0
     committed_passages: int = 0
+    #: Passages already staged for its next version (a document too big to hold whole goes in pieces), the
+    #: language they were staged with, and whether the store skipped it as replaced meanwhile.
+    staged: int = 0
+    language: str | None = None
+    replaced: bool = False
 
 
 @dataclass
@@ -1121,7 +1127,7 @@ class KnowledgeService:
             for d in group:
                 d.committing = True
                 d.passages = [d.done[i] for i in sorted(d.done)]
-                if d.error is None and not d.split and not d.passages:
+                if d.error is None and not d.split and not d.passages and not d.staged:
                     d.error = media.MediaError("the file holds nothing to search")
             done = [d for d in group if d.error is None and not d.split]
             try:
@@ -1130,20 +1136,24 @@ class KnowledgeService:
             finally:
                 # Committed (or failed): its passages are not needed any more, and nor is their memory.
                 for d in group:
-                    d.committed_passages = len(d.passages)
+                    d.committed_passages = d.staged + len(d.passages)
                     d.passages, d.done = [], {}
                     budget.adjust(-d.reserved)
                     d.reserved = 0
 
         async def write_passages(done: list[_InFlight]) -> None:
             t0 = time.perf_counter()
-            languages = [detect_language("\n".join(p.text or "" for p in d.passages)) for d in done]
+            languages = [
+                d.language if d.staged else detect_language("\n".join(p.text or "" for p in d.passages)) for d in done
+            ]
             _timing.record("language", time.perf_counter() - t0, calls=len(done))
             async with _timing.timed("store.write"):
                 replaced = await self.store.replace_passages(
                     bank_id,
                     [
-                        PassageReplacement(d.work.document_id, d.passages, language, storage_key=d.work.storage_key)
+                        PassageReplacement(
+                            d.work.document_id, d.passages, language, storage_key=d.work.storage_key, staged=d.staged
+                        )
                         for d, language in zip(done, languages, strict=True)
                     ],
                 )
@@ -1172,6 +1182,31 @@ class KnowledgeService:
                 batch = list(waiting)
                 waiting.clear()
                 await launch(batch)
+
+        async def stage(doc: _InFlight) -> None:
+            """Write what a document has embedded so far out of sight, as a piece of its next version, and
+            give back its memory: a document too big for the budget is held one piece at a time, not
+            whole, and commits once it is all cut (``PassageReplacement(staged=n)``)."""
+            await flush_round()
+            await asyncio.gather(*doc.rounds)  # every passage queued so far is embedded
+            await asyncio.gather(*doc.saves)
+            if doc.error is not None:
+                return
+            piece = [doc.done[i] for i in sorted(doc.done)]
+            if doc.staged == 0:
+                # The version's language is the first piece's: later pieces are indexed by it as they go.
+                doc.language = detect_language("\n".join(p.text or "" for p in piece))
+            async with _timing.timed("store.stage"):
+                skipped = await self.store.stage_passages(
+                    bank_id,
+                    [PassageStage(doc.work.document_id, piece, doc.language, doc.work.storage_key, doc.staged)],
+                )
+            if skipped:  # replaced or deleted meanwhile: what is left of it would belong to nobody
+                doc.replaced = True
+            doc.staged += len(piece)
+            doc.done = {}
+            budget.adjust(-doc.reserved)
+            doc.reserved = 0
 
         async def commit_finished() -> None:
             """Start the commit of every document cut so far: it runs once their rounds are embedded,
@@ -1207,8 +1242,14 @@ class KnowledgeService:
                 try:
                     # A document an embed round refused stops here: its remaining passages (a long
                     # video's windows) would only be cut to be thrown away.
-                    while doc.error is None and (draft := await _split(_next_draft, drafts)) is not None:
+                    while (
+                        doc.error is None
+                        and not doc.replaced
+                        and (draft := await _split(_next_draft, drafts)) is not None
+                    ):
                         cost = _passage_estimate(draft)
+                        if budget.limit > 0 and doc.reserved + cost > budget.limit and doc.queued > doc.staged:
+                            await stage(doc)
                         await budget.reserve(cost, doc.reserved, commit_finished)
                         doc.reserved += cost
                         waiting.append(_Waiting(doc, draft, doc.queued, cost))

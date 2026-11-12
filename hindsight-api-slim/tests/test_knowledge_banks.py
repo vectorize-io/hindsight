@@ -1126,17 +1126,30 @@ async def test_a_batch_over_its_memory_budget_commits_as_it_goes_and_stays_under
     assert page["total"] == 60
 
 
-async def test_one_document_over_the_memory_budget_still_goes_through(
-    api_client, kb, fake_embedder, memory_budget_mb, caplog
+async def test_one_document_over_the_memory_budget_goes_in_staged_pieces(
+    api_client, memory, kb, fake_embedder, memory_budget_mb, caplog, monkeypatch
 ):
     memory_budget_mb(1)
+    store = get_knowledge_service(memory).store
+    pieces: list[int] = []
+    real = store.stage_passages
+
+    async def spy(bank_id, items):
+        pieces.extend(len(i.passages) for i in items)
+        return await real(bank_id, items)
+
+    monkeypatch.setattr(store, "stage_passages", spy)
     big = {"document_id": "big", "text": "a long report about red " + "word " * 400_000}  # ~2 MB
     with caplog.at_level("INFO", logger="hindsight_api.knowledge.service"):
         r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [big]})
     assert r.is_success, r.text
-    # Held whole, since its passages are replaced in one write: the budget admits it rather than wait forever.
-    assert _peak_mb(caplog) >= 2
-    assert (await api_client.get(f"{KB}/{kb}/documents/big")).json()["status"] == "ready"
+    # Staged in pieces, and never held whole: the batch stays within its budget.
+    assert len(pieces) >= 2
+    assert _peak_mb(caplog) <= 1
+    doc = (await api_client.get(f"{KB}/{kb}/documents/big")).json()
+    passages = (await store.list_passages(kb, ["big"]))["big"]
+    assert doc["status"] == "ready" and doc["passage_count"] == len(passages) > sum(pieces)
+    assert [p.index for p in passages] == list(range(len(passages)))
 
 
 async def test_a_failed_round_stops_a_splitter_waiting_for_memory(
@@ -1227,6 +1240,70 @@ async def test_writes_for_a_replaced_version_leave_the_newer_one_alone(api_clien
     after = (await store.get_documents(kb, ["d"]))["d"]
     assert (after.status, after.error, after.storage_key) == ("ready", None, newer.storage_key)
     assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["second blue"]
+
+
+def _passages(start: int, *texts: str):
+    from hindsight_api.knowledge.store import KnowledgePassage
+
+    return [
+        KnowledgePassage(index=start + n, modality="text", text=t, embedding=FakeEmbedder._norm(FakeEmbedder._text(t)))
+        for n, t in enumerate(texts)
+    ]
+
+
+async def test_staged_pieces_stay_out_of_sight_until_their_commit(api_client, memory, kb, fake_embedder):
+    from hindsight_api.knowledge.store import PassageReplacement, PassageStage
+
+    store = get_knowledge_service(memory).store
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
+    assert r.status_code == 200, r.text
+    key = (await store.get_documents(kb, ["d"]))["d"].storage_key
+    assert (
+        await store.stage_passages(kb, [PassageStage("d", _passages(0, "new red one", "new red two"), "en", key)]) == []
+    )
+    assert await store.stage_passages(kb, [PassageStage("d", _passages(2, "new red three"), "en", key, staged=2)]) == []
+    # Until the commit, every read sees the version it replaces, whole.
+    assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["old blue"]
+    assert [h["text"] for h in await _search(api_client, kb, query="red")] in ([], ["old blue"])
+    done = await store.replace_passages(
+        kb, [PassageReplacement("d", _passages(3, "new red four"), "en", key, staged=3)]
+    )
+    assert done.skipped_document_ids == []
+    texts = [p.text for p in (await store.list_passages(kb, ["d"]))["d"]]
+    assert texts == ["new red one", "new red two", "new red three", "new red four"]
+    assert (await store.get_documents(kb, ["d"]))["d"].passage_count == 4
+    assert "old blue" not in [h["text"] for h in await _search(api_client, kb, query="blue", top_k=10)]
+
+
+async def test_a_piece_for_a_replaced_file_is_skipped(api_client, memory, kb):
+    from hindsight_api.knowledge.store import PassageStage
+
+    store = get_knowledge_service(memory).store
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
+    assert r.status_code == 200, r.text
+    assert await store.stage_passages(kb, [PassageStage("d", _passages(0, "stale red"), "en", "gone")]) == ["d"]
+    assert await store.stage_passages(kb, [PassageStage("nope", _passages(0, "x"), "en")]) == ["nope"]
+
+
+async def test_what_an_ingest_that_never_committed_staged_is_dropped(api_client, memory, kb, fake_embedder):
+    from hindsight_api.knowledge.store import PassageReplacement, PassageStage
+
+    store = get_knowledge_service(memory).store
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
+    assert r.status_code == 200, r.text
+    key = (await store.get_documents(kb, ["d"]))["d"].storage_key
+    # An ingest staged five passages and died before committing them.
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), "en", key)])
+    # A version started over (a staged=0 piece) drops them...
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, "kept red"), "en", key)])
+    await store.replace_passages(kb, [PassageReplacement("d", [], "en", key, staged=1)])
+    assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["kept red"]
+    # ...and so does a version written in one go, which never names them.
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), "en", key)])
+    await store.replace_passages(kb, [PassageReplacement("d", _passages(0, "one blue", "two blue"), "en", key)])
+    assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["one blue", "two blue"]
+    hits = await _search(api_client, kb, query="red", top_k=20)
+    assert not any("lost" in h["text"] or "kept" in h["text"] for h in hits), hits
 
 
 async def test_renaming_a_file_ingests_it_again(api_client, kb):
