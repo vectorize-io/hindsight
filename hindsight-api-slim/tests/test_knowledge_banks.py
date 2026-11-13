@@ -633,12 +633,13 @@ async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, 
     # Text weight 0: the score is the page image (+ bands) alone, which says nothing about invoices to the fake.
     monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT", "0")
     clear_config_cache()
-    assert (await _scored(memory, kb, "invoice"))[0].score < 0.5
+    # The page's own score, before the keyword mix rescales the candidates (one page alone is 1.0 there).
+    assert (await _scored(memory, kb, "invoice"))[0].explain.passage_score < 0.5
     # The default weight brings in the page's text layer (whole page and 128-token units).
     monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT", "0.6")
     clear_config_cache()
     top = (await _scored(memory, kb, "invoice"))[0]
-    assert top.score > 0.5 and top.passage.text == text and top.passage.page == 1
+    assert top.explain.passage_score > 0.5 and top.passage.text == text and top.passage.page == 1
     assert "score" not in (await _search(api_client, kb, query="invoice"))[0]
 
 
@@ -822,38 +823,42 @@ async def test_remote_embedder_retries_a_dropped_connection():
     assert calls["n"] == 2
 
 
-def test_language_detection_and_keyword_fusion():
-    from hindsight_api.knowledge.language import detect, text_search_config
+def test_keyword_fusion():
     from hindsight_api.knowledge.store import fuse_keyword
 
-    assert detect("The rotation of the keys is done by the admin in the console") == "english"
-    assert detect("La rotation des clés est faite par l'administrateur dans la console") == "french"
-    assert detect("ERR-4417") is None
-    assert (text_search_config("german"), text_search_config(None)) == ("german", "simple")
     # No keyword hit: dense scores pass through untouched.
     assert fuse_keyword([0.5, 0.4], [0.0, 0.0], 0.2) == [0.5, 0.4]
     # A keyword hit can lift a slightly weaker dense match over the best one.
     fused = fuse_keyword([0.50, 0.49, 0.10], [0.0, 1.0, 0.0], 0.2)
     assert fused[1] > fused[0] > fused[2]
+    # One candidate, or a tie, is the best there is, not the worst.
+    assert fuse_keyword([0.6], [0.3], 0.2) == [1.0]
 
 
-async def test_keyword_matches_count_only_for_documents_in_the_query_language(api_client, kb):
-    # The fake embedder sees none of its axis words here, so every passage ties on meaning
-    # and only the keyword match can order them.
+async def test_keywords_match_rare_words_in_every_language(api_client, kb):
+    # The fake embedder sees none of its axis words here, so every passage ties on meaning and only
+    # the keyword match orders them. Keywords used to count only in documents of the query's detected
+    # language: the French and Japanese pages, which hold the code, got nothing.
     docs = [
         ("en-hit", "The gateway returns the code zx4417 when the token of the session has ended."),
         ("en-miss", "The gateway returns a timeout when the upstream of the session has ended."),
         ("fr-hit", "La passerelle renvoie le code zx4417 quand le jeton de la session est fini."),
+        ("ja-hit", "ゲートウェイ zx4417"),
+        *((f"filler-{n}", f"The state of the system is the same as the state of the log {n}.") for n in range(8)),
     ]
-    r = await api_client.post(
-        f"{KB}/{kb}/ingest",
-        json={"items": [{"document_id": d, "text": t} for d, t in docs]},
-    )
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": d, "text": t} for d, t in docs]})
     assert r.status_code == 200, r.text
-    hits = await _search(api_client, kb, query="what does the code zx4417 of the gateway mean")
-    # en-miss shares only "gateway"; the French page shares the code but not the query's
-    # language, so it gets no keyword credit at all.
-    assert [h["document_id"] for h in hits] == ["en-hit", "en-miss", "fr-hit"]
+    body = (
+        await api_client.post(
+            f"{KB}/{kb}/search", json={"query": "what does the code zx4417 of the gateway mean", "trace": True}
+        )
+    ).json()
+    trace = body["trace"]
+    # Common words ("the", "of") are left out next to the rare ones, in no language's stopword list.
+    assert "zx4417" in trace["keyword_terms"] and not {"the", "of"} & set(trace["keyword_terms"])
+    keyword = {h["document_id"]: h["keyword"] for h in trace["hits"]}
+    assert keyword["fr-hit"] > 0 and keyword["ja-hit"] > 0 and keyword["filler-0"] == 0
+    assert body["results"][0]["document_id"] == "en-hit"
 
 
 async def test_a_search_needs_a_query_and_a_bank(api_client, kb):
@@ -1105,7 +1110,7 @@ async def test_an_ingest_batch_reports_where_its_time_went(api_client, kb, fake_
     assert len(lines) == 1 and "docs=20" in lines[0], lines
     # Every stage a batch passes through is attributed, with its round-trip count.
     phases = dict(p.split("=", 1) for p in lines[0].split(" | ", 1)[1].split())
-    for phase in ("store.read", "store.status", "file.read", "split", "embed", "store.write", "language"):
+    for phase in ("store.read", "store.status", "file.read", "split", "embed", "store.write"):
         assert phase in phases, (phase, lines[0])
     assert phases["file.read"].split("/")[1] == "20c"  # one stored file read per document
 
@@ -1384,16 +1389,12 @@ async def test_staged_pieces_stay_out_of_sight_until_their_commit(api_client, me
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
     assert r.status_code == 200, r.text
     key = (await store.get_documents(kb, ["d"]))["d"].storage_key
-    assert (
-        await store.stage_passages(kb, [PassageStage("d", _passages(0, "new red one", "new red two"), "en", key)]) == []
-    )
-    assert await store.stage_passages(kb, [PassageStage("d", _passages(2, "new red three"), "en", key, staged=2)]) == []
+    assert await store.stage_passages(kb, [PassageStage("d", _passages(0, "new red one", "new red two"), key)]) == []
+    assert await store.stage_passages(kb, [PassageStage("d", _passages(2, "new red three"), key, staged=2)]) == []
     # Until the commit, every read sees the version it replaces, whole.
     assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["old blue"]
     assert [h["text"] for h in await _search(api_client, kb, query="red")] in ([], ["old blue"])
-    done = await store.replace_passages(
-        kb, [PassageReplacement("d", _passages(3, "new red four"), "en", key, staged=3)]
-    )
+    done = await store.replace_passages(kb, [PassageReplacement("d", _passages(3, "new red four"), key, staged=3)])
     assert done.skipped_document_ids == []
     texts = [p.text for p in (await store.list_passages(kb, ["d"]))["d"]]
     assert texts == ["new red one", "new red two", "new red three", "new red four"]
@@ -1407,8 +1408,8 @@ async def test_a_piece_for_a_replaced_file_is_skipped(api_client, memory, kb):
     store = get_knowledge_service(memory).store
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
     assert r.status_code == 200, r.text
-    assert await store.stage_passages(kb, [PassageStage("d", _passages(0, "stale red"), "en", "gone")]) == ["d"]
-    assert await store.stage_passages(kb, [PassageStage("nope", _passages(0, "x"), "en")]) == ["nope"]
+    assert await store.stage_passages(kb, [PassageStage("d", _passages(0, "stale red"), "gone")]) == ["d"]
+    assert await store.stage_passages(kb, [PassageStage("nope", _passages(0, "x"))]) == ["nope"]
 
 
 async def test_what_an_ingest_that_never_committed_staged_is_dropped(api_client, memory, kb, fake_embedder):
@@ -1419,14 +1420,14 @@ async def test_what_an_ingest_that_never_committed_staged_is_dropped(api_client,
     assert r.status_code == 200, r.text
     key = (await store.get_documents(kb, ["d"]))["d"].storage_key
     # An ingest staged five passages and died before committing them.
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), "en", key)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), key)])
     # A version started over (a staged=0 piece) drops them...
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, "kept red"), "en", key)])
-    await store.replace_passages(kb, [PassageReplacement("d", [], "en", key, staged=1)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, "kept red"), key)])
+    await store.replace_passages(kb, [PassageReplacement("d", [], key, staged=1)])
     assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["kept red"]
     # ...and so does a version written in one go, which never names them.
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), "en", key)])
-    await store.replace_passages(kb, [PassageReplacement("d", _passages(0, "one blue", "two blue"), "en", key)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), key)])
+    await store.replace_passages(kb, [PassageReplacement("d", _passages(0, "one blue", "two blue"), key)])
     assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["one blue", "two blue"]
     hits = await _search(api_client, kb, query="red")
     assert not any("lost" in h["text"] or "kept" in h["text"] for h in hits), hits
@@ -1439,17 +1440,17 @@ async def test_a_document_that_fails_drops_what_it_staged(api_client, memory, kb
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
     assert r.status_code == 200, r.text
     key = (await store.get_documents(kb, ["d"]))["d"].storage_key
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), "en", key)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), key)])
     # A failure for another version (an older file) leaves what this one staged.
     await store.set_statuses(kb, [StatusUpdate("d", "failed", "boom", "some-other-key")])
-    await store.replace_passages(kb, [PassageReplacement("d", [], "en", key, staged=3)])
+    await store.replace_passages(kb, [PassageReplacement("d", [], key, staged=3)])
     assert len((await store.list_passages(kb, ["d"]))["d"]) == 3
     # Failing for good drops it: a commit naming the staged pieces finds none. The store has no read of
     # staged rows, so a commit that would move them in is how the test sees they are gone.
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), "en", key)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), key)])
     await store.set_statuses(kb, [StatusUpdate("d", "failed", "boom", key)])
     assert (await store.get_documents(kb, ["d"]))["d"].status == "failed"
-    await store.replace_passages(kb, [PassageReplacement("d", [], "en", key, staged=3)])
+    await store.replace_passages(kb, [PassageReplacement("d", [], key, staged=3)])
     assert (await store.list_passages(kb, ["d"]))["d"] == []
 
 
@@ -1883,12 +1884,12 @@ async def test_a_traced_search_explains_every_rank_and_what_the_budget_kept(api_
         json={"items": [{"document_id": "long", "text": "\n\n".join(paragraphs), "filename": "long.md"}]},
     )
     assert r.status_code == 200, r.text
-    # One word: too short to detect a language from, yet the keyword search still runs.
+    # One word: keywords run for any query, in any language.
     body = (
         await api_client.post(f"{KB}/{kb}/search", json={"query": "invoice", "max_tokens": 1200, "trace": True})
     ).json()
     trace = body["trace"]
-    assert trace["language"] == "english" and "invoic" in trace["keyword_terms"]
+    assert "invoice" in trace["keyword_terms"]
     assert trace["candidates"] >= len(trace["hits"]) > 0 and 0 < trace["tokens_used"] <= 1200
     assert {"embed", "store.search", "context"} <= set(trace["timings_ms"])
     hits = trace["hits"]

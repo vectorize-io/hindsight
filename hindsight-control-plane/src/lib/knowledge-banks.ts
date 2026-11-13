@@ -158,7 +158,6 @@ export interface KnowledgeSearchTrace {
   max_tokens: number;
   tokens_used: number;
   candidates: number;
-  language: string | null;
   keyword_weight: number;
   keyword_terms: Record<string, number>;
   timings_ms: Record<string, number>;

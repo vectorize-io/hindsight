@@ -219,7 +219,7 @@ class KnowledgeSearchRequest(BaseModel):
     trace: bool = Field(
         default=False,
         description="Also return how the search ranked and what the token budget kept: every ranked "
-        "candidate with its score step by step, the query's language and keyword weights, and each phase's time.",
+        "candidate with its score step by step, the keyword words and their weights, and each phase's time.",
     )
 
 
@@ -296,9 +296,11 @@ class KnowledgeSearchTrace(BaseModel):
     max_tokens: int
     tokens_used: int = Field(description="What the results weigh, in tokens of their text")
     candidates: int = Field(description="Passages the candidate searches found, before scoring")
-    language: str | None = Field(description="The query's language; keywords match documents in it only")
     keyword_weight: float = Field(description="The keyword score's share of the final score")
-    keyword_terms: dict[str, float] = Field(description="Each query word the keyword search used, with its IDF")
+    keyword_terms: dict[str, float] = Field(
+        description="Each query word the keyword search used, with its IDF; words in half the passages or more "
+        "are left out"
+    )
     timings_ms: dict[str, float] = Field(description="Each phase's time: open_bank, embed, store.search, context")
     candidate_searches: list[KnowledgeTraceArm] = Field(description="Step 1: each candidate search's own list")
     hits: list[KnowledgeSearchTraceHit] = Field(description="Steps 2-3: every candidate scored, best first")
@@ -428,7 +430,6 @@ def trace_response(body: KnowledgeSearchRequest, trace: SearchTrace, returned: l
         max_tokens=body.max_tokens,
         tokens_used=trace.tokens_used,
         candidates=trace.store.candidates,
-        language=trace.store.language,
         keyword_weight=trace.store.keyword_weight,
         keyword_terms=trace.store.keyword_terms,
         timings_ms={phase: round(seconds * 1000, 1) for phase, seconds in trace.seconds.items()},

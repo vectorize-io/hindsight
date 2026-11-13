@@ -271,10 +271,7 @@ export function KnowledgeSearchTraceView({ trace }: { trace: KnowledgeSearchTrac
           <>
             {terms.length === 0
               ? t("noKeywords")
-              : t("rankingHelp", {
-                  weight: Math.round(trace.keyword_weight * 100),
-                  language: trace.language ?? "?",
-                })}
+              : t("rankingHelp", { weight: Math.round(trace.keyword_weight * 100) })}
             {terms.length > 0 && (
               <span className="ml-2 inline-flex flex-wrap gap-1 align-middle">
                 {terms.map(([word, idf]) => (

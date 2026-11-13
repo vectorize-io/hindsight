@@ -47,7 +47,6 @@ const trace = (n: number) => ({
   max_tokens: 4096,
   tokens_used: 1200,
   candidates: n,
-  language: "english",
   keyword_weight: 0.2,
   keyword_terms: { invoic: 3.14 },
   timings_ms: { embed: 12.4, "store.search": 80 },
