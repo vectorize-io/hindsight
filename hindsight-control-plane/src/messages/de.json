@@ -2216,6 +2216,9 @@
         "updateNode": "Knotenaktualisierung fehlgeschlagen",
         "deleteNode": "Knotenlöschung fehlgeschlagen",
         "search": "Suche in den Seiten fehlgeschlagen"
+      },
+      "request": {
+        "tooLarge": "Anfrage zu groß. Laden Sie weniger oder kleinere Dateien hoch (Limit: HINDSIGHT_CP_MAX_UPLOAD_SIZE)."
       }
     }
   },

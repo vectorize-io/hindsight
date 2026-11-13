@@ -2216,6 +2216,9 @@
         "updateNode": "노드 업데이트 실패",
         "deleteNode": "노드 삭제 실패",
         "search": "페이지 검색 실패"
+      },
+      "request": {
+        "tooLarge": "요청이 너무 큽니다. 더 적거나 작은 파일을 업로드하세요 (한도: HINDSIGHT_CP_MAX_UPLOAD_SIZE)."
       }
     }
   },

@@ -2216,6 +2216,9 @@
         "updateNode": "更新頁面節點失敗",
         "deleteNode": "刪除頁面節點失敗",
         "search": "搜尋頁面失敗"
+      },
+      "request": {
+        "tooLarge": "請求太大。請上載較少或較細的檔案（上限：HINDSIGHT_CP_MAX_UPLOAD_SIZE）。"
       }
     }
   },

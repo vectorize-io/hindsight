@@ -36,7 +36,12 @@ export async function middleware(request: NextRequest) {
     if (size > limit) {
       return NextResponse.json(
         {
-          error: `Request is ${Math.ceil(size / 1024 ** 2)} MB, over the ${Math.floor(limit / 1024 ** 2)} MB limit (HINDSIGHT_CP_MAX_UPLOAD_SIZE). Upload fewer or smaller files.`,
+          ...localizeApiErrorPayload(request, {
+            error: "Request too large",
+            errorKey: "api.errors.request.tooLarge",
+          }),
+          sizeBytes: size,
+          limitBytes: limit,
         },
         { status: 413 }
       );

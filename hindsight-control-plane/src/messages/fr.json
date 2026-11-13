@@ -2216,6 +2216,9 @@
         "updateNode": "Échec de mise à jour du nœud",
         "deleteNode": "Échec de suppression du nœud",
         "search": "Échec de la recherche dans la base"
+      },
+      "request": {
+        "tooLarge": "Requête trop volumineuse. Envoyez moins de fichiers ou des fichiers plus petits (limite : HINDSIGHT_CP_MAX_UPLOAD_SIZE)."
       }
     }
   },

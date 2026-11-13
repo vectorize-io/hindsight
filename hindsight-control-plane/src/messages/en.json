@@ -2216,6 +2216,9 @@
         "updateNode": "Failed to update node",
         "deleteNode": "Failed to delete node",
         "search": "Failed to search pages"
+      },
+      "request": {
+        "tooLarge": "Request too large. Upload fewer or smaller files (limit: HINDSIGHT_CP_MAX_UPLOAD_SIZE)."
       }
     }
   },

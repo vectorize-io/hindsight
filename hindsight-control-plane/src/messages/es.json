@@ -2216,6 +2216,9 @@
         "updateNode": "Error al actualizar el nodo",
         "deleteNode": "Error al eliminar el nodo",
         "search": "Error al buscar en las páginas"
+      },
+      "request": {
+        "tooLarge": "Solicitud demasiado grande. Sube menos archivos o más pequeños (límite: HINDSIGHT_CP_MAX_UPLOAD_SIZE)."
       }
     }
   },

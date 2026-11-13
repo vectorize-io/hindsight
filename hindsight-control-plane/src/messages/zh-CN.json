@@ -2216,6 +2216,9 @@
         "updateNode": "更新页面节点失败",
         "deleteNode": "删除页面节点失败",
         "search": "搜索页面失败"
+      },
+      "request": {
+        "tooLarge": "请求过大。请上传更少或更小的文件（上限：HINDSIGHT_CP_MAX_UPLOAD_SIZE）。"
       }
     }
   },

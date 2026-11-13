@@ -55,7 +55,10 @@ describe("middleware body limit", () => {
     vi.stubEnv("HINDSIGHT_CP_MAX_UPLOAD_SIZE", "1mb");
     const res = await post(2 * 1024 * 1024);
     expect(res.status).toBe(413);
-    expect((await res.json()).error).toMatch(/over the 1 MB limit/);
+    expect(await res.json()).toMatchObject({
+      error: expect.stringMatching(/too large/),
+      limitBytes: 1024 * 1024,
+    });
     expect((await post(1024 * 1024)).status).toBe(200);
   });
 });

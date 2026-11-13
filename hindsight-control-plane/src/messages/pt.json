@@ -2216,6 +2216,9 @@
         "updateNode": "Falha ao atualizar nó",
         "deleteNode": "Falha ao excluir nó",
         "search": "Falha ao pesquisar nas páginas"
+      },
+      "request": {
+        "tooLarge": "Requisição muito grande. Envie menos arquivos ou arquivos menores (limite: HINDSIGHT_CP_MAX_UPLOAD_SIZE)."
       }
     }
   },

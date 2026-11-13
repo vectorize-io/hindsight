@@ -2216,6 +2216,9 @@
         "updateNode": "ノードの更新に失敗しました",
         "deleteNode": "ノードの削除に失敗しました",
         "search": "ページ検索に失敗しました"
+      },
+      "request": {
+        "tooLarge": "リクエストが大きすぎます。ファイル数を減らすか、小さいファイルをアップロードしてください（上限: HINDSIGHT_CP_MAX_UPLOAD_SIZE）。"
       }
     }
   },
