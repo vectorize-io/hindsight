@@ -2585,8 +2585,7 @@
       "search": "지식 뱅크 검색...",
       "empty": "아직 지식 뱅크가 없습니다.",
       "noSearchResults": "검색과 일치하는 지식 뱅크가 없습니다.",
-      "create": "새 지식 뱅크",
-      "countsLegend": "문서 · 구절"
+      "create": "새 지식 뱅크"
     },
     "home": {
       "documents": "문서",

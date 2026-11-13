@@ -23,6 +23,8 @@ export interface KnowledgeBank {
   failed_count: number;
   total_bytes: number;
   documents_by_media_type: Partial<Record<MediaType, number>>;
+  /** When a document was last added or changed; null for an empty bank. */
+  last_document_at?: string | null;
 }
 
 /** The settings a knowledge bank splits its files with: its own value, else the server's. */

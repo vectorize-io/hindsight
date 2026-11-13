@@ -164,6 +164,8 @@ class BankStats:
     pending_count: int = 0
     total_bytes: int = 0
     by_media_type: dict[str, int] = field(default_factory=dict)
+    #: When a document was last added or changed; None for an empty bank.
+    last_document_at: datetime | None = None
 
 
 class KnowledgeStore(ABC):
@@ -1012,7 +1014,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
             rows = await conn.fetch(
                 f"""
                 SELECT bank_id, media_type, status, COUNT(*) AS documents, COALESCE(SUM(passage_count), 0) AS passages,
-                       COALESCE(SUM(size_bytes), 0) AS bytes
+                       COALESCE(SUM(size_bytes), 0) AS bytes, MAX(updated_at) AS last_at
                 FROM {fq_table("kb_documents")} WHERE bank_id = ANY($1::text[])
                 GROUP BY bank_id, media_type, status
                 """,
@@ -1026,6 +1028,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
             s.passage_count += int(r["passages"])
             s.total_bytes += int(r["bytes"])
             s.by_media_type[r["media_type"]] = s.by_media_type.get(r["media_type"], 0) + n
+            if r["last_at"] is not None and (s.last_document_at is None or r["last_at"] > s.last_document_at):
+                s.last_document_at = r["last_at"]
             if r["status"] == "ready":
                 s.ready_count += n
             elif r["status"] == "failed":

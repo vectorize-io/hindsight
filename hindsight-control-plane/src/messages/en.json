@@ -2585,8 +2585,7 @@
       "search": "Search knowledge banks...",
       "empty": "No knowledge banks yet.",
       "noSearchResults": "No knowledge banks match your search.",
-      "create": "New knowledge bank",
-      "countsLegend": "docs · passages"
+      "create": "New knowledge bank"
     },
     "home": {
       "documents": "Documents",

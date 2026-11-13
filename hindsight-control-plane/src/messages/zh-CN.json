@@ -2585,8 +2585,7 @@
       "search": "搜索文档库...",
       "empty": "还没有文档库。",
       "noSearchResults": "没有与搜索匹配的文档库。",
-      "create": "新建文档库",
-      "countsLegend": "文档 · 段落"
+      "create": "新建文档库"
     },
     "home": {
       "documents": "文档",

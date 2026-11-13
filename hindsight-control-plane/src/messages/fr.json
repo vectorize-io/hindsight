@@ -2585,8 +2585,7 @@
       "search": "Rechercher des banques de connaissances...",
       "empty": "Aucune banque de connaissances pour l’instant.",
       "noSearchResults": "Aucune banque de connaissances ne correspond à votre recherche.",
-      "create": "Nouvelle banque de connaissances",
-      "countsLegend": "docs · passages"
+      "create": "Nouvelle banque de connaissances"
     },
     "home": {
       "documents": "Documents",

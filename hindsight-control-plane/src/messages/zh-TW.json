@@ -2585,8 +2585,7 @@
       "search": "搜尋文件庫...",
       "empty": "尚無文件庫。",
       "noSearchResults": "沒有符合搜尋的文件庫。",
-      "create": "新增文件庫",
-      "countsLegend": "文件 · 段落"
+      "create": "新增文件庫"
     },
     "home": {
       "documents": "文件",

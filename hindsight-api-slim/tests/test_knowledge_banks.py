@@ -1849,3 +1849,13 @@ async def test_reflect_reads_the_linked_banks_through_the_knowledge_search(api_c
     first = out["documents"][0]["text"]
     assert "Paragraph 4:" in first and "Paragraph 3:" in first and "Paragraph 5:" in first
     await memory.delete_bank(mem_bank, request_context=request_context)
+
+
+async def test_a_bank_says_when_its_documents_last_changed(api_client, kb):
+    # The bank list shows it beside the size, as the memory bank list shows its last write.
+    assert (await api_client.get(f"{KB}/{kb}")).json()["last_document_at"] is None
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "a", "text": "hello"}]})
+    assert r.status_code == 200, r.text
+    changed = (await api_client.get(f"{KB}/{kb}")).json()["last_document_at"]
+    listed = {b["bank_id"]: b for b in (await api_client.get(KB, params={"q": kb})).json()["banks"]}
+    assert changed is not None and listed[kb]["last_document_at"] == changed

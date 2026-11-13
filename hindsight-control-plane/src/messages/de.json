@@ -2585,8 +2585,7 @@
       "search": "Wissensbänke durchsuchen...",
       "empty": "Noch keine Wissensbänke.",
       "noSearchResults": "Keine Wissensbank passt zu deiner Suche.",
-      "create": "Neue Wissensbank",
-      "countsLegend": "Dokumente · Abschnitte"
+      "create": "Neue Wissensbank"
     },
     "home": {
       "documents": "Dokumente",

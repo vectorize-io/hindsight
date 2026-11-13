@@ -2585,8 +2585,7 @@
       "search": "Buscar bancos de conocimiento...",
       "empty": "Aún no hay bancos de conocimiento.",
       "noSearchResults": "Ningún banco de conocimiento coincide con tu búsqueda.",
-      "create": "Nuevo banco de conocimiento",
-      "countsLegend": "docs · fragmentos"
+      "create": "Nuevo banco de conocimiento"
     },
     "home": {
       "documents": "Documentos",
