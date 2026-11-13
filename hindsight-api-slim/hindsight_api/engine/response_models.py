@@ -105,6 +105,7 @@ class ToolCallTrace(BaseModel):
     output: dict = Field(description="Tool output/result")
     duration_ms: int = Field(description="Execution time in milliseconds")
     iteration: int = Field(default=0, description="Iteration number (1-based) when this tool was called")
+    started_at_ms: int = Field(default=0, description="When the call started, in Unix epoch milliseconds")
 
 
 class LLMCallTrace(BaseModel):
@@ -112,6 +113,7 @@ class LLMCallTrace(BaseModel):
 
     scope: str = Field(description="Call scope: agent_1, agent_2, final, etc.")
     duration_ms: int = Field(description="Execution time in milliseconds")
+    started_at_ms: int = Field(default=0, description="When the call started, in Unix epoch milliseconds")
 
 
 class ObservationRef(BaseModel):

@@ -31,7 +31,8 @@ class ReflectToolCall(BaseModel):
     output: Optional[Dict[str, Any]] = None
     duration_ms: StrictInt = Field(description="Execution time in milliseconds")
     iteration: Optional[StrictInt] = Field(default=0, description="Iteration number (1-based) when this tool was called")
-    __properties: ClassVar[List[str]] = ["tool", "input", "output", "duration_ms", "iteration"]
+    started_at_ms: Optional[StrictInt] = Field(default=0, description="When the call started, in Unix epoch milliseconds")
+    __properties: ClassVar[List[str]] = ["tool", "input", "output", "duration_ms", "iteration", "started_at_ms"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -93,7 +94,8 @@ class ReflectToolCall(BaseModel):
             "input": obj.get("input"),
             "output": obj.get("output"),
             "duration_ms": obj.get("duration_ms"),
-            "iteration": obj.get("iteration") if obj.get("iteration") is not None else 0
+            "iteration": obj.get("iteration") if obj.get("iteration") is not None else 0,
+            "started_at_ms": obj.get("started_at_ms") if obj.get("started_at_ms") is not None else 0
         })
         return _obj
 

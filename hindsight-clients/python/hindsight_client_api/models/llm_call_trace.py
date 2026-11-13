@@ -18,7 +18,7 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from typing import Optional, Set
 from typing_extensions import Self
 
@@ -28,7 +28,8 @@ class LLMCallTrace(BaseModel):
     """ # noqa: E501
     scope: StrictStr = Field(description="Call scope: agent_1, agent_2, final, etc.")
     duration_ms: StrictInt = Field(description="Execution time in milliseconds")
-    __properties: ClassVar[List[str]] = ["scope", "duration_ms"]
+    started_at_ms: Optional[StrictInt] = Field(default=0, description="When the call started, in Unix epoch milliseconds")
+    __properties: ClassVar[List[str]] = ["scope", "duration_ms", "started_at_ms"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,7 +83,8 @@ class LLMCallTrace(BaseModel):
 
         _obj = cls.model_validate({
             "scope": obj.get("scope"),
-            "duration_ms": obj.get("duration_ms")
+            "duration_ms": obj.get("duration_ms"),
+            "started_at_ms": obj.get("started_at_ms") if obj.get("started_at_ms") is not None else 0
         })
         return _obj
 

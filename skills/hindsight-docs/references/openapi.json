@@ -14171,6 +14171,12 @@
             "type": "integer",
             "title": "Duration Ms",
             "description": "Execution time in milliseconds"
+          },
+          "started_at_ms": {
+            "type": "integer",
+            "title": "Started At Ms",
+            "description": "When the call started, in Unix epoch milliseconds",
+            "default": 0
           }
         },
         "type": "object",
@@ -16731,6 +16737,12 @@
             "title": "Iteration",
             "description": "Agent loop iteration (1-based) this call belongs to.",
             "default": 0
+          },
+          "started_at_ms": {
+            "type": "integer",
+            "title": "Started At Ms",
+            "description": "When the call started, in Unix epoch milliseconds.",
+            "default": 0
           }
         },
         "type": "object",
@@ -19274,6 +19286,12 @@
             "type": "integer",
             "title": "Duration Ms",
             "description": "Execution time in milliseconds"
+          },
+          "started_at_ms": {
+            "type": "integer",
+            "title": "Started At Ms",
+            "description": "When the call started, in Unix epoch milliseconds",
+            "default": 0
           }
         },
         "type": "object",
@@ -19704,6 +19722,12 @@
             "type": "integer",
             "title": "Iteration",
             "description": "Iteration number (1-based) when this tool was called",
+            "default": 0
+          },
+          "started_at_ms": {
+            "type": "integer",
+            "title": "Started At Ms",
+            "description": "When the call started, in Unix epoch milliseconds",
             "default": 0
           }
         },

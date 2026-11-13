@@ -1762,6 +1762,7 @@ class ReflectToolCall(BaseModel):
     )
     duration_ms: int = Field(description="Execution time in milliseconds")
     iteration: int = Field(default=0, description="Iteration number (1-based) when this tool was called")
+    started_at_ms: int = Field(default=0, description="When the call started, in Unix epoch milliseconds")
 
 
 class ReflectLLMCall(BaseModel):
@@ -1769,6 +1770,7 @@ class ReflectLLMCall(BaseModel):
 
     scope: str = Field(description="Call scope: agent_1, agent_2, final, etc.")
     duration_ms: int = Field(description="Execution time in milliseconds")
+    started_at_ms: int = Field(default=0, description="When the call started, in Unix epoch milliseconds")
 
 
 class ReflectBasedOn(BaseModel):
@@ -5867,11 +5869,15 @@ def _register_routes(app: FastAPI):
                         input=tc.input,
                         output=tc.output if include_output else None,
                         duration_ms=tc.duration_ms,
+                        started_at_ms=tc.started_at_ms,
                         iteration=tc.iteration,
                     )
                     for tc in core_result.tool_trace
                 ]
-                llm_calls = [ReflectLLMCall(scope=lc.scope, duration_ms=lc.duration_ms) for lc in core_result.llm_trace]
+                llm_calls = [
+                    ReflectLLMCall(scope=lc.scope, duration_ms=lc.duration_ms, started_at_ms=lc.started_at_ms)
+                    for lc in core_result.llm_trace
+                ]
                 trace_result = ReflectTrace(
                     tool_calls=tool_calls,
                     llm_calls=llm_calls,

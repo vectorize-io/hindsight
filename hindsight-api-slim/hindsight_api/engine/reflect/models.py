@@ -58,6 +58,7 @@ class ToolCall(BaseModel):
     output: dict = Field(description="Tool output/result")
     duration_ms: int = Field(description="Execution time in milliseconds")
     iteration: int = Field(default=0, description="Iteration number (1-based) when this tool was called")
+    started_at_ms: int = Field(default=0, description="When the call started, in Unix epoch milliseconds")
 
 
 class LLMCall(BaseModel):
@@ -67,6 +68,7 @@ class LLMCall(BaseModel):
     duration_ms: int = Field(description="Execution time in milliseconds")
     input_tokens: int = Field(default=0, description="Input tokens used")
     output_tokens: int = Field(default=0, description="Output tokens used")
+    started_at_ms: int = Field(default=0, description="When the call started, in Unix epoch milliseconds")
 
 
 class DirectiveInfo(BaseModel):

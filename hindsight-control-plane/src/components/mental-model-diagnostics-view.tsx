@@ -9,60 +9,19 @@ import {
 } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertTriangle, Check, Clock, Play } from "lucide-react";
+import { AlertTriangle, Clock, Play } from "lucide-react";
 import { formatAbsoluteDateTime as formatDateTime } from "@/lib/relative-time";
+import { buildReflectTimeline, traceWallMs } from "@/lib/reflect-timeline";
 import JsonView from "react18-json-view";
+import { ReflectLLMStep } from "./reflect-llm-step";
 import "react18-json-view/src/style.css";
-
-/** One step of the reconstructed agent timeline: an LLM turn, or the tools it then called. */
-type TimelineStep =
-  | { type: "llm"; iteration: number; isFinal: boolean; scope: string; durationMs: number }
-  | { type: "tools"; iteration: number; tools: MentalModelRefreshTrace["tool_calls"] };
-
-/**
- * Rebuild the interleaved LLM -> tools -> LLM timeline from the flat trace,
- * matching how the reflect view presents an agent run. Tool calls carry the
- * iteration they belong to; the final LLM turn is the one that produced the
- * answer rather than more tool calls.
- */
-function buildTimeline(trace: MentalModelRefreshTrace): TimelineStep[] {
-  const llmCalls = trace.llm_calls ?? [];
-  const toolCalls = trace.tool_calls ?? [];
-  const steps: TimelineStep[] = [];
-
-  llmCalls.forEach((lc, idx) => {
-    const iterTools = toolCalls.filter((tc) => tc.iteration === idx + 1);
-    const isLast = idx === llmCalls.length - 1;
-    const isFinal = lc.scope.includes("final") || (isLast && iterTools.length === 0);
-    steps.push({
-      type: "llm",
-      iteration: isFinal ? llmCalls.length : idx + 1,
-      isFinal,
-      scope: lc.scope,
-      durationMs: lc.duration_ms,
-    });
-    if (iterTools.length > 0) {
-      steps.push({ type: "tools", iteration: idx + 1, tools: iterTools });
-    }
-  });
-
-  // Tool calls whose iteration has no matching LLM turn would otherwise vanish.
-  const covered = new Set(steps.flatMap((s) => (s.type === "tools" ? [s.iteration] : [])));
-  const orphans = toolCalls.filter((tc) => !covered.has(tc.iteration));
-  if (orphans.length > 0) {
-    steps.push({ type: "tools", iteration: -1, tools: orphans });
-  }
-  return steps;
-}
 
 /** The agent run, as a vertical timeline. Shared with the History tab, which
  *  shows the trace of the refresh that produced each version. */
 export function ExecutionTimeline({ trace }: { trace: MentalModelRefreshTrace }) {
   const t = useTranslations("mentalModelDiagnostics");
-  const timeline = buildTimeline(trace);
-  const totalMs =
-    (trace.llm_calls ?? []).reduce((s, c) => s + c.duration_ms, 0) +
-    (trace.tool_calls ?? []).reduce((s, c) => s + c.duration_ms, 0);
+  const timeline = buildReflectTimeline(trace.llm_calls ?? [], trace.tool_calls ?? []);
+  const totalMs = traceWallMs(trace.llm_calls ?? [], trace.tool_calls ?? []);
 
   return (
     <Card className="h-fit">
@@ -85,34 +44,12 @@ export function ExecutionTimeline({ trace }: { trace: MentalModelRefreshTrace })
                 {idx < timeline.length - 1 && (
                   <div className="absolute left-3 top-6 bottom-0 w-0.5 bg-border" />
                 )}
-                {step.type === "llm" ? (
-                  <div className="flex items-start gap-3 pb-3">
-                    <div
-                      className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
-                        step.isFinal
-                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                          : "bg-primary/10 text-primary"
-                      }`}
-                    >
-                      {step.isFinal ? (
-                        <Check className="w-3.5 h-3.5" strokeWidth={2.5} />
-                      ) : (
-                        <span className="text-[10px] font-semibold">{step.iteration}</span>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-sm">
-                          {step.isFinal ? t("responseGenerated") : t("agentDecided")}
-                        </span>
-                        <span className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          {step.durationMs}ms
-                        </span>
-                      </div>
-                      <span className="text-xs text-muted-foreground font-mono">{step.scope}</span>
-                    </div>
-                  </div>
+                {step.kind === "llm" ? (
+                  <ReflectLLMStep
+                    step={step.step}
+                    durationMs={step.duration_ms}
+                    offsetMs={step.offset_ms}
+                  />
                 ) : (
                   <div className="flex items-start gap-3 pb-3">
                     <div className="w-6 h-6 rounded-full flex items-center justify-center bg-blue-500/15 text-blue-600 dark:text-blue-400 shrink-0">
@@ -121,6 +58,7 @@ export function ExecutionTimeline({ trace }: { trace: MentalModelRefreshTrace })
                     <div className="flex-1 min-w-0 space-y-2">
                       <div className="text-xs text-muted-foreground">
                         {t("executingTools", { count: step.tools.length })}
+                        <span className="font-mono"> · +{step.offset_ms}ms</span>
                       </div>
                       {step.tools.map((tc, tcIdx) => (
                         <div

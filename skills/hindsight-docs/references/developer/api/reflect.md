@@ -467,8 +467,8 @@ Token usage for all LLM calls made during the agentic loop: `input_tokens`, `out
 
 The full execution log of the agentic loop. Only present when `include.tool_calls` was enabled. Contains:
 
-- `tool_calls` — each tool invocation with `tool` name (`lookup`, `recall`, `learn`, `expand`), `input`, `output` (if `output: true`), `duration_ms`, and `iteration` number.
-- `llm_calls` — each LLM call with `scope` (e.g., `"agent_1"`, `"final"`) and `duration_ms`.
+- `tool_calls` — each tool invocation with `tool` name (`lookup`, `recall`, `learn`, `expand`), `input`, `output` (if `output: true`), `duration_ms`, `started_at_ms` (Unix epoch milliseconds), and `iteration` number. Tools called in the same turn run in parallel and share a start time.
+- `llm_calls` — each LLM call with `scope` (e.g., `"agent_1"`, `"final"`), `duration_ms` and `started_at_ms`. LLM calls are not one per iteration (decision-model checks and the closing answer are calls too), so sort both lists by `started_at_ms` to see the loop in the order it ran.
 
 ## When Reflect Fails
 
