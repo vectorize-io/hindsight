@@ -201,10 +201,13 @@ export function SearchResultCard({
   result,
   bankId,
   rank,
+  score,
 }: {
   result: KnowledgeSearchResult;
   bankId: string;
   rank?: number;
+  /** The score it was ranked by, from the search's trace: comparable within one search only. */
+  score?: number;
 }) {
   const t = useTranslations("knowledgeBanks.search");
   const label = documentLabel(result);
@@ -246,6 +249,7 @@ export function SearchResultCard({
           {rank != null && (
             <span className="shrink-0 font-mono text-xs text-muted-foreground tabular-nums">
               #{rank}
+              {score != null && <span className="ml-1.5">{score.toFixed(3)}</span>}
             </span>
           )}
         </div>

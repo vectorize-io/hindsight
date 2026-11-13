@@ -861,7 +861,7 @@ async def test_a_search_needs_a_query_and_a_bank(api_client, kb):
     assert r.status_code == 400 and "query" in r.text
     assert (await api_client.post(f"{KB}/kb-missing/search", json={"query": "x"})).status_code == 404
     body = (await api_client.post(f"{KB}/{kb}/search", json={"query": "x"})).json()
-    assert set(body) == {"results"}  # ranks, no timing and no scores
+    assert set(body) == {"results", "trace"} and body["trace"] is None  # ranks only, unless a trace is asked
 
 
 def test_running_headers_and_footers_are_not_embedded():
@@ -1859,3 +1859,46 @@ async def test_a_bank_says_when_its_documents_last_changed(api_client, kb):
     changed = (await api_client.get(f"{KB}/{kb}")).json()["last_document_at"]
     listed = {b["bank_id"]: b for b in (await api_client.get(KB, params={"q": kb})).json()["banks"]}
     assert changed is not None and listed[kb]["last_document_at"] == changed
+
+
+def test_a_heading_waits_for_its_content_instead_of_standing_alone():
+    # "## Observations" alone outranked every real answer to "hindsight": a few words nearly equal a
+    # short query. A heading now joins what follows it, a cut paragraph's first sentences included.
+    from hindsight_api.knowledge.text_passages import split_into_passages
+
+    doc = "## Observations\n\n### Recent\n\n" + "The worker retried the batch. " * 40
+    chunks = split_into_passages(doc, passage_size=64)
+    assert chunks[0].startswith("## Observations\n\n### Recent\n\nThe worker")
+    assert all(count_tokens(c) <= 64 for c in chunks)
+    assert not any(c.strip().startswith("#") and "\n" not in c.strip() for c in chunks)
+
+
+async def test_a_traced_search_explains_every_rank_and_what_the_budget_kept(api_client, kb):
+    paragraphs = [
+        f"Paragraph {i}: " + ("the invoice is in the box " if i == 4 else "this is the filler of it ") * 30
+        for i in range(10)
+    ]
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest",
+        json={"items": [{"document_id": "long", "text": "\n\n".join(paragraphs), "filename": "long.md"}]},
+    )
+    assert r.status_code == 200, r.text
+    # One word: too short to detect a language from, yet the keyword search still runs.
+    body = (
+        await api_client.post(f"{KB}/{kb}/search", json={"query": "invoice", "max_tokens": 1200, "trace": True})
+    ).json()
+    trace = body["trace"]
+    assert trace["language"] == "english" and "invoic" in trace["keyword_terms"]
+    assert trace["candidates"] >= len(trace["hits"]) > 0 and 0 < trace["tokens_used"] <= 1200
+    assert {"embed", "store.search", "context"} <= set(trace["timings_ms"])
+    hits = trace["hits"]
+    assert [h["rank"] for h in hits] == list(range(1, len(hits) + 1))
+    assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
+    top = hits[0]
+    assert top["index"] == 4 and top["keyword"] > 0 and "keyword" in top["found_by"] and top["result_rank"] == 1
+    # Its neighbours came back inside its text, so they are merged into it, not results of their own.
+    merged = [h for h in hits if h["outcome"] == "merged"]
+    assert merged and all(h["merged_into_rank"] == 1 for h in merged)
+    returned = [h for h in hits if h["outcome"] == "returned"]
+    assert [h["result_rank"] for h in returned] == list(range(1, len(body["results"]) + 1))
+    assert any(h["outcome"] == "over_budget" for h in hits)

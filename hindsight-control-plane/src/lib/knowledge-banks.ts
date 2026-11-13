@@ -110,11 +110,50 @@ export interface KnowledgeSearchRequest {
   tags_match?: "any" | "all";
   document_ids?: string[];
   media_types?: MediaType[];
+  /** Also return how the search ranked and what the token budget kept. */
+  trace?: boolean;
 }
 
 /** Results best first: the server sends ranks, not scores (they mean nothing across queries). */
+/** One ranked candidate of a traced search: its score step by step, and what the budget did. */
+export interface KnowledgeSearchTraceHit {
+  rank: number;
+  outcome: "returned" | "merged" | "over_budget";
+  result_rank: number | null;
+  merged_into_rank: number | null;
+  document_id: string;
+  filename: string | null;
+  index: number;
+  media_type: MediaType;
+  page: number | null;
+  start_ms: number | null;
+  end_ms: number | null;
+  snippet: string | null;
+  score: number;
+  found_by: string[];
+  similarity: number;
+  roles: Record<string, number>;
+  passage_score: number;
+  with_document: number;
+  keyword: number;
+  reference_page: boolean;
+}
+
+export interface KnowledgeSearchTrace {
+  budget: SearchBudget;
+  max_tokens: number;
+  tokens_used: number;
+  candidates: number;
+  language: string | null;
+  keyword_weight: number;
+  keyword_terms: Record<string, number>;
+  timings_ms: Record<string, number>;
+  hits: KnowledgeSearchTraceHit[];
+}
+
 export interface KnowledgeSearchResponse {
   results: KnowledgeSearchResult[];
+  trace?: KnowledgeSearchTrace | null;
 }
 
 export interface KnowledgeIngestResponse {

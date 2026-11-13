@@ -27,6 +27,7 @@ import {
 } from "@/lib/knowledge-banks";
 import { cn } from "@/lib/utils";
 import { SearchResultCard, SearchResultGrid } from "@/components/knowledge-passage";
+import { KnowledgeSearchTraceView } from "@/components/knowledge-search-trace";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -77,7 +78,7 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
   const [response, setResponse] = React.useState<KnowledgeSearchResponse | null>(null);
   // Timed here: the response carries no timing.
   const [tookMs, setTookMs] = React.useState(0);
-  const [viewMode, setViewMode] = React.useState<"results" | "json">("results");
+  const [viewMode, setViewMode] = React.useState<"results" | "trace" | "json">("results");
   const [error, setError] = React.useState<string | null>(null);
   const [dragOver, setDragOver] = React.useState(false);
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -121,6 +122,8 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
       ...(video ? { query_video: video.base64 } : {}),
       ...(parsedTags.length ? { tags: parsedTags, tags_match: tagsMatch } : {}),
       ...(mediaTypes.length ? { media_types: mediaTypes } : {}),
+      // Always traced, as the Recall view is: the Trace tab and each result's score read it.
+      trace: true,
     };
     setSearching(true);
     setError(null);
@@ -405,7 +408,7 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
             </div>
             <div className="flex-1" />
             <div className="flex gap-1 bg-muted p-1 rounded-lg">
-              {(["results", "json"] as const).map((mode) => (
+              {(["results", "trace", "json"] as const).map((mode) => (
                 <button
                   key={mode}
                   type="button"
@@ -416,12 +419,20 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
                       : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
-                  {mode === "results" ? tRecall("viewResults") : tRecall("viewJson")}
+                  {mode === "results"
+                    ? tRecall("viewResults")
+                    : mode === "trace"
+                      ? tRecall("viewTrace")
+                      : tRecall("viewJson")}
                 </button>
               ))}
             </div>
           </div>
-          {viewMode === "json" ? (
+          {viewMode === "trace" ? (
+            response.trace ? (
+              <KnowledgeSearchTraceView trace={response.trace} />
+            ) : null
+          ) : viewMode === "json" ? (
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">{tRecall("rawResponse")}</CardTitle>
@@ -446,6 +457,7 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
                   result={result}
                   bankId={bankId}
                   rank={i + 1}
+                  score={response.trace?.hits.find((h) => h.result_rank === i + 1)?.score}
                 />
               ))}
             </SearchResultGrid>

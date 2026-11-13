@@ -2718,6 +2718,40 @@
           "description": "超过此时长的音频或视频会被拒绝；只能低于服务器的上限。"
         }
       }
+    },
+    "trace": {
+      "summaryTitle": "搜索如何运行",
+      "candidates": "找到的候选",
+      "ranked": "已排名",
+      "outcomes": "（返回 {returned} · 合并 {merged} · 超出预算 {over}）",
+      "tokens": "已用 token",
+      "budget": "预算",
+      "keywords": "关键词（语言：{language}，占分数 {weight}%）",
+      "noLanguage": "未知",
+      "noKeywords": "无关键词搜索：查询语言未知。",
+      "idfHelp": "该词在此库中的稀有程度（IDF）：越稀有越重要。",
+      "rankingTitle": "所有已排名候选",
+      "rankingHelp": "最佳优先。悬停列查看含义；悬停相似度查看 PDF 页的额外向量。",
+      "passage": "段落",
+      "outcome": "结果",
+      "score": "分数",
+      "scoreHelp": "用于排名的最终分数：语义与关键词结合。仅在本次搜索内可比。",
+      "similarity": "相似度",
+      "similarityHelp": "查询与段落主向量的接近程度（余弦）。",
+      "passageScore": "段落",
+      "passageScoreHelp": "混合了 PDF 页额外向量（条带、文本、句子）的相似度。",
+      "withDocument": "含文档",
+      "withDocumentHelp": "与同一文档最佳段落取平均：先找对文件，再找对位置。",
+      "keyword": "关键词",
+      "keywordHelp": "所含查询词稀有度（IDF）之和。",
+      "foundBy": "发现方式",
+      "returned": "结果 #{rank}",
+      "merged": "并入 #{rank} 的结果",
+      "overBudget": "超出预算",
+      "referencePage": "参考文献列表",
+      "page": "第 {page} 页",
+      "showAll": "显示全部 {count} 个",
+      "showLess": "收起"
     }
   },
   "observationTree": {

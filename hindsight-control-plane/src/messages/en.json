@@ -2718,6 +2718,40 @@
           "description": "Audio or video longer than this is refused; it can only be lower than the server's limit."
         }
       }
+    },
+    "trace": {
+      "summaryTitle": "How the search ran",
+      "candidates": "Candidates found",
+      "ranked": "Ranked",
+      "outcomes": "({returned} returned · {merged} merged · {over} over budget)",
+      "tokens": "Tokens used",
+      "budget": "Budget",
+      "keywords": "Keyword words (language: {language}, {weight}% of the score)",
+      "noLanguage": "unknown",
+      "noKeywords": "No keyword search: the query's language is unknown.",
+      "idfHelp": "How rare the word is in this bank (IDF): rarer words count more.",
+      "rankingTitle": "Every ranked candidate",
+      "rankingHelp": "Best first. Hover a column for what it means; hover Similarity for the extra vectors of a PDF page.",
+      "passage": "Passage",
+      "outcome": "Outcome",
+      "score": "Score",
+      "scoreHelp": "The final score it was ranked by: meaning and keywords combined. Comparable within this search only.",
+      "similarity": "Similarity",
+      "similarityHelp": "How close the query is to the passage's main vector (cosine).",
+      "passageScore": "Passage",
+      "passageScoreHelp": "The similarity with a PDF page's extra vectors (bands, text, sentences) mixed in.",
+      "withDocument": "With document",
+      "withDocumentHelp": "Averaged with the best passage of the same document: the right file first, then the right part of it.",
+      "keyword": "Keyword",
+      "keywordHelp": "The summed rarity (IDF) of the query words it contains.",
+      "foundBy": "Found by",
+      "returned": "Result #{rank}",
+      "merged": "In result of #{rank}",
+      "overBudget": "Over budget",
+      "referencePage": "reference list",
+      "page": "p. {page}",
+      "showAll": "Show all {count}",
+      "showLess": "Show less"
     }
   },
   "observationTree": {

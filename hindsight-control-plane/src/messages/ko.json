@@ -2718,6 +2718,40 @@
           "description": "이보다 긴 오디오나 비디오는 거부됩니다. 서버 한도보다 낮게만 설정할 수 있습니다."
         }
       }
+    },
+    "trace": {
+      "summaryTitle": "검색 실행 방식",
+      "candidates": "찾은 후보",
+      "ranked": "순위",
+      "outcomes": "(반환 {returned} · 병합 {merged} · 예산 초과 {over})",
+      "tokens": "사용한 토큰",
+      "budget": "예산",
+      "keywords": "키워드 (언어: {language}, 점수의 {weight}%)",
+      "noLanguage": "알 수 없음",
+      "noKeywords": "키워드 검색 없음: 쿼리 언어를 알 수 없습니다.",
+      "idfHelp": "이 뱅크에서 단어가 얼마나 드문지 (IDF): 드문 단어일수록 더 중요합니다.",
+      "rankingTitle": "순위가 매겨진 모든 후보",
+      "rankingHelp": "높은 순서대로. 열에 마우스를 올리면 의미가, 유사도에서는 PDF 페이지의 추가 벡터가 표시됩니다.",
+      "passage": "패시지",
+      "outcome": "결과",
+      "score": "점수",
+      "scoreHelp": "순위에 사용된 최종 점수: 의미와 키워드를 합친 값. 이 검색 안에서만 비교할 수 있습니다.",
+      "similarity": "유사도",
+      "similarityHelp": "쿼리와 패시지 기본 벡터의 가까움 (코사인).",
+      "passageScore": "패시지",
+      "passageScoreHelp": "PDF 페이지의 추가 벡터(띠, 텍스트, 문장)를 섞은 유사도.",
+      "withDocument": "문서 포함",
+      "withDocumentHelp": "같은 문서의 최고 패시지와 평균: 먼저 맞는 파일, 그다음 맞는 부분.",
+      "keyword": "키워드",
+      "keywordHelp": "포함된 쿼리 단어의 희소성(IDF) 합계.",
+      "foundBy": "찾은 방법",
+      "returned": "결과 #{rank}",
+      "merged": "#{rank} 결과에 포함",
+      "overBudget": "예산 초과",
+      "referencePage": "참고문헌 목록",
+      "page": "{page}쪽",
+      "showAll": "{count}개 모두 보기",
+      "showLess": "간단히 보기"
     }
   },
   "observationTree": {

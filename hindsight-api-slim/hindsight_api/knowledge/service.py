@@ -68,6 +68,7 @@ from .store import (
     SearchFilters,
     SearchHit,
     StatusUpdate,
+    StoreSearchTrace,
     TimeBucket,
     load_knowledge_store,
 )
@@ -218,6 +219,29 @@ class SearchResultItem:
     #: the budget's windows can be checked directly.
     context_first: int | None = None
     context_last: int | None = None
+
+
+@dataclass
+class TracedHit:
+    """A ranked candidate and what the token budget did with it."""
+
+    hit: SearchHit
+    #: "returned": a result of its own; "merged": inside a better hit's passages (``merged_into``);
+    #: "over_budget": nothing of it fit in what was left of ``max_tokens``.
+    outcome: Literal["returned", "merged", "over_budget"]
+    merged_into: SearchHit | None = None
+
+
+@dataclass
+class SearchTrace:
+    """What one search did, for a caller that asks (the API's ``trace: true``)."""
+
+    store: StoreSearchTrace = field(default_factory=StoreSearchTrace)
+    #: Every ranked candidate, best first, with its outcome.
+    hits: list[TracedHit] = field(default_factory=list)
+    tokens_used: int = 0
+    #: Each phase's wall time (open_bank, embed, store.search, context), in seconds.
+    seconds: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -1670,12 +1694,18 @@ class KnowledgeService:
     # --- search -----------------------------------------------------------------------------
 
     async def search(
-        self, bank_id: str, request: SearchRequest, request_context: RequestContext
+        self,
+        bank_id: str,
+        request: SearchRequest,
+        request_context: RequestContext,
+        trace: SearchTrace | None = None,
     ) -> list[SearchResultItem]:
         # One `[knowledge_search-timing]` line per search, phase by phase, as an ingest batch has: a
         # slow search is otherwise only attributable by guessing which of the bank checks, the
         # embedder, the store or the budget's context reads it was.
-        async with _timing.retain_timing(op="knowledge_search", bank_id=bank_id, store=type(self.store).__name__):
+        async with _timing.retain_timing(
+            op="knowledge_search", bank_id=bank_id, store=type(self.store).__name__
+        ) as timing:
             has_query = (
                 bool((request.query or "").strip())
                 or request.query_image is not None
@@ -1695,9 +1725,12 @@ class KnowledgeService:
                 raise
             vector = await embedding
             async with _timing.timed("store.search"):
-                hits = await self._search(bank_id, request, vector)
+                hits = await self._search(bank_id, request, vector, trace)
             async with _timing.timed("context"):
-                return await self._within_budget(bank_id, hits, request.max_tokens)
+                items = await self._within_budget(bank_id, hits, request.max_tokens, trace)
+            if trace is not None:
+                trace.seconds = dict(timing.seconds)
+            return items
 
     async def _embed_query(self, request: SearchRequest) -> list[float]:
         async with _timing.timed("embed"):
@@ -1706,7 +1739,9 @@ class KnowledgeService:
             except UnsupportedModalityError as exc:
                 raise KnowledgeBankError(str(exc), 415) from exc
 
-    async def _search(self, bank_id: str, request: SearchRequest, vector: list[float]) -> list[SearchHit]:
+    async def _search(
+        self, bank_id: str, request: SearchRequest, vector: list[float], trace: SearchTrace | None = None
+    ) -> list[SearchHit]:
         return await self.store.search(
             bank_id,
             vector,
@@ -1715,9 +1750,12 @@ class KnowledgeService:
             text_weight=get_config().knowledge_pdf_text_weight,
             query_text=request.query,
             keyword_weight=get_config().knowledge_keyword_weight,
+            trace=trace.store if trace is not None else None,
         )
 
-    async def _within_budget(self, bank_id: str, hits: list[SearchHit], max_tokens: int) -> list[SearchResultItem]:
+    async def _within_budget(
+        self, bank_id: str, hits: list[SearchHit], max_tokens: int, trace: SearchTrace | None = None
+    ) -> list[SearchResultItem]:
         """The ranked hits that fit in ``max_tokens``, each text hit with the passages around it as its
         ``context``. In rank order, a text hit comes with one passage on each side (the query-time step that
         paid, CHUNKING.md), or alone if only that fits, and a hit another one's context already holds is not
@@ -1823,7 +1861,21 @@ class KnowledgeService:
                 for i in range(w.first, w.last + 1)
                 if (w.document_id, i) in passages
             )
+        if trace is not None:
+            trace.tokens_used = used
+            trace.hits = [_traced(hit, items, windows) for hit in hits]
         return items
+
+
+def _traced(hit: SearchHit, items: list[SearchResultItem], windows: list[_Window]) -> TracedHit:
+    """What the budget did with one ranked hit, read off the results it built."""
+    if any(item.hit is hit for item in items):
+        return TracedHit(hit, "returned")
+    document_id, index = hit.document.document_id, hit.passage.index
+    for w in windows:
+        if w.document_id == document_id and w.first <= index <= w.last:
+            return TracedHit(hit, "merged", merged_into=w.item.hit)
+    return TracedHit(hit, "over_budget")
 
 
 async def documents_for_memory_bank(

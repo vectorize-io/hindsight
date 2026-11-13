@@ -2718,6 +2718,40 @@
           "description": "Längeres Audio oder Video wird abgelehnt; der Wert kann nur unter dem Limit des Servers liegen."
         }
       }
+    },
+    "trace": {
+      "summaryTitle": "So lief die Suche",
+      "candidates": "Gefundene Kandidaten",
+      "ranked": "Bewertet",
+      "outcomes": "({returned} geliefert · {merged} zusammengeführt · {over} über Budget)",
+      "tokens": "Verbrauchte Tokens",
+      "budget": "Budget",
+      "keywords": "Schlüsselwörter (Sprache: {language}, {weight}% des Scores)",
+      "noLanguage": "unbekannt",
+      "noKeywords": "Keine Schlüsselwortsuche: Die Sprache der Anfrage ist unbekannt.",
+      "idfHelp": "Wie selten das Wort in dieser Bank ist (IDF): seltenere Wörter zählen mehr.",
+      "rankingTitle": "Alle bewerteten Kandidaten",
+      "rankingHelp": "Beste zuerst. Fahren Sie über eine Spalte für ihre Bedeutung; über Ähnlichkeit für die zusätzlichen Vektoren einer PDF-Seite.",
+      "passage": "Passage",
+      "outcome": "Ergebnis",
+      "score": "Score",
+      "scoreHelp": "Der endgültige Score für das Ranking: Bedeutung und Schlüsselwörter kombiniert. Nur innerhalb dieser Suche vergleichbar.",
+      "similarity": "Ähnlichkeit",
+      "similarityHelp": "Wie nah die Anfrage am Hauptvektor der Passage ist (Kosinus).",
+      "passageScore": "Passage",
+      "passageScoreHelp": "Die Ähnlichkeit, gemischt mit den zusätzlichen Vektoren einer PDF-Seite (Streifen, Text, Sätze).",
+      "withDocument": "Mit Dokument",
+      "withDocumentHelp": "Gemittelt mit der besten Passage desselben Dokuments: erst die richtige Datei, dann die richtige Stelle.",
+      "keyword": "Schlüsselwort",
+      "keywordHelp": "Die summierte Seltenheit (IDF) der enthaltenen Suchwörter.",
+      "foundBy": "Gefunden durch",
+      "returned": "Ergebnis #{rank}",
+      "merged": "In Ergebnis von #{rank}",
+      "overBudget": "Über Budget",
+      "referencePage": "Literaturliste",
+      "page": "S. {page}",
+      "showAll": "Alle {count} anzeigen",
+      "showLess": "Weniger anzeigen"
     }
   },
   "observationTree": {

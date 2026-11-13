@@ -66,7 +66,7 @@ async def test_a_sync_ingest_returns_once_every_document_is_searchable(kb, knowl
         "media_type": "text",
         "page": None,
     }
-    assert hit["filename"] == "keys.md" and "score" not in hit and set(r.body) == {"results"}
+    assert hit["filename"] == "keys.md" and "score" not in hit and r.body.get("trace") is None
     assert (await _hits(kb, knowledge_bank, query="when are invoices emailed", first=1)) == ["billing"]
     bank = (await kb.get(knowledge_bank)).body
     assert (bank["document_count"], bank["ready_count"], bank["failed_count"]) == (3, 3, 0)

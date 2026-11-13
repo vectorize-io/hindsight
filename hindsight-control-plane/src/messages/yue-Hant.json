@@ -2718,6 +2718,40 @@
           "description": "長過呢個時間嘅音訊或者影片會被拒絕；只可以低過伺服器嘅上限。"
         }
       }
+    },
+    "trace": {
+      "summaryTitle": "搜尋點樣運行",
+      "candidates": "搵到嘅候選",
+      "ranked": "已排名",
+      "outcomes": "（返回 {returned} · 合併 {merged} · 超出預算 {over}）",
+      "tokens": "用咗嘅 token",
+      "budget": "預算",
+      "keywords": "關鍵詞（語言：{language}，佔分數 {weight}%）",
+      "noLanguage": "未知",
+      "noKeywords": "冇關鍵詞搜尋：唔知查詢嘅語言。",
+      "idfHelp": "呢個詞喺呢個庫有幾罕見（IDF）：越罕見越重要。",
+      "rankingTitle": "所有已排名候選",
+      "rankingHelp": "最好嘅排先。指住欄位睇意思；指住相似度睇 PDF 頁嘅額外向量。",
+      "passage": "段落",
+      "outcome": "結果",
+      "score": "分數",
+      "scoreHelp": "用嚟排名嘅最終分數：意思同關鍵詞加埋。只可以喺今次搜尋入面比較。",
+      "similarity": "相似度",
+      "similarityHelp": "查詢同段落主向量有幾接近（餘弦）。",
+      "passageScore": "段落",
+      "passageScoreHelp": "混合咗 PDF 頁額外向量（條帶、文字、句子）嘅相似度。",
+      "withDocument": "連文件",
+      "withDocumentHelp": "同一文件最好段落嘅平均：先係啱嘅檔案，再係啱嘅部分。",
+      "keyword": "關鍵詞",
+      "keywordHelp": "包含嘅查詢詞罕見度（IDF）總和。",
+      "foundBy": "搵到方式",
+      "returned": "結果 #{rank}",
+      "merged": "喺 #{rank} 嘅結果入面",
+      "overBudget": "超出預算",
+      "referencePage": "參考文獻列表",
+      "page": "第 {page} 頁",
+      "showAll": "顯示全部 {count} 個",
+      "showLess": "顯示少啲"
     }
   },
   "observationTree": {

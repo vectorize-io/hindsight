@@ -2718,6 +2718,40 @@
           "description": "Un audio o vídeo más largo se rechaza; solo puede ser menor que el límite del servidor."
         }
       }
+    },
+    "trace": {
+      "summaryTitle": "Cómo se ejecutó la búsqueda",
+      "candidates": "Candidatos encontrados",
+      "ranked": "Clasificados",
+      "outcomes": "({returned} devueltos · {merged} fusionados · {over} fuera de presupuesto)",
+      "tokens": "Tokens usados",
+      "budget": "Presupuesto",
+      "keywords": "Palabras clave (idioma: {language}, {weight}% de la puntuación)",
+      "noLanguage": "desconocido",
+      "noKeywords": "Sin búsqueda por palabras clave: el idioma de la consulta es desconocido.",
+      "idfHelp": "Qué tan rara es la palabra en este banco (IDF): las más raras cuentan más.",
+      "rankingTitle": "Todos los candidatos clasificados",
+      "rankingHelp": "Los mejores primero. Pasa el cursor por una columna para ver su significado; por Similitud para los vectores extra de una página PDF.",
+      "passage": "Pasaje",
+      "outcome": "Resultado",
+      "score": "Puntuación",
+      "scoreHelp": "La puntuación final con la que se clasificó: significado y palabras clave combinados. Comparable solo dentro de esta búsqueda.",
+      "similarity": "Similitud",
+      "similarityHelp": "Qué tan cerca está la consulta del vector principal del pasaje (coseno).",
+      "passageScore": "Pasaje",
+      "passageScoreHelp": "La similitud mezclada con los vectores extra de una página PDF (bandas, texto, frases).",
+      "withDocument": "Con documento",
+      "withDocumentHelp": "Promediada con el mejor pasaje del mismo documento: primero el archivo correcto, luego la parte correcta.",
+      "keyword": "Palabra clave",
+      "keywordHelp": "La rareza sumada (IDF) de las palabras de la consulta que contiene.",
+      "foundBy": "Encontrado por",
+      "returned": "Resultado #{rank}",
+      "merged": "En el resultado de #{rank}",
+      "overBudget": "Fuera de presupuesto",
+      "referencePage": "lista de referencias",
+      "page": "p. {page}",
+      "showAll": "Mostrar los {count}",
+      "showLess": "Mostrar menos"
     }
   },
   "observationTree": {
