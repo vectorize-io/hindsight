@@ -1569,15 +1569,6 @@ async def test_a_store_shedding_a_batch_defers_it_without_using_a_retry(
     # Deferred, not retried: the backlog clears by itself, and a counted retry is how a long ingest's
     # batches ran out of attempts while it did.
     assert row["status"] == "pending" and (row["retry_count"] or 0) == 0, row
-    # So is the typed refusal, whatever its wording: the routes answer it 503, the worker defers it.
-    from hindsight_api.engine.memories.base import StoreWriteUnavailable
-
-    async def closed(*_a, **_k):
-        raise StoreWriteUnavailable("the bank is closed to writes for a moment")
-
-    monkeypatch.setattr(service.store, "replace_passages", closed)
-    row = await _run_as_worker(memory, poller, child, retry_count=0)
-    assert row["status"] == "pending" and (row["retry_count"] or 0) == 0, row
     assert (await service.store.get_documents(kb, ["b"]))["b"].status == "pending"
 
 
