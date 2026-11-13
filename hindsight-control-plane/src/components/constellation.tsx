@@ -760,6 +760,14 @@ export function Constellation({
     if (clusters.length > 0) {
       ctx.save();
       ctx.lineJoin = "round";
+      const labelQueue: Array<{
+        text: string;
+        color: string;
+        x: number;
+        y: number;
+        size: number;
+        hovered: boolean;
+      }> = [];
       for (const cluster of clusters) {
         const pts: Array<[number, number]> = [];
         for (const idx of cluster.members) {
@@ -830,30 +838,44 @@ export function Constellation({
         ctx.fill();
         ctx.stroke();
 
-        // Label: a solid colored pill at the top of the circle (readable over dots).
+        // Queue the label; they are placed after every blob is drawn (see below).
         if (cluster.label && zoom > 0.15) {
-          const label = cluster.label;
-          ctx.font = "600 11px ui-sans-serif, system-ui, sans-serif";
-          const tw = ctx.measureText(label).width;
-          const padX = 8;
-          const pillH = 19;
-          let topY = my;
-          for (const [, y] of pts) topY = Math.min(topY, y);
-          const ly = (nodeGroupsFn ? my - rad : topY - pad) - 12;
-          const pw = tw + padX * 2;
-          ctx.fillStyle = cluster.color;
-          ctx.beginPath();
-          if (typeof ctx.roundRect === "function") {
-            ctx.roundRect(mx - pw / 2, ly - pillH / 2, pw, pillH, 9.5);
-          } else {
-            ctx.rect(mx - pw / 2, ly - pillH / 2, pw, pillH);
-          }
-          ctx.fill();
-          ctx.fillStyle = "#ffffff";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(label, mx, ly + 0.5);
+          labelQueue.push({
+            text: cluster.label,
+            color: cluster.color,
+            x: mx,
+            y: nodeGroupsFn ? my - rad - 10 : my,
+            size: cluster.members.length,
+            hovered: hoverIndex >= 0 && cluster.members.includes(hoverIndex),
+          });
         }
+      }
+      // Map-style labels: text in the cluster's colour with a halo of the background,
+      // centred on the cluster. Biggest clusters (and the hovered one) claim space first and
+      // a label that would overlap one already placed is skipped, so dense views stay
+      // readable and more names appear as you zoom in. (Solid pills at every cluster's top
+      // edge piled on top of each other once there were dozens of clusters.)
+      labelQueue.sort((p, q) => Number(q.hovered) - Number(p.hovered) || q.size - p.size);
+      const placed: Array<[number, number, number, number]> = [];
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.lineJoin = "round";
+      for (const l of labelQueue) {
+        const fontPx = Math.round(Math.min(14, 10 + Math.sqrt(l.size) / 4));
+        ctx.font = `600 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+        const w = ctx.measureText(l.text).width + 8;
+        const h = fontPx + 6;
+        const box: [number, number, number, number] = [l.x - w / 2, l.y - h / 2, w, h];
+        const overlaps = placed.some(
+          ([x, y, bw, bh]) => box[0] < x + bw && x < box[0] + w && box[1] < y + bh && y < box[1] + h
+        );
+        if (overlaps && !l.hovered) continue;
+        placed.push(box);
+        ctx.strokeStyle = isDark ? "rgba(9,9,11,0.85)" : "rgba(255,255,255,0.9)";
+        ctx.lineWidth = 3.5;
+        ctx.strokeText(l.text, l.x, l.y);
+        ctx.fillStyle = l.color;
+        ctx.fillText(l.text, l.x, l.y);
       }
       ctx.restore();
       ctx.textAlign = "left";
