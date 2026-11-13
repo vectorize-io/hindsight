@@ -705,7 +705,7 @@ if TYPE_CHECKING:
     from ..webhooks.url_guard import GuardedWebhookClient
     from . import bank_aliases as bank_aliases_mod
     from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse, AuditLogSummary
-    from .memories import MemoriesExtension, MemoryScopeWatermark
+    from .memories import MemoriesExtension, MemoryScopeWatermark, ReflectFreshness
     from .memories.base import AttachmentRef, EntityResolverHandle, StoredMemory
     from .prompt_preview import PromptPreview
     from .retain.attachment_content import AttachmentOccurrence, LoadedAttachment, RetainAttachment
@@ -16279,18 +16279,21 @@ class MemoryEngine(MemoryEngineInterface):
         # (not held during LLM calls which can be slow)
         backend = await self._get_backend()
 
-        # The store's reflect read, not the exact freshness: reflect waits on it before it
-        # starts, and needs only a hint and a write time that is never too early (see
-        # MemoriesStore.reflect_freshness). Internal read: reflect is already authorized
+        # The store's reflect read, not the exact freshness. reflect used to read
+        # consolidation_freshness (through get_bank_freshness's helper), which is exact for
+        # the gates that act on `pending` — and a store-owned backend can pay seconds to make
+        # it exact on a bank under write churn, all before reflect's first LLM call. reflect
+        # needs only a hint and a write time that is never too early (see
+        # MemoriesExtension.reflect_freshness). Internal read: reflect is already authorized
         # (validate_reflect + the caller's scope); the public get_bank_freshness is a
         # bank-wide read scoped callers can't make.
         freshness = await self._reflect_freshness(bank_id)
         _mark("freshness")
-        pending_consolidation = freshness["pending"]
+        pending_consolidation = freshness.pending
         # Resolved once for the whole reflect: a mental model refreshed at or
         # after this needs no scoped staleness query at all (see
         # tool_search_mental_models).
-        last_memory_write_at = freshness["last_memory_write_at"]
+        last_memory_write_at = freshness.last_memory_write_at
 
         # Create tool callbacks that acquire connections only when needed
         from .retain import embedding_utils
@@ -17271,7 +17274,7 @@ class MemoryEngine(MemoryEngineInterface):
             "failed_consolidation": fresh["failed"],
         }
 
-    async def _reflect_freshness(self, bank_id: str) -> dict[str, Any]:
+    async def _reflect_freshness(self, bank_id: str) -> "ReflectFreshness":
         """The store's ``reflect_freshness``, for reflect() — which reads it under its own
         authorization (validate_reflect and the caller's tag scope), so it skips the bank-wide
         statistics check the public :meth:`get_bank_freshness` makes and a scoped caller fails."""

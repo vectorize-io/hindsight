@@ -763,6 +763,18 @@ def watermark_may_postdate(last_refreshed_at: datetime | None, watermark: dateti
 
 
 @dataclass(frozen=True)
+class ReflectFreshness:
+    """What reflect reads about a bank before it starts (see ``MemoriesExtension.reflect_freshness``).
+
+    ``pending`` may lag the bank's writes; ``last_memory_write_at`` may be later than the
+    bank's newest write but never earlier, and is None only for an empty bank.
+    """
+
+    pending: int
+    last_memory_write_at: datetime | None
+
+
+@dataclass(frozen=True)
 class MemoryScopeWatermark:
     """One "has this scope changed?" question, for the batched staleness check.
 
@@ -2337,8 +2349,8 @@ class MemoriesExtension(Extension, ABC):
         fresh = await self.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
         return fresh.get("last_memory_write_at")
 
-    async def reflect_freshness(self, *, conn, fq_table, bank_id: str) -> dict[str, Any]:
-        """``{"pending", "last_memory_write_at"}``: what reflect reads about the bank before it starts.
+    async def reflect_freshness(self, *, conn, fq_table, bank_id: str) -> ReflectFreshness:
+        """What reflect reads about the bank before it starts.
 
         Reflect waits on this, so it may be cheaper than :meth:`consolidation_freshness`, and
         each value may be loose in one direction only:
@@ -2356,7 +2368,7 @@ class MemoriesExtension(Extension, ABC):
         The default is :meth:`consolidation_freshness`, which meets both rules exactly.
         """
         fresh = await self.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
-        return {"pending": fresh["pending"], "last_memory_write_at": fresh.get("last_memory_write_at")}
+        return ReflectFreshness(pending=fresh["pending"], last_memory_write_at=fresh.get("last_memory_write_at"))
 
     async def live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[Any]) -> set[str]:
         """Which of ``unit_ids`` still exist among the bank's live memories.
