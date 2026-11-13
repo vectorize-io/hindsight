@@ -187,7 +187,7 @@
     "cloneIncludeHistoryHint": "Journal d'audit et traces des requêtes LLM.",
     "cloneNothingSelected": "Choisissez au moins un élément à copier.",
     "memoryTree": "Observations",
-    "memoryTreeDescription": "Observations regroupées automatiquement en dossiers par sujet, sans LLM. Chaque dossier a un résumé ; chaque feuille liste toutes ses mémoires."
+    "memoryTreeDescription": "Tout ce que cette banque a appris, sous forme de dossier de fichiers markdown à parcourir, rechercher et exporter — les mêmes fichiers qu'un agent peut lister et parcourir avec grep. Chaque fichier de sujet contient toutes ses observations ; l'index.md de chaque dossier en donne un aperçu."
   },
   "bankProfile": {
     "noBankSelected": "Aucune banque sélectionnée",
@@ -2705,6 +2705,7 @@
     "pickFile": "Choisissez un fichier à gauche.",
     "findPlaceholder": "Chercher dans les mémoires (texte ou regex)",
     "showRaw": ".md brut",
+    "exportZip": "Exporter en .zip",
     "showRendered": "Mis en forme",
     "clearFind": "Effacer",
     "noMatches": "Aucun résultat.",

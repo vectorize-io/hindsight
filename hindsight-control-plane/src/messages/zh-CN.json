@@ -187,7 +187,7 @@
     "cloneIncludeHistoryHint": "审计日志和 LLM 请求追踪。",
     "cloneNothingSelected": "请至少选择一项要复制的内容。",
     "memoryTree": "观察",
-    "memoryTreeDescription": "自动将观察按主题分组为文件夹，不使用 LLM。每个文件夹都有摘要；每个末端文件夹列出所有记忆。"
+    "memoryTreeDescription": "此记忆库学到的一切，以可浏览、搜索和导出的 Markdown 文件夹呈现——与代理可以列出和用 grep 搜索的是同一批文件。每个主题文件包含其全部观察；每个文件夹的 index.md 提供概览。"
   },
   "bankProfile": {
     "noBankSelected": "未选择记忆库",
@@ -2705,6 +2705,7 @@
     "pickFile": "请在左侧选择一个文件。",
     "findPlaceholder": "在记忆中查找（文本或正则）",
     "showRaw": "原始 .md",
+    "exportZip": "导出 .zip",
     "showRendered": "渲染视图",
     "clearFind": "清除",
     "noMatches": "没有匹配。",

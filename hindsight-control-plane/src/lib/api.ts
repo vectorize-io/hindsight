@@ -90,8 +90,8 @@ export interface MemoryTreeObservation {
 export interface MemoryTreeFile {
   path: string;
   name: string;
-  /** `readme`: a folder's overview. `topic`: every observation in one topic. */
-  kind: "readme" | "topic";
+  /** `index`: a folder's overview (OKF's index.md). `topic`: every observation in one topic. */
+  kind: "index" | "topic";
   title: string;
   observation_count: number;
   about: string[];

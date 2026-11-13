@@ -25,13 +25,13 @@ from typing_extensions import Self
 
 class MemoryTreeFile(BaseModel):
     """
-    A markdown file in the memory tree: a folder's README or one topic.
+    A markdown file in the memory tree: a folder's index.md or one topic (an OKF concept).
     """ # noqa: E501
-    path: StrictStr = Field(description="Path from the tree root, e.g. `gemma/vllm.md` or `gemma/README.md`.")
+    path: StrictStr = Field(description="Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.")
     name: StrictStr
-    kind: StrictStr = Field(description="`readme`: a folder's overview and best-supported observations. `topic`: every observation in one topic.")
+    kind: StrictStr = Field(description="`index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.")
     title: StrictStr
-    observation_count: StrictInt = Field(description="Observations in the topic, or in the whole folder for a README.")
+    observation_count: StrictInt = Field(description="Observations in the topic, or in the whole folder for an index.")
     about: List[StrictStr] = Field(description="The entities that set this topic apart from its siblings.")
     related: List[StrictStr] = Field(description="Paths of related topic files elsewhere in the tree.")
     observations: List[MemoryTreeObservation] = Field(description="What the file lists, best-supported first.")
@@ -41,8 +41,8 @@ class MemoryTreeFile(BaseModel):
     @field_validator('kind')
     def kind_validate_enum(cls, value):
         """Validates the enum"""
-        if value not in set(['readme', 'topic']):
-            raise ValueError("must be one of enum values ('readme', 'topic')")
+        if value not in set(['index', 'topic']):
+            raise ValueError("must be one of enum values ('index', 'topic')")
         return value
 
     model_config = ConfigDict(

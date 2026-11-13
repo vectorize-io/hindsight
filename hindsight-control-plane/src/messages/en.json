@@ -187,7 +187,7 @@
     "cloneIncludeHistoryHint": "Audit log and LLM request traces.",
     "cloneNothingSelected": "Choose at least one thing to copy.",
     "memoryTree": "Observations",
-    "memoryTreeDescription": "Observations grouped into topics automatically, without an LLM. Each topic is a file with all of its facts; each folder's README gives an overview."
+    "memoryTreeDescription": "Everything this bank has learned, as a folder of markdown files you can browse, search and export — the same files an agent can list and grep. Each topic file holds all of its observations; each folder's index.md gives an overview."
   },
   "bankProfile": {
     "noBankSelected": "No Bank Selected",
@@ -2705,6 +2705,7 @@
     "pickFile": "Pick a file on the left.",
     "findPlaceholder": "Find in memories (text or regex)",
     "showRaw": "Raw .md",
+    "exportZip": "Export .zip",
     "showRendered": "Rendered",
     "clearFind": "Clear",
     "noMatches": "No matches.",

@@ -5,9 +5,15 @@ ids and near-ubiquitous entities are ignored), split recursively with spherical 
 group is small enough to be one file, and every folder is named after the entities that set it
 apart from its siblings. Each topic is one markdown file listing every observation in it, with
 dates and source counts, so a grep over the tree finds everything. Each folder holds a
-``README.md``: what the folder is about, its topics, and its best-supported observations.
+``index.md``: what the folder is about, its topics, and its best-supported observations.
+
+The tree is an Open Knowledge Format bundle (https://okf.md/spec/, v0.2): every topic file opens
+with YAML frontmatter (``type``, ``title``, ``description``, ``tags``, ``timestamp``,
+``generated``), folder overviews use the reserved ``index.md`` (frontmatter only on the root,
+declaring ``okf_version``), and links are bundle-relative (``/gemma/vllm.md``).
 """
 
+import json
 import math
 import posixpath
 import re
@@ -16,6 +22,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import numpy as np
+
+from .. import __version__
 
 # A group at or under this size becomes one leaf.
 LEAF_MAX = 120
@@ -33,7 +41,9 @@ SEED_OVERLAP = 0.5
 SHARE_TO_JOIN = 0.25
 # What fits no topic in a folder; split by month, then ISO week, once it outgrows LEAF_MAX.
 MISC_NAME = "misc"
-README = "README.md"
+INDEX = "index.md"
+OKF_VERSION = "0.2"
+OKF_TYPE = "Memory Topic"
 
 # Speaker roles the extractor attaches to almost everything.
 _ROLE_ENTITIES = {"user", "agent", "assistant"}
@@ -58,7 +68,8 @@ class TreeObservation:
 class TreeFile:
     path: str
     name: str
-    # "readme" (a folder's overview) or "topic" (one topic, every observation in it).
+    # "index" (a folder's overview, OKF's reserved index.md) or "topic" (one topic, every
+    # observation in it).
     kind: str
     title: str
     observation_count: int
@@ -342,7 +353,7 @@ def _line(o: TreeObservation) -> str:
 
 
 def _file_path(node: _Node) -> str:
-    return node.path + ".md" if not node.children else posixpath.join(node.path, README)
+    return node.path + ".md" if not node.children else posixpath.join(node.path, INDEX)
 
 
 def _title(node: _Node) -> str:
@@ -356,18 +367,43 @@ def _ranked(node: _Node, observations: list[TreeObservation]) -> list[TreeObserv
     ]
 
 
+def _link(node: _Node) -> str:
+    """A bundle-relative link, as OKF recommends."""
+    return "/" + _file_path(node)
+
+
+def _latest(node: _Node, observations: list[TreeObservation]) -> datetime | None:
+    stamps = [d for i in node.members if (d := observations[i].updated_at or observations[i].mentioned_at)]
+    return max(stamps) if stamps else None
+
+
+def _frontmatter(node: _Node, observations: list[TreeObservation], title: str) -> list[str]:
+    """OKF frontmatter. Strings are JSON-quoted, which YAML reads as-is. The timestamps are the
+    newest observation's, not the request's, so the same bank gives the same bundle."""
+    about = node.top_entities
+    description = f"{len(node.members)} observations" + (f" about {', '.join(about[:3])}." if about else ".")
+    lines = [
+        "---",
+        f"type: {OKF_TYPE}",
+        f"title: {json.dumps(title, ensure_ascii=False)}",
+        f"description: {json.dumps(description, ensure_ascii=False)}",
+        f"tags: {json.dumps(about, ensure_ascii=False)}",
+    ]
+    latest = _latest(node, observations)
+    if latest:
+        at = latest.astimezone(UTC).isoformat()
+        lines += [f"timestamp: {at}", "generated:", f"  by: hindsight/{__version__}", f"  at: {at}"]
+    return [*lines, "---", ""]
+
+
 def _render_topic(node: _Node, observations: list[TreeObservation], related: list[_Node]) -> TreeFile:
     title = _title(node)
     ranked = _ranked(node, observations)
-    lines = [f"# {title}", "", f"{len(ranked)} observations. Times are UTC."]
+    lines = [*_frontmatter(node, observations, title), f"# {title}", "", f"{len(ranked)} observations. Times are UTC."]
     if node.top_entities:
         lines += ["", "**About:** " + ", ".join(node.top_entities)]
     if related:
-        here = posixpath.dirname(node.path) or "."
-        lines += [
-            "",
-            "**Related:** " + ", ".join(f"[{r.path}]({posixpath.relpath(_file_path(r), here)})" for r in related),
-        ]
+        lines += ["", "**Related:** " + ", ".join(f"[{r.path}]({_link(r)})" for r in related)]
     lines += ["", "## Observations", ""] + [_line(o) for o in ranked]
     return TreeFile(
         path=_file_path(node),
@@ -391,19 +427,21 @@ def _render(
     ranked = _ranked(node, observations)
     folder = TreeFolder(path=node.path, name=node.slug, title=title, observation_count=len(ranked))
     children = sorted(node.children, key=lambda c: -len(c.members))
-    lines = [f"# {title}", "", f"{len(ranked)} observations in {len(children)} topics."]
+    # OKF's index.md carries no frontmatter, except the root's okf_version.
+    lines = ["---", f'okf_version: "{OKF_VERSION}"', "---", ""] if not node.path else []
+    lines += [f"# {title}", "", f"{len(ranked)} observations in {len(children)} topics."]
     if node.top_entities:
         lines += ["", "**About:** " + ", ".join(node.top_entities)]
     lines += ["", "## Topics", ""]
     for c in children:
-        rel = posixpath.relpath(_file_path(c), node.path or ".")
-        lines.append(f"- [{_title(c)}]({rel}): {len(c.members)} observations")
+        about = f"; about {', '.join(c.top_entities[:3])}" if c.top_entities else ""
+        lines.append(f"* [{_title(c)}]({_link(c)}) - {len(c.members)} observations{about}")
     lines += ["", "## Best supported", ""] + [_line(o) for o in ranked[:SUMMARY_TOP]]
     folder.files.append(
         TreeFile(
             path=_file_path(node),
-            name=README,
-            kind="readme",
+            name=INDEX,
+            kind="index",
             title=title,
             observation_count=len(ranked),
             about=node.top_entities,

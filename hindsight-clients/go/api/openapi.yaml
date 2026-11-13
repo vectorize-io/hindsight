@@ -1048,10 +1048,14 @@ paths:
       - Entities
   /v1/default/banks/{bank_id}/memory-tree:
     get:
-      description: "The bank's observations laid out as a bounded tree of topic folders,\
-        \ built without an LLM. Observations are grouped by the entities they are\
-        \ about. Each topic is one file listing every observation in it; each folder\
-        \ has a `README.md` with its topics and best-supported observations. Experimental."
+      description: "Everything the bank has learned, as a bundle of markdown files\
+        \ an agent can list, read and grep like any folder, or that can be exported\
+        \ and mounted. Observations are grouped by the entities they are about into\
+        \ a bounded tree of topics: each topic is one file listing every observation\
+        \ in it, and each folder has an `index.md` with its topics and best-supported\
+        \ observations. The bundle follows the Open Knowledge Format (https://okf.md/spec/).\
+        \ Built on request, deterministically, so a file keeps its path as the bank\
+        \ changes. Experimental."
       operationId: get_memory_tree
       parameters:
       - explode: false
@@ -10836,14 +10840,15 @@ components:
       - time
       title: MemoryTimeseriesBucket
     MemoryTreeFile:
-      description: "A markdown file in the memory tree: a folder's README or one topic."
+      description: "A markdown file in the memory tree: a folder's index.md or one\
+        \ topic (an OKF concept)."
       example:
         path: path
         observation_count: 6
         related:
         - related
         - related
-        kind: readme
+        kind: index
         observations:
         - occurred_start: 2000-01-23T04:56:07.000+00:00
           proof_count: 1
@@ -10873,17 +10878,17 @@ components:
         content: content
       properties:
         path:
-          description: "Path from the tree root, e.g. `gemma/vllm.md` or `gemma/README.md`."
+          description: "Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`."
           title: Path
           type: string
         name:
           title: Name
           type: string
         kind:
-          description: "`readme`: a folder's overview and best-supported observations.\
-            \ `topic`: every observation in one topic."
+          description: "`index`: a folder's overview (OKF's reserved `index.md`) and\
+            \ best-supported observations. `topic`: every observation in one topic."
           enum:
-          - readme
+          - index
           - topic
           title: Kind
           type: string
@@ -10891,7 +10896,7 @@ components:
           title: Title
           type: string
         observation_count:
-          description: "Observations in the topic, or in the whole folder for a README."
+          description: "Observations in the topic, or in the whole folder for an index."
           title: Observation Count
           type: integer
         about:
@@ -10940,7 +10945,7 @@ components:
           related:
           - related
           - related
-          kind: readme
+          kind: index
           observations:
           - occurred_start: 2000-01-23T04:56:07.000+00:00
             proof_count: 1
@@ -10973,7 +10978,7 @@ components:
           related:
           - related
           - related
-          kind: readme
+          kind: index
           observations:
           - occurred_start: 2000-01-23T04:56:07.000+00:00
             proof_count: 1

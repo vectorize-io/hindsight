@@ -187,7 +187,7 @@
     "cloneIncludeHistoryHint": "Log de auditoria e rastros de requisições ao LLM.",
     "cloneNothingSelected": "Escolha pelo menos um item para copiar.",
     "memoryTree": "Observações",
-    "memoryTreeDescription": "Observações agrupadas automaticamente em pastas por tema, sem LLM. Cada pasta tem um resumo; cada folha lista todas as suas memórias."
+    "memoryTreeDescription": "Tudo o que este banco aprendeu, como uma pasta de arquivos markdown que você pode navegar, pesquisar e exportar — os mesmos arquivos que um agente pode listar e pesquisar com grep. Cada arquivo de tópico contém todas as suas observações; o index.md de cada pasta dá uma visão geral."
   },
   "bankProfile": {
     "noBankSelected": "Nenhum Banco Selecionado",
@@ -2705,6 +2705,7 @@
     "pickFile": "Escolha um arquivo à esquerda.",
     "findPlaceholder": "Buscar nas memórias (texto ou regex)",
     "showRaw": ".md bruto",
+    "exportZip": "Exportar .zip",
     "showRendered": "Formatado",
     "clearFind": "Limpar",
     "noMatches": "Nenhum resultado.",

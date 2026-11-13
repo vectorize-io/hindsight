@@ -187,7 +187,7 @@
     "cloneIncludeHistoryHint": "감사 로그와 LLM 요청 추적.",
     "cloneNothingSelected": "복사할 항목을 하나 이상 선택하세요.",
     "memoryTree": "관찰",
-    "memoryTreeDescription": "관찰을 LLM 없이 자동으로 주제별 폴더로 묶습니다. 각 폴더에는 요약이 있고, 각 말단 폴더에는 모든 메모리가 나열됩니다."
+    "memoryTreeDescription": "이 뱅크가 학습한 모든 내용을 탐색, 검색, 내보내기가 가능한 마크다운 파일 폴더로 보여줍니다. 에이전트가 나열하고 grep으로 검색하는 것과 같은 파일입니다. 각 주제 파일에는 모든 관찰이 담겨 있고, 각 폴더의 index.md가 개요를 제공합니다."
   },
   "bankProfile": {
     "noBankSelected": "선택된 뱅크 없음",
@@ -2705,6 +2705,7 @@
     "pickFile": "왼쪽에서 파일을 선택하세요.",
     "findPlaceholder": "메모리에서 찾기 (텍스트 또는 정규식)",
     "showRaw": "원본 .md",
+    "exportZip": ".zip 내보내기",
     "showRendered": "렌더링",
     "clearFind": "지우기",
     "noMatches": "일치 항목 없음.",

@@ -187,7 +187,7 @@
     "cloneIncludeHistoryHint": "Audit-Protokoll und LLM-Anfrage-Traces.",
     "cloneNothingSelected": "Wähle mindestens etwas zum Kopieren aus.",
     "memoryTree": "Beobachtungen",
-    "memoryTreeDescription": "Beobachtungen automatisch in Themenordner gruppiert, ohne LLM. Jeder Ordner hat eine Zusammenfassung; jedes Blatt listet alle seine Erinnerungen."
+    "memoryTreeDescription": "Alles, was diese Bank gelernt hat, als Ordner mit Markdown-Dateien zum Durchsuchen und Exportieren – dieselben Dateien, die ein Agent auflisten und mit grep durchsuchen kann. Jede Themendatei enthält alle ihre Beobachtungen; die index.md jedes Ordners gibt einen Überblick."
   },
   "bankProfile": {
     "noBankSelected": "Keine Bank ausgewählt",
@@ -2705,6 +2705,7 @@
     "pickFile": "Wähle links eine Datei.",
     "findPlaceholder": "In Erinnerungen suchen (Text oder Regex)",
     "showRaw": "Roh-.md",
+    "exportZip": ".zip exportieren",
     "showRendered": "Formatiert",
     "clearFind": "Leeren",
     "noMatches": "Keine Treffer.",

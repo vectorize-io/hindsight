@@ -19,15 +19,15 @@ import (
 // checks if the MemoryTreeFile type satisfies the MappedNullable interface at compile time
 var _ MappedNullable = &MemoryTreeFile{}
 
-// MemoryTreeFile A markdown file in the memory tree: a folder's README or one topic.
+// MemoryTreeFile A markdown file in the memory tree: a folder's index.md or one topic (an OKF concept).
 type MemoryTreeFile struct {
-	// Path from the tree root, e.g. `gemma/vllm.md` or `gemma/README.md`.
+	// Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.
 	Path string `json:"path"`
 	Name string `json:"name"`
-	// `readme`: a folder's overview and best-supported observations. `topic`: every observation in one topic.
+	// `index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.
 	Kind string `json:"kind"`
 	Title string `json:"title"`
-	// Observations in the topic, or in the whole folder for a README.
+	// Observations in the topic, or in the whole folder for an index.
 	ObservationCount int32 `json:"observation_count"`
 	// The entities that set this topic apart from its siblings.
 	About []string `json:"about"`

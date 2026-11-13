@@ -1,10 +1,11 @@
 """The memory tree groups observations by subject, keeps every one, and is deterministic."""
 
+import json
 import random
 import re
 from datetime import datetime, timezone
 
-from hindsight_api.engine.memory_tree import LEAF_MAX, TreeObservation, build_memory_tree, iter_files
+from hindsight_api.engine.memory_tree import LEAF_MAX, OKF_VERSION, TreeObservation, build_memory_tree, iter_files
 
 
 def _bank() -> list[TreeObservation]:
@@ -45,7 +46,7 @@ def test_groups_by_subject_and_keeps_everything():
     paths = {f.path for f in topics}
     assert "misc.md" in paths
     assert not any("pr" in p.split("-") or "user" in p for p in paths)
-    assert all(f.path.endswith("README.md") for f in iter_files(tree) if f.kind == "readme")
+    assert all(f.path.endswith("index.md") for f in iter_files(tree) if f.kind == "index")
     # Each line carries its date and source count, so grep sees them.
     assert "(2026-10-01 00:00 · 1 sources)" in next(f for f in topics if f.path != "misc.md").content
 
@@ -178,3 +179,49 @@ def test_a_month_too_big_for_one_file_is_split_by_week():
     ]
     names = sorted(f.path for f in iter_files(build_memory_tree(obs)) if f.kind == "topic")
     assert names == ["misc-2026-W45.md", "misc-2026-W46.md"]
+
+
+def _frontmatter(content: str) -> dict[str, str] | None:
+    """The frontmatter's top-level ``key: value`` lines, or None when there is none."""
+    if not content.startswith("---\n"):
+        return None
+    block = content[4 : content.index("\n---\n", 4)]
+    top = [line.partition(":") for line in block.splitlines() if not line.startswith(" ")]
+    return {k: v.strip() for k, _, v in top}
+
+
+def test_the_tree_is_an_open_knowledge_format_bundle():
+    """OKF v0.2 (https://okf.md/spec/): every concept file has frontmatter with a non-empty type,
+    index.md is reserved for folder overviews and carries no frontmatter except the root's
+    okf_version, timestamps carry a UTC offset, and links are bundle-relative and resolve."""
+    files = list(iter_files(build_memory_tree(_realistic_bank())))
+    paths = {f.path for f in files}
+    for f in files:
+        meta = _frontmatter(f.content)
+        if f.kind == "index":
+            assert f.name == "index.md"
+            assert meta == ({"okf_version": f'"{OKF_VERSION}"'} if f.path == "index.md" else None), f.path
+        else:
+            assert f.name not in ("index.md", "log.md")
+            assert meta and meta["type"], f.path
+            # Strings and lists are written as JSON, which is valid YAML.
+            assert json.loads(meta["title"]) == f.title
+            assert json.loads(meta["description"])
+            assert json.loads(meta["tags"]) == f.about
+        for link in re.findall(r"\]\((/[^)]+)\)", f.content):
+            assert link.lstrip("/") in paths, f"{f.path} links to missing {link}"
+
+
+def test_frontmatter_timestamps_carry_an_offset():
+    obs = [
+        TreeObservation(
+            id=f"o{i}",
+            text=f"fact {i}",
+            proof_count=1,
+            entities=["Redis"],
+            updated_at=datetime(2026, 10, i + 1, tzinfo=timezone.utc),
+        )
+        for i in range(3)
+    ]
+    meta = _frontmatter(next(f for f in iter_files(build_memory_tree(obs)) if f.kind == "topic").content)
+    assert meta is not None and meta["timestamp"] == "2026-10-03T00:00:00+00:00"

@@ -722,7 +722,7 @@ export function Constellation({
       const baseAlpha = (0.06 + Math.min(zoom * 0.04, 0.1)) * shimmer;
       // Links between clusters carry the structure (which groups relate), so they stay
       // readable at rest; links inside a cluster are texture and stay faint.
-      const bridgeAlpha = 0.35 * shimmer;
+      const bridgeAlpha = 0.2 * shimmer;
 
       for (const link of linksWithIndices) {
         if (linksDrawn >= maxLinks) break;
@@ -741,7 +741,7 @@ export function Constellation({
 
         ctx.strokeStyle = link.color;
         ctx.globalAlpha = link.bridge ? bridgeAlpha : baseAlpha;
-        ctx.lineWidth = link.bridge ? 1.2 : 0.4;
+        ctx.lineWidth = link.bridge ? 0.8 : 0.4;
 
         const midX = (ax + bx) / 2 + (by - ay) * 0.08;
         const midY = (ay + by) / 2 - (bx - ax) * 0.08;
@@ -1563,7 +1563,7 @@ export function Constellation({
 
       // --- Links: exactly as the UI canvas draws them in the no-hover state
       // (thin 0.4px colored quadratic curves at a faint, zoom-derived alpha; links
-      // between clusters as 1.2px bridges at 0.35) ---
+      // between clusters as 0.8px bridges at 0.2) ---
       const linkParts: string[] = [];
       const bridgeParts: string[] = [];
       const maxLinks = 6000;
@@ -1585,7 +1585,7 @@ export function Constellation({
       parts.push(
         `<g fill="none" stroke-width="0.4" opacity="${a(linkAlpha)}">${linkParts.join("")}</g>`
       );
-      parts.push(`<g fill="none" stroke-width="1.2" opacity="0.35">${bridgeParts.join("")}</g>`);
+      parts.push(`<g fill="none" stroke-width="0.8" opacity="0.2">${bridgeParts.join("")}</g>`);
 
       // --- Nodes: exactly as the UI canvas draws them (solid heat dot, opacity
       // by link count, plus a translucent halo for hubs) — minus hover effects ---

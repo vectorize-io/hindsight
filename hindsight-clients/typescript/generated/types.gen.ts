@@ -4044,13 +4044,13 @@ export type MemoryTimeseriesBucket = {
 /**
  * MemoryTreeFile
  *
- * A markdown file in the memory tree: a folder's README or one topic.
+ * A markdown file in the memory tree: a folder's index.md or one topic (an OKF concept).
  */
 export type MemoryTreeFile = {
   /**
    * Path
    *
-   * Path from the tree root, e.g. `gemma/vllm.md` or `gemma/README.md`.
+   * Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.
    */
   path: string;
   /**
@@ -4060,9 +4060,9 @@ export type MemoryTreeFile = {
   /**
    * Kind
    *
-   * `readme`: a folder's overview and best-supported observations. `topic`: every observation in one topic.
+   * `index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.
    */
-  kind: "readme" | "topic";
+  kind: "index" | "topic";
   /**
    * Title
    */
@@ -4070,7 +4070,7 @@ export type MemoryTreeFile = {
   /**
    * Observation Count
    *
-   * Observations in the topic, or in the whole folder for a README.
+   * Observations in the topic, or in the whole folder for an index.
    */
   observation_count: number;
   /**

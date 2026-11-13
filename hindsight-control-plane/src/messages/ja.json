@@ -187,7 +187,7 @@
     "cloneIncludeHistoryHint": "監査ログと LLM リクエストのトレース。",
     "cloneNothingSelected": "コピーする対象を 1 つ以上選んでください。",
     "memoryTree": "観察",
-    "memoryTreeDescription": "観察をLLMなしで自動的にトピック別フォルダにまとめます。各フォルダに要約があり、各末端フォルダにはすべてのメモリが一覧されます。"
+    "memoryTreeDescription": "このバンクが学んだすべてを、閲覧・検索・エクスポートできる Markdown ファイルのフォルダとして表示します。エージェントが一覧表示や grep に使うのと同じファイルです。各トピックファイルにはそのすべての観察が含まれ、各フォルダの index.md が概要を示します。"
   },
   "bankProfile": {
     "noBankSelected": "バンクが選択されていません",
@@ -2705,6 +2705,7 @@
     "pickFile": "左のファイルを選択してください。",
     "findPlaceholder": "メモリを検索（テキストまたは正規表現）",
     "showRaw": "生の .md",
+    "exportZip": ".zip でエクスポート",
     "showRendered": "整形表示",
     "clearFind": "クリア",
     "noMatches": "一致なし。",

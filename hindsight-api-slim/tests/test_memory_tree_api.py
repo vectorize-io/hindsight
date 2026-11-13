@@ -99,7 +99,7 @@ async def test_memory_tree_groups_observations_into_topic_files(
     for f in topics:
         assert len({o["text"].split()[0] for o in f["observations"]}) == 1, f"{f['path']} mixes subjects"
         assert "(2026-10-05 12:00 · 1 sources)" in f["content"]
-    assert {f["path"] for f in _files(tree) if f["kind"] == "readme"} == {"README.md"}
+    assert {f["path"] for f in _files(tree) if f["kind"] == "index"} == {"index.md"}
 
 
 @pytest.mark.asyncio
