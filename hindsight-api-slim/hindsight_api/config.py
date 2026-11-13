@@ -224,8 +224,8 @@ ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE = "HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_
 # ``json_object``, which only promises some JSON object. For a backend that
 # grammar-constrains any schema (vLLM, llama.cpp). Gemma 4 on vLLM is why: under
 # json_object, long nested replies (mental-model delta ops, consolidation) closed
-# the list early and repeated keys until the token cap; enforced, 0 of 663 delta-ops
-# and 0 of 190 consolidation replays did. The schema stays in the prompt: a grammar
+# the list early and repeated keys until the token cap (6 of 663 delta-ops replays);
+# enforced, 1 of 663, and 0 of 190 consolidation replays. The schema stays in the prompt: a grammar
 # forces only the required fields, and without the text Gemma never wrote the
 # optional ones it was not told about (retain's event dates on 0 of 390 facts, 252
 # of 402 with it). An earlier version left the text out, after retain went empty

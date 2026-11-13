@@ -38,6 +38,7 @@ from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
 
 if TYPE_CHECKING:
+    from ...config import HindsightConfig
     from .attachment_store import AttachmentLoader
 from .entity_labels import (
     EntityLabelsConfig,
@@ -1804,7 +1805,7 @@ def build_chunk_prompt_parts(
     )
 
 
-def _uses_custom_instructions(config) -> bool:
+def _uses_custom_instructions(config: "HindsightConfig") -> bool:
     """Whether the system prompt carries custom instructions: custom mode with some configured."""
     return config.retain_extraction_mode == "custom" and bool(config.retain_custom_instructions)
 
