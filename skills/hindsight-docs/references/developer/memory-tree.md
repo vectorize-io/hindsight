@@ -64,7 +64,7 @@ Grouping uses the entities each observation is about (inherited from the facts i
 1. Entities that say nothing about a subject are ignored: ids, hashes, IP addresses, speaker roles, and entities on more than a third of the bank.
 2. Each folder starts its groups from its strongest entities, skipping one that mostly appears alongside one already chosen. An observation joins the group of the starting entity it carries most.
 3. An observation that carries none of them joins the group it shares the most entities with, and only if that is at least a quarter of its weight. Otherwise it goes to the folder's `misc` file, rather than into a topic it has little to do with.
-4. A group with more than 120 observations becomes a folder and is split the same way, when it can be: a group with no two distinct entities to split on stays one file. A `misc` file that grows past 120 splits by month (`misc-2026-11.md`), then by ISO week (`misc-2026-w45.md`).
+4. A bank with 120 observations or fewer is one topic file, `all.md` (plus `misc.md` for what shares nothing). A group with more than 120 observations becomes a folder and is split the same way, when it can be: a group with no two distinct entities to split on stays one file. A `misc` file that grows past 120 splits by month (`misc-2026-11.md`), then by ISO week (`misc-2026-w45.md`).
 
 ### Stable Paths
 

@@ -7,6 +7,10 @@ takes). Two teams share a bank, each learning about four subjects; each team's t
 group its own observations and hold none of the other's, and the whole-bank tree must
 file every observation exactly once.
 
+How a bank too big for one file is split into topics is the unit tests' job
+(hindsight-api-slim/tests/test_memory_tree.py); a story needs a bank past 120 observations
+for that, so this one stays small and covers the hand-off between the steps instead.
+
 Then consolidation rewrites an observation. The tree is not stored, so the next request
 must show the new text, in the same file, rather than a copy that went stale when the
 observation changed underneath it.
@@ -100,11 +104,9 @@ async def test_each_team_sees_only_its_own_observations(client, llm, bank_id, se
     assert sorted(_placed(team_b)) == sorted(LEARNED[TEAM_B])
     assert sorted(_placed(everything)) == sorted([*LEARNED[TEAM_A], *LEARNED[TEAM_B]])
     assert everything.observation_count == 16
-    # Grouped, not dumped in misc: a scope this small is its index plus one topic file,
-    # named after its most common entities.
-    assert sorted(f.path for f in _files(team_a)) == ["index.md", "kafka-nginx.md"]
-    assert sorted(f.path for f in _files(team_b)) == ["gpu-grafana.md", "index.md"]
-    assert sorted(f.path for f in _files(everything)) == ["gpu-grafana.md", "index.md"]
+    # Grouped, not dumped in misc: a scope this small is its index plus its one topic file.
+    for tree in (team_a, team_b, everything):
+        assert sorted(f.path for f in _files(tree)) == ["all.md", "index.md"]
     # Every topic file is an Open Knowledge Format concept: frontmatter with a type.
     for f in _files(everything):
         if f.kind == "topic":
@@ -115,14 +117,18 @@ async def test_a_rewritten_observation_shows_its_new_text_in_the_same_file(clien
     await _two_teams(client, llm, bank_id, settled)
     before = _placed(await client.memory.get_memory_tree(bank_id))
     memories = await client.memory.list_memories(bank_id, limit=100)
-    redis = next(m.id for m in memories.items if m.fact_type == "observation" and m.text == "Redis keys expire after an hour")
+    redis = next(
+        m.id for m in memories.items if m.fact_type == "observation" and m.text == "Redis keys expire after an hour"
+    )
 
     llm.reset()
     llm.on_step("extract_facts").returns(extracted(fact("Redis keys now expire after a day", entities=["Redis"])))
 
     def rewrite(request) -> Consolidation:
         return Consolidation(
-            updates=[ObservationUpdate(text=REWRITTEN, observation_id=redis, source_fact_ids=fact_ids_in(request.all_text))]
+            updates=[
+                ObservationUpdate(text=REWRITTEN, observation_id=redis, source_fact_ids=fact_ids_in(request.all_text))
+            ]
         )
 
     llm.on_step("consolidate").answers_with(rewrite)
@@ -132,7 +138,7 @@ async def test_a_rewritten_observation_shows_its_new_text_in_the_same_file(clien
     after = _placed(await client.memory.get_memory_tree(bank_id))
     assert REWRITTEN in after and "Redis keys expire after an hour" not in after
     # Same file as before the rewrite, and every other observation stayed put.
-    assert after[REWRITTEN] == before["Redis keys expire after an hour"] == "gpu-grafana.md"
+    assert after[REWRITTEN] == before["Redis keys expire after an hour"] == "all.md"
     assert {t: p for t, p in after.items() if t != REWRITTEN} == {
         t: p for t, p in before.items() if t != "Redis keys expire after an hour"
     }

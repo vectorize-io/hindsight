@@ -162,6 +162,7 @@ from hindsight_client_api.models.memory_graph_table_row import MemoryGraphTableR
 from hindsight_client_api.models.memory_item import MemoryItem
 from hindsight_client_api.models.memory_timeseries_bucket import MemoryTimeseriesBucket
 from hindsight_client_api.models.memory_tree_file import MemoryTreeFile
+from hindsight_client_api.models.memory_tree_file_kind import MemoryTreeFileKind
 from hindsight_client_api.models.memory_tree_folder import MemoryTreeFolder
 from hindsight_client_api.models.memory_tree_observation import MemoryTreeObservation
 from hindsight_client_api.models.memory_unit_list_item import MemoryUnitListItem

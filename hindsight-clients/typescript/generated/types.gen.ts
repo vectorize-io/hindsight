@@ -4058,11 +4058,9 @@ export type MemoryTreeFile = {
    */
   name: string;
   /**
-   * Kind
-   *
    * `index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.
    */
-  kind: "index" | "topic";
+  kind: MemoryTreeFileKind;
   /**
    * Title
    */
@@ -4098,6 +4096,15 @@ export type MemoryTreeFile = {
    */
   content: string;
 };
+
+/**
+ * MemoryTreeFileKind
+ *
+ * What a memory-tree file is. A named enum, not a Literal: inline enums are named after
+ * their field by the generated Rust client, and ``kind`` already names the page node enum
+ * there (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``).
+ */
+export type MemoryTreeFileKind = "index" | "topic";
 
 /**
  * MemoryTreeFolder

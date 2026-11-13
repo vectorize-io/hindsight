@@ -20,6 +20,7 @@ import uuid
 from collections.abc import Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from enum import StrEnum
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import quote, unquote
@@ -822,12 +823,21 @@ class MemoryTreeObservation(BaseModel):
     tags: list[str]
 
 
+class MemoryTreeFileKind(StrEnum):
+    """What a memory-tree file is. A named enum, not a Literal: inline enums are named after
+    their field by the generated Rust client, and ``kind`` already names the page node enum
+    there (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``)."""
+
+    INDEX = "index"
+    TOPIC = "topic"
+
+
 class MemoryTreeFile(BaseModel):
     """A markdown file in the memory tree: a folder's index.md or one topic (an OKF concept)."""
 
     path: str = Field(description="Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.")
     name: str
-    kind: Literal["index", "topic"] = Field(
+    kind: MemoryTreeFileKind = Field(
         description="`index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic."
     )
     title: str

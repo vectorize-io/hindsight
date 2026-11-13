@@ -626,6 +626,7 @@ export type {
   MemoryItem,
   MemoryTimeseriesBucket,
   MemoryTreeFile,
+  MemoryTreeFileKind,
   MemoryTreeFolder,
   MemoryTreeObservation,
   MemoryUnitListItem,

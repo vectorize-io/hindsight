@@ -15803,12 +15803,7 @@
             "title": "Name"
           },
           "kind": {
-            "type": "string",
-            "enum": [
-              "index",
-              "topic"
-            ],
-            "title": "Kind",
+            "$ref": "#/components/schemas/MemoryTreeFileKind",
             "description": "`index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic."
           },
           "title": {
@@ -15864,6 +15859,15 @@
         ],
         "title": "MemoryTreeFile",
         "description": "A markdown file in the memory tree: a folder's index.md or one topic (an OKF concept)."
+      },
+      "MemoryTreeFileKind": {
+        "type": "string",
+        "enum": [
+          "index",
+          "topic"
+        ],
+        "title": "MemoryTreeFileKind",
+        "description": "What a memory-tree file is. A named enum, not a Literal: inline enums are named after\ntheir field by the generated Rust client, and ``kind`` already names the page node enum\nthere (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``)."
       },
       "MemoryTreeFolder": {
         "properties": {

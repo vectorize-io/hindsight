@@ -44,6 +44,8 @@ SEED_OVERLAP = 0.5
 SHARE_TO_JOIN = 0.25
 # What fits no topic in a folder; split by month, then ISO week, once it outgrows LEAF_MAX.
 MISC_NAME = "misc"
+# The one topic file of a bank too small to split.
+LONE_NAME = "all"
 INDEX = "index.md"
 # OKF reserves index.md and log.md: no topic may take those names.
 _RESERVED = frozenset({"index", "log"})
@@ -321,13 +323,18 @@ def _name_children(
         child.top_entities = [name for score, name in reversed(scored) if score > 0][:5]
         if not child.top_entities and not child.rest:
             # Nothing sets it apart from its parent (a bank small enough for one topic file):
-            # name it after its most common entities rather than "topic".
+            # title it after its most common entities (its path stays LONE_NAME).
             common = sorted(((-df[c], vocab[c]) for c in df if df[c] >= 2 and vocab[c] not in taken))
             child.top_entities = [name for _, name in common[:5]]
         if child.rest:
             slug = MISC_NAME
+        elif child.seed:
+            slug = _slug(child.seed)
         else:
-            slug = _slug(child.seed) if child.seed else "-".join(_slug(e) for e in child.top_entities[:2]) or "topic"
+            # Only a bank small enough for one topic file has an unseeded topic. A fixed name
+            # keeps its path when a subject is added (naming it after its first entities
+            # renamed the file, and moved every observation, each time one tied in).
+            slug = LONE_NAME
         if not child.rest and (slug in _RESERVED or slug == MISC_NAME or slug.startswith(f"{MISC_NAME}-")):
             # A topic named index would overwrite the folder's index.md; misc-* would read as leftovers.
             slug = f"{slug}-topic"

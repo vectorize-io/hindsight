@@ -17,8 +17,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List
+from hindsight_client_api.models.memory_tree_file_kind import MemoryTreeFileKind
 from hindsight_client_api.models.memory_tree_observation import MemoryTreeObservation
 from typing import Optional, Set
 from typing_extensions import Self
@@ -29,7 +30,7 @@ class MemoryTreeFile(BaseModel):
     """ # noqa: E501
     path: StrictStr = Field(description="Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.")
     name: StrictStr
-    kind: StrictStr = Field(description="`index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.")
+    kind: MemoryTreeFileKind = Field(description="`index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.")
     title: StrictStr
     observation_count: StrictInt = Field(description="Observations in the topic, or in the whole folder for an index.")
     about: List[StrictStr] = Field(description="The entities that set this topic apart from its siblings.")
@@ -37,13 +38,6 @@ class MemoryTreeFile(BaseModel):
     observations: List[MemoryTreeObservation] = Field(description="What the file lists, best-supported first.")
     content: StrictStr = Field(description="The same file as markdown, with dates and source counts on every line.")
     __properties: ClassVar[List[str]] = ["path", "name", "kind", "title", "observation_count", "about", "related", "observations", "content"]
-
-    @field_validator('kind')
-    def kind_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['index', 'topic']):
-            raise ValueError("must be one of enum values ('index', 'topic')")
-        return value
 
     model_config = ConfigDict(
         populate_by_name=True,

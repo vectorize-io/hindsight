@@ -269,12 +269,18 @@ def test_every_path_is_lowercase():
         assert all(p == p.lower() for p in paths), [p for p in paths if p != p.lower()]
 
 
-def test_a_bank_small_enough_for_one_file_names_its_topic():
-    """With one topic nothing sets it apart from the bank, but it still gets a real name."""
+def test_a_bank_small_enough_for_one_file_titles_its_topic_and_keeps_its_path():
+    """With one topic nothing sets it apart from the bank: it is titled after its most common
+    entities, but its path is fixed, so a new subject does not move every observation."""
     obs = [
         TreeObservation(id=f"{e}-{i}", text=f"{e} fact {i}", proof_count=1, entities=[e])
         for e in ["Kafka", "Nginx", "Postgres", "Redis"]
         for i in range(2)
     ]
     topics = [f for f in iter_files(build_memory_tree(obs)) if f.kind == "topic"]
-    assert [(f.path, f.title) for f in topics] == [("kafka-nginx.md", "Kafka · Nginx")]
+    assert [(f.path, f.title) for f in topics] == [("all.md", "Kafka · Nginx")]
+    more = obs + [
+        TreeObservation(id=f"Aardvark-{i}", text=f"Aardvark fact {i}", proof_count=1, entities=["Aardvark"])
+        for i in range(2)
+    ]
+    assert [f.path for f in iter_files(build_memory_tree(more)) if f.kind == "topic"] == ["all.md"]

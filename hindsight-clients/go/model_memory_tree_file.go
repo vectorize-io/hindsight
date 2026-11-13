@@ -25,7 +25,7 @@ type MemoryTreeFile struct {
 	Path string `json:"path"`
 	Name string `json:"name"`
 	// `index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.
-	Kind string `json:"kind"`
+	Kind MemoryTreeFileKind `json:"kind"`
 	Title string `json:"title"`
 	// Observations in the topic, or in the whole folder for an index.
 	ObservationCount int32 `json:"observation_count"`
@@ -45,7 +45,7 @@ type _MemoryTreeFile MemoryTreeFile
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewMemoryTreeFile(path string, name string, kind string, title string, observationCount int32, about []string, related []string, observations []MemoryTreeObservation, content string) *MemoryTreeFile {
+func NewMemoryTreeFile(path string, name string, kind MemoryTreeFileKind, title string, observationCount int32, about []string, related []string, observations []MemoryTreeObservation, content string) *MemoryTreeFile {
 	this := MemoryTreeFile{}
 	this.Path = path
 	this.Name = name
@@ -116,9 +116,9 @@ func (o *MemoryTreeFile) SetName(v string) {
 }
 
 // GetKind returns the Kind field value
-func (o *MemoryTreeFile) GetKind() string {
+func (o *MemoryTreeFile) GetKind() MemoryTreeFileKind {
 	if o == nil {
-		var ret string
+		var ret MemoryTreeFileKind
 		return ret
 	}
 
@@ -127,7 +127,7 @@ func (o *MemoryTreeFile) GetKind() string {
 
 // GetKindOk returns a tuple with the Kind field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetKindOk() (*string, bool) {
+func (o *MemoryTreeFile) GetKindOk() (*MemoryTreeFileKind, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -135,7 +135,7 @@ func (o *MemoryTreeFile) GetKindOk() (*string, bool) {
 }
 
 // SetKind sets field value
-func (o *MemoryTreeFile) SetKind(v string) {
+func (o *MemoryTreeFile) SetKind(v MemoryTreeFileKind) {
 	o.Kind = v
 }
 
