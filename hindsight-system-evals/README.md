@@ -595,17 +595,15 @@ HINDSIGHT_EVAL_SET_LLM_PROMPT_CACHE_ENABLED=false uv run pytest evals/refresh-pa
 ### Knowledge banks — `evals/knowledge/test_knowledge.py`
 
 Six categories, each on datasets with a public leaderboard, so every score sits next to the
-best published systems. Five measure **retrieval** (search alone, no LLM; the model under test
-is the server's knowledge embedder); the sixth, **agent use**, measures an agent answering
+best published systems. Three groups measure **retrieval** (search alone, no LLM; the model under test
+is the server's knowledge embedder); the fourth, **agent use**, measures an agent answering
 from a knowledge bank, and lives in `evals/knowledge_agent` (next section).
 
 | category | cases | what a query is | main metric | leaderboard |
 |---|---|---|---|---|
-| `text` | `scifact` (default), `fiqa` (BEIR) | a scientific claim → the abstracts that support or refute it; a personal-finance question → the forum answers to it | nDCG@10 | [MTEB](https://huggingface.co/spaces/mteb/leaderboard) (retrieval tasks SciFact, FiQA2018) |
-| `pdf` | `hr` (default) + 7 more ViDoRe V3 tasks | a question in one of 6 languages → the pages of business PDFs that answer it; each source PDF uploaded whole | nDCG@10, per language and as MTEB's language mean | [MTEB, benchmark ViDoRe(v3)](https://huggingface.co/spaces/mteb/leaderboard); [ViDoRe V3 announcement](https://huggingface.co/blog/QuentinJG/introducing-vidore-v3) |
-| `image` | `flickr30k` (default, 1k test), `mscoco` (5k test) | a photo caption → the photo | recall@1 (also @5/@10, nDCG@10) | no live board for these splits: compare with the R@1 model papers report (MIEB on MTEB uses a larger pool, so its numbers are not comparable) |
-| `video` | `msrvtt` (default, 1k-A test), `msvd` (test) | a clip description → the clip (picture and soundtrack, cut into windows by the server) | nDCG@10, recall@1 | MMEB-V2 video retrieval, on the [MMEB leaderboard](https://huggingface.co/spaces/TIGER-Lab/MMEB-Leaderboard) (scored as Hit@1); vendors report nDCG@10 / R@1 in their papers |
-| `research` | `brightpro_<domain>` (7 StackExchange domains; `brightpro_biology` default) | a question that needs reasoning → the passages covering each of its aspects | alpha-nDCG@25 | [BRIGHT-Pro paper](https://arxiv.org/abs/2605.04018) Table 2. These rank retrieval *systems*, so a Hindsight number is a fair system score |
+| `text` | `scifact` (BEIR), `brightpro_biology` | a scientific claim → the abstracts that support or refute it; a biology question that needs reasoning → the passages covering each of its aspects | nDCG@10; alpha-nDCG@25 (BRIGHT-Pro) | [MTEB](https://huggingface.co/spaces/mteb/leaderboard) (SciFact); [BRIGHT-Pro paper](https://arxiv.org/abs/2605.04018) Table 2 |
+| `pdf` | `hr`, `finance_en`, `physics` (ViDoRe V3) | a question in one of 6 languages → the pages of business PDFs that answer it; each source PDF uploaded whole | nDCG@10, per language and as MTEB's language mean | [MTEB, benchmark ViDoRe(v3)](https://huggingface.co/spaces/mteb/leaderboard); [ViDoRe V3 announcement](https://huggingface.co/blog/QuentinJG/introducing-vidore-v3) |
+| `media` | `flickr30k` (1k test), `msrvtt` (1k-A test) | a photo caption → the photo; a clip description → the clip (picture and soundtrack, cut into windows by the server) | recall@1, nDCG@10 | no live board for Flickr30k's split (compare the R@1 model papers report); MSR-VTT on the [MMEB leaderboard](https://huggingface.co/spaces/TIGER-Lab/MMEB-Leaderboard) |
 | agent use | `evals/knowledge_agent` | a business question → an answer, judged | overall (completeness when correct, else 0) | [EnterpriseRAG-Bench](https://huggingface.co/spaces/onyx-dot-app/EnterpriseRAG-Bench-Leaderboard) |
 
 **How retrieval is scored.** Each dataset gives its queries and, per query, the right
@@ -624,9 +622,10 @@ Scores, ingest rate and search latency (p50/p95, timed by the client). The ranke
 broken pipeline (a failed document, a query with no results).
 
 **Small by default, the leaderboard number with `--full`.** The corpus is always whole (a
-smaller pool makes every query easier); a default run only cuts the queries: SciFact and FiQA
-100 each, ViDoRe 17 per language (~100 per task), one caption per photo or clip, BRIGHT-Pro 25
-per domain. `--full` asks every query.
+smaller pool makes every query easier); a default run only cuts the queries: SciFact 100, ViDoRe
+17 per language (~100 per task), one caption per photo or clip, BRIGHT-Pro 25. `--full` asks
+every query. The set is fixed so runs compare: FiQA, five more ViDoRe tasks, MS-COCO, MSVD, six
+more BRIGHT-Pro domains and BrowseComp-Plus were dropped, as a full run took days.
 
 ```bash
 cd hindsight-system-evals
