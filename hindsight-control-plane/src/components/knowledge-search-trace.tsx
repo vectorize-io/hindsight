@@ -1,214 +1,372 @@
 "use client";
 
-// A traced knowledge search, as the Recall view's Trace tab shows a memory recall: what the
-// search found, how each candidate's score was built, and what the token budget kept.
+// A traced knowledge search, laid out like the Recall view's Trace tab: the parallel candidate
+// searches, then each step with its own partial list and scores, down to how the token budget was
+// filled. Every step card opens to its list.
 
 import * as React from "react";
 import { useTranslations } from "next-intl";
+import { ArrowDown, ChevronDown, ChevronRight } from "lucide-react";
 
-import type { KnowledgeSearchTrace, KnowledgeSearchTraceHit } from "@/lib/knowledge-banks";
+import type {
+  KnowledgeSearchTrace,
+  KnowledgeSearchTraceHit,
+  KnowledgeTraceBudgetStep,
+} from "@/lib/knowledge-banks";
 import { cn } from "@/lib/utils";
 import { KindIcon } from "@/components/knowledge-passage";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Card, CardContent } from "@/components/ui/card";
 
-/** Rows shown before "show all": a mid search ranks up to 200. */
-const INITIAL_ROWS = 50;
+/** Rows a step shows before "view all", as the Recall trace does. */
+const INITIAL_ROWS = 10;
 
-const OUTCOME_STYLE: Record<KnowledgeSearchTraceHit["outcome"], string> = {
-  returned: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  merged: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  over_budget: "bg-muted text-muted-foreground",
+const fmt = (n: number) => n.toFixed(3);
+
+const ARM_STYLE: Record<string, { letter: string; bg: string; text: string }> = {
+  vector: { letter: "V", bg: "bg-blue-500/10", text: "text-blue-500" },
+  extra_vectors: { letter: "X", bg: "bg-cyan-500/10", text: "text-cyan-500" },
+  keyword: { letter: "K", bg: "bg-amber-500/10", text: "text-amber-500" },
 };
 
-const score = (n: number) => n.toFixed(3);
+const ACTION_STYLE: Record<KnowledgeTraceBudgetStep["action"], string> = {
+  window: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+  alone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+  media: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
+  joined: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+  folded: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+  widened: "bg-violet-500/15 text-violet-700 dark:text-violet-400",
+  skipped: "bg-muted text-muted-foreground",
+};
 
-function Stat({ label, children }: { label: string; children: React.ReactNode }) {
+function Divider({ label }: { label: string }) {
   return (
-    <div className="min-w-0">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold">{children}</div>
+    <div className="mb-3 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+      <div className="h-px flex-1 bg-border" />
+      <span>{label}</span>
+      <div className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+function Arrow() {
+  return (
+    <div className="flex justify-center py-2">
+      <ArrowDown className="h-4 w-4 text-muted-foreground/50" />
+    </div>
+  );
+}
+
+/** A step: a header card that opens to its list, like the Recall trace's steps. */
+function Step({
+  icon,
+  iconClass,
+  title,
+  description,
+  count,
+  rows,
+  render,
+  open,
+  onToggle,
+}: {
+  icon: React.ReactNode;
+  iconClass: string;
+  title: string;
+  description: React.ReactNode;
+  count: React.ReactNode;
+  rows?: unknown[];
+  render?: (row: any, i: number) => React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const t = useTranslations("knowledgeBanks.trace");
+  const [showAll, setShowAll] = React.useState(false);
+  const expandable = !!rows && rows.length > 0 && !!render;
+  const shown = rows ? (showAll ? rows : rows.slice(0, INITIAL_ROWS)) : [];
+  return (
+    <div>
+      <Card
+        className={cn(
+          "transition-colors",
+          expandable && "cursor-pointer",
+          open ? "border-primary" : expandable && "hover:border-primary/50"
+        )}
+        onClick={expandable ? onToggle : undefined}
+      >
+        <CardContent className="py-4">
+          <div className="flex items-center gap-4">
+            <div
+              className={cn(
+                "flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-sm font-bold",
+                iconClass
+              )}
+            >
+              {icon}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-foreground">{title}</div>
+              <div className="mt-0.5 text-sm text-muted-foreground">{description}</div>
+            </div>
+            <div className="text-2xl font-bold text-foreground">{count}</div>
+            {expandable &&
+              (open ? (
+                <ChevronDown className="h-5 w-5 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-5 w-5 text-muted-foreground" />
+              ))}
+          </div>
+        </CardContent>
+      </Card>
+      {open && expandable && (
+        <div className="ml-6 mt-2 max-h-[420px] space-y-2 overflow-y-auto border-l-2 border-muted pl-4">
+          {shown.map((row, i) => render!(row, i))}
+          {rows!.length > INITIAL_ROWS && (
+            <button
+              type="button"
+              className="w-full rounded py-2 text-xs text-primary hover:bg-muted/50"
+              onClick={() => setShowAll((v) => !v)}
+            >
+              {showAll ? t("showLess") : t("viewAll", { count: rows!.length })}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One passage row inside a step: its rank there, what it is, and that step's scores. */
+function Row({
+  n,
+  hit,
+  children,
+}: {
+  n: number;
+  hit: KnowledgeSearchTraceHit | undefined;
+  children: React.ReactNode;
+}) {
+  const t = useTranslations("knowledgeBanks.trace");
+  return (
+    <div className="rounded-lg bg-muted/30 p-3">
+      <div className="flex items-start gap-3">
+        <span className="w-6 shrink-0 font-mono text-xs text-muted-foreground">{n}</span>
+        <div className="min-w-0 flex-1">
+          {hit ? (
+            <>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <KindIcon kind={hit.media_type} />
+                <span className="truncate text-xs font-medium">
+                  {hit.filename || hit.document_id}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {hit.page != null ? t("page", { page: hit.page }) : `#${hit.index}`}
+                </span>
+              </div>
+              {hit.snippet && (
+                <p className="mt-0.5 line-clamp-2 text-sm text-foreground">{hit.snippet}</p>
+              )}
+            </>
+          ) : null}
+          <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+            {children}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
 export function KnowledgeSearchTraceView({ trace }: { trace: KnowledgeSearchTrace }) {
   const t = useTranslations("knowledgeBanks.trace");
-  const [showAll, setShowAll] = React.useState(false);
-  const rows = showAll ? trace.hits : trace.hits.slice(0, INITIAL_ROWS);
-  const terms = Object.entries(trace.keyword_terms).sort((a, b) => b[1] - a[1]);
-  const counts = trace.hits.reduce<Record<string, number>>((acc, h) => {
-    acc[h.outcome] = (acc[h.outcome] ?? 0) + 1;
-    return acc;
-  }, {});
+  const [open, setOpen] = React.useState<Set<string>>(new Set());
+  const toggle = (key: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
+  const byKey = new Map(trace.hits.map((h) => [`${h.document_id}\u0000${h.index}`, h]));
+  const byRank = new Map(trace.hits.map((h) => [h.rank, h]));
+  const meaning = [...trace.hits].sort((a, b) => b.with_document - a.with_document);
+  const terms = Object.entries(trace.keyword_terms).sort((a, b) => b[1] - a[1]);
+  const returned = trace.hits.filter((h) => h.outcome === "returned").length;
+
+  // No space-y here: the arrows between steps are the spacing, as in the Recall trace.
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">{t("summaryTitle")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Stat label={t("candidates")}>{trace.candidates}</Stat>
-            <Stat label={t("ranked")}>
-              {trace.hits.length}{" "}
-              <span className="font-normal text-muted-foreground">
-                {t("outcomes", {
-                  returned: counts.returned ?? 0,
-                  merged: counts.merged ?? 0,
-                  over: counts.over_budget ?? 0,
-                })}
-              </span>
-            </Stat>
-            <Stat label={t("tokens")}>
-              {trace.tokens_used} / {trace.max_tokens}
-            </Stat>
-            <Stat label={t("budget")}>{trace.budget}</Stat>
-          </div>
-          <div>
-            <div className="text-xs text-muted-foreground">
-              {t("keywords", {
-                language: trace.language ?? t("noLanguage"),
-                weight: Math.round(trace.keyword_weight * 100),
-              })}
-            </div>
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              {terms.length === 0 ? (
-                <span className="text-sm text-muted-foreground">{t("noKeywords")}</span>
-              ) : (
-                terms.map(([word, idf]) => (
-                  <span
-                    key={word}
-                    className="rounded-md bg-muted px-2 py-0.5 font-mono text-xs"
-                    title={t("idfHelp")}
-                  >
-                    {word} <span className="text-muted-foreground">{idf.toFixed(2)}</span>
-                  </span>
-                ))
-              )}
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            {Object.entries(trace.timings_ms).map(([phase, ms]) => (
-              <span key={phase}>
-                {phase} <span className="font-medium text-foreground">{Math.round(ms)}ms</span>
+    <div>
+      <div className="mb-4 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        {Object.entries(trace.timings_ms).map(([phase, ms]) => (
+          <span key={phase}>
+            {phase} <span className="font-medium text-foreground">{Math.round(ms)}ms</span>
+          </span>
+        ))}
+      </div>
+
+      <div>
+        <Divider label={t("parallelSearches")} />
+        <div className="space-y-2">
+          {trace.candidate_searches.map((arm) => {
+            const style = ARM_STYLE[arm.name] ?? ARM_STYLE.vector;
+            return (
+              <Step
+                key={arm.name}
+                icon={style.letter}
+                iconClass={cn(style.bg, style.text)}
+                title={t(`arm_${arm.name}`)}
+                description={t(`arm_${arm.name}_help`)}
+                count={arm.results.length}
+                rows={arm.results}
+                open={open.has(arm.name)}
+                onToggle={() => toggle(arm.name)}
+                render={(r, i) => (
+                  <Row key={i} n={i + 1} hit={byKey.get(`${r.document_id}\u0000${r.index}`)}>
+                    <span>
+                      {t("armScore")} {fmt(r.score)}
+                    </span>
+                  </Row>
+                )}
+              />
+            );
+          })}
+        </div>
+        <Arrow />
+      </div>
+
+      <Step
+        icon="∪"
+        iconClass="bg-purple-500/10 text-purple-500"
+        title={t("meaningTitle")}
+        description={t("meaningHelp", { count: trace.candidates })}
+        count={trace.candidates}
+        rows={meaning}
+        open={open.has("meaning")}
+        onToggle={() => toggle("meaning")}
+        render={(h: KnowledgeSearchTraceHit, i) => (
+          <Row key={h.rank} n={i + 1} hit={h}>
+            <span>
+              {t("similarity")} {fmt(h.similarity)}
+            </span>
+            {Object.entries(h.roles).map(([role, v]) => (
+              <span key={role}>
+                {role} {fmt(v)}
               </span>
             ))}
-          </div>
-        </CardContent>
-      </Card>
+            <span>
+              {t("passageScore")} {fmt(h.passage_score)}
+            </span>
+            <span className="font-medium text-foreground">
+              {t("withDocument")} {fmt(h.with_document)}
+            </span>
+          </Row>
+        )}
+      />
+      <Arrow />
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">{t("rankingTitle")}</CardTitle>
-          <p className="text-xs text-muted-foreground">{t("rankingHelp")}</p>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-12">#</TableHead>
-                <TableHead>{t("passage")}</TableHead>
-                <TableHead>{t("outcome")}</TableHead>
-                <TableHead className="text-right" title={t("scoreHelp")}>
-                  {t("score")}
-                </TableHead>
-                <TableHead className="text-right" title={t("similarityHelp")}>
-                  {t("similarity")}
-                </TableHead>
-                <TableHead className="text-right" title={t("passageScoreHelp")}>
-                  {t("passageScore")}
-                </TableHead>
-                <TableHead className="text-right" title={t("withDocumentHelp")}>
-                  {t("withDocument")}
-                </TableHead>
-                <TableHead className="text-right" title={t("keywordHelp")}>
-                  {t("keyword")}
-                </TableHead>
-                <TableHead>{t("foundBy")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map((h) => (
-                <TableRow key={h.rank}>
-                  <TableCell className="font-mono text-xs tabular-nums">{h.rank}</TableCell>
-                  <TableCell className="max-w-[22rem]">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <KindIcon kind={h.media_type} />
-                      <span className="truncate text-xs font-medium" title={h.document_id}>
-                        {h.filename || h.document_id}
-                      </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {h.page != null ? t("page", { page: h.page }) : `#${h.index}`}
-                      </span>
-                    </div>
-                    {h.snippet && (
-                      <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-                        {h.snippet}
-                      </p>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className={cn(
-                        "whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-medium",
-                        OUTCOME_STYLE[h.outcome]
-                      )}
-                    >
-                      {h.outcome === "returned"
-                        ? t("returned", { rank: h.result_rank ?? 0 })
-                        : h.outcome === "merged"
-                          ? t("merged", { rank: h.merged_into_rank ?? 0 })
-                          : t("overBudget")}
-                    </span>
-                    {h.reference_page && (
-                      <span className="ml-1 text-[11px] text-amber-600">{t("referencePage")}</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs font-semibold tabular-nums">
-                    {score(h.score)}
-                  </TableCell>
-                  <TableCell
-                    className="text-right font-mono text-xs tabular-nums"
-                    title={Object.entries(h.roles)
-                      .map(([role, v]) => `${role} ${score(v)}`)
-                      .join(" · ")}
+      <Step
+        icon="K"
+        iconClass="bg-amber-500/10 text-amber-500"
+        title={t("rankingTitle")}
+        description={
+          <>
+            {terms.length === 0
+              ? t("noKeywords")
+              : t("rankingHelp", {
+                  weight: Math.round(trace.keyword_weight * 100),
+                  language: trace.language ?? "?",
+                })}
+            {terms.length > 0 && (
+              <span className="ml-2 inline-flex flex-wrap gap-1 align-middle">
+                {terms.map(([word, idf]) => (
+                  <span
+                    key={word}
+                    className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs"
+                    title={t("idfHelp")}
                   >
-                    {score(h.similarity)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">
-                    {score(h.passage_score)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">
-                    {score(h.with_document)}
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs tabular-nums">
-                    {h.keyword > 0 ? h.keyword.toFixed(2) : "—"}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                    {h.found_by.join(", ")}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          {trace.hits.length > INITIAL_ROWS && (
-            <button
-              type="button"
-              onClick={() => setShowAll((v) => !v)}
-              className="mt-3 text-xs font-medium text-primary hover:underline"
+                    {word} {idf.toFixed(2)}
+                  </span>
+                ))}
+              </span>
+            )}
+          </>
+        }
+        count={trace.hits.length}
+        rows={trace.hits}
+        open={open.has("ranking")}
+        onToggle={() => toggle("ranking")}
+        render={(h: KnowledgeSearchTraceHit) => (
+          <Row key={h.rank} n={h.rank} hit={h}>
+            <span>
+              {t("meaning")} {fmt(h.with_document)}
+            </span>
+            <span>
+              {t("keyword")} {h.keyword > 0 ? h.keyword.toFixed(2) : "0"}
+            </span>
+            {h.reference_page && <span className="text-amber-600">{t("referencePage")}</span>}
+            <span className="font-medium text-foreground">
+              {t("score")} {fmt(h.score)}
+            </span>
+          </Row>
+        )}
+      />
+      <Arrow />
+
+      <Step
+        icon="⌄"
+        iconClass="bg-slate-500/10 text-slate-500"
+        title={t("depthTitle", { budget: trace.budget })}
+        description={t("depthHelp", { depth: trace.depth, total: trace.hits.length })}
+        count={trace.depth}
+        open={false}
+        onToggle={() => {}}
+      />
+      <Arrow />
+
+      <Step
+        icon="Σ"
+        iconClass="bg-emerald-500/10 text-emerald-500"
+        title={t("budgetTitle")}
+        description={
+          <span className="flex items-center gap-2">
+            <span className="h-1.5 w-32 overflow-hidden rounded-full bg-muted">
+              <span
+                className="block h-full bg-emerald-500"
+                style={{ width: `${Math.min(100, (trace.tokens_used / trace.max_tokens) * 100)}%` }}
+              />
+            </span>
+            {t("budgetHelp", { used: trace.tokens_used, max: trace.max_tokens })}
+          </span>
+        }
+        count={trace.budget_steps.length}
+        rows={trace.budget_steps}
+        open={open.has("budget")}
+        onToggle={() => toggle("budget")}
+        render={(s: KnowledgeTraceBudgetStep, i) => (
+          <Row key={i} n={i + 1} hit={byRank.get(s.rank)}>
+            <span
+              className={cn("rounded px-1.5 py-0.5 font-medium", ACTION_STYLE[s.action])}
+              title={t(`action_${s.action}_help`)}
             >
-              {showAll ? t("showLess") : t("showAll", { count: trace.hits.length })}
-            </button>
-          )}
+              {t(`action_${s.action}`, { rank: s.into_rank ?? 0 })}
+            </span>
+            <span>{t("candidateRank", { rank: s.rank })}</span>
+            <span>{t("passages", { first: s.first, last: s.last })}</span>
+            <span>+{s.tokens}</span>
+            <span className="font-medium text-foreground">
+              {t("total", { total: s.total, max: trace.max_tokens })}
+            </span>
+          </Row>
+        )}
+      />
+      <Arrow />
+
+      <Card className="border-primary/40">
+        <CardContent className="flex items-center gap-4 py-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary">
+            ✓
+          </div>
+          <div className="flex-1 font-semibold">{t("resultsTitle")}</div>
+          <div className="text-2xl font-bold">{returned}</div>
         </CardContent>
       </Card>
     </div>

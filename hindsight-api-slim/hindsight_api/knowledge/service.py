@@ -232,6 +232,28 @@ class TracedHit:
     merged_into: SearchHit | None = None
 
 
+BudgetAction = Literal["window", "alone", "media", "joined", "folded", "widened", "skipped"]
+
+
+@dataclass
+class BudgetStep:
+    """One step of filling ``max_tokens``, in the order the budget took it."""
+
+    #: window: a text hit with a passage each side; alone: a text hit with no room for neighbours;
+    #: media: an image, page or clip; joined: a hit a better window already reached, which grew to it;
+    #: folded: two windows that met, kept as the better-ranked one; widened: leftover budget, one passage
+    #: added to a window's side; skipped: nothing of the hit fit.
+    action: BudgetAction
+    hit: SearchHit
+    document_id: str
+    first: int
+    last: int
+    tokens: int
+    total: int
+    #: For joined and folded: the hit whose window took it in.
+    into: SearchHit | None = None
+
+
 @dataclass
 class SearchTrace:
     """What one search did, for a caller that asks (the API's ``trace: true``)."""
@@ -240,6 +262,7 @@ class SearchTrace:
     #: Every ranked candidate, best first, with its outcome.
     hits: list[TracedHit] = field(default_factory=list)
     tokens_used: int = 0
+    budget_steps: list[BudgetStep] = field(default_factory=list)
     #: Each phase's wall time (open_bank, embed, store.search, context), in seconds.
     seconds: dict[str, float] = field(default_factory=dict)
 
@@ -1788,6 +1811,15 @@ class KnowledgeService:
         windows: list[_Window] = []
         held: dict[str, set[int]] = {}  # per document, the passages some window already returns
         used = 0
+
+        def step(
+            action: BudgetAction, hit: SearchHit, first: int, last: int, tokens: int, into: SearchHit | None = None
+        ) -> None:
+            if trace is not None:
+                trace.budget_steps.append(
+                    BudgetStep(action, hit, hit.document.document_id, first, last, tokens, used, into)
+                )
+
         for hit in hits:
             document_id, index = hit.document.document_id, hit.passage.index
             if hit.passage.modality != "text":
@@ -1795,12 +1827,16 @@ class KnowledgeService:
                 if used + weight <= max_tokens:
                     items.append(SearchResultItem(hit))
                     used += weight
+                    step("media", hit, index, index, weight)
+                else:
+                    step("skipped", hit, index, index, 0)
                 continue
             mine = held.setdefault(document_id, set())
             around = [i for i in (index - 1, index, index + 1) if (document_id, i) in passages]
             owner = next(
                 (w for w in windows if w.document_id == document_id and w.first - 1 <= index <= w.last + 1), None
             )
+            placed = False
             for span in (around, [index]):  # with a passage on each side, or alone
                 new = [i for i in span if i not in mine]
                 weight = sum(cost(document_id, i) for i in new)
@@ -1808,8 +1844,10 @@ class KnowledgeService:
                     continue
                 used += weight
                 mine.update(new)
+                placed = True
                 if owner is not None:  # a better hit's context reaches it: that context takes it in
                     owner.first, owner.last = min(owner.first, *span), max(owner.last, *span)
+                    step("joined", hit, owner.first, owner.last, weight, into=owner.item.hit)
                     # Grown, it may now reach another window of the document: fold that one in, or the
                     # passages they share would come back twice.
                     # The better-ranked of two meeting windows is the one kept, and holds both: the hit
@@ -1820,6 +1858,7 @@ class KnowledgeService:
                                 (other, owner) if windows.index(other) < windows.index(owner) else (owner, other)
                             )
                             keep.first, keep.last = min(keep.first, drop.first), max(keep.last, drop.last)
+                            step("folded", drop.item.hit, keep.first, keep.last, 0, into=keep.item.hit)
                             windows.remove(drop)
                             items.remove(drop.item)
                             owner = keep
@@ -1827,7 +1866,10 @@ class KnowledgeService:
                     item = SearchResultItem(hit)
                     items.append(item)
                     windows.append(_Window(item, document_id, min(span), max(span)))
+                    step("window" if len(span) > 1 else "alone", hit, min(span), max(span), weight)
                 break
+            if not placed:
+                step("skipped", hit, index, index, 0)
         for _ in range(MAX_CONTEXT_PASSAGES - 1):
             growing = [w for w in windows if w.grows_before or w.grows_after]
             if not growing:
@@ -1850,6 +1892,7 @@ class KnowledgeService:
                             w.first = i
                         else:
                             w.last = i
+                        step("widened", w.item.hit, w.first, w.last, cost(w.document_id, i))
                     elif side == "before":
                         w.grows_before = False
                     else:

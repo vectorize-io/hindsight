@@ -1902,3 +1902,20 @@ async def test_a_traced_search_explains_every_rank_and_what_the_budget_kept(api_
     returned = [h for h in hits if h["outcome"] == "returned"]
     assert [h["result_rank"] for h in returned] == list(range(1, len(body["results"]) + 1))
     assert any(h["outcome"] == "over_budget" for h in hits)
+    # Step 1: each candidate search's own list, best first; the keyword one found the invoice paragraph.
+    arms = {a["name"]: a["results"] for a in trace["candidate_searches"]}
+    assert {"vector", "keyword"} <= set(arms) and arms["keyword"][0]["index"] == 4
+    assert all([r["score"] for r in a] == sorted((r["score"] for r in a), reverse=True) for a in arms.values())
+    # Step 4: the budget's steps, in order, add up to what the results weigh.
+    steps = trace["budget_steps"]
+    assert steps[0]["rank"] == 1 and steps[0]["action"] == "window" and (steps[0]["first"], steps[0]["last"]) == (3, 5)
+    assert [s["total"] for s in steps] == sorted(s["total"] for s in steps)
+    assert steps[-1]["total"] == trace["tokens_used"] == sum(s["tokens"] for s in steps)
+    assert any(s["action"] == "widened" for s in steps) or any(s["action"] == "skipped" for s in steps)
+    # The depth cut: a low budget keeps the top 50 of what was scored.
+    low = (
+        await api_client.post(
+            f"{KB}/{kb}/search", json={"query": "invoice", "max_tokens": 1200, "budget": "low", "trace": True}
+        )
+    ).json()["trace"]
+    assert low["depth"] == min(50, len(low["hits"]))

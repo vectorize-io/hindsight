@@ -167,6 +167,22 @@ class StoreSearchTrace:
     keyword_weight: float = 0.0
     #: Each query word the keyword search used, with its IDF in this bank.
     keyword_terms: dict[str, float] = field(default_factory=dict)
+    #: Each candidate search's own list, best first: (document_id, index, its score in that search).
+    arms: dict[ArmName, list[ArmHit]] = field(default_factory=dict)
+    #: Every candidate scored, best first, before the depth cut keeps the top ``top_k``.
+    scored: list[SearchHit] = field(default_factory=list)
+
+
+#: The candidate searches: the passages' main vectors, their extra vectors, and keywords.
+ArmName = Literal["vector", "extra_vectors", "keyword"]
+
+
+@dataclass
+class ArmHit:
+    document_id: str
+    index: int
+    #: Cosine similarity for the vector searches, ts_rank_cd for the keyword one.
+    score: float
 
 
 @dataclass
@@ -907,7 +923,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
             roles = f" AND {CANDIDATE_ROLES_SQL.replace('role', 'x.role')}" if table == "kb_passage_vectors" else ""
             arm = "vector" if table == "kb_passages" else "extra_vectors"
             return f"""
-                SELECT x.document_id, x.idx, '{arm}' AS arm FROM {fq_table(table)} x
+                SELECT x.document_id, x.idx, '{arm}' AS arm, 1 - {self._distance("$1", "x")} AS arm_score
+                FROM {fq_table(table)} x
                 JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
                 WHERE x.bank_id = $2{where}{roles}
                 ORDER BY {self._distance("$1", "x")} LIMIT {pool}
@@ -916,7 +933,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
         arms = [nearest("kb_passages"), nearest("kb_passage_vectors")]
         if language:
             arms.append(f"""
-                SELECT x.document_id, x.idx, 'keyword' AS arm FROM {fq_table("kb_passages")} x
+                SELECT x.document_id, x.idx, 'keyword' AS arm,
+                       ts_rank_cd(x.search_vector, {tsquery}) AS arm_score FROM {fq_table("kb_passages")} x
                 JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
                 WHERE x.bank_id = $2{where} AND d.language = {lang} AND x.search_vector @@ {tsquery}
                 ORDER BY ts_rank_cd(x.search_vector, {tsquery}) DESC LIMIT {pool}
@@ -927,23 +945,27 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 await conn.execute("SET LOCAL hnsw.ef_search = 200")
                 if self._iterative_scan:
                     await conn.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
-                # Each candidate once, with the searches that found it (the trace's "found by").
-                candidates = await conn.fetch(
-                    "SELECT document_id, idx, array_agg(DISTINCT arm) AS arms FROM ("
-                    + " UNION ALL ".join(f"({a})" for a in arms)
-                    + ") c GROUP BY document_id, idx",
-                    *params,
-                )
+                # Every search's own rows: the candidates are their union, and the trace shows each list.
+                arm_rows = await conn.fetch(" UNION ALL ".join(f"({a})" for a in arms), *params)
+            found_by: dict[tuple[str, int], list[str]] = {}
+            for r in arm_rows:
+                found_by.setdefault((r["document_id"], r["idx"]), []).append(r["arm"])
+            candidates = list(found_by)
             if trace is not None:
                 trace.candidates, trace.language, trace.keyword_weight = len(candidates), language, keyword_weight
+                for r in arm_rows:
+                    trace.arms.setdefault(r["arm"], []).append(
+                        ArmHit(r["document_id"], r["idx"], float(r["arm_score"] or 0.0))
+                    )
+                for arm_hits in trace.arms.values():
+                    arm_hits.sort(key=lambda a: a.score, reverse=True)
             if not candidates:
                 return []
-            found_by = {(r["document_id"], r["idx"]): sorted(r["arms"]) for r in candidates}
             stage_params: list[Any] = [
                 str(vector),
                 bank_id,
-                [r["document_id"] for r in candidates],
-                [r["idx"] for r in candidates],
+                [document_id for document_id, _ in candidates],
+                [idx for _, idx in candidates],
             ]
             keyword = "0"
             if language:
@@ -1039,7 +1061,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 document=_document(r),
                 score=scores[i],
                 explain=ScoreExplain(
-                    found_by=found_by.get((r["document_id"], r["idx"]), []),
+                    found_by=sorted(set(found_by.get((r["document_id"], r["idx"]), []))),
                     similarity=float(r["score"]),
                     roles={role: max(values) for role, values in roles[i].items() if values},
                     passage_score=first[i],
@@ -1051,6 +1073,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
             for i, r in enumerate(rows)
         ]
         hits.sort(key=lambda h: h.score, reverse=True)
+        if trace is not None:
+            trace.scored = hits
         return hits[:top_k]
 
     async def timeseries(

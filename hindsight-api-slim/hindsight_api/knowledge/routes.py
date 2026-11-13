@@ -33,7 +33,7 @@ from .service import (
     SearchTrace,
     get_knowledge_service,
 )
-from .store import KnowledgeDocument, KnowledgePassage, SearchFilters, SearchHit
+from .store import ArmName, KnowledgeDocument, KnowledgePassage, SearchFilters, SearchHit
 
 PREFIX = "/v1/default/knowledge-banks"
 
@@ -233,10 +233,10 @@ class KnowledgeSearchResult(KnowledgePassageResponse):
 class KnowledgeSearchTraceHit(BaseModel):
     """One ranked candidate: its score step by step, and what the token budget did with it."""
 
-    rank: int = Field(description="Its place among all ranked candidates, from 1")
-    outcome: Literal["returned", "merged", "over_budget"] = Field(
+    rank: int = Field(description="Its place among all scored candidates, from 1")
+    outcome: Literal["returned", "merged", "over_budget", "below_depth"] = Field(
         description="returned: a result of its own; merged: inside a better hit's text (merged_into_rank); "
-        "over_budget: nothing of it fit in max_tokens"
+        "over_budget: nothing of it fit in max_tokens; below_depth: ranked past what the budget level keeps"
     )
     result_rank: int | None = Field(default=None, description="Its place in `results`, from 1, when returned")
     merged_into_rank: int | None = Field(default=None, description="The rank of the hit whose text holds it")
@@ -260,8 +260,39 @@ class KnowledgeSearchTraceHit(BaseModel):
     reference_page: bool = Field(description="Read as a reference list, and pushed down")
 
 
+class KnowledgeTraceArmHit(BaseModel):
+    document_id: str
+    index: int
+    score: float = Field(description="Its score in this search: cosine similarity, or ts_rank_cd for keywords")
+
+
+class KnowledgeTraceArm(BaseModel):
+    """One candidate search, with its own list, best first."""
+
+    name: ArmName
+    results: list[KnowledgeTraceArmHit]
+
+
+class KnowledgeTraceBudgetStep(BaseModel):
+    """One step of filling max_tokens, in order."""
+
+    action: Literal["window", "alone", "media", "joined", "folded", "widened", "skipped"] = Field(
+        description="window: a text hit with a passage each side; alone: no room for its neighbours; media: an "
+        "image, page or clip; joined: a better window reached it and grew; folded: two windows met and became one; "
+        "widened: leftover budget added a passage to a window; skipped: nothing of it fit"
+    )
+    rank: int = Field(description="The candidate's rank")
+    document_id: str
+    first: int = Field(description="The window's first passage after this step")
+    last: int = Field(description="The window's last passage after this step")
+    tokens: int = Field(description="Tokens this step added")
+    total: int = Field(description="Tokens used after this step")
+    into_rank: int | None = Field(default=None, description="For joined and folded: the rank of the window kept")
+
+
 class KnowledgeSearchTrace(BaseModel):
     budget: Literal["low", "mid", "high"]
+    depth: int = Field(description="How many of the scored candidates the budget level keeps for max_tokens")
     max_tokens: int
     tokens_used: int = Field(description="What the results weigh, in tokens of their text")
     candidates: int = Field(description="Passages the candidate searches found, before scoring")
@@ -269,7 +300,9 @@ class KnowledgeSearchTrace(BaseModel):
     keyword_weight: float = Field(description="The keyword score's share of the final score")
     keyword_terms: dict[str, float] = Field(description="Each query word the keyword search used, with its IDF")
     timings_ms: dict[str, float] = Field(description="Each phase's time: open_bank, embed, store.search, context")
-    hits: list[KnowledgeSearchTraceHit] = Field(description="Every ranked candidate, best first")
+    candidate_searches: list[KnowledgeTraceArm] = Field(description="Step 1: each candidate search's own list")
+    hits: list[KnowledgeSearchTraceHit] = Field(description="Steps 2-3: every candidate scored, best first")
+    budget_steps: list[KnowledgeTraceBudgetStep] = Field(description="Step 4: how max_tokens was filled, in order")
 
 
 class KnowledgeSearchResponse(BaseModel):
@@ -358,18 +391,19 @@ TRACE_SNIPPET_CHARS = 200
 
 
 def trace_response(body: KnowledgeSearchRequest, trace: SearchTrace, returned: list[SearchHit]) -> KnowledgeSearchTrace:
-    rank_of = {id(t.hit): n for n, t in enumerate(trace.hits, 1)}
+    scored = trace.store.scored or [t.hit for t in trace.hits]
+    rank_of = {id(h): n for n, h in enumerate(scored, 1)}
     result_rank = {id(hit): n for n, hit in enumerate(returned, 1)}
+    outcome_of = {id(t.hit): t for t in trace.hits}
     hits = []
-    for n, t in enumerate(trace.hits, 1):
-        h, explain = t.hit, t.hit.explain
-        text = h.passage.text
+    for n, h in enumerate(scored, 1):
+        traced, explain, text = outcome_of.get(id(h)), h.explain, h.passage.text
         hits.append(
             KnowledgeSearchTraceHit(
                 rank=n,
-                outcome=t.outcome,
+                outcome=traced.outcome if traced else "below_depth",
                 result_rank=result_rank.get(id(h)),
-                merged_into_rank=rank_of.get(id(t.merged_into)) if t.merged_into is not None else None,
+                merged_into_rank=rank_of.get(id(traced.merged_into)) if traced and traced.merged_into else None,
                 document_id=h.document.document_id,
                 filename=h.document.filename,
                 index=h.passage.index,
@@ -390,6 +424,7 @@ def trace_response(body: KnowledgeSearchRequest, trace: SearchTrace, returned: l
         )
     return KnowledgeSearchTrace(
         budget=body.budget,
+        depth=len(trace.hits),
         max_tokens=body.max_tokens,
         tokens_used=trace.tokens_used,
         candidates=trace.store.candidates,
@@ -397,7 +432,27 @@ def trace_response(body: KnowledgeSearchRequest, trace: SearchTrace, returned: l
         keyword_weight=trace.store.keyword_weight,
         keyword_terms=trace.store.keyword_terms,
         timings_ms={phase: round(seconds * 1000, 1) for phase, seconds in trace.seconds.items()},
+        candidate_searches=[
+            KnowledgeTraceArm(
+                name=name,
+                results=[KnowledgeTraceArmHit(document_id=a.document_id, index=a.index, score=a.score) for a in arm],
+            )
+            for name, arm in trace.store.arms.items()
+        ],
         hits=hits,
+        budget_steps=[
+            KnowledgeTraceBudgetStep(
+                action=st.action,
+                rank=rank_of.get(id(st.hit), 0),
+                document_id=st.document_id,
+                first=st.first,
+                last=st.last,
+                tokens=st.tokens,
+                total=st.total,
+                into_rank=rank_of.get(id(st.into)) if st.into is not None else None,
+            )
+            for st in trace.budget_steps
+        ],
     )
 
 

@@ -118,7 +118,7 @@ export interface KnowledgeSearchRequest {
 /** One ranked candidate of a traced search: its score step by step, and what the budget did. */
 export interface KnowledgeSearchTraceHit {
   rank: number;
-  outcome: "returned" | "merged" | "over_budget";
+  outcome: "returned" | "merged" | "over_budget" | "below_depth";
   result_rank: number | null;
   merged_into_rank: number | null;
   document_id: string;
@@ -139,8 +139,22 @@ export interface KnowledgeSearchTraceHit {
   reference_page: boolean;
 }
 
+/** One step of filling max_tokens, in order. */
+export interface KnowledgeTraceBudgetStep {
+  action: "window" | "alone" | "media" | "joined" | "folded" | "widened" | "skipped";
+  rank: number;
+  document_id: string;
+  first: number;
+  last: number;
+  tokens: number;
+  total: number;
+  into_rank: number | null;
+}
+
 export interface KnowledgeSearchTrace {
   budget: SearchBudget;
+  /** How many scored candidates the budget level keeps for max_tokens. */
+  depth: number;
   max_tokens: number;
   tokens_used: number;
   candidates: number;
@@ -148,7 +162,15 @@ export interface KnowledgeSearchTrace {
   keyword_weight: number;
   keyword_terms: Record<string, number>;
   timings_ms: Record<string, number>;
+  /** Step 1: each candidate search's own list, best first. */
+  candidate_searches: {
+    name: "vector" | "extra_vectors" | "keyword";
+    results: { document_id: string; index: number; score: number }[];
+  }[];
+  /** Every candidate scored, best first. */
   hits: KnowledgeSearchTraceHit[];
+  /** How max_tokens was filled, in order. */
+  budget_steps: KnowledgeTraceBudgetStep[];
 }
 
 export interface KnowledgeSearchResponse {
