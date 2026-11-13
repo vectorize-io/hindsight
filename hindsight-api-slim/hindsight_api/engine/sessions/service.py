@@ -107,8 +107,11 @@ CREDIT_RE = re.compile(
 )
 DISMISS_RE = re.compile(
     r"Hindsight note \(live session (#\d+[^)]*)\)|Hindsight thought (#\d+(?:\s*(?:/|,|and)\s*#\d+)*), (?:set aside|already done)"
-    # Agents drift from the asked "#N — ...; no change:": beta also had "#N: ... . No change:".
-    r"|🧠 Hindsight thought (#\d+(?:\s*(?:/|,|and)\s*#\d+)*)\s*[—–:-]"
+    # Agents drift from the asked "#N — ...; no change:": beta also had "#N: ... . No change:", and
+    # live "#N said <it>. Wrong: <why>" with nothing after the number, which matched nothing: 26 lines
+    # over two weeks lost their verdict, wrong ones among them (2026-11-13). Any 🧠 line naming a
+    # thought counts; a credit line is read above and wins.
+    r"|🧠 Hindsight thought (#\d+(?:\s*(?:/|,|and)\s*#\d+)*)(?!\d)\s*[—–:-]?"
 )
 NOTE_NUMBER_RE = re.compile(r"#(\d+)")
 NOTE_SEARCH_RE = re.compile(r"#?(\d+)")

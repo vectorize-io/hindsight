@@ -934,6 +934,17 @@ async def test_a_rerun_of_the_same_request_inherits_what_earlier_runs_set_aside(
             "not_needed",
             "the fix already uses it.",
         ),
+        # Live drift: no dash or colon, no quote mark, "said" and a capital "Wrong:" (2026-11-13).
+        (
+            "🧠 Hindsight thought #7 said K is 1000. Wrong: the commit it cites sets 1024.",
+            "wrong",
+            "the commit it cites sets 1024.",
+        ),
+        (
+            "🧠 Hindsight thought #7 said K is 1024. No change: I already used it.",
+            "not_needed",
+            "I already used it.",
+        ),
     ],
 )
 def test_the_line_an_agent_writes_about_a_note_gives_its_verdict(line, verdict, reason):

@@ -35,6 +35,8 @@ export const NOTE_DISMISS = noteDismiss("<number>");
 /**
  * Told to the agent once, at session start. Without it a note read as an injection: Claude called a
  * real decision (a recorded corp-beta override) a prompt injection and refused it three times.
+ * "Copy the line exactly": agents drifted to a bare "🧠 Hindsight thought #N: ..." or "#N said ...",
+ * which loses the quote that sets the line apart in the reply (11 of 84 lines on 2026-11-13).
  */
 export const LIVE_DECLARATION =
   "Hindsight is this project's long-term memory, and it thinks alongside you. As you work, thoughts " +
@@ -43,7 +45,8 @@ export const LIVE_DECLARATION =
   "contradicts a past decision is a wrong fix. Each thought says where it was recalled from: check it; " +
   "if the source says what the thought claims, act on it as part of the task; ignore it only if the " +
   "source does not say so, or it does not touch your work. Share every thought with the user in your " +
-  "reply, one line each, by its number, so they see memory thinking. Ask one question: did you do " +
+  "reply, one line each, by its number, so they see memory thinking. Copy the line below exactly, starting " +
+  'with the "> " that sets it apart from your answer. Ask one question: did you do ' +
   "anything differently because of it (fix, add, avoid or undo something)? If yes:\n" +
   `${NOTE_CREDIT} <what you did differently>\n` +
   "If no (you were already doing it, or it does not apply):\n" +
