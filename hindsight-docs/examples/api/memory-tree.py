@@ -68,7 +68,7 @@ async def main():
         for f in folder.files:
             path = os.path.join(out_dir, f.path)
             os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w") as fh:
+            with open(path, "w", encoding="utf-8") as fh:
                 fh.write(f.content)
         for sub in folder.folders:
             write(sub)

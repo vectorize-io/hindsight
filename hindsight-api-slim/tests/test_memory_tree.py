@@ -246,8 +246,8 @@ def test_a_topic_never_takes_a_reserved_name():
 
 
 def test_non_latin_names_keep_their_letters():
-    paths = {f.path for f in iter_files(build_memory_tree(_subjects(["北京", "東京", "서울", "Москва"])))}
-    assert {"北京.md", "東京.md", "서울.md", "москва.md"} <= paths, paths
+    paths = {f.path for f in iter_files(build_memory_tree(_subjects(["北京", "東京", "서울", "Москва", "हिन्दी"])))}
+    assert {"北京.md", "東京.md", "서울.md", "москва.md", "हिन्दी.md"} <= paths, paths
 
 
 def test_every_path_is_lowercase():
@@ -267,3 +267,14 @@ def test_every_path_is_lowercase():
     for obs in [*banks, weeks]:
         paths = [f.path for f in iter_files(build_memory_tree(obs))]
         assert all(p == p.lower() for p in paths), [p for p in paths if p != p.lower()]
+
+
+def test_a_bank_small_enough_for_one_file_names_its_topic():
+    """With one topic nothing sets it apart from the bank, but it still gets a real name."""
+    obs = [
+        TreeObservation(id=f"{e}-{i}", text=f"{e} fact {i}", proof_count=1, entities=[e])
+        for e in ["Kafka", "Nginx", "Postgres", "Redis"]
+        for i in range(2)
+    ]
+    topics = [f for f in iter_files(build_memory_tree(obs)) if f.kind == "topic"]
+    assert [(f.path, f.title) for f in topics] == [("kafka-nginx.md", "Kafka · Nginx")]

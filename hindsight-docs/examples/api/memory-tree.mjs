@@ -53,7 +53,7 @@ const write = (folder) => {
     for (const f of folder.files) {
         const path = join(outDir, f.path);
         mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, f.content);
+        writeFileSync(path, f.content, 'utf8');
     }
     folder.folders.forEach(write);
 };

@@ -12,9 +12,15 @@ OUT_DIR=$(mktemp -d)
 # Setup (not shown in docs)
 # =============================================================================
 hindsight bank create "$BANK_ID" --name "Memory Tree Demo"
-hindsight memory retain "$BANK_ID" "The API runs on Kubernetes behind an nginx ingress."
-hindsight memory retain "$BANK_ID" "Redis keys expire after an hour."
-hindsight memory retain "$BANK_ID" "The GPU nodes serve Gemma with vLLM."
+# Item-level tags (the CLI's retain has only the deprecated document tags), so the scoped
+# call below has something to show.
+for item in \
+  '{"content": "The API runs on Kubernetes behind an nginx ingress.", "tags": ["team:platform"]}' \
+  '{"content": "Redis keys expire after an hour.", "tags": ["team:platform"]}' \
+  '{"content": "The GPU nodes serve Gemma with vLLM.", "tags": ["team:ml"]}'; do
+  curl -s -X POST "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memories" \
+    -H "Content-Type: application/json" -d "{\"items\": [$item]}" > /dev/null
+done
 sleep 5
 
 # =============================================================================

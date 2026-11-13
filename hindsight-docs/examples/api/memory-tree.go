@@ -68,8 +68,11 @@ func main() {
 	walk(*tree)
 
 	// Only one scope: the same tag filters as recall.
-	platform, _, _ := client.MemoryAPI.GetMemoryTree(ctx, mtBankID).
+	platform, _, err := client.MemoryAPI.GetMemoryTree(ctx, mtBankID).
 		Tags([]string{"team:platform"}).TagsMatch("any_strict").Execute()
+	if err != nil {
+		panic(err)
+	}
 	walk(*platform)
 	// [/docs:get-tree]
 
@@ -79,8 +82,12 @@ func main() {
 	write = func(folder hindsight.MemoryTreeFolder) {
 		for _, f := range folder.GetFiles() {
 			path := filepath.Join(outDir, f.GetPath())
-			os.MkdirAll(filepath.Dir(path), 0o755)
-			os.WriteFile(path, []byte(f.GetContent()), 0o644)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				panic(err)
+			}
+			if err := os.WriteFile(path, []byte(f.GetContent()), 0o644); err != nil {
+				panic(err)
+			}
 		}
 		for _, sub := range folder.GetFolders() {
 			write(sub)

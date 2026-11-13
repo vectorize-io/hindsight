@@ -169,8 +169,11 @@ walk = func(folder hindsight.MemoryTreeFolder) {
 walk(*tree)
 
 // Only one scope: the same tag filters as recall.
-platform, _, _ := client.MemoryAPI.GetMemoryTree(ctx, mtBankID).
+platform, _, err := client.MemoryAPI.GetMemoryTree(ctx, mtBankID).
 	Tags([]string{"team:platform"}).TagsMatch("any_strict").Execute()
+if err != nil {
+	panic(err)
+}
 walk(*platform)
 ```
 
@@ -184,7 +187,7 @@ def write(folder):
     for f in folder.files:
         path = os.path.join(out_dir, f.path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as fh:
+        with open(path, "w", encoding="utf-8") as fh:
             fh.write(f.content)
     for sub in folder.folders:
         write(sub)
@@ -200,7 +203,7 @@ const write = (folder) => {
     for (const f of folder.files) {
         const path = join(outDir, f.path);
         mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, f.content);
+        writeFileSync(path, f.content, 'utf8');
     }
     folder.folders.forEach(write);
 };
@@ -228,8 +231,12 @@ var write func(folder hindsight.MemoryTreeFolder)
 write = func(folder hindsight.MemoryTreeFolder) {
 	for _, f := range folder.GetFiles() {
 		path := filepath.Join(outDir, f.GetPath())
-		os.MkdirAll(filepath.Dir(path), 0o755)
-		os.WriteFile(path, []byte(f.GetContent()), 0o644)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(path, []byte(f.GetContent()), 0o644); err != nil {
+			panic(err)
+		}
 	}
 	for _, sub := range folder.GetFolders() {
 		write(sub)

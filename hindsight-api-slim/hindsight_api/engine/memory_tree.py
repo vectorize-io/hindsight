@@ -17,6 +17,7 @@ import json
 import math
 import posixpath
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -117,9 +118,11 @@ def _useful(name: str) -> bool:
 
 
 def _slug(text: str) -> str:
-    """Lowercase letters and digits of any script, joined by dashes (北京 stays 北京: an
-    ASCII-only slug turned every non-Latin name into topic, topic-2, ...)."""
-    return re.sub(r"[\W_]+", "-", text.lower())[:40].strip("-") or "topic"
+    """Letters, digits and combining marks of any script, lowercased and joined by dashes
+    (北京 and हिन्दी stay whole: an ASCII-only slug turned every non-Latin name into topic,
+    topic-2, ..., and treating combining marks as separators split Devanagari apart)."""
+    kept = "".join(c if unicodedata.category(c)[0] in "LNM" else "-" for c in text.lower())
+    return re.sub(r"-+", "-", kept)[:40].strip("-") or "topic"
 
 
 @dataclass
@@ -316,6 +319,11 @@ def _name_children(
             if df[c] >= 2 and vocab[c] not in taken
         )
         child.top_entities = [name for score, name in reversed(scored) if score > 0][:5]
+        if not child.top_entities and not child.rest:
+            # Nothing sets it apart from its parent (a bank small enough for one topic file):
+            # name it after its most common entities rather than "topic".
+            common = sorted(((-df[c], vocab[c]) for c in df if df[c] >= 2 and vocab[c] not in taken))
+            child.top_entities = [name for _, name in common[:5]]
         if child.rest:
             slug = MISC_NAME
         else:
