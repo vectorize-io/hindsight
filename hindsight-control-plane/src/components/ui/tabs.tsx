@@ -14,7 +14,9 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-10 max-w-full items-center justify-center-safe overflow-x-auto rounded-md bg-muted p-1 text-muted-foreground",
+      // shrink-0: in a flex column (a dialog with a long, scrolling body) the list would
+      // otherwise shrink — overflow-x-auto drops its min-height to 0 — and clip its labels.
+      "inline-flex h-10 shrink-0 max-w-full items-center justify-center-safe overflow-x-auto rounded-md bg-muted p-1 text-muted-foreground",
       className
     )}
     {...props}
