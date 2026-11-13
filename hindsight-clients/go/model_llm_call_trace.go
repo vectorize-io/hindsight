@@ -25,6 +25,8 @@ type LLMCallTrace struct {
 	Scope string `json:"scope"`
 	// Execution time in milliseconds
 	DurationMs int32 `json:"duration_ms"`
+	// When the call started, in Unix epoch milliseconds
+	StartedAtMs *int64 `json:"started_at_ms,omitempty"`
 }
 
 type _LLMCallTrace LLMCallTrace
@@ -37,6 +39,8 @@ func NewLLMCallTrace(scope string, durationMs int32) *LLMCallTrace {
 	this := LLMCallTrace{}
 	this.Scope = scope
 	this.DurationMs = durationMs
+	var startedAtMs int64 = 0
+	this.StartedAtMs = &startedAtMs
 	return &this
 }
 
@@ -45,6 +49,8 @@ func NewLLMCallTrace(scope string, durationMs int32) *LLMCallTrace {
 // but it doesn't guarantee that properties required by API are set
 func NewLLMCallTraceWithDefaults() *LLMCallTrace {
 	this := LLMCallTrace{}
+	var startedAtMs int64 = 0
+	this.StartedAtMs = &startedAtMs
 	return &this
 }
 
@@ -96,6 +102,38 @@ func (o *LLMCallTrace) SetDurationMs(v int32) {
 	o.DurationMs = v
 }
 
+// GetStartedAtMs returns the StartedAtMs field value if set, zero value otherwise.
+func (o *LLMCallTrace) GetStartedAtMs() int64 {
+	if o == nil || IsNil(o.StartedAtMs) {
+		var ret int64
+		return ret
+	}
+	return *o.StartedAtMs
+}
+
+// GetStartedAtMsOk returns a tuple with the StartedAtMs field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *LLMCallTrace) GetStartedAtMsOk() (*int64, bool) {
+	if o == nil || IsNil(o.StartedAtMs) {
+		return nil, false
+	}
+	return o.StartedAtMs, true
+}
+
+// HasStartedAtMs returns a boolean if a field has been set.
+func (o *LLMCallTrace) HasStartedAtMs() bool {
+	if o != nil && !IsNil(o.StartedAtMs) {
+		return true
+	}
+
+	return false
+}
+
+// SetStartedAtMs gets a reference to the given int64 and assigns it to the StartedAtMs field.
+func (o *LLMCallTrace) SetStartedAtMs(v int64) {
+	o.StartedAtMs = &v
+}
+
 func (o LLMCallTrace) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -108,6 +146,9 @@ func (o LLMCallTrace) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["scope"] = o.Scope
 	toSerialize["duration_ms"] = o.DurationMs
+	if !IsNil(o.StartedAtMs) {
+		toSerialize["started_at_ms"] = o.StartedAtMs
+	}
 	return toSerialize, nil
 }
 

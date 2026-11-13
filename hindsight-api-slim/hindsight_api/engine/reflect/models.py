@@ -58,6 +58,12 @@ class ToolCall(BaseModel):
     output: dict = Field(description="Tool output/result")
     duration_ms: int = Field(description="Execution time in milliseconds")
     iteration: int = Field(default=0, description="Iteration number (1-based) when this tool was called")
+    # Epoch milliseconds overflow int32: without format int64 the Go client decodes into int32 and fails.
+    started_at_ms: int = Field(
+        default=0,
+        description="When the call started, in Unix epoch milliseconds",
+        json_schema_extra={"format": "int64"},
+    )
 
 
 class LLMCall(BaseModel):
@@ -67,6 +73,12 @@ class LLMCall(BaseModel):
     duration_ms: int = Field(description="Execution time in milliseconds")
     input_tokens: int = Field(default=0, description="Input tokens used")
     output_tokens: int = Field(default=0, description="Output tokens used")
+    # Epoch milliseconds overflow int32: without format int64 the Go client decodes into int32 and fails.
+    started_at_ms: int = Field(
+        default=0,
+        description="When the call started, in Unix epoch milliseconds",
+        json_schema_extra={"format": "int64"},
+    )
 
 
 class DirectiveInfo(BaseModel):

@@ -9771,6 +9771,12 @@ components:
           description: Execution time in milliseconds
           title: Duration Ms
           type: integer
+        started_at_ms:
+          default: 0
+          description: "When the call started, in Unix epoch milliseconds"
+          format: int64
+          title: Started At Ms
+          type: integer
       required:
       - duration_ms
       - scope
@@ -11570,6 +11576,12 @@ components:
           default: 0
           description: Agent loop iteration (1-based) this call belongs to.
           title: Iteration
+          type: integer
+        started_at_ms:
+          default: 0
+          description: "When the call started, in Unix epoch milliseconds."
+          format: int64
+          title: Started At Ms
           type: integer
       required:
       - duration_ms
@@ -13469,6 +13481,12 @@ components:
           description: Execution time in milliseconds
           title: Duration Ms
           type: integer
+        started_at_ms:
+          default: 0
+          description: "When the call started, in Unix epoch milliseconds"
+          format: int64
+          title: Started At Ms
+          type: integer
       required:
       - duration_ms
       - scope
@@ -13684,6 +13702,12 @@ components:
           default: 0
           description: Iteration number (1-based) when this tool was called
           title: Iteration
+          type: integer
+        started_at_ms:
+          default: 0
+          description: "When the call started, in Unix epoch milliseconds"
+          format: int64
+          title: Started At Ms
           type: integer
       required:
       - duration_ms

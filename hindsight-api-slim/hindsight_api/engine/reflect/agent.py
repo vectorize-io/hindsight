@@ -708,6 +708,11 @@ async def _run_reflect_agent_inner(
     llm_trace: list[dict[str, Any]] = []
     context_history: list[dict[str, Any]] = []  # For final prompt fallback
 
+    def _record_llm(entry: dict[str, Any]) -> None:
+        # Recorded as the call ends, so its start is now minus its duration.
+        entry["started_at_ms"] = _now_ms() - entry["duration_ms"]
+        llm_trace.append(entry)
+
     # Token usage tracking - accumulate across all LLM calls.
     # cached_tokens and thoughts_tokens are surfaced for cost attribution
     # and prompt-cache tuning. Both are subsets of (or parallel to) the
@@ -727,6 +732,7 @@ async def _run_reflect_agent_inner(
             LLMCall(
                 scope=c["scope"],
                 duration_ms=c["duration_ms"],
+                started_at_ms=c["started_at_ms"],
                 input_tokens=c.get("input_tokens", 0),
                 output_tokens=c.get("output_tokens", 0),
             )
@@ -813,7 +819,7 @@ async def _run_reflect_agent_inner(
         total_output_tokens += usage.output_tokens
         total_cached_tokens += getattr(usage, "cached_tokens", 0) or 0
         total_thoughts_tokens += getattr(usage, "thoughts_tokens", 0) or 0
-        llm_trace.append(
+        _record_llm(
             {
                 "scope": trace_scope,
                 "duration_ms": llm_duration,
@@ -911,7 +917,7 @@ async def _run_reflect_agent_inner(
         total_output_tokens += result.output_tokens
         total_cached_tokens += getattr(result, "cached_tokens", 0) or 0
         total_thoughts_tokens += getattr(result, "thoughts_tokens", 0) or 0
-        llm_trace.append(
+        _record_llm(
             {
                 # Its own scope, not the "final" the standalone synthesis records:
                 # they are different calls with different costs — this one rides the
@@ -1062,7 +1068,7 @@ async def _run_reflect_agent_inner(
             total_output_tokens += rewrite.output_tokens
             total_cached_tokens += rewrite.cached_tokens
             total_thoughts_tokens += rewrite.thoughts_tokens
-            llm_trace.append(
+            _record_llm(
                 {
                     "scope": "final_rewrite",
                     "duration_ms": rewrite.duration_ms,
@@ -1124,7 +1130,7 @@ async def _run_reflect_agent_inner(
             )
             return False
         finally:
-            llm_trace.append({"scope": trace_scope, "duration_ms": int((time.perf_counter() - decision_start) * 1000)})
+            _record_llm({"scope": trace_scope, "duration_ms": int((time.perf_counter() - decision_start) * 1000)})
 
     async def _timed_prune(tool_results: list[Any]) -> list[Any]:
         """A parallel round's retrieval, pruned by the decision model when there is one."""
@@ -1136,7 +1142,7 @@ async def _run_reflect_agent_inner(
         # kept the later commit that undid a decision as readily as the decision (sde-bench
         # dedupe-history), so the answer reported the decision as superseded.
         pruned = await _prune_round(query, tool_results, prune_evidence_fn, reflect_id)
-        llm_trace.append({"scope": "decision_prune", "duration_ms": int((time.perf_counter() - prune_start) * 1000)})
+        _record_llm({"scope": "decision_prune", "duration_ms": int((time.perf_counter() - prune_start) * 1000)})
         return pruned
 
     # Whether the pages alone answered the first parallel round, and whether the batch that
@@ -1377,7 +1383,7 @@ async def _run_reflect_agent_inner(
                 total_output_tokens += result.output_tokens
                 total_cached_tokens += getattr(result, "cached_tokens", 0) or 0
                 total_thoughts_tokens += getattr(result, "thoughts_tokens", 0) or 0
-                llm_trace.append(
+                _record_llm(
                     {
                         "scope": f"agent_{iteration + 1}",
                         "duration_ms": llm_duration,
@@ -1400,7 +1406,7 @@ async def _run_reflect_agent_inner(
                     f"[REFLECT {reflect_id}] LLM error on iteration {iteration + 1}: {describe_llm_error(e)} "
                     f"({err_duration}ms, {queued_ms}ms queued)"
                 )
-                llm_trace.append(
+                _record_llm(
                     {"scope": f"agent_{iteration + 1}_err", "duration_ms": err_duration, "queued_ms": queued_ms}
                 )
                 # Context overflow errors must never be retried — retrying would only make them worse.
@@ -1681,6 +1687,8 @@ async def _run_reflect_agent_inner(
             # the answer read the evidence in fused order. On the sde-bench commit-history tasks
             # that put a later "simplify" commit last, and the answer narrated it as replacing the
             # decision before it: 10/30 correct, against 19/30 reranked (agent mode: 21/30).
+            # The batch runs in parallel, so every tool in it starts now.
+            tools_started_at_ms = _now_ms()
             tool_results = await asyncio.gather(*tool_tasks, return_exceptions=True)
             total_tools_called += len(other_tools)
 
@@ -1828,6 +1836,7 @@ async def _run_reflect_agent_inner(
                         input=input_dict,
                         output=output,
                         duration_ms=duration_ms,
+                        started_at_ms=tools_started_at_ms,
                         iteration=iteration + 1,
                     )
                 )
@@ -2400,6 +2409,7 @@ async def _process_done_tool(
             LLMCall(
                 scope="final_rewrite",
                 duration_ms=rewrite.duration_ms,
+                started_at_ms=_now_ms() - rewrite.duration_ms,
                 input_tokens=rewrite.input_tokens,
                 output_tokens=rewrite.output_tokens,
             )
@@ -2447,6 +2457,11 @@ async def _process_done_tool(
         used_observation_ids=used_observation_ids,
         directives_applied=directives_applied,
     )
+
+
+def _now_ms() -> int:
+    """Wall-clock milliseconds, so trace entries from every step sort into one timeline."""
+    return int(time.time() * 1000)  # noqa: TID251 - a timestamp, not a duration
 
 
 async def _execute_tool_with_timing(

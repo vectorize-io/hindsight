@@ -269,6 +269,12 @@ class MentalModelTraceToolCall(BaseModel):
     result_count: int | None = Field(default=None, description="Number of items the tool returned, when countable.")
     duration_ms: int = Field(description="Execution time in milliseconds.")
     iteration: int = Field(default=0, description="Agent loop iteration (1-based) this call belongs to.")
+    # Epoch milliseconds overflow int32: without format int64 the Go client decodes into int32 and fails.
+    started_at_ms: int = Field(
+        default=0,
+        description="When the call started, in Unix epoch milliseconds.",
+        json_schema_extra={"format": "int64"},
+    )
 
 
 class MentalModelRefreshTrace(BaseModel):

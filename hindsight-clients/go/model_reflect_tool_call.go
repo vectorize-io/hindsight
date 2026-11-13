@@ -30,6 +30,8 @@ type ReflectToolCall struct {
 	DurationMs int32 `json:"duration_ms"`
 	// Iteration number (1-based) when this tool was called
 	Iteration *int32 `json:"iteration,omitempty"`
+	// When the call started, in Unix epoch milliseconds
+	StartedAtMs *int64 `json:"started_at_ms,omitempty"`
 }
 
 type _ReflectToolCall ReflectToolCall
@@ -45,6 +47,8 @@ func NewReflectToolCall(tool string, input map[string]interface{}, durationMs in
 	this.DurationMs = durationMs
 	var iteration int32 = 0
 	this.Iteration = &iteration
+	var startedAtMs int64 = 0
+	this.StartedAtMs = &startedAtMs
 	return &this
 }
 
@@ -55,6 +59,8 @@ func NewReflectToolCallWithDefaults() *ReflectToolCall {
 	this := ReflectToolCall{}
 	var iteration int32 = 0
 	this.Iteration = &iteration
+	var startedAtMs int64 = 0
+	this.StartedAtMs = &startedAtMs
 	return &this
 }
 
@@ -195,6 +201,38 @@ func (o *ReflectToolCall) SetIteration(v int32) {
 	o.Iteration = &v
 }
 
+// GetStartedAtMs returns the StartedAtMs field value if set, zero value otherwise.
+func (o *ReflectToolCall) GetStartedAtMs() int64 {
+	if o == nil || IsNil(o.StartedAtMs) {
+		var ret int64
+		return ret
+	}
+	return *o.StartedAtMs
+}
+
+// GetStartedAtMsOk returns a tuple with the StartedAtMs field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ReflectToolCall) GetStartedAtMsOk() (*int64, bool) {
+	if o == nil || IsNil(o.StartedAtMs) {
+		return nil, false
+	}
+	return o.StartedAtMs, true
+}
+
+// HasStartedAtMs returns a boolean if a field has been set.
+func (o *ReflectToolCall) HasStartedAtMs() bool {
+	if o != nil && !IsNil(o.StartedAtMs) {
+		return true
+	}
+
+	return false
+}
+
+// SetStartedAtMs gets a reference to the given int64 and assigns it to the StartedAtMs field.
+func (o *ReflectToolCall) SetStartedAtMs(v int64) {
+	o.StartedAtMs = &v
+}
+
 func (o ReflectToolCall) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -213,6 +251,9 @@ func (o ReflectToolCall) ToMap() (map[string]interface{}, error) {
 	toSerialize["duration_ms"] = o.DurationMs
 	if !IsNil(o.Iteration) {
 		toSerialize["iteration"] = o.Iteration
+	}
+	if !IsNil(o.StartedAtMs) {
+		toSerialize["started_at_ms"] = o.StartedAtMs
 	}
 	return toSerialize, nil
 }

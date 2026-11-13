@@ -35,7 +35,8 @@ class MentalModelTraceToolCall(BaseModel):
     result_count: Optional[StrictInt] = None
     duration_ms: StrictInt = Field(description="Execution time in milliseconds.")
     iteration: Optional[StrictInt] = Field(default=0, description="Agent loop iteration (1-based) this call belongs to.")
-    __properties: ClassVar[List[str]] = ["tool", "reason", "input", "output", "updated_at", "result_count", "duration_ms", "iteration"]
+    started_at_ms: Optional[StrictInt] = Field(default=0, description="When the call started, in Unix epoch milliseconds.")
+    __properties: ClassVar[List[str]] = ["tool", "reason", "input", "output", "updated_at", "result_count", "duration_ms", "iteration", "started_at_ms"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -115,7 +116,8 @@ class MentalModelTraceToolCall(BaseModel):
             "updated_at": obj.get("updated_at"),
             "result_count": obj.get("result_count"),
             "duration_ms": obj.get("duration_ms"),
-            "iteration": obj.get("iteration") if obj.get("iteration") is not None else 0
+            "iteration": obj.get("iteration") if obj.get("iteration") is not None else 0,
+            "started_at_ms": obj.get("started_at_ms") if obj.get("started_at_ms") is not None else 0
         })
         return _obj
 

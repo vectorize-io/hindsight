@@ -34,6 +34,8 @@ type MentalModelTraceToolCall struct {
 	DurationMs int32 `json:"duration_ms"`
 	// Agent loop iteration (1-based) this call belongs to.
 	Iteration *int32 `json:"iteration,omitempty"`
+	// When the call started, in Unix epoch milliseconds.
+	StartedAtMs *int64 `json:"started_at_ms,omitempty"`
 }
 
 type _MentalModelTraceToolCall MentalModelTraceToolCall
@@ -48,6 +50,8 @@ func NewMentalModelTraceToolCall(tool string, durationMs int32) *MentalModelTrac
 	this.DurationMs = durationMs
 	var iteration int32 = 0
 	this.Iteration = &iteration
+	var startedAtMs int64 = 0
+	this.StartedAtMs = &startedAtMs
 	return &this
 }
 
@@ -58,6 +62,8 @@ func NewMentalModelTraceToolCallWithDefaults() *MentalModelTraceToolCall {
 	this := MentalModelTraceToolCall{}
 	var iteration int32 = 0
 	this.Iteration = &iteration
+	var startedAtMs int64 = 0
+	this.StartedAtMs = &startedAtMs
 	return &this
 }
 
@@ -332,6 +338,38 @@ func (o *MentalModelTraceToolCall) SetIteration(v int32) {
 	o.Iteration = &v
 }
 
+// GetStartedAtMs returns the StartedAtMs field value if set, zero value otherwise.
+func (o *MentalModelTraceToolCall) GetStartedAtMs() int64 {
+	if o == nil || IsNil(o.StartedAtMs) {
+		var ret int64
+		return ret
+	}
+	return *o.StartedAtMs
+}
+
+// GetStartedAtMsOk returns a tuple with the StartedAtMs field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *MentalModelTraceToolCall) GetStartedAtMsOk() (*int64, bool) {
+	if o == nil || IsNil(o.StartedAtMs) {
+		return nil, false
+	}
+	return o.StartedAtMs, true
+}
+
+// HasStartedAtMs returns a boolean if a field has been set.
+func (o *MentalModelTraceToolCall) HasStartedAtMs() bool {
+	if o != nil && !IsNil(o.StartedAtMs) {
+		return true
+	}
+
+	return false
+}
+
+// SetStartedAtMs gets a reference to the given int64 and assigns it to the StartedAtMs field.
+func (o *MentalModelTraceToolCall) SetStartedAtMs(v int64) {
+	o.StartedAtMs = &v
+}
+
 func (o MentalModelTraceToolCall) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -361,6 +399,9 @@ func (o MentalModelTraceToolCall) ToMap() (map[string]interface{}, error) {
 	toSerialize["duration_ms"] = o.DurationMs
 	if !IsNil(o.Iteration) {
 		toSerialize["iteration"] = o.Iteration
+	}
+	if !IsNil(o.StartedAtMs) {
+		toSerialize["started_at_ms"] = o.StartedAtMs
 	}
 	return toSerialize, nil
 }

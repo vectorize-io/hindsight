@@ -2402,6 +2402,7 @@ def _summarize_refresh_tool_calls(
                 result_count=result_count,
                 duration_ms=tc.duration_ms,
                 iteration=tc.iteration,
+                started_at_ms=tc.started_at_ms,
             )
         )
     return summaries
@@ -16605,6 +16606,7 @@ class MemoryEngine(MemoryEngineInterface):
                     input=tc.input,
                     output=tc.output,
                     duration_ms=tc.duration_ms,
+                    started_at_ms=tc.started_at_ms,
                     iteration=tc.iteration,
                 )
                 for tc in agent_result.tool_trace
@@ -16612,7 +16614,8 @@ class MemoryEngine(MemoryEngineInterface):
 
             # Convert agent LLM trace to LLMCallTrace objects
             llm_trace_result = [
-                LLMCallTrace(scope=lc.scope, duration_ms=lc.duration_ms) for lc in agent_result.llm_trace
+                LLMCallTrace(scope=lc.scope, duration_ms=lc.duration_ms, started_at_ms=lc.started_at_ms)
+                for lc in agent_result.llm_trace
             ]
 
             # Extract memories and observations from tool outputs - only include those the agent actually used

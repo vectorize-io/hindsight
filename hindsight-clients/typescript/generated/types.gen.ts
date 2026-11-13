@@ -3124,6 +3124,12 @@ export type LlmCallTrace = {
    * Execution time in milliseconds
    */
   duration_ms: number;
+  /**
+   * Started At Ms
+   *
+   * When the call started, in Unix epoch milliseconds
+   */
+  started_at_ms?: number;
 };
 
 /**
@@ -4766,6 +4772,12 @@ export type MentalModelTraceToolCall = {
    * Agent loop iteration (1-based) this call belongs to.
    */
   iteration?: number;
+  /**
+   * Started At Ms
+   *
+   * When the call started, in Unix epoch milliseconds.
+   */
+  started_at_ms?: number;
 };
 
 /**
@@ -6328,6 +6340,12 @@ export type ReflectLlmCall = {
    * Execution time in milliseconds
    */
   duration_ms: number;
+  /**
+   * Started At Ms
+   *
+   * When the call started, in Unix epoch milliseconds
+   */
+  started_at_ms?: number;
 };
 
 /**
@@ -6535,6 +6553,12 @@ export type ReflectToolCall = {
    * Iteration number (1-based) when this tool was called
    */
   iteration?: number;
+  /**
+   * Started At Ms
+   *
+   * When the call started, in Unix epoch milliseconds
+   */
+  started_at_ms?: number;
 };
 
 /**
