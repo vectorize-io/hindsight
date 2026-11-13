@@ -701,6 +701,7 @@ if TYPE_CHECKING:
     from hindsight_api.config_resolver import ValidatedBankConfigUpdate
     from hindsight_api.models import RequestContext
 
+    from ..knowledge.service import KnowledgeService
     from ..webhooks.url_guard import GuardedWebhookClient
     from . import bank_aliases as bank_aliases_mod
     from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse, AuditLogSummary
@@ -3069,6 +3070,8 @@ class MemoryEngine(MemoryEngineInterface):
         memory_llm_base_url = memory_llm_base_url or config.get_llm_base_url() or None
         # Track pg0 instance (if used)
         self._pg0: EmbeddedPostgres | None = None
+        # The knowledge-bank service, created on first use (knowledge/service.py get_knowledge_service).
+        self._knowledge_service: KnowledgeService | None = None
 
         # Initialize PostgreSQL connection URL
         # The actual URL will be set during initialize() after starting the server

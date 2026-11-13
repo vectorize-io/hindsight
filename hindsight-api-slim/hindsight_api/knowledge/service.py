@@ -19,7 +19,6 @@ import re
 import threading
 import time
 import uuid
-import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -1791,19 +1790,21 @@ def _next_draft(drafts: Iterator[media.PassageDraft]) -> media.PassageDraft | No
     return next(drafts, None)
 
 
-_services: weakref.WeakKeyDictionary[MemoryEngine, KnowledgeService] = weakref.WeakKeyDictionary()
-
-
-# A threading lock, not an asyncio one: the map is process-wide and the critical section never awaits.
+# A threading lock, not an asyncio one: engines are reached from more than one thread and the critical
+# section never awaits.
 _services_lock = threading.Lock()
 
 
 def get_knowledge_service(engine: MemoryEngine) -> KnowledgeService:
-    """One service per engine (one embedder, loaded once), created on first use."""
+    """One service per engine (one embedder, loaded once), created on first use and kept on the engine,
+    so it lives exactly as long as the engine does. It used to sit in a process-wide WeakKeyDictionary
+    keyed by the engine, but the service holds its engine, and a value that holds its own key keeps the
+    entry (and the engine, with its pools and caches) alive for ever: every engine a test created leaked,
+    until an api-slim CI shard ran out of memory and its runner was killed."""
     with _services_lock:
-        service = _services.get(engine)
+        service = engine._knowledge_service
         if service is None:
-            service = _services[engine] = KnowledgeService(engine)
+            service = engine._knowledge_service = KnowledgeService(engine)
         return service
 
 

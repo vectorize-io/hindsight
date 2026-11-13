@@ -1586,3 +1586,21 @@ async def test_a_batch_that_fails_for_good_fails_its_documents_not_leaves_them_p
     # The engine does not retry a ValueError, so a pending document would wait for ever.
     doc = (await api_client.get(f"{KB}/{kb}/documents/v")).json()
     assert doc["status"] == "failed" and "768 dimensions" in (doc["error"] or ""), doc
+
+
+def test_an_engine_with_a_knowledge_service_can_still_be_freed():
+    """The service is kept on its engine, not in a process-wide map: a weak map whose value (the service)
+    held its own key (the engine) kept every engine a test made alive until the CI runner ran out of memory."""
+    import gc
+    import weakref
+
+    class _Engine:
+        _knowledge_service = None
+
+    engine = _Engine()
+    service = get_knowledge_service(engine)  # type: ignore[arg-type]
+    assert get_knowledge_service(engine) is service  # type: ignore[arg-type]  # one per engine
+    gone = weakref.ref(engine)
+    del engine, service
+    gc.collect()
+    assert gone() is None
