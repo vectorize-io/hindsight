@@ -32,8 +32,8 @@ def engine():
     )
     eng._authenticate_tenant = AsyncMock()  # type: ignore[method-assign]
     eng.ensure_bank_profile = AsyncMock(return_value={"name": "Test", "mission": ""})  # type: ignore[method-assign]
-    eng._bank_freshness = AsyncMock(  # type: ignore[method-assign]
-        return_value={"last_consolidated_at": None, "pending_consolidation": 0, "last_memory_write_at": None}
+    eng._reflect_freshness = AsyncMock(  # type: ignore[method-assign]
+        return_value={"pending": 0, "last_memory_write_at": None}
     )
     eng.list_directives = AsyncMock(return_value=DirectivePage(items=[], total=0))  # type: ignore[method-assign]
     eng._get_backend = AsyncMock(return_value=SimpleNamespace())  # type: ignore[method-assign]

@@ -16279,20 +16279,18 @@ class MemoryEngine(MemoryEngineInterface):
         # (not held during LLM calls which can be slow)
         backend = await self._get_backend()
 
-        # Pull only the consolidation freshness — get_bank_stats also computes
-        # link aggregations that reflect() does not use and which can take many
-        # seconds on large banks.
-        # Internal read: reflect is already authorized (validate_reflect + the caller's
-        # scope); the public get_bank_freshness is a bank-wide read scoped callers can't make.
-        freshness = await self._bank_freshness(bank_id)
+        # The store's reflect read, not the exact freshness: reflect waits on it before it
+        # starts, and needs only a hint and a write time that is never too early (see
+        # MemoriesStore.reflect_freshness). Internal read: reflect is already authorized
+        # (validate_reflect + the caller's scope); the public get_bank_freshness is a
+        # bank-wide read scoped callers can't make.
+        freshness = await self._reflect_freshness(bank_id)
         _mark("freshness")
-        last_consolidated_at = freshness.get("last_consolidated_at")
-        pending_consolidation = freshness.get("pending_consolidation", 0)
+        pending_consolidation = freshness["pending"]
         # Resolved once for the whole reflect: a mental model refreshed at or
         # after this needs no scoped staleness query at all (see
         # tool_search_mental_models).
-        raw_watermark = freshness.get("last_memory_write_at")
-        last_memory_write_at = datetime.fromisoformat(raw_watermark) if raw_watermark else None
+        last_memory_write_at = freshness["last_memory_write_at"]
 
         # Create tool callbacks that acquire connections only when needed
         from .retain import embedding_utils
@@ -16416,7 +16414,6 @@ class MemoryEngine(MemoryEngineInterface):
                 tags=tags,
                 tags_match=tags_match,
                 tag_groups=tag_groups,
-                last_consolidated_at=last_consolidated_at,
                 pending_consolidation=pending_consolidation,
                 source_facts_max_tokens=reflect_source_facts_max_tokens,
                 include_entities=effective_observations_include_entities,
@@ -17246,12 +17243,11 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
     ) -> dict[str, Any]:
-        """Cheap subset of bank stats consumed by reflect().
+        """Cheap subset of bank stats: the freshness fields, exact.
 
-        Returns only the freshness fields: when the bank was last consolidated,
-        when a memory was last written, and how many units are pending or
-        failed. reflect() calls this on every invocation, so it must not pay for
-        any cross-table joins or link aggregations.
+        Returns when the bank was last consolidated, when a memory was last
+        written, and how many units are pending or failed — without the
+        cross-table joins or link aggregations get_bank_stats pays for.
         """
         await self._authenticate_tenant(request_context)
         if self._operation_validator:
@@ -17261,22 +17257,6 @@ class MemoryEngine(MemoryEngineInterface):
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
         await self._refuse_bank_wide_if_scoped(bank_id, request_context, "read the bank's statistics")
-        return await self._bank_freshness(bank_id)
-
-    async def _bank_freshness(self, bank_id: str) -> dict[str, Any]:
-        """``get_bank_freshness`` without the authorization, for callers that already
-        authorized the request themselves.
-
-        reflect() is one: it reads freshness only to decide how stale its own sources are,
-        under its own ``validate_reflect`` and the caller's tag scope. Routing it through
-        the public method made a scoped caller's reflect hit the bank-wide statistics
-        check and be refused, though reflect itself is narrowed to the scope.
-        """
-        # The current reflect() caller reads last_consolidated_at,
-        # pending_consolidation and last_memory_write_at, but `failed` is part of
-        # this method's published contract (see interface.get_bank_freshness) so
-        # the returned shape stays a strict subset of get_bank_stats. All four
-        # come from one scan, so keeping `failed` costs nothing extra.
         from .memories import get_memories
 
         async with self._store_read_conn(bank_id) as conn:
@@ -17290,6 +17270,15 @@ class MemoryEngine(MemoryEngineInterface):
             "pending_consolidation": fresh["pending"],
             "failed_consolidation": fresh["failed"],
         }
+
+    async def _reflect_freshness(self, bank_id: str) -> dict[str, Any]:
+        """The store's ``reflect_freshness``, for reflect() — which reads it under its own
+        authorization (validate_reflect and the caller's tag scope), so it skips the bank-wide
+        statistics check the public :meth:`get_bank_freshness` makes and a scoped caller fails."""
+        from .memories import get_memories
+
+        async with self._store_read_conn(bank_id) as conn:
+            return await get_memories().reflect_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
 
     async def _probe_llm(self, llm: Any) -> _LlmProbeOutcome:
         """Probe one LLM client (status only). The detailed provider error is logged
