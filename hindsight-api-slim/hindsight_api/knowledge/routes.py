@@ -335,9 +335,13 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=exc.status_code, detail=exc.reason)
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
-    if isinstance(exc, aiohttp.ClientError | UpstreamHTTPError | TimeoutError):
+    if isinstance(exc, aiohttp.ClientError | UpstreamHTTPError):
         # The embedder is a remote server here: its outage is ours to report, not a crash.
         return HTTPException(status_code=503, detail=f"knowledge embedder unavailable: {exc}")
+    if isinstance(exc, TimeoutError):
+        # The embedder's or the database's: a statement past the command timeout raises it too, and
+        # calling every timeout an embedder outage sent a failed bank delete looking at the wrong thing.
+        return HTTPException(status_code=503, detail="timed out waiting for the embedder or the database")
     raise exc
 
 

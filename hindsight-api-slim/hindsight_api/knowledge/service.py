@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import json
 import logging
 import re
@@ -43,7 +44,6 @@ from ..extensions.operation_validator import (
     KnowledgeBankReadOperation,
     KnowledgeBankWriteContext,
     KnowledgeBankWriteOperation,
-    OperationValidationError,
 )
 from ..tracing import inject_task_trace_context
 from . import bank_config, ingest_strategy, media
@@ -110,9 +110,9 @@ _FILE_PASSAGE_VECTORS_ESTIMATE = 24
 _CHILD_DOCUMENTS = 100
 
 
-#: Passages reflect's recall tool reads from a memory bank's linked knowledge banks. Fixed: a per-bank
-#: setting was dropped before launch (nothing tuned it).
-LINKED_RECALL_TOP_K = 5
+#: Documents a bank delete removes per transaction, with their passages and vectors (about 7 and 30
+#: each on a web corpus), so no single statement nears the command timeout.
+DELETE_BATCH_DOCUMENTS = 500
 
 
 class KnowledgeBankError(Exception):
@@ -436,12 +436,6 @@ class _Waiting:
 _SaveFile = Callable[[_InFlight, str, media.PassageDraft], Awaitable[None]]
 
 
-@dataclass
-class LinkedHit:
-    bank_id: str
-    hit: SearchHit
-
-
 # The splitter a media type's typical file goes through (a PDF for "document").
 _SPLIT_OF: dict[str, media.Kind] = {
     "document": "pdf",
@@ -527,8 +521,16 @@ class KnowledgeService:
         bank_id: str,
         operation: KnowledgeBankReadOperation | KnowledgeBankWriteOperation,
         request_context: RequestContext,
+        *,
+        needs_vectors: bool = True,
     ) -> None:
-        await self._ready(request_context)
+        # ``needs_vectors=False`` for an operation that never reads or writes a vector (a delete): the
+        # store's first-use setup asks the embedder for its size, and an unreachable embedder must not
+        # be what stops a bank from being deleted.
+        if needs_vectors:
+            await self._ready(request_context)
+        else:
+            await self._engine._authenticate_tenant(request_context)
         await self._authorize(bank_id, operation, request_context)
         await self._require_bank(bank_id)
 
@@ -640,8 +642,26 @@ class KnowledgeService:
         return KnowledgeBankInfo(row["bank_id"], row["created_at"], stats[bank_id])
 
     async def delete_bank(self, bank_id: str, request_context: RequestContext) -> None:
-        await self._open_bank(bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK, request_context)
-        # The banks row cascades to kb_documents -> kb_passages, and to its async operations.
+        await self._open_bank(
+            bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK, request_context, needs_vectors=False
+        )
+        # The bank's queued and running ingests are cancelled first, so no new writes start, then its
+        # documents go a batch per transaction: the banks row cascades to kb_documents -> kb_passages
+        # -> vectors, and on a 100k-document bank that one cascading statement ran past the command
+        # timeout (BrowseComp-Plus, ~680k passages), while ingests kept writing to the same rows.
+        async with acquire_with_retry(await self._engine._get_backend()) as conn:
+            await conn.execute(
+                f"UPDATE {fq_table('async_operations')} SET status = 'cancelled', updated_at = now() "
+                "WHERE bank_id = $1 AND status IN ('pending', 'processing')",
+                bank_id,
+            )
+        while True:
+            if await self.store.delete_some_documents(bank_id, DELETE_BATCH_DOCUMENTS):
+                continue
+            if not (await self.store.list_documents(bank_id, limit=1, offset=0)).documents:
+                break
+            # Only documents an ingest is still writing are left; it stops after its current batch.
+            await asyncio.sleep(1)
         await self._engine.delete_bank(bank_id, request_context=request_context, _knowledge_bank=True)
         await self._engine._file_storage.delete_prefix(f"{bank_storage_prefix(bank_id)}kb/")
 
@@ -1805,67 +1825,51 @@ class KnowledgeService:
             )
         return items
 
-    async def search_linked(
-        self, bank_ids: list[str], query: str, top_k: int, request_context: RequestContext
-    ) -> list[LinkedHit]:
-        """Search the knowledge banks a memory bank links, best passages first across all of them."""
-        await self._ready(request_context)
-        hits: list[LinkedHit] = []
-        vector: list[float] | None = None
-        for bank_id in bank_ids:
-            try:
-                await self._authorize(bank_id, KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK, request_context)
-            except OperationValidationError as exc:
-                # The memory bank links it, but this caller may not read it: the reflect goes on without it.
-                logger.info(f"Linked knowledge bank '{bank_id}' refused for this caller ({exc.reason}); skipped")
-                continue
-            if await self._kind_of(bank_id) != KIND:
-                logger.warning(f"Linked knowledge bank '{bank_id}' does not exist; skipped")
-                continue
-            if vector is None:
-                vector = await self.embedder.embed_query(query)
-            for hit in await self.store.search(
-                bank_id,
-                vector,
-                top_k=top_k,
-                filters=SearchFilters(),
-                # no keyword arm: fused scores are rescaled per bank and could not be ranked across banks
-                text_weight=get_config().knowledge_pdf_text_weight,
-            ):
-                hits.append(LinkedHit(bank_id=bank_id, hit=hit))
-        hits.sort(key=lambda linked: linked.hit.score, reverse=True)
-        return hits[:top_k]
-
 
 async def documents_for_memory_bank(
-    engine: MemoryEngine, bank_id: str, query: str, request_context: RequestContext
+    engine: MemoryEngine, bank_id: str, linked: list[str], query: str, max_tokens: int, request_context: RequestContext
 ) -> list[KnowledgeDocumentHit] | None:
-    """The linked knowledge banks' best passages for reflect's recall tool, or None when none are linked.
+    """The linked knowledge banks' hits for reflect's recall tool, or None when none are linked.
+
+    The same search as ``POST /knowledge-banks/{id}/search``, keywords and meaning, each text hit with
+    the passages around it, within ``max_tokens``; the banks are searched at once and their hits taken in
+    turn, best of each first (fused scores are per bank, so they cannot be ranked against each other).
+    It used to be its own search: meaning only, the 5 best passages across banks, no text around them,
+    so reflect read less than the same question showed in the UI.
 
     A failure here never fails the reflect: the memories are still the answer, without the docs.
     """
     if not get_config().enable_knowledge_banks:
         return None
-    config = await engine._config_resolver.get_bank_config(bank_id, request_context)
-    linked = [b for b in (config.get("knowledge_banks") or []) if b != bank_id]
+    linked = [b for b in linked if b != bank_id]
     if not linked or not (query or "").strip():
         return None
     # Reflect's recall runs as an internal operation, but the linked banks are read on the caller's
     # behalf: the validator must see the caller, not a background job it would let through.
     caller = replace(request_context, internal=False)
-    try:
-        hits = await get_knowledge_service(engine).search_linked(linked, query, LINKED_RECALL_TOP_K, caller)
-    except Exception as exc:
-        logger.warning(f"Knowledge search for memory bank '{bank_id}' failed: {exc!r}")
-        return []
-    from .routes import search_result
+    service = get_knowledge_service(engine)
+    request = SearchRequest(query=query, query_image=None, filters=SearchFilters(), max_tokens=max_tokens)
+    found = await asyncio.gather(*(service.search(b, request, caller) for b in linked), return_exceptions=True)
+    ranked: list[list[tuple[str, SearchResultItem]]] = []
+    for linked_bank, items in zip(linked, found, strict=True):
+        if isinstance(items, BaseException):
+            # A bank this caller may not read, or that no longer exists, is skipped; reflect goes on.
+            logger.warning(f"Linked knowledge bank '{linked_bank}' of '{bank_id}' skipped: {items!r}")
+            continue
+        ranked.append([(linked_bank, item) for item in items])
+    from .routes import item_result
 
-    out = []
-    for linked in hits:
-        r = search_result(linked.bank_id, linked.hit)
+    out: list[KnowledgeDocumentHit] = []
+    spent = 0
+    for linked_bank, item in (pair for turn in itertools.zip_longest(*ranked) for pair in turn if pair):
+        r = item_result(linked_bank, item)
+        cost = count_tokens(r.text or "") + (0 if item.hit.passage.modality == "text" else MEDIA_HIT_TOKENS)
+        if spent + cost > max_tokens:
+            continue
+        spent += cost
         out.append(
             KnowledgeDocumentHit(
-                bank_id=linked.bank_id,
+                bank_id=linked_bank,
                 document_id=r.document_id,
                 passage_index=r.index,
                 filename=r.filename,
@@ -1874,7 +1878,7 @@ async def documents_for_memory_bank(
                 page=r.page,
                 start_ms=r.start_ms,
                 end_ms=r.end_ms,
-                score=linked.hit.score,
+                score=item.hit.score,
                 passage_url=r.passage_url,
                 document_url=r.document_url,
                 tags=r.tags,

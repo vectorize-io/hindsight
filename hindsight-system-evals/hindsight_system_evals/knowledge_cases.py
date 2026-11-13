@@ -7,7 +7,7 @@ a public leaderboard, so a score sits next to the best published models.
 | ``pdf`` | ViDoRe V3, 8 public tasks | nDCG@10 (ViDoRe / MTEB) |
 | ``image`` | Flickr30k 1k and MS-COCO 5k test, text to image | recall@1/5/10 |
 | ``video`` | MSR-VTT 1k-A and MSVD test, text to video | nDCG@10, recall@1 |
-| ``research`` | BRIGHT-Pro (7 domains), BrowseComp-Plus | alpha-nDCG@25; nDCG@10, recall@100 |
+| ``research`` | BRIGHT-Pro (7 domains) | alpha-nDCG@25 |
 
 ``research`` ranks retrieval *systems* (rewriting, hybrid, reranking are fair), unlike the
 leaderboards above, which rank bare embedding models.
@@ -53,12 +53,11 @@ class Sizes:
     image_captions_per_image: int | None
     video_captions_per_video: int | None
     bright_pro_queries_per_domain: int | None
-    browsecomp_queries: int | None
 
 
 #: BRIGHT-Pro's 25 per domain is the sample its paper runs agents on.
-DEFAULT = Sizes(17, 100, 1, 1, 25, 100)
-FULL = Sizes(None, None, None, None, None, None)
+DEFAULT = Sizes(17, 100, 1, 1, 25)
+FULL = Sizes(None, None, None, None, None)
 
 
 @dataclass
@@ -154,7 +153,6 @@ CASES: list[Case] = [
     *(Case(name.split("_")[0], "image", _images(name), "image") for name in data.IMAGE_SETS),
     *(Case(name.split("_")[0], "video", _videos(name), "video") for name in data.VIDEO_SETS),
     *(Case(f"brightpro_{d}", "research", _bright_pro(d), "text") for d in data.BRIGHT_PRO_DOMAINS),
-    Case("browsecomp_plus", "research", lambda sizes: data.browsecomp_plus(queries=sizes.browsecomp_queries), "text"),
 ]
 
 #: What a default run covers: one case per category.

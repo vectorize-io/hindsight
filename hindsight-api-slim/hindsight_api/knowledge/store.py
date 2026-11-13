@@ -226,6 +226,11 @@ class KnowledgeStore(ABC):
         """Delete these documents and their passages; returns what was deleted, for its files."""
 
     @abstractmethod
+    async def delete_some_documents(self, bank_id: str, limit: int) -> int:
+        """Delete up to ``limit`` of the bank's documents with their passages, skipping any another
+        transaction holds; returns how many went (0 with documents left means they are all held)."""
+
+    @abstractmethod
     async def media_keys(self, bank_id: str, document_ids: list[str]) -> list[str]:
         """The media keys of every passage of these documents."""
 
@@ -790,6 +795,22 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 document_ids,
             )
         return [_document(r) for r in rows]
+
+    async def delete_some_documents(self, bank_id: str, limit: int) -> int:
+        table = fq_table("kb_documents")
+        async with acquire_with_retry(await self._pool()) as conn:
+            # SKIP LOCKED: a document an ingest is still writing is left for a later batch, rather than
+            # this statement waiting on that write and running past the command timeout. The batch is
+            # picked once (MATERIALIZED) and joined: as `IN (SELECT ... LIMIT ... SKIP LOCKED)` Postgres
+            # re-ran the pick per row, each run took the next rows, and one batch deleted the whole bank.
+            return await conn.fetchval(
+                f"WITH picked AS MATERIALIZED (SELECT document_id FROM {table} WHERE bank_id = $1 "
+                f"ORDER BY document_id LIMIT $2 FOR UPDATE SKIP LOCKED), "
+                f"gone AS (DELETE FROM {table} t USING picked p WHERE t.bank_id = $1 "
+                f"AND t.document_id = p.document_id RETURNING 1) SELECT count(*) FROM gone",
+                bank_id,
+                limit,
+            )
 
     async def search(
         self,

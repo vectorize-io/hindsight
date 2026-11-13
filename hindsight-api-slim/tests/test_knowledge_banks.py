@@ -1786,3 +1786,66 @@ async def test_a_text_with_a_nul_byte_is_stored_and_spares_its_batch(api_client,
         detail = (await api_client.get(f"{KB}/{kb}/documents/{doc}")).json()
         assert detail["status"] == "ready", detail
     assert (await api_client.get(f"{KB}/{kb}/documents/nul")).json()["passages"][0]["text"] == "debt ratio"
+
+
+async def test_a_bank_bigger_than_one_delete_batch_is_deleted_whole(api_client, memory, kb, monkeypatch):
+    # A big bank is deleted a batch of documents at a time: one cascading statement over all of them
+    # ran past the command timeout on a 100k-document bank.
+    from hindsight_api.knowledge import service as service_mod
+
+    monkeypatch.setattr(service_mod, "DELETE_BATCH_DOCUMENTS", 2)
+    store = get_knowledge_service(memory).store
+    batches: list[int] = []
+    delete_some = store.delete_some_documents
+
+    async def counted(bank_id, limit):
+        batches.append(await delete_some(bank_id, limit))
+        return batches[-1]
+
+    monkeypatch.setattr(store, "delete_some_documents", counted)
+    items = [{"document_id": f"d{i}", "text": f"text number {i}"} for i in range(5)]
+    assert (await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})).status_code == 200
+    assert (await api_client.delete(f"{KB}/{kb}")).status_code == 200
+    assert batches == [2, 2, 1, 0]
+    assert (await api_client.get(f"{KB}/{kb}")).status_code == 404
+
+
+async def test_a_bank_is_deleted_while_the_embedder_is_unreachable(api_client, memory, kb, monkeypatch):
+    # The store's first-use setup asks the embedder for its size; a delete touches no vector and must
+    # not need it (a gateway outage turned a delete into a 503).
+    embedder = get_knowledge_service(memory).embedder
+
+    async def unreachable(*_a, **_k):
+        import aiohttp
+
+        raise aiohttp.ClientConnectionError("gateway down")
+
+    monkeypatch.setattr(embedder, "dimension", 0)
+    monkeypatch.setattr(embedder, "embed_query", unreachable)
+    assert (await api_client.get(f"{KB}/{kb}/documents")).status_code == 503
+    assert (await api_client.delete(f"{KB}/{kb}")).status_code == 200
+
+
+async def test_reflect_reads_the_linked_banks_through_the_knowledge_search(api_client, memory, kb, request_context):
+    # Reflect's recall tool gets what POST /search gives for the same question: a keyword match, with
+    # the passages around it. It used to run its own meaning-only top-5 with no text around a hit.
+    from hindsight_api.engine.reflect.tools import tool_recall
+
+    paragraphs = [f"Paragraph {i}: " + ("invoice " if i == 4 else "filler ") * 180 for i in range(10)]
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest",
+        json={"items": [{"document_id": "long", "text": "\n\n".join(paragraphs), "filename": "long.md"}]},
+    )
+    assert r.status_code == 200, r.text
+    mem_bank = f"mem-{uuid.uuid4().hex[:8]}"
+    await api_client.post(f"/v1/default/banks/{mem_bank}/memories", json={"items": [{"content": "Invoices are due."}]})
+    # A linked bank that is gone is skipped, not a failed reflect.
+    links = {"updates": {"knowledge_banks": [kb, f"gone-{uuid.uuid4().hex[:6]}"]}}
+    assert (await api_client.patch(f"/v1/default/banks/{mem_bank}/config", json=links)).status_code == 200
+
+    out = await tool_recall(memory, mem_bank, "invoice", request_context, max_tokens=4096, include_documents=True)
+    searched = await _search(api_client, kb, query="invoice", max_tokens=4096)
+    assert [d["text"] for d in out["documents"]] == [h["text"] for h in searched]
+    first = out["documents"][0]["text"]
+    assert "Paragraph 4:" in first and "Paragraph 3:" in first and "Paragraph 5:" in first
+    await memory.delete_bank(mem_bank, request_context=request_context)

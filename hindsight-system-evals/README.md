@@ -605,7 +605,7 @@ from a knowledge bank, and lives in `evals/knowledge_agent` (next section).
 | `pdf` | `hr` (default) + 7 more ViDoRe V3 tasks | a question in one of 6 languages → the pages of business PDFs that answer it; each source PDF uploaded whole | nDCG@10, per language and as MTEB's language mean | [MTEB, benchmark ViDoRe(v3)](https://huggingface.co/spaces/mteb/leaderboard); [ViDoRe V3 announcement](https://huggingface.co/blog/QuentinJG/introducing-vidore-v3) |
 | `image` | `flickr30k` (default, 1k test), `mscoco` (5k test) | a photo caption → the photo | recall@1 (also @5/@10, nDCG@10) | no live board for these splits: compare with the R@1 model papers report (MIEB on MTEB uses a larger pool, so its numbers are not comparable) |
 | `video` | `msrvtt` (default, 1k-A test), `msvd` (test) | a clip description → the clip (picture and soundtrack, cut into windows by the server) | nDCG@10, recall@1 | MMEB-V2 video retrieval, on the [MMEB leaderboard](https://huggingface.co/spaces/TIGER-Lab/MMEB-Leaderboard) (scored as Hit@1); vendors report nDCG@10 / R@1 in their papers |
-| `research` | `brightpro_<domain>` (7 StackExchange domains; `brightpro_biology` default), `browsecomp_plus` | a question that needs reasoning → the passages covering each of its aspects; a hard research question → the evidence web pages | alpha-nDCG@25 (BRIGHT-Pro); nDCG@10, recall@100 on evidence documents (BrowseComp-Plus) | [BRIGHT-Pro paper](https://arxiv.org/abs/2605.04018) Table 2; [BrowseComp-Plus paper](https://arxiv.org/abs/2508.06600) Table 2. These rank retrieval *systems*, so a Hindsight number is a fair system score |
+| `research` | `brightpro_<domain>` (7 StackExchange domains; `brightpro_biology` default) | a question that needs reasoning → the passages covering each of its aspects | alpha-nDCG@25 | [BRIGHT-Pro paper](https://arxiv.org/abs/2605.04018) Table 2. These rank retrieval *systems*, so a Hindsight number is a fair system score |
 | agent use | `evals/knowledge_agent` | a business question → an answer, judged | overall (completeness when correct, else 0) | [EnterpriseRAG-Bench](https://huggingface.co/spaces/onyx-dot-app/EnterpriseRAG-Bench-Leaderboard) |
 
 **How retrieval is scored.** Each dataset gives its queries and, per query, the right
@@ -626,7 +626,7 @@ broken pipeline (a failed document, a query with no results).
 **Small by default, the leaderboard number with `--full`.** The corpus is always whole (a
 smaller pool makes every query easier); a default run only cuts the queries: SciFact and FiQA
 100 each, ViDoRe 17 per language (~100 per task), one caption per photo or clip, BRIGHT-Pro 25
-per domain, BrowseComp-Plus 100. `--full` asks every query.
+per domain. `--full` asks every query.
 
 ```bash
 cd hindsight-system-evals
@@ -666,7 +666,6 @@ benchmark; measured 2026-11-10/11):
 | video | MSR-VTT 1k-A, nDCG@10 / R@1 (1,000 queries) | 65.5 / 50.1 | Qwen3-VL-Embedding-8B 74.0 / 59.8 ([MTEB results](https://github.com/embeddings-benchmark/results), 879 of the 1k clips); Gemini Embedding 2 nDCG@10 68.0 ([Gemini paper](https://arxiv.org/pdf/2605.27295)) | −8.5 / −9.7 |
 | video | MSVD test, nDCG@10 / R@1 | not measured yet | Qwen3-VL-Embedding-8B 87.6 / 75.3 ([MTEB results](https://github.com/embeddings-benchmark/results), first caption per clip) | — |
 | research | BRIGHT-Pro, 7 domains, alpha-nDCG@25 (739 queries, 526k passages) | not measured yet | BGE-Reasoner-8B 68.0, DIVER-4B-1020 63.7; EmbeddingGemma 300M 39.4, BM25 40.3 ([BRIGHT-Pro paper](https://arxiv.org/abs/2605.04018)) | — |
-| research | BrowseComp-Plus, evidence nDCG@10 / recall@100 (830 queries, 100k documents) | not measured yet | Qwen3-Embedding-8B 20.3 / 47.7, BM25 1.6 / 4.7 ([BrowseComp-Plus paper](https://arxiv.org/abs/2508.06600)); end to end, gpt-5 + Qwen3-Embedding-8B 70.1% accuracy | — |
 | agent use | EnterpriseRAG-Bench, overall (default 50 questions) | 62.5 ² (Gemma 4 26B-A4B); search alone: nDCG@10 67.6, recall@10 81.5 | PipesHub 93.24 ([leaderboard](https://huggingface.co/spaces/onyx-dot-app/EnterpriseRAG-Bench-Leaderboard)) | −30.7 ² |
 
 ² On a 3.7k-document slice, easier than the leaderboard's 512k, with a 4B-active open model; on the

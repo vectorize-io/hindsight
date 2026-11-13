@@ -379,11 +379,9 @@ export function KnowledgeBankHome({
         {t("subtitle")} <span className="font-mono text-foreground">{bank.bank_id}</span>
       </p>
 
-      <KnowledgeBankStats bank={bank} />
-
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* Same card as the memory bank home's constellation. */}
-        <div className="flex flex-col overflow-hidden rounded-[16px] border border-border bg-card lg:col-span-2">
+      {/* The memory bank home's layout: constellation and recent documents in one row, stats below. */}
+      <div className="grid grid-cols-1 gap-4 lg:h-[520px] lg:grid-cols-3">
+        <div className="flex flex-col overflow-hidden rounded-[16px] border border-border bg-card lg:col-span-2 lg:h-full">
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
             <div className="flex min-w-0 items-center gap-2">
               <Network className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -410,7 +408,7 @@ export function KnowledgeBankHome({
           )}
         </div>
 
-        <div className="flex min-h-0 flex-col overflow-hidden rounded-[16px] border border-border bg-card">
+        <div className="flex min-h-0 flex-col overflow-hidden rounded-[16px] border border-border bg-card lg:h-full">
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
             <h2 className="truncate text-sm font-semibold text-foreground">{t("recentTitle")}</h2>
             <ViewAll href={documentsHref} label={t("viewAll")} />
@@ -422,7 +420,7 @@ export function KnowledgeBankHome({
           ) : docs.length === 0 ? (
             <div className="px-4 py-6 text-sm text-muted-foreground">{t("noDocuments")}</div>
           ) : (
-            <ul className="py-2">
+            <ul className="min-h-0 flex-1 overflow-y-auto py-2">
               {docs.slice(0, RECENT_LIST).map((doc) => (
                 <li key={doc.document_id}>
                   <Link
@@ -453,6 +451,10 @@ export function KnowledgeBankHome({
             </ul>
           )}
         </div>
+      </div>
+
+      <div className="mt-4">
+        <KnowledgeBankStats bank={bank} />
       </div>
 
       <div className="mt-4">
