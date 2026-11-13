@@ -729,19 +729,22 @@ async def test_text_hits_come_back_with_neighbours_and_overlapping_windows_merge
     passages = (await api_client.get(f"{KB}/{kb}/documents/long")).json()["passages"]
     weight = {p["index"]: count_tokens(p["text"]) for p in passages}
 
-    # Room for four passages: passage 4 with one on each side, then passage 5 joins that window
-    # instead of coming back on its own, and nothing else fits.
+    # Room for four passages: the best invoice passage with one on each side, which holds the other
+    # invoice passage too (it is not repeated), then one more hit alone with what is left.
     def paragraphs_in(text: str) -> list[int]:
         return [i for i in range(10) if f"Paragraph {i}:" in text]
 
     hits = await _search(api_client, kb, query="invoice", max_tokens=sum(weight[i] for i in (3, 4, 5, 6)))
-    assert len(hits) == 1 and hits[0]["index"] in (4, 5) and "context" not in hits[0]
-    assert paragraphs_in(hits[0]["text"]) == [3, 4, 5, 6]  # the hit's text is the run the budget gave it
-    # More room widens it, and no passage comes back twice.
+    assert hits[0]["index"] in (4, 5) and "context" not in hits[0]
+    first = paragraphs_in(hits[0]["text"])  # the hit's text is the run the budget gave it
+    assert {4, 5} <= set(first) and len(first) == 3
+    assert sum(len(paragraphs_in(h["text"])) for h in hits) == 4
+    # Room for everything: every passage comes back once, the other hits as results of their own, and no
+    # result holds more than five passages.
     wide = await _search(api_client, kb, query="invoice", max_tokens=sum(weight.values()))
-    assert paragraphs_in(wide[0]["text"])[0] < 3 and paragraphs_in(wide[0]["text"])[-1] > 6
     returned = [i for h in wide for i in paragraphs_in(h["text"])]
-    assert len(returned) == len(set(returned))
+    assert sorted(returned) == list(range(10))
+    assert {4, 5} <= set(paragraphs_in(wide[0]["text"])) and all(len(paragraphs_in(h["text"])) <= 5 for h in wide)
     # Less than one passage: nothing fits.
     assert await _search(api_client, kb, query="invoice", max_tokens=1) == []
 
@@ -1508,25 +1511,7 @@ async def test_renaming_a_file_ingests_it_again(api_client, kb):
     assert (await api_client.get(f"{KB}/{kb}/documents/d")).json()["filename"] == "b.md"
 
 
-async def test_neighbour_windows_that_grow_into_each_other_are_merged(api_client, memory, kb):
-    from hindsight_api.knowledge.store import SearchHit
-
-    text = "\n\n".join(f"# Part {n}\n\npassage {n} red" for n in range(8))
-    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "w", "text": text}]})
-    assert r.status_code == 200, r.text
-    service = get_knowledge_service(memory)
-    document = (await service.store.get_documents(kb, ["w"]))["w"]
-    passages = (await service.store.list_passages(kb, ["w"]))["w"]
-    assert len(passages) >= 6
-    # Hits at 0, then 4, then 2: windows 0-1 and 3-5, which passage 2's window 1-3 joins into one.
-    hits = [SearchHit(passages[i], document, 1.0 - i / 10) for i in (0, 4, 2)]
-    # A budget that holds those six passages and no more: the windows meet, nothing widens past them.
-    budget = sum(count_tokens(p.text or "") for p in passages[:6])
-    items = await service._within_budget(kb, hits, budget)
-    assert [(i.context_first, i.context_last) for i in items] == [(0, 5)]
-
-
-async def test_folded_windows_keep_the_rank_of_the_best_hit(api_client, memory, kb):
+async def test_each_hit_gets_its_own_result_and_none_holds_more_than_five_passages(api_client, memory, kb):
     from hindsight_api.knowledge.store import SearchHit
 
     text = "\n\n".join(f"# Part {n}\n\npassage {n} red" for n in range(10))
@@ -1535,12 +1520,18 @@ async def test_folded_windows_keep_the_rank_of_the_best_hit(api_client, memory, 
     service = get_knowledge_service(memory)
     document = (await service.store.get_documents(kb, ["f"]))["f"]
     passages = (await service.store.list_passages(kb, ["f"]))["f"]
-    # Hits at 2 (best), 7, then 5: 5 joins 7's window, which then meets 2's. The merged window is the
-    # best hit's: it keeps passage 2 as its hit, first in the results.
+    weight = [count_tokens(p.text or "") for p in passages]
+    # Hits at 2 (best), 7, then 5: each is a result of its own with its free neighbours (5 gets 4, as 6 is
+    # 7's). A window used to grow to take in a nearby hit and fold into the next: one whole-document result.
     hits = [SearchHit(passages[i], document, 1.0 - n / 10) for n, i in enumerate((2, 7, 5))]
-    budget = sum(count_tokens(p.text or "") for p in passages[1:9])
-    items = await service._within_budget(kb, hits, budget)
-    assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 8)]
+    items = await service._within_budget(kb, hits, sum(weight[1:9]))
+    assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 3), (7, 6, 8), (5, 4, 5)]
+    # A hit already inside a better result comes back there, and nothing grows.
+    items = await service._within_budget(kb, [hits[0], SearchHit(passages[3], document, 0.5)], sum(weight[1:4]))
+    assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 3)]
+    # Leftover budget widens a result to five passages at most, however much is left.
+    items = await service._within_budget(kb, [hits[0]], sum(weight))
+    assert [(i.context_first, i.context_last) for i in items] == [(0, 4)]
 
 
 async def test_a_document_replaced_during_its_batch_is_not_committed(memory, kb, monkeypatch):
@@ -1899,7 +1890,8 @@ async def test_a_traced_search_explains_every_rank_and_what_the_budget_kept(api_
     assert top["index"] == 4 and top["keyword"] > 0 and "keyword" in top["found_by"] and top["result_rank"] == 1
     # Its neighbours came back inside its text, so they are merged into it, not results of their own.
     merged = [h for h in hits if h["outcome"] == "merged"]
-    assert merged and all(h["merged_into_rank"] == 1 for h in merged)
+    returned_ranks = {h["rank"] for h in hits if h["outcome"] == "returned"}
+    assert merged and all(h["merged_into_rank"] in returned_ranks for h in merged)
     returned = [h for h in hits if h["outcome"] == "returned"]
     assert [h["result_rank"] for h in returned] == list(range(1, len(body["results"]) + 1))
     assert any(h["outcome"] == "over_budget" for h in hits)

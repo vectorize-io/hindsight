@@ -109,9 +109,11 @@ async def test_a_text_hit_comes_back_with_the_passages_around_it_as_the_budget_a
     r = await kb.search(knowledge_bank, query="open the valve until the gauge reads green")
     hit = r.body["results"][0]
     assert hit["document_id"] == "manual" and "Open the valve slowly" in hit["text"]
-    # The whole manual fits in the default budget: the hit's text grows to take it all in, once.
-    assert "Step 0" in hit["text"] and "Step 5" in hit["text"] and "context" not in hit
-    assert [h["document_id"] for h in r.body["results"]].count("manual") == 1
+    # The hit comes with a passage on each side; the rest of the manual comes back as results of their
+    # own, each step once (a result no longer grows to take the whole document in).
+    assert "Step 2" in hit["text"] and "Step 4" in hit["text"] and "context" not in hit
+    texts = [h["text"] for h in r.body["results"] if h["document_id"] == "manual"]
+    assert sorted(n for n in range(6) for t in texts if f"# Step {n}" in t) == list(range(6))
 
 
 async def test_reingesting_skips_what_is_unchanged_and_replaces_what_is_not(kb, knowledge_bank):

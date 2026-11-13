@@ -32,8 +32,7 @@ const ACTION_STYLE: Record<KnowledgeTraceBudgetStep["action"], string> = {
   window: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
   alone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
   media: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  joined: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  folded: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
+  merged: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
   widened: "bg-violet-500/15 text-violet-700 dark:text-violet-400",
   skipped: "bg-muted text-muted-foreground",
 };

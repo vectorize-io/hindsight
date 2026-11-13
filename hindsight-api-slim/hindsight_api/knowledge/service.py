@@ -191,8 +191,10 @@ SEARCH_CANDIDATES: dict[SearchBudget, int] = {"low": 50, "mid": 200, "high": 500
 #: What a hit with no text of its own (an image, a page's picture, a clip) costs the budget, on top of
 #: any text it carries: its media is a URL and a few fields to whoever reads the results.
 MEDIA_HIT_TOKENS = 64
-#: How far context may grow around a text hit, in passages on each side, once every hit that fits has
-#: its first neighbour on each side.
+#: The most passages one text result holds: the hit and two on each side. Leftover budget widens results
+#: up to it, once every hit that fits has its own. Results used to also grow to take in a nearby lower
+#: hit, without limit: in a small document result #1 became the whole document, and later hits came
+#: back with no text around them.
 MAX_CONTEXT_PASSAGES = 5
 
 
@@ -231,7 +233,7 @@ class TracedHit:
     merged_into: SearchHit | None = None
 
 
-BudgetAction = Literal["window", "alone", "media", "joined", "folded", "widened", "skipped"]
+BudgetAction = Literal["window", "alone", "media", "merged", "widened", "skipped"]
 
 
 @dataclass
@@ -239,9 +241,9 @@ class BudgetStep:
     """One step of filling ``max_tokens``, in the order the budget took it."""
 
     #: window: a text hit with a passage each side; alone: a text hit with no room for neighbours;
-    #: media: an image, page or clip; joined: a hit a better window already reached, which grew to it;
-    #: folded: two windows that met, kept as the better-ranked one; widened: leftover budget, one passage
-    #: added to a window's side; skipped: nothing of the hit fit.
+    #: media: an image, page or clip; merged: a hit already inside a better hit's result (nothing grows);
+    #: widened: leftover budget, one passage added to a result's side (up to MAX_CONTEXT_PASSAGES);
+    #: skipped: nothing of the hit fit.
     action: BudgetAction
     hit: SearchHit
     document_id: str
@@ -249,7 +251,7 @@ class BudgetStep:
     last: int
     tokens: int
     total: int
-    #: For joined and folded: the hit whose window took it in.
+    #: For merged: the hit whose result holds it.
     into: SearchHit | None = None
 
 
@@ -1771,9 +1773,9 @@ class KnowledgeService:
     ) -> list[SearchResultItem]:
         """The ranked hits that fit in ``max_tokens``, each text hit with the passages around it as its
         ``context``. In rank order, a text hit comes with one passage on each side (the query-time step that
-        paid, CHUNKING.md), or alone if only that fits, and a hit another one's context already holds is not
-        repeated: that context grows to take it in. What is left then widens the best hits' context, one
-        passage a side at a time, up to ``MAX_CONTEXT_PASSAGES``. A hit with no text of its own costs
+        paid, CHUNKING.md), never repeating a passage another result holds, or alone if only that fits; a hit
+        another result already holds comes back there (merged), and that result does not grow. What is
+        left then widens the best results, one passage a side at a time, up to ``MAX_CONTEXT_PASSAGES``. A hit with no text of its own costs
         ``MEDIA_HIT_TOKENS`` plus its text. This replaced ``top_k`` and ``neighbors``: a caller holds a token
         budget, and a count of hits said nothing about how much text came back."""
         text_hits = [h for h in hits if h.passage.modality == "text"]
@@ -1822,46 +1824,32 @@ class KnowledgeService:
                     step("skipped", hit, index, index, 0)
                 continue
             mine = held.setdefault(document_id, set())
-            around = [i for i in (index - 1, index, index + 1) if (document_id, i) in passages]
-            owner = next(
-                (w for w in windows if w.document_id == document_id and w.first - 1 <= index <= w.last + 1), None
-            )
+            if index in mine:
+                # Already inside a better hit's result: it comes back there, and that result does not grow.
+                owner = next(w for w in windows if w.document_id == document_id and w.first <= index <= w.last)
+                step("merged", hit, owner.first, owner.last, 0, into=owner.item.hit)
+                continue
+            # The hit with the neighbours no result holds yet (a run: only its edges can be held).
+            around = [i for i in (index - 1, index, index + 1) if (document_id, i) in passages and i not in mine]
             placed = False
             for span in (around, [index]):  # with a passage on each side, or alone
-                new = [i for i in span if i not in mine]
-                weight = sum(cost(document_id, i) for i in new)
+                weight = sum(cost(document_id, i) for i in span)
                 if used + weight > max_tokens:
                     continue
                 used += weight
-                mine.update(new)
+                mine.update(span)
                 placed = True
-                if owner is not None:  # a better hit's context reaches it: that context takes it in
-                    owner.first, owner.last = min(owner.first, *span), max(owner.last, *span)
-                    step("joined", hit, owner.first, owner.last, weight, into=owner.item.hit)
-                    # Grown, it may now reach another window of the document: fold that one in, or the
-                    # passages they share would come back twice.
-                    # The better-ranked of two meeting windows is the one kept, and holds both: the hit
-                    # that reached them first decides the merged result's rank.
-                    for other in [w for w in windows if w is not owner and w.document_id == document_id]:
-                        if other.first <= owner.last + 1 and other.last >= owner.first - 1:
-                            keep, drop = (
-                                (other, owner) if windows.index(other) < windows.index(owner) else (owner, other)
-                            )
-                            keep.first, keep.last = min(keep.first, drop.first), max(keep.last, drop.last)
-                            step("folded", drop.item.hit, keep.first, keep.last, 0, into=keep.item.hit)
-                            windows.remove(drop)
-                            items.remove(drop.item)
-                            owner = keep
-                else:
-                    item = SearchResultItem(hit)
-                    items.append(item)
-                    windows.append(_Window(item, document_id, min(span), max(span)))
-                    step("window" if len(span) > 1 else "alone", hit, min(span), max(span), weight)
+                item = SearchResultItem(hit)
+                items.append(item)
+                windows.append(_Window(item, document_id, min(span), max(span)))
+                step("window" if len(span) > 1 else "alone", hit, min(span), max(span), weight)
                 break
             if not placed:
                 step("skipped", hit, index, index, 0)
-        for _ in range(MAX_CONTEXT_PASSAGES - 1):
-            growing = [w for w in windows if w.grows_before or w.grows_after]
+        for _ in range(MAX_CONTEXT_PASSAGES):
+            growing = [
+                w for w in windows if (w.grows_before or w.grows_after) and w.last - w.first + 1 < MAX_CONTEXT_PASSAGES
+            ]
             if not growing:
                 break
             await load(
@@ -1874,7 +1862,8 @@ class KnowledgeService:
                         continue
                     i = w.first - 1 if side == "before" else w.last + 1
                     mine = held[w.document_id]
-                    blocked = i < 0 or (w.document_id, i) not in passages or i in mine
+                    full = w.last - w.first + 1 >= MAX_CONTEXT_PASSAGES
+                    blocked = full or i < 0 or (w.document_id, i) not in passages or i in mine
                     if not blocked and used + cost(w.document_id, i) <= max_tokens:
                         used += cost(w.document_id, i)
                         mine.add(i)

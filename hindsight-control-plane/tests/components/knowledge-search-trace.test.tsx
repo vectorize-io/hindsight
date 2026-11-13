@@ -73,7 +73,7 @@ const trace = (n: number) => ({
       into_rank: null,
     },
     {
-      action: "joined" as const,
+      action: "merged" as const,
       rank: 2,
       document_id: "d1",
       first: 0,
@@ -98,7 +98,7 @@ describe("KnowledgeSearchTraceView", () => {
     render(<KnowledgeSearchTraceView trace={trace(3)} />);
     fireEvent.click(screen.getByText("budgetTitle"));
     expect(screen.getByText('action_window:{"rank":0}')).toBeTruthy();
-    expect(screen.getByText('action_joined:{"rank":1}')).toBeTruthy();
+    expect(screen.getByText('action_merged:{"rank":1}')).toBeTruthy();
     expect(screen.getByText('total:{"total":1200,"max":4096}')).toBeTruthy();
   });
 

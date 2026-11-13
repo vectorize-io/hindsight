@@ -141,7 +141,7 @@ export interface KnowledgeSearchTraceHit {
 
 /** One step of filling max_tokens, in order. */
 export interface KnowledgeTraceBudgetStep {
-  action: "window" | "alone" | "media" | "joined" | "folded" | "widened" | "skipped";
+  action: "window" | "alone" | "media" | "merged" | "widened" | "skipped";
   rank: number;
   document_id: string;
   first: number;

@@ -276,10 +276,10 @@ class KnowledgeTraceArm(BaseModel):
 class KnowledgeTraceBudgetStep(BaseModel):
     """One step of filling max_tokens, in order."""
 
-    action: Literal["window", "alone", "media", "joined", "folded", "widened", "skipped"] = Field(
+    action: Literal["window", "alone", "media", "merged", "widened", "skipped"] = Field(
         description="window: a text hit with a passage each side; alone: no room for its neighbours; media: an "
-        "image, page or clip; joined: a better window reached it and grew; folded: two windows met and became one; "
-        "widened: leftover budget added a passage to a window; skipped: nothing of it fit"
+        "image, page or clip; merged: already inside a better hit's result; widened: leftover budget added a "
+        "passage to a result (5 at most); skipped: nothing of it fit"
     )
     rank: int = Field(description="The candidate's rank")
     document_id: str
@@ -287,7 +287,7 @@ class KnowledgeTraceBudgetStep(BaseModel):
     last: int = Field(description="The window's last passage after this step")
     tokens: int = Field(description="Tokens this step added")
     total: int = Field(description="Tokens used after this step")
-    into_rank: int | None = Field(default=None, description="For joined and folded: the rank of the window kept")
+    into_rank: int | None = Field(default=None, description="For merged: the rank of the hit whose result holds it")
 
 
 class KnowledgeSearchTrace(BaseModel):
