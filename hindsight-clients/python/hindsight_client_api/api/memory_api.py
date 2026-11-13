@@ -1942,6 +1942,9 @@ class MemoryApi:
     async def get_memory_tree(
         self,
         bank_id: StrictStr,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only group observations carrying these tags (the scope), as in recall.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as recall).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1962,6 +1965,12 @@ class MemoryApi:
 
         :param bank_id: (required)
         :type bank_id: str
+        :param tags: Only group observations carrying these tags (the scope), as in recall.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as recall).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -1988,6 +1997,9 @@ class MemoryApi:
 
         _param = self._get_memory_tree_serialize(
             bank_id=bank_id,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2015,6 +2027,9 @@ class MemoryApi:
     async def get_memory_tree_with_http_info(
         self,
         bank_id: StrictStr,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only group observations carrying these tags (the scope), as in recall.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as recall).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2035,6 +2050,12 @@ class MemoryApi:
 
         :param bank_id: (required)
         :type bank_id: str
+        :param tags: Only group observations carrying these tags (the scope), as in recall.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as recall).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2061,6 +2082,9 @@ class MemoryApi:
 
         _param = self._get_memory_tree_serialize(
             bank_id=bank_id,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2088,6 +2112,9 @@ class MemoryApi:
     async def get_memory_tree_without_preload_content(
         self,
         bank_id: StrictStr,
+        tags: Annotated[Optional[List[StrictStr]], Field(description="Only group observations carrying these tags (the scope), as in recall.")] = None,
+        tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as recall).")] = None,
+        tag_groups: Annotated[Optional[StrictStr], Field(description="Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -2108,6 +2135,12 @@ class MemoryApi:
 
         :param bank_id: (required)
         :type bank_id: str
+        :param tags: Only group observations carrying these tags (the scope), as in recall.
+        :type tags: List[str]
+        :param tags_match: How `tags` match (same modes as recall).
+        :type tags_match: str
+        :param tag_groups: Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+        :type tag_groups: str
         :param authorization:
         :type authorization: str
         :param _request_timeout: timeout setting for this request. If one
@@ -2134,6 +2167,9 @@ class MemoryApi:
 
         _param = self._get_memory_tree_serialize(
             bank_id=bank_id,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=tag_groups,
             authorization=authorization,
             _request_auth=_request_auth,
             _content_type=_content_type,
@@ -2156,6 +2192,9 @@ class MemoryApi:
     def _get_memory_tree_serialize(
         self,
         bank_id,
+        tags,
+        tags_match,
+        tag_groups,
         authorization,
         _request_auth,
         _content_type,
@@ -2166,6 +2205,7 @@ class MemoryApi:
         _host = None
 
         _collection_formats: Dict[str, str] = {
+            'tags': 'multi',
         }
 
         _path_params: Dict[str, str] = {}
@@ -2181,6 +2221,18 @@ class MemoryApi:
         if bank_id is not None:
             _path_params['bank_id'] = bank_id
         # process the query parameters
+        if tags is not None:
+            
+            _query_params.append(('tags', tags))
+            
+        if tags_match is not None:
+            
+            _query_params.append(('tags_match', tags_match))
+            
+        if tag_groups is not None:
+            
+            _query_params.append(('tag_groups', tag_groups))
+            
         # process the header parameters
         if authorization is not None:
             _header_params['authorization'] = authorization

@@ -874,7 +874,28 @@ type ApiGetMemoryTreeRequest struct {
 	ctx context.Context
 	ApiService *MemoryAPIService
 	bankId string
+	tags *[]string
+	tagsMatch *string
+	tagGroups *string
 	authorization *string
+}
+
+// Only group observations carrying these tags (the scope), as in recall.
+func (r ApiGetMemoryTreeRequest) Tags(tags []string) ApiGetMemoryTreeRequest {
+	r.tags = &tags
+	return r
+}
+
+// How &#x60;tags&#x60; match (same modes as recall).
+func (r ApiGetMemoryTreeRequest) TagsMatch(tagsMatch string) ApiGetMemoryTreeRequest {
+	r.tagsMatch = &tagsMatch
+	return r
+}
+
+// Compound tag filter as a JSON-encoded list of tag groups — the same shape &#x60;tag_groups&#x60; takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with &#x60;tags&#x60;.
+func (r ApiGetMemoryTreeRequest) TagGroups(tagGroups string) ApiGetMemoryTreeRequest {
+	r.tagGroups = &tagGroups
+	return r
 }
 
 func (r ApiGetMemoryTreeRequest) Authorization(authorization string) ApiGetMemoryTreeRequest {
@@ -925,6 +946,26 @@ func (a *MemoryAPIService) GetMemoryTreeExecute(r ApiGetMemoryTreeRequest) (*Mem
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.tags != nil {
+		t := *r.tags
+		if reflect.TypeOf(t).Kind() == reflect.Slice {
+			s := reflect.ValueOf(t)
+			for i := 0; i < s.Len(); i++ {
+				parameterAddToHeaderOrQuery(localVarQueryParams, "tags", s.Index(i).Interface(), "form", "multi")
+			}
+		} else {
+			parameterAddToHeaderOrQuery(localVarQueryParams, "tags", t, "form", "multi")
+		}
+	}
+	if r.tagsMatch != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tags_match", r.tagsMatch, "form", "")
+	} else {
+		var defaultValue string = "any"
+		r.tagsMatch = &defaultValue
+	}
+	if r.tagGroups != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tag_groups", r.tagGroups, "form", "")
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 

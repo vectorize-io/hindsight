@@ -1062,6 +1062,47 @@ paths:
           title: Bank Id
           type: string
         style: simple
+      - description: "Only group observations carrying these tags (the scope), as\
+          \ in recall."
+        explode: true
+        in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: How `tags` match (same modes as recall).
+        explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          description: How `tags` match (same modes as recall).
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        style: form
+      - description: "Compound tag filter as a JSON-encoded list of tag groups — the\
+          \ same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve}\
+          \ and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually\
+          \ exclusive with `tags`."
+        explode: true
+        in: query
+        name: tag_groups
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
       - explode: false
         in: header
         name: authorization

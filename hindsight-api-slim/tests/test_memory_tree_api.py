@@ -1,5 +1,6 @@
 """GET /memory-tree: a bank's observations come back as topic files, every one exactly once."""
 
+import json
 import uuid
 
 import httpx
@@ -22,7 +23,9 @@ async def api_client(memory):
         yield client
 
 
-async def _seed(conn, bank_id: str, subject: str, entities: list[str], count: int) -> None:
+async def _seed(
+    conn, bank_id: str, subject: str, entities: list[str], count: int, tags: list[str] | None = None
+) -> None:
     """``count`` observations about ``subject``, each backed by one fact naming ``entities``."""
     entity_ids = []
     for name in entities:
@@ -50,13 +53,14 @@ async def _seed(conn, bank_id: str, subject: str, entities: list[str], count: in
             await conn.execute("INSERT INTO unit_entities (unit_id, entity_id) VALUES ($1, $2)", fact_id, eid)
         await conn.execute(
             """
-            INSERT INTO memory_units (id, bank_id, text, fact_type, source_memory_ids, proof_count, mentioned_at)
-            VALUES ($1, $2, $3, 'observation', $4, 1, '2026-10-05T12:00:00Z')
+            INSERT INTO memory_units (id, bank_id, text, fact_type, source_memory_ids, proof_count, mentioned_at, tags)
+            VALUES ($1, $2, $3, 'observation', $4, 1, '2026-10-05T12:00:00Z', $5)
             """,
             uuid.uuid4(),
             bank_id,
             f"{subject} observation {i}",
             [fact_id],
+            tags or [],
         )
 
 
@@ -106,3 +110,34 @@ async def test_memory_tree_of_an_empty_bank(api_client: httpx.AsyncClient, memor
     response = await api_client.get(f"/v1/default/banks/{bank_id}/memory-tree")
     assert response.status_code == 200, response.text
     assert response.json()["observation_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_memory_tree_for_one_scope(api_client: httpx.AsyncClient, memory: MemoryEngine, request_context):
+    """tags / tags_match / tag_groups scope the tree as they scope recall: only matching
+    observations are grouped."""
+    bank_id = f"test-memory-tree-scope-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        await _seed(conn, bank_id, "redis", ["Redis"], 5, tags=["team:a"])
+        await _seed(conn, bank_id, "gpu", ["GPU"], 4, tags=["team:b"])
+        await _seed(conn, bank_id, "s3", ["S3"], 3, tags=["team:a", "team:b"])
+        await _seed(conn, bank_id, "misc", ["Misc"], 2)
+
+    def placed(tree: dict) -> set[str]:
+        return {o["text"].split()[0] for f in _files(tree) if f["kind"] == "topic" for o in f["observations"]}
+
+    url = f"/v1/default/banks/{bank_id}/memory-tree"
+    scoped = (await api_client.get(url, params={"tags": "team:a", "tags_match": "any_strict"})).json()
+    assert scoped["observation_count"] == 8
+    assert placed(scoped) == {"redis", "s3"}
+
+    both = (await api_client.get(url, params={"tags": ["team:a", "team:b"], "tags_match": "all_strict"})).json()
+    assert placed(both) == {"s3"}
+
+    groups = json.dumps([{"tags": ["team:b"], "match": "any_strict"}, {"not": {"tags": ["team:a"]}}])
+    assert placed((await api_client.get(url, params={"tag_groups": groups})).json()) == {"gpu"}
+
+    rejected = await api_client.get(url, params={"tags": "team:a", "tag_groups": groups})
+    assert rejected.status_code == 400

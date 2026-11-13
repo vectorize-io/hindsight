@@ -6188,11 +6188,23 @@ def _register_routes(app: FastAPI):
     )
     async def api_get_memory_tree(
         bank_id: str,
+        tags: list[str] | None = Query(
+            default=None,
+            description="Only group observations carrying these tags (the scope), as in recall.",
+        ),
+        tags_match: TagsMatch = Query(default="any", description="How `tags` match (same modes as recall)."),
+        tag_groups: str | None = Query(default=None, description=_TAG_GROUPS_QUERY_DESCRIPTION),
         request_context: RequestContext = Depends(get_request_context),
     ):
-        """Return the memory tree for a bank."""
+        """Return the memory tree for a bank, optionally for one tag scope."""
         try:
-            tree = await app.state.memory.get_memory_tree(bank_id, request_context=request_context)
+            tree = await app.state.memory.get_memory_tree(
+                bank_id,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=_parse_tag_groups_query(tag_groups, tags),
+                request_context=request_context,
+            )
             return MemoryTreeFolder.model_validate(dataclasses.asdict(tree))
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)

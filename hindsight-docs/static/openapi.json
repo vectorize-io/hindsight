@@ -1529,6 +1529,64 @@
             }
           },
           {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only group observations carrying these tags (the scope), as in recall.",
+              "title": "Tags"
+            },
+            "description": "Only group observations carrying these tags (the scope), as in recall."
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
+              "type": "string",
+              "description": "How `tags` match (same modes as recall).",
+              "default": "any",
+              "title": "Tags Match"
+            },
+            "description": "How `tags` match (same modes as recall)."
+          },
+          {
+            "name": "tag_groups",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.",
+              "title": "Tag Groups"
+            },
+            "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`."
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,

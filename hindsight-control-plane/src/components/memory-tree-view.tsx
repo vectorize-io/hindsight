@@ -23,6 +23,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { formatAbsoluteDateTime, formatRelativeTime } from "@/lib/relative-time";
 import { MemoryDetailModal } from "./memory-detail-modal";
 import { Constellation } from "./constellation";
+import { TagFilterInput } from "./tag-filter-input";
 import type { GraphData } from "./graph-data";
 import { UnderlineTabs } from "@/components/ui/underline-tabs";
 
@@ -327,13 +328,30 @@ export function MemoryTreeView() {
   const [openMemory, setOpenMemory] = useState<string | null>(null);
   const [mode, setMode] = useState<"files" | "constellation">("files");
 
+  // Scope: the tree is rebuilt from the matching observations only, so a scope gets its own
+  // topics. Strict modes, like the entities page: a tag should not pull in untagged memories.
+  const [scopeTags, setScopeTags] = useState<string[]>([]);
+  const [scopeMatch, setScopeMatch] = useState<"any" | "all">("any");
+
   useEffect(() => {
     if (!bankId) return;
+    let stale = false;
+    setTree(null);
+    setError(null);
+    // Topic paths differ per scope; start each scope at its root README.
+    setSelected(README);
+    setOpen(new Set());
     client
-      .getMemoryTree(bankId)
-      .then(setTree)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [bankId]);
+      .getMemoryTree(bankId, {
+        tags: scopeTags,
+        tags_match: scopeMatch === "all" ? "all_strict" : "any_strict",
+      })
+      .then((t) => !stale && setTree(t))
+      .catch((e) => !stale && setError(e instanceof Error ? e.message : String(e)));
+    return () => {
+      stale = true;
+    };
+  }, [bankId, scopeTags, scopeMatch]);
 
   const { files, byPath, folders } = useMemo(() => {
     const all: MemoryTreeFile[] = [];
@@ -354,14 +372,39 @@ export function MemoryTreeView() {
   const close = (path: string) =>
     setOpen((prev) => new Set([...prev].filter((p) => p !== path && !p.startsWith(`${path}/`))));
 
-  if (error) return <p className="text-sm text-destructive">{error}</p>;
-  if (!tree)
+  const scopeBar = (
+    <TagFilterInput
+      value={scopeTags}
+      onChange={setScopeTags}
+      bankId={bankId}
+      matchMode={scopeMatch}
+      onMatchModeChange={setScopeMatch}
+      className="mb-3 max-w-[480px]"
+    />
+  );
+  if (error)
     return (
-      <div className="flex items-center justify-center py-24">
-        <Spinner size="lg" variant="jump" />
+      <div>
+        {scopeBar}
+        <p className="text-sm text-destructive">{error}</p>
       </div>
     );
-  if (tree.observation_count === 0) return <p className="text-muted-foreground">{t("empty")}</p>;
+  if (!tree)
+    return (
+      <div>
+        {scopeBar}
+        <div className="flex items-center justify-center py-24">
+          <Spinner size="lg" variant="jump" />
+        </div>
+      </div>
+    );
+  if (tree.observation_count === 0)
+    return (
+      <div>
+        {scopeBar}
+        <p className="text-muted-foreground">{t("empty")}</p>
+      </div>
+    );
 
   const file = byPath.get(selected);
   const dir =
@@ -387,6 +430,7 @@ export function MemoryTreeView() {
   if (mode === "constellation")
     return (
       <div>
+        {scopeBar}
         {switcher}
         <Constellation
           data={graph}
@@ -404,6 +448,7 @@ export function MemoryTreeView() {
 
   return (
     <div>
+      {scopeBar}
       {switcher}
       <div className="flex flex-col md:flex-row items-stretch overflow-hidden h-[calc(100dvh-17rem)] min-h-[520px]">
         <aside className="w-full max-h-[45%] md:w-1/3 md:max-h-none flex-shrink-0 bg-muted/30 border-b md:border-b-0 md:border-r border-border flex flex-col">

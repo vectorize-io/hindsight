@@ -16871,8 +16871,20 @@ class MemoryEngine(MemoryEngineInterface):
                 offset=offset,
             )
 
-    async def get_memory_tree(self, bank_id: str, *, request_context: "RequestContext") -> "TreeFolder":
+    async def get_memory_tree(
+        self,
+        bank_id: str,
+        *,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
+        request_context: "RequestContext",
+    ) -> "TreeFolder":
         """The bank's observations as a bounded tree of topic folders (see ``memory_tree``). No LLM.
+
+        ``tags`` / ``tags_match`` / ``tag_groups`` scope the tree the way they scope recall: only
+        matching observations are grouped, so a scope gets its own topics, not a filtered copy of
+        the whole bank's.
 
         # ponytail: scans every observation and rebuilds on each call (~0.2s for 2.5k observations).
         # Cache by the bank's last write, or persist the tree, once banks are large.
@@ -16883,10 +16895,20 @@ class MemoryEngine(MemoryEngineInterface):
         await self._authenticate_tenant(request_context)
         tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_MEMORY_UNITS, request_context)
         await self._require_bank_exists(bank_id)
+        tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
+        # The caller's tag scope narrows the tree like any other read's.
+        if tag_scope:
+            tag_groups = [*(tag_groups or []), *tag_scope]
         store = get_memories()
         async with self._store_read_conn(bank_id) as conn:
             units = await store._scan_all_memories(
-                conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=["observation"], tag_groups=tag_scope or None
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                fact_types=["observation"],
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups or None,
             )
             # An observation inherits its source memories' entities.
             entity_map = await store.entity_map_for_units(

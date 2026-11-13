@@ -982,10 +982,10 @@ export class ControlPlaneClient {
   }
 
   /** The bank's observations as a tree of topic folders (experimental, no LLM). */
-  async getMemoryTree(bankId: string) {
-    return this.fetchApi<MemoryTreeFolder>(
-      `/api/memory-tree?bank_id=${encodeURIComponent(bankId)}`
-    );
+  async getMemoryTree(bankId: string, filter?: TagFilter) {
+    const params = new URLSearchParams({ bank_id: bankId });
+    if (filter) appendTagFilter(params, filter);
+    return this.fetchApi<MemoryTreeFolder>(`/api/memory-tree?${params}`);
   }
 
   /**
