@@ -19,7 +19,7 @@ import numpy as np
 
 # A group at or under this size becomes one leaf.
 LEAF_MAX = 120
-# Groups smaller than this are folded into their nearest sibling.
+# Groups smaller than this are not a topic of their own: they go to the folder's other.
 LEAF_MIN = 15
 BRANCH = 8
 MAX_DEPTH = 6
@@ -27,7 +27,10 @@ SUMMARY_TOP = 10
 RELATED_TOP = 3
 # An entity on more than this share of the bank's observations names nothing.
 UBIQUITOUS_SHARE = 0.33
-KMEANS_ITERS = 25
+# Two seed entities sharing more than this share of their rows (Jaccard) are one subject.
+SEED_OVERLAP = 0.5
+# A row with no seed entity joins a group only if the group carries this share of its entity weight.
+SHARE_TO_JOIN = 0.25
 OTHER_NAME = "other"
 README = "README.md"
 
@@ -85,6 +88,11 @@ class _Node:
     top_entities: list[str] = field(default_factory=list)
     slug: str = ""
     path: str = ""
+    # The entity the group was seeded from: its path segment, since it moves only if the
+    # group itself does (the most distinctive entities can swap order on a small change).
+    seed: str = ""
+    # The folder's ``other``: rows that fit none of its topics.
+    rest: bool = False
 
 
 def _useful(name: str) -> bool:
@@ -174,30 +182,62 @@ def _build_features(observations: list[TreeObservation]) -> _BankFeatures:
     )
 
 
-def _kmeans(feats: _Features, k: int, rng: np.random.Generator) -> np.ndarray:
-    """Spherical k-means with k-means++ seeding. Returns a label per row."""
-    first = int(rng.integers(feats.n))
-    centres = [feats.dense_row(first)]
-    best = feats.sims(np.array(centres))[:, 0]
-    for _ in range(1, k):
-        dist = np.clip(1 - best, 0, None)
-        if dist.sum() == 0:
+def _seed_entities(feats: _Features, k: int, exclude: frozenset[int] = frozenset()) -> list[int]:
+    """Up to ``k`` entities to start the groups from: the strongest entities in the group (by
+    their summed weight, so an entity on nearly every row counts for little), skipping any that
+    mostly co-occurs with one already chosen. Ties go to the name, so the choice depends only on
+    counts, which a few observations more or less barely move. (Random k-means++ seeding re-rolled
+    every group as soon as one row was added, removed or reordered: ~3% of a real bank's
+    observations kept their file across a 1% change. Greedy coverage seeding stopped at one
+    seed when one entity sat on most rows, leaving a 497-observation file.)"""
+    mass = np.bincount(feats.cols, weights=feats.vals, minlength=len(feats.vocab))
+    df = np.bincount(feats.cols[feats.vals > 0], minlength=len(feats.vocab))
+    rows_of = {}
+    chosen: list[int] = []
+    candidates = [c for c in np.flatnonzero(df >= LEAF_MIN) if int(c) not in exclude]
+    for c in sorted(candidates, key=lambda c: (-round(mass[c], 9), feats.vocab[c])):
+        rows = set(feats.rows[(feats.cols == c) & (feats.vals > 0)].tolist())
+        if any(len(rows & rows_of[o]) / len(rows | rows_of[o]) > SEED_OVERLAP for o in chosen):
+            continue
+        rows_of[int(c)] = rows
+        chosen.append(int(c))
+        if len(chosen) == k:
             break
-        nxt = int(rng.choice(feats.n, p=dist / dist.sum()))
-        centres.append(feats.dense_row(nxt))
-        best = np.maximum(best, feats.sims(np.array(centres[-1:]))[:, 0])
-    cent = np.array(centres)
-    labels = feats.sims(cent).argmax(axis=1)
-    for _ in range(KMEANS_ITERS):
-        cent = feats.centroids(labels, len(cent))
-        new = feats.sims(cent).argmax(axis=1)
-        if np.array_equal(new, labels):
-            break
-        labels = new
+    return chosen
+
+
+def _assign(feats: _Features, seeds: list[int]) -> np.ndarray:
+    """A label per row: ``c`` for the group grown from ``seeds[c]``, ``len(seeds)`` for the rest.
+
+    A row goes to the seed entity it weighs most. A row carrying no seed joins the group that
+    shares the largest part of its entity weight (counting entities at least two of the group's
+    rows carry), if that part is at least ``SHARE_TO_JOIN``; otherwise it goes to the rest, the
+    folder's ``other``. (Placing it by similarity to the group's mean put it next to the nearest
+    group however far: median similarity 0.03, so a fact about deleting a document's request
+    history landed in a topic about CLAUDE.md system stories.) No k-means rounds after this:
+    each round let a small change in the bank ripple through every group."""
+    k = len(seeds)
+    cent = np.zeros((k, len(feats.vocab)))
+    cent[np.arange(k), seeds] = 1.0
+    sims = feats.sims(cent)
+    labels = np.where(sims.max(axis=1) > 0, sims.argmax(axis=1), k)
+    loose = np.flatnonzero(labels == k)
+    if len(loose) and len(loose) < feats.n:
+        # Entities each seeded group carries on at least two rows.
+        counts = np.zeros((k, len(feats.vocab)))
+        placed = labels[feats.rows] < k
+        np.add.at(counts, (labels[feats.rows][placed], feats.cols[placed]), 1)
+        carried = counts >= 2
+        total = np.bincount(feats.rows, weights=feats.vals, minlength=feats.n)
+        shared = np.zeros((feats.n, k))
+        for g in range(k):
+            shared[:, g] = np.bincount(feats.rows, weights=feats.vals * carried[g, feats.cols], minlength=feats.n)
+        part = shared[loose] / np.where(total[loose] == 0, 1, total[loose])[:, None]
+        labels[loose] = np.where(part.max(axis=1) >= SHARE_TO_JOIN, part.argmax(axis=1), k)
     return labels
 
 
-def _split(feats: _Features, members: np.ndarray, depth: int, rng: np.random.Generator) -> _Node:
+def _split(feats: _Features, members: np.ndarray, depth: int, ancestors: frozenset[int] = frozenset()) -> _Node:
     sub = feats.subset(members)
     node = _Node(members=members, centroid=sub.centroids(np.zeros(sub.n, dtype=np.int64), 1)[0])
     if len(members) <= LEAF_MAX or depth >= MAX_DEPTH:
@@ -207,27 +247,30 @@ def _split(feats: _Features, members: np.ndarray, depth: int, rng: np.random.Gen
     # (Sizing k as ceil(n / LEAF_MAX) asked a 160-observation bank with four unrelated
     # subjects for 2 groups, so files mixed subjects that share no entity.)
     local = sub.reweighted()
-    labels = _kmeans(local, BRANCH, rng)
-    # Rows that only carry what the whole group shares have no local signal: place them by
-    # their original features instead of letting them all fall into group 0.
-    blank = np.bincount(local.rows, weights=local.vals, minlength=sub.n) == 0
-    if blank.any():
-        labels[blank] = sub.sims(sub.centroids(labels, labels.max() + 1))[blank].argmax(axis=1)
-    # Fold groups too small to stand alone into the nearest remaining group.
-    while True:
-        sizes = np.bincount(labels)
-        small = [c for c in range(len(sizes)) if 0 < sizes[c] < LEAF_MIN]
-        alive = [c for c in range(len(sizes)) if sizes[c] >= LEAF_MIN]
-        if not small or not alive:
-            break
-        cent = sub.centroids(labels, len(sizes))
-        moved = np.isin(labels, small)
-        sims = sub.sims(cent[alive])
-        labels[moved] = np.array(alive)[sims[moved].argmax(axis=1)]
-    groups = [members[labels == c] for c in np.unique(labels)]
-    if len(groups) < 2:
+    # An ancestor's seed is what this whole group is about: seeding on it again only peels
+    # the group into memlake/memlake/... folders.
+    seeds = _seed_entities(local, BRANCH, ancestors)
+    if len(seeds) < 2:
         return node
-    node.children = [_split(feats, g, depth + 1, rng) for g in groups]
+    labels = _assign(local, seeds)
+    rest = len(seeds)
+    # Rows that only carry what the whole group shares are about the folder, not one topic.
+    blank = np.bincount(local.rows, weights=local.vals, minlength=sub.n) == 0
+    labels[blank] = rest
+    # A group too small to stand alone goes to the rest too, rather than into whichever group
+    # is nearest (the rest itself is never folded away: it is the folder's ``other``).
+    sizes = np.bincount(labels, minlength=rest + 1)
+    labels[np.isin(labels, [c for c in range(rest) if sizes[c] < LEAF_MIN])] = rest
+    kept = np.unique(labels)
+    if len(kept) < 2:
+        return node
+    node.children = []
+    for c in kept:
+        own = frozenset([seeds[c]]) if c < rest else frozenset()
+        child = _split(feats, members[labels == c], depth + 1, ancestors | own)
+        child.seed = local.vocab[seeds[c]] if c < rest else ""
+        child.rest = c == rest
+        node.children.append(child)
     return node
 
 
@@ -249,7 +292,10 @@ def _name_children(
             if df[c] >= 2 and vocab[c] not in taken
         )
         child.top_entities = [name for score, name in reversed(scored) if score > 0][:5]
-        slug = "-".join(_slug(e) for e in child.top_entities[:2]) or "topic"
+        if child.rest:
+            slug = OTHER_NAME
+        else:
+            slug = _slug(child.seed) if child.seed else "-".join(_slug(e) for e in child.top_entities[:2]) or "topic"
         base, i = slug, 2
         while slug in used:
             slug, i = f"{base}-{i}", i + 1
@@ -363,22 +409,30 @@ def _render(
 def build_memory_tree(observations: list[TreeObservation], bank_title: str = "Memories") -> TreeFolder:
     """Lay ``observations`` out as a tree. Deterministic: the same input gives the same tree.
 
-    # ponytail: rebuilt from scratch on every call, so paths can move when observations change.
-    # Upgrade: persist leaf centroids, route new observations to the nearest leaf, split a leaf
-    # only when it outgrows LEAF_MAX.
+    Rebuilt on every call (a stored tree would need one per tag scope), so stability comes from
+    the build itself: no randomness, groups seeded from entity counts, paths named after the
+    seed entity. A small change to the bank leaves most observations in their file.
     """
+    # One canonical order, so the tree depends on which observations there are, not on the
+    # order the store returned them in.
+    observations = sorted(observations, key=lambda o: o.id)
     bank = _build_features(observations)
     feats, obs_cols = bank.feats, bank.obs_cols
     with_features = np.array([i for i, cs in enumerate(obs_cols) if cs], dtype=np.int64)
     without = [i for i, cs in enumerate(obs_cols) if not cs]
-    rng = np.random.default_rng(0)
     root = _Node(members=np.arange(len(observations)), centroid=None)
     if len(with_features):
-        clustered = _split(feats, with_features, 0, rng)
+        clustered = _split(feats, with_features, 0)
         root.children = clustered.children or [clustered]
     _name_children(root, obs_cols, feats.vocab)
     if without:
-        root.children.append(_Node(members=np.array(without), centroid=None, slug=OTHER_NAME, path=OTHER_NAME))
+        rest = next((c for c in root.children if c.rest and not c.children), None)
+        if rest:  # one other.md at the root, not two
+            rest.members = np.concatenate([rest.members, np.array(without)])
+        else:
+            root.children.append(
+                _Node(members=np.array(without), centroid=None, slug=OTHER_NAME, path=OTHER_NAME, rest=True)
+            )
 
     leaves = [leaf for leaf in _leaves(root) if leaf.centroid is not None and leaf is not root]
     related: dict[str, list[_Node]] = {}
