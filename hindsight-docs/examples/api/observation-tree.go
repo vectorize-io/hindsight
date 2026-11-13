@@ -11,7 +11,7 @@ import (
 	hindsight "github.com/vectorize-io/hindsight/hindsight-clients/go"
 )
 
-const mtBankID = "memory-tree-demo-bank-go"
+const mtBankID = "observation-tree-demo-bank-go"
 
 func main() {
 	apiURL := os.Getenv("HINDSIGHT_API_URL")
@@ -29,7 +29,7 @@ func main() {
 	// =============================================================================
 	client.BanksAPI.CreateOrUpdateBank(ctx, mtBankID).
 		CreateBankRequest(hindsight.CreateBankRequest{
-			Name: *hindsight.NewNullableString(hindsight.PtrString("Memory Tree Demo")),
+			Name: *hindsight.NewNullableString(hindsight.PtrString("Observation Tree Demo")),
 		}).Execute()
 	for _, content := range []string{
 		"The API runs on Kubernetes behind an nginx ingress.",
@@ -42,7 +42,7 @@ func main() {
 			}).Execute()
 	}
 	time.Sleep(5 * time.Second)
-	outDir, _ := os.MkdirTemp("", "memory-tree-")
+	outDir, _ := os.MkdirTemp("", "observation-tree-")
 
 	// =============================================================================
 	// Doc Examples
@@ -50,14 +50,14 @@ func main() {
 
 	// [docs:get-tree]
 	// The whole bank: folders, topic files and each folder's index.md.
-	tree, _, err := client.MemoryAPI.GetMemoryTree(ctx, mtBankID).Execute()
+	tree, _, err := client.MemoryAPI.GetObservationTree(ctx, mtBankID).Execute()
 	if err != nil {
 		panic(err)
 	}
 	fmt.Printf("%d observations\n", tree.GetObservationCount())
 
-	var walk func(folder hindsight.MemoryTreeFolder)
-	walk = func(folder hindsight.MemoryTreeFolder) {
+	var walk func(folder hindsight.ObservationTreeFolder)
+	walk = func(folder hindsight.ObservationTreeFolder) {
 		for _, f := range folder.GetFiles() {
 			fmt.Printf("/%s (%d)\n", f.GetPath(), f.GetObservationCount())
 		}
@@ -68,7 +68,7 @@ func main() {
 	walk(*tree)
 
 	// Only one scope: the same tag filters as recall.
-	platform, _, err := client.MemoryAPI.GetMemoryTree(ctx, mtBankID).
+	platform, _, err := client.MemoryAPI.GetObservationTree(ctx, mtBankID).
 		Tags([]string{"team:platform"}).TagsMatch("any_strict").Execute()
 	if err != nil {
 		panic(err)
@@ -78,8 +78,8 @@ func main() {
 
 	// [docs:write-bundle]
 	// Write the bundle to disk: each file's markdown at its path.
-	var write func(folder hindsight.MemoryTreeFolder)
-	write = func(folder hindsight.MemoryTreeFolder) {
+	var write func(folder hindsight.ObservationTreeFolder)
+	write = func(folder hindsight.ObservationTreeFolder) {
 		for _, f := range folder.GetFiles() {
 			path := filepath.Join(outDir, f.GetPath())
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -105,5 +105,5 @@ func main() {
 	req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/v1/default/banks/%s", apiURL, mtBankID), nil)
 	http.DefaultClient.Do(req)
 
-	fmt.Println("memory-tree.go: All examples passed")
+	fmt.Println("observation-tree.go: All examples passed")
 }

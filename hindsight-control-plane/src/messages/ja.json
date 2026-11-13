@@ -186,8 +186,8 @@
     "cloneIncludeHistory": "履歴",
     "cloneIncludeHistoryHint": "監査ログと LLM リクエストのトレース。",
     "cloneNothingSelected": "コピーする対象を 1 つ以上選んでください。",
-    "memoryTree": "観察",
-    "memoryTreeDescription": "このバンクが学んだすべてを、閲覧・検索・エクスポートできる Markdown ファイルのフォルダとして表示します。エージェントが一覧表示や grep に使うのと同じファイルです。各トピックファイルにはそのすべての観察が含まれ、各フォルダの index.md が概要を示します。"
+    "observationTree": "観察",
+    "observationTreeDescription": "このバンクが学んだすべてを、閲覧・検索・エクスポートできる Markdown ファイルのフォルダとして表示します。エージェントが一覧表示や grep に使うのと同じファイルです。各トピックファイルにはそのすべての観察が含まれ、各フォルダの index.md が概要を示します。"
   },
   "bankProfile": {
     "noBankSelected": "バンクが選択されていません",
@@ -2700,7 +2700,7 @@
       }
     }
   },
-  "memoryTree": {
+  "observationTree": {
     "empty": "このバンクにはまだ観察がありません。",
     "pickFile": "左のファイルを選択してください。",
     "findPlaceholder": "メモリを検索（テキストまたは正規表現）",

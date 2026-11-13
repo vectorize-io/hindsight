@@ -1,4 +1,4 @@
-"""GET /memory-tree: a bank's observations come back as topic files, every one exactly once."""
+"""GET /observation-tree: a bank's observations come back as topic files, every one exactly once."""
 
 import json
 import uuid
@@ -69,10 +69,10 @@ def _files(folder: dict) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_memory_tree_groups_observations_into_topic_files(
+async def test_observation_tree_groups_observations_into_topic_files(
     api_client: httpx.AsyncClient, memory: MemoryEngine, request_context: RequestContext
 ):
-    bank_id = f"test-memory-tree-{uuid.uuid4().hex[:8]}"
+    bank_id = f"test-observation-tree-{uuid.uuid4().hex[:8]}"
     await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     pool = await memory._get_pool()
     # Four subjects so no entity is on more than a third of the bank (that counts as "everywhere",
@@ -87,7 +87,7 @@ async def test_memory_tree_groups_observations_into_topic_files(
         for subject, entities in subjects.items():
             await _seed(conn, bank_id, subject, entities, 40)
 
-    response = await api_client.get(f"/v1/default/banks/{bank_id}/memory-tree")
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/observations/tree")
     assert response.status_code == 200, response.text
     tree = response.json()
 
@@ -103,11 +103,11 @@ async def test_memory_tree_groups_observations_into_topic_files(
 
 
 @pytest.mark.asyncio
-async def test_memory_tree_of_an_empty_bank(api_client: httpx.AsyncClient, memory: MemoryEngine, request_context):
-    bank_id = f"test-memory-tree-empty-{uuid.uuid4().hex[:8]}"
+async def test_observation_tree_of_an_empty_bank(api_client: httpx.AsyncClient, memory: MemoryEngine, request_context):
+    bank_id = f"test-observation-tree-empty-{uuid.uuid4().hex[:8]}"
     await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
-    response = await api_client.get(f"/v1/default/banks/{bank_id}/memory-tree")
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/observations/tree")
     assert response.status_code == 200, response.text
     tree = response.json()
     assert tree["observation_count"] == 0
@@ -115,10 +115,10 @@ async def test_memory_tree_of_an_empty_bank(api_client: httpx.AsyncClient, memor
 
 
 @pytest.mark.asyncio
-async def test_memory_tree_for_one_scope(api_client: httpx.AsyncClient, memory: MemoryEngine, request_context):
+async def test_observation_tree_for_one_scope(api_client: httpx.AsyncClient, memory: MemoryEngine, request_context):
     """tags / tags_match / tag_groups scope the tree as they scope recall: only matching
     observations are grouped."""
-    bank_id = f"test-memory-tree-scope-{uuid.uuid4().hex[:8]}"
+    bank_id = f"test-observation-tree-scope-{uuid.uuid4().hex[:8]}"
     await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     pool = await memory._get_pool()
     async with pool.acquire() as conn:
@@ -130,7 +130,7 @@ async def test_memory_tree_for_one_scope(api_client: httpx.AsyncClient, memory: 
     def placed(tree: dict) -> set[str]:
         return {o["text"].split()[0] for f in _files(tree) if f["kind"] == "topic" for o in f["observations"]}
 
-    url = f"/v1/default/banks/{bank_id}/memory-tree"
+    url = f"/v1/default/banks/{bank_id}/observations/tree"
     scoped = (await api_client.get(url, params={"tags": "team:a", "tags_match": "any_strict"})).json()
     assert scoped["observation_count"] == 8
     assert placed(scoped) == {"redis", "s3"}

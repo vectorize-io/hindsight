@@ -502,6 +502,25 @@ enum BankAliasCommands {
 
 #[derive(Subcommand)]
 enum MemoryCommands {
+    /// Show the bank's observations as a tree of topic files (an Open Knowledge Format bundle),
+    /// or write the bundle to a folder with --out
+    ObservationTree {
+        /// Bank ID
+        bank_id: String,
+
+        /// Only observations carrying these tags (comma-separated, e.g. team:a)
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+
+        /// Tag matching mode: any, all, any_strict, all_strict, exact (default: any)
+        #[arg(long)]
+        tags_match: Option<String>,
+
+        /// Write every file's markdown under this directory instead of printing the tree
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+
     /// List memory units with pagination
     List {
         /// Bank ID
@@ -1749,6 +1768,19 @@ fn run() -> Result<()> {
                 limit,
                 offset,
                 verbose,
+                output_format,
+            ),
+            MemoryCommands::ObservationTree {
+                bank_id,
+                tags,
+                tags_match,
+                out,
+            } => commands::memory::observation_tree(
+                &client,
+                &bank_id,
+                tags,
+                tags_match,
+                out,
                 output_format,
             ),
             MemoryCommands::Get { bank_id, memory_id } => {

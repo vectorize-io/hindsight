@@ -17,11 +17,11 @@ import (
 	"fmt"
 )
 
-// checks if the MemoryTreeObservation type satisfies the MappedNullable interface at compile time
-var _ MappedNullable = &MemoryTreeObservation{}
+// checks if the ObservationTreeObservation type satisfies the MappedNullable interface at compile time
+var _ MappedNullable = &ObservationTreeObservation{}
 
-// MemoryTreeObservation An observation as the memory tree lists it.
-type MemoryTreeObservation struct {
+// ObservationTreeObservation An observation as the observation tree lists it.
+type ObservationTreeObservation struct {
 	Id string `json:"id"`
 	Text string `json:"text"`
 	// How many source memories back it.
@@ -33,14 +33,14 @@ type MemoryTreeObservation struct {
 	Tags []string `json:"tags"`
 }
 
-type _MemoryTreeObservation MemoryTreeObservation
+type _ObservationTreeObservation ObservationTreeObservation
 
-// NewMemoryTreeObservation instantiates a new MemoryTreeObservation object
+// NewObservationTreeObservation instantiates a new ObservationTreeObservation object
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewMemoryTreeObservation(id string, text string, proofCount int32, tags []string) *MemoryTreeObservation {
-	this := MemoryTreeObservation{}
+func NewObservationTreeObservation(id string, text string, proofCount int32, tags []string) *ObservationTreeObservation {
+	this := ObservationTreeObservation{}
 	this.Id = id
 	this.Text = text
 	this.ProofCount = proofCount
@@ -48,16 +48,16 @@ func NewMemoryTreeObservation(id string, text string, proofCount int32, tags []s
 	return &this
 }
 
-// NewMemoryTreeObservationWithDefaults instantiates a new MemoryTreeObservation object
+// NewObservationTreeObservationWithDefaults instantiates a new ObservationTreeObservation object
 // This constructor will only assign default values to properties that have it defined,
 // but it doesn't guarantee that properties required by API are set
-func NewMemoryTreeObservationWithDefaults() *MemoryTreeObservation {
-	this := MemoryTreeObservation{}
+func NewObservationTreeObservationWithDefaults() *ObservationTreeObservation {
+	this := ObservationTreeObservation{}
 	return &this
 }
 
 // GetId returns the Id field value
-func (o *MemoryTreeObservation) GetId() string {
+func (o *ObservationTreeObservation) GetId() string {
 	if o == nil {
 		var ret string
 		return ret
@@ -68,7 +68,7 @@ func (o *MemoryTreeObservation) GetId() string {
 
 // GetIdOk returns a tuple with the Id field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeObservation) GetIdOk() (*string, bool) {
+func (o *ObservationTreeObservation) GetIdOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -76,12 +76,12 @@ func (o *MemoryTreeObservation) GetIdOk() (*string, bool) {
 }
 
 // SetId sets field value
-func (o *MemoryTreeObservation) SetId(v string) {
+func (o *ObservationTreeObservation) SetId(v string) {
 	o.Id = v
 }
 
 // GetText returns the Text field value
-func (o *MemoryTreeObservation) GetText() string {
+func (o *ObservationTreeObservation) GetText() string {
 	if o == nil {
 		var ret string
 		return ret
@@ -92,7 +92,7 @@ func (o *MemoryTreeObservation) GetText() string {
 
 // GetTextOk returns a tuple with the Text field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeObservation) GetTextOk() (*string, bool) {
+func (o *ObservationTreeObservation) GetTextOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -100,12 +100,12 @@ func (o *MemoryTreeObservation) GetTextOk() (*string, bool) {
 }
 
 // SetText sets field value
-func (o *MemoryTreeObservation) SetText(v string) {
+func (o *ObservationTreeObservation) SetText(v string) {
 	o.Text = v
 }
 
 // GetProofCount returns the ProofCount field value
-func (o *MemoryTreeObservation) GetProofCount() int32 {
+func (o *ObservationTreeObservation) GetProofCount() int32 {
 	if o == nil {
 		var ret int32
 		return ret
@@ -116,7 +116,7 @@ func (o *MemoryTreeObservation) GetProofCount() int32 {
 
 // GetProofCountOk returns a tuple with the ProofCount field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeObservation) GetProofCountOk() (*int32, bool) {
+func (o *ObservationTreeObservation) GetProofCountOk() (*int32, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -124,12 +124,12 @@ func (o *MemoryTreeObservation) GetProofCountOk() (*int32, bool) {
 }
 
 // SetProofCount sets field value
-func (o *MemoryTreeObservation) SetProofCount(v int32) {
+func (o *ObservationTreeObservation) SetProofCount(v int32) {
 	o.ProofCount = v
 }
 
 // GetOccurredStart returns the OccurredStart field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *MemoryTreeObservation) GetOccurredStart() time.Time {
+func (o *ObservationTreeObservation) GetOccurredStart() time.Time {
 	if o == nil || IsNil(o.OccurredStart.Get()) {
 		var ret time.Time
 		return ret
@@ -140,7 +140,7 @@ func (o *MemoryTreeObservation) GetOccurredStart() time.Time {
 // GetOccurredStartOk returns a tuple with the OccurredStart field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *MemoryTreeObservation) GetOccurredStartOk() (*time.Time, bool) {
+func (o *ObservationTreeObservation) GetOccurredStartOk() (*time.Time, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -148,7 +148,7 @@ func (o *MemoryTreeObservation) GetOccurredStartOk() (*time.Time, bool) {
 }
 
 // HasOccurredStart returns a boolean if a field has been set.
-func (o *MemoryTreeObservation) HasOccurredStart() bool {
+func (o *ObservationTreeObservation) HasOccurredStart() bool {
 	if o != nil && o.OccurredStart.IsSet() {
 		return true
 	}
@@ -157,21 +157,21 @@ func (o *MemoryTreeObservation) HasOccurredStart() bool {
 }
 
 // SetOccurredStart gets a reference to the given NullableTime and assigns it to the OccurredStart field.
-func (o *MemoryTreeObservation) SetOccurredStart(v time.Time) {
+func (o *ObservationTreeObservation) SetOccurredStart(v time.Time) {
 	o.OccurredStart.Set(&v)
 }
 // SetOccurredStartNil sets the value for OccurredStart to be an explicit nil
-func (o *MemoryTreeObservation) SetOccurredStartNil() {
+func (o *ObservationTreeObservation) SetOccurredStartNil() {
 	o.OccurredStart.Set(nil)
 }
 
 // UnsetOccurredStart ensures that no value is present for OccurredStart, not even an explicit nil
-func (o *MemoryTreeObservation) UnsetOccurredStart() {
+func (o *ObservationTreeObservation) UnsetOccurredStart() {
 	o.OccurredStart.Unset()
 }
 
 // GetOccurredEnd returns the OccurredEnd field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *MemoryTreeObservation) GetOccurredEnd() time.Time {
+func (o *ObservationTreeObservation) GetOccurredEnd() time.Time {
 	if o == nil || IsNil(o.OccurredEnd.Get()) {
 		var ret time.Time
 		return ret
@@ -182,7 +182,7 @@ func (o *MemoryTreeObservation) GetOccurredEnd() time.Time {
 // GetOccurredEndOk returns a tuple with the OccurredEnd field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *MemoryTreeObservation) GetOccurredEndOk() (*time.Time, bool) {
+func (o *ObservationTreeObservation) GetOccurredEndOk() (*time.Time, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -190,7 +190,7 @@ func (o *MemoryTreeObservation) GetOccurredEndOk() (*time.Time, bool) {
 }
 
 // HasOccurredEnd returns a boolean if a field has been set.
-func (o *MemoryTreeObservation) HasOccurredEnd() bool {
+func (o *ObservationTreeObservation) HasOccurredEnd() bool {
 	if o != nil && o.OccurredEnd.IsSet() {
 		return true
 	}
@@ -199,21 +199,21 @@ func (o *MemoryTreeObservation) HasOccurredEnd() bool {
 }
 
 // SetOccurredEnd gets a reference to the given NullableTime and assigns it to the OccurredEnd field.
-func (o *MemoryTreeObservation) SetOccurredEnd(v time.Time) {
+func (o *ObservationTreeObservation) SetOccurredEnd(v time.Time) {
 	o.OccurredEnd.Set(&v)
 }
 // SetOccurredEndNil sets the value for OccurredEnd to be an explicit nil
-func (o *MemoryTreeObservation) SetOccurredEndNil() {
+func (o *ObservationTreeObservation) SetOccurredEndNil() {
 	o.OccurredEnd.Set(nil)
 }
 
 // UnsetOccurredEnd ensures that no value is present for OccurredEnd, not even an explicit nil
-func (o *MemoryTreeObservation) UnsetOccurredEnd() {
+func (o *ObservationTreeObservation) UnsetOccurredEnd() {
 	o.OccurredEnd.Unset()
 }
 
 // GetMentionedAt returns the MentionedAt field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *MemoryTreeObservation) GetMentionedAt() time.Time {
+func (o *ObservationTreeObservation) GetMentionedAt() time.Time {
 	if o == nil || IsNil(o.MentionedAt.Get()) {
 		var ret time.Time
 		return ret
@@ -224,7 +224,7 @@ func (o *MemoryTreeObservation) GetMentionedAt() time.Time {
 // GetMentionedAtOk returns a tuple with the MentionedAt field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *MemoryTreeObservation) GetMentionedAtOk() (*time.Time, bool) {
+func (o *ObservationTreeObservation) GetMentionedAtOk() (*time.Time, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -232,7 +232,7 @@ func (o *MemoryTreeObservation) GetMentionedAtOk() (*time.Time, bool) {
 }
 
 // HasMentionedAt returns a boolean if a field has been set.
-func (o *MemoryTreeObservation) HasMentionedAt() bool {
+func (o *ObservationTreeObservation) HasMentionedAt() bool {
 	if o != nil && o.MentionedAt.IsSet() {
 		return true
 	}
@@ -241,21 +241,21 @@ func (o *MemoryTreeObservation) HasMentionedAt() bool {
 }
 
 // SetMentionedAt gets a reference to the given NullableTime and assigns it to the MentionedAt field.
-func (o *MemoryTreeObservation) SetMentionedAt(v time.Time) {
+func (o *ObservationTreeObservation) SetMentionedAt(v time.Time) {
 	o.MentionedAt.Set(&v)
 }
 // SetMentionedAtNil sets the value for MentionedAt to be an explicit nil
-func (o *MemoryTreeObservation) SetMentionedAtNil() {
+func (o *ObservationTreeObservation) SetMentionedAtNil() {
 	o.MentionedAt.Set(nil)
 }
 
 // UnsetMentionedAt ensures that no value is present for MentionedAt, not even an explicit nil
-func (o *MemoryTreeObservation) UnsetMentionedAt() {
+func (o *ObservationTreeObservation) UnsetMentionedAt() {
 	o.MentionedAt.Unset()
 }
 
 // GetUpdatedAt returns the UpdatedAt field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *MemoryTreeObservation) GetUpdatedAt() time.Time {
+func (o *ObservationTreeObservation) GetUpdatedAt() time.Time {
 	if o == nil || IsNil(o.UpdatedAt.Get()) {
 		var ret time.Time
 		return ret
@@ -266,7 +266,7 @@ func (o *MemoryTreeObservation) GetUpdatedAt() time.Time {
 // GetUpdatedAtOk returns a tuple with the UpdatedAt field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *MemoryTreeObservation) GetUpdatedAtOk() (*time.Time, bool) {
+func (o *ObservationTreeObservation) GetUpdatedAtOk() (*time.Time, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -274,7 +274,7 @@ func (o *MemoryTreeObservation) GetUpdatedAtOk() (*time.Time, bool) {
 }
 
 // HasUpdatedAt returns a boolean if a field has been set.
-func (o *MemoryTreeObservation) HasUpdatedAt() bool {
+func (o *ObservationTreeObservation) HasUpdatedAt() bool {
 	if o != nil && o.UpdatedAt.IsSet() {
 		return true
 	}
@@ -283,21 +283,21 @@ func (o *MemoryTreeObservation) HasUpdatedAt() bool {
 }
 
 // SetUpdatedAt gets a reference to the given NullableTime and assigns it to the UpdatedAt field.
-func (o *MemoryTreeObservation) SetUpdatedAt(v time.Time) {
+func (o *ObservationTreeObservation) SetUpdatedAt(v time.Time) {
 	o.UpdatedAt.Set(&v)
 }
 // SetUpdatedAtNil sets the value for UpdatedAt to be an explicit nil
-func (o *MemoryTreeObservation) SetUpdatedAtNil() {
+func (o *ObservationTreeObservation) SetUpdatedAtNil() {
 	o.UpdatedAt.Set(nil)
 }
 
 // UnsetUpdatedAt ensures that no value is present for UpdatedAt, not even an explicit nil
-func (o *MemoryTreeObservation) UnsetUpdatedAt() {
+func (o *ObservationTreeObservation) UnsetUpdatedAt() {
 	o.UpdatedAt.Unset()
 }
 
 // GetTags returns the Tags field value
-func (o *MemoryTreeObservation) GetTags() []string {
+func (o *ObservationTreeObservation) GetTags() []string {
 	if o == nil {
 		var ret []string
 		return ret
@@ -308,7 +308,7 @@ func (o *MemoryTreeObservation) GetTags() []string {
 
 // GetTagsOk returns a tuple with the Tags field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeObservation) GetTagsOk() ([]string, bool) {
+func (o *ObservationTreeObservation) GetTagsOk() ([]string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -316,11 +316,11 @@ func (o *MemoryTreeObservation) GetTagsOk() ([]string, bool) {
 }
 
 // SetTags sets field value
-func (o *MemoryTreeObservation) SetTags(v []string) {
+func (o *ObservationTreeObservation) SetTags(v []string) {
 	o.Tags = v
 }
 
-func (o MemoryTreeObservation) MarshalJSON() ([]byte, error) {
+func (o ObservationTreeObservation) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
 		return []byte{}, err
@@ -328,7 +328,7 @@ func (o MemoryTreeObservation) MarshalJSON() ([]byte, error) {
 	return json.Marshal(toSerialize)
 }
 
-func (o MemoryTreeObservation) ToMap() (map[string]interface{}, error) {
+func (o ObservationTreeObservation) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["id"] = o.Id
 	toSerialize["text"] = o.Text
@@ -349,7 +349,7 @@ func (o MemoryTreeObservation) ToMap() (map[string]interface{}, error) {
 	return toSerialize, nil
 }
 
-func (o *MemoryTreeObservation) UnmarshalJSON(data []byte) (err error) {
+func (o *ObservationTreeObservation) UnmarshalJSON(data []byte) (err error) {
 	// This validates that all required properties are included in the JSON object
 	// by unmarshalling the object into a generic map with string keys and checking
 	// that every required field exists as a key in the generic map.
@@ -374,52 +374,52 @@ func (o *MemoryTreeObservation) UnmarshalJSON(data []byte) (err error) {
 		}
 	}
 
-	varMemoryTreeObservation := _MemoryTreeObservation{}
+	varObservationTreeObservation := _ObservationTreeObservation{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	err = decoder.Decode(&varMemoryTreeObservation)
+	err = decoder.Decode(&varObservationTreeObservation)
 
 	if err != nil {
 		return err
 	}
 
-	*o = MemoryTreeObservation(varMemoryTreeObservation)
+	*o = ObservationTreeObservation(varObservationTreeObservation)
 
 	return err
 }
 
-type NullableMemoryTreeObservation struct {
-	value *MemoryTreeObservation
+type NullableObservationTreeObservation struct {
+	value *ObservationTreeObservation
 	isSet bool
 }
 
-func (v NullableMemoryTreeObservation) Get() *MemoryTreeObservation {
+func (v NullableObservationTreeObservation) Get() *ObservationTreeObservation {
 	return v.value
 }
 
-func (v *NullableMemoryTreeObservation) Set(val *MemoryTreeObservation) {
+func (v *NullableObservationTreeObservation) Set(val *ObservationTreeObservation) {
 	v.value = val
 	v.isSet = true
 }
 
-func (v NullableMemoryTreeObservation) IsSet() bool {
+func (v NullableObservationTreeObservation) IsSet() bool {
 	return v.isSet
 }
 
-func (v *NullableMemoryTreeObservation) Unset() {
+func (v *NullableObservationTreeObservation) Unset() {
 	v.value = nil
 	v.isSet = false
 }
 
-func NewNullableMemoryTreeObservation(val *MemoryTreeObservation) *NullableMemoryTreeObservation {
-	return &NullableMemoryTreeObservation{value: val, isSet: true}
+func NewNullableObservationTreeObservation(val *ObservationTreeObservation) *NullableObservationTreeObservation {
+	return &NullableObservationTreeObservation{value: val, isSet: true}
 }
 
-func (v NullableMemoryTreeObservation) MarshalJSON() ([]byte, error) {
+func (v NullableObservationTreeObservation) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.value)
 }
 
-func (v *NullableMemoryTreeObservation) UnmarshalJSON(src []byte) error {
+func (v *NullableObservationTreeObservation) UnmarshalJSON(src []byte) error {
 	v.isSet = true
 	return json.Unmarshal(src, &v.value)
 }

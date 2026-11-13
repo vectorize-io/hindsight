@@ -18,9 +18,9 @@ from enum import Enum
 from typing_extensions import Self
 
 
-class MemoryTreeFileKind(str, Enum):
+class ObservationTreeFileKind(str, Enum):
     """
-    What a memory-tree file is. A named enum, not a Literal: inline enums are named after their field by the generated Rust client, and ``kind`` already names the page node enum there (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``).
+    What a observation-tree file is. A named enum, not a Literal: inline enums are named after their field by the generated Rust client, and ``kind`` already names the page node enum there (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``).
     """
 
     """
@@ -31,7 +31,7 @@ class MemoryTreeFileKind(str, Enum):
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:
-        """Create an instance of MemoryTreeFileKind from a JSON string"""
+        """Create an instance of ObservationTreeFileKind from a JSON string"""
         return cls(json.loads(json_str))
 
 

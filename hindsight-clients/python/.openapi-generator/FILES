@@ -137,10 +137,6 @@ hindsight_client_api/models/memory_graph_node_data.py
 hindsight_client_api/models/memory_graph_table_row.py
 hindsight_client_api/models/memory_item.py
 hindsight_client_api/models/memory_timeseries_bucket.py
-hindsight_client_api/models/memory_tree_file.py
-hindsight_client_api/models/memory_tree_file_kind.py
-hindsight_client_api/models/memory_tree_folder.py
-hindsight_client_api/models/memory_tree_observation.py
 hindsight_client_api/models/memory_unit_list_item.py
 hindsight_client_api/models/mental_model_delta_operations.py
 hindsight_client_api/models/mental_model_dry_run_refresh_result.py
@@ -163,6 +159,10 @@ hindsight_client_api/models/observation_id_sample.py
 hindsight_client_api/models/observation_scope.py
 hindsight_client_api/models/observation_scopes.py
 hindsight_client_api/models/observation_scopes_response.py
+hindsight_client_api/models/observation_tree_file.py
+hindsight_client_api/models/observation_tree_file_kind.py
+hindsight_client_api/models/observation_tree_folder.py
+hindsight_client_api/models/observation_tree_observation.py
 hindsight_client_api/models/operation_progress.py
 hindsight_client_api/models/operation_response.py
 hindsight_client_api/models/operation_status_response.py

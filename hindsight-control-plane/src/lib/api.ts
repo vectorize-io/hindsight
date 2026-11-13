@@ -76,7 +76,7 @@ export interface WebhookHttpConfig {
   params: Record<string, string>;
 }
 
-export interface MemoryTreeObservation {
+export interface ObservationTreeObservation {
   id: string;
   text: string;
   proof_count: number;
@@ -87,7 +87,7 @@ export interface MemoryTreeObservation {
   tags: string[];
 }
 
-export interface MemoryTreeFile {
+export interface ObservationTreeFile {
   path: string;
   name: string;
   /** `index`: a folder's overview (OKF's index.md). `topic`: every observation in one topic. */
@@ -96,17 +96,17 @@ export interface MemoryTreeFile {
   observation_count: number;
   about: string[];
   related: string[];
-  observations: MemoryTreeObservation[];
+  observations: ObservationTreeObservation[];
   content: string;
 }
 
-export interface MemoryTreeFolder {
+export interface ObservationTreeFolder {
   path: string;
   name: string;
   title: string;
   observation_count: number;
-  folders: MemoryTreeFolder[];
-  files: MemoryTreeFile[];
+  folders: ObservationTreeFolder[];
+  files: ObservationTreeFile[];
 }
 
 export interface PageNode {
@@ -982,10 +982,10 @@ export class ControlPlaneClient {
   }
 
   /** The bank's observations as a tree of topic folders (experimental, no LLM). */
-  async getMemoryTree(bankId: string, filter?: TagFilter) {
+  async getObservationTree(bankId: string, filter?: TagFilter) {
     const params = new URLSearchParams({ bank_id: bankId });
     if (filter) appendTagFilter(params, filter);
-    return this.fetchApi<MemoryTreeFolder>(`/api/memory-tree?${params}`);
+    return this.fetchApi<ObservationTreeFolder>(`/api/observations/tree?${params}`);
   }
 
   /**

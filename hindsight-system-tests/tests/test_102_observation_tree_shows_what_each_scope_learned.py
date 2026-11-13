@@ -1,4 +1,4 @@
-"""The memory tree shows what consolidation learned, scope by scope, as it is now.
+"""The observation tree shows what consolidation learned, scope by scope, as it is now.
 
 The tree is built on request from the bank's observations, so it composes two things
 nothing else tests together: consolidation's tag scopes (an observation carries exactly
@@ -8,7 +8,7 @@ group its own observations and hold none of the other's, and the whole-bank tree
 file every observation exactly once.
 
 How a bank too big for one file is split into topics is the unit tests' job
-(hindsight-api-slim/tests/test_memory_tree.py); a story needs a bank past 120 observations
+(hindsight-api-slim/tests/test_observation_tree.py); a story needs a bank past 120 observations
 for that, so this one stays small and covers the hand-off between the steps instead.
 
 Then consolidation rewrites an observation. The tree is not stored, so the next request
@@ -96,9 +96,9 @@ async def _two_teams(client, llm, bank_id, settled) -> None:
 async def test_each_team_sees_only_its_own_observations(client, llm, bank_id, settled):
     await _two_teams(client, llm, bank_id, settled)
 
-    team_a = await client.memory.get_memory_tree(bank_id, tags=[TEAM_A], tags_match="any_strict")
-    team_b = await client.memory.get_memory_tree(bank_id, tags=[TEAM_B], tags_match="any_strict")
-    everything = await client.memory.get_memory_tree(bank_id)
+    team_a = await client.memory.get_observation_tree(bank_id, tags=[TEAM_A], tags_match="any_strict")
+    team_b = await client.memory.get_observation_tree(bank_id, tags=[TEAM_B], tags_match="any_strict")
+    everything = await client.memory.get_observation_tree(bank_id)
 
     assert sorted(_placed(team_a)) == sorted(LEARNED[TEAM_A])
     assert sorted(_placed(team_b)) == sorted(LEARNED[TEAM_B])
@@ -115,7 +115,7 @@ async def test_each_team_sees_only_its_own_observations(client, llm, bank_id, se
 
 async def test_a_rewritten_observation_shows_its_new_text_in_the_same_file(client, llm, bank_id, settled):
     await _two_teams(client, llm, bank_id, settled)
-    before = _placed(await client.memory.get_memory_tree(bank_id))
+    before = _placed(await client.memory.get_observation_tree(bank_id))
     memories = await client.memory.list_memories(bank_id, limit=100)
     redis = next(
         m.id for m in memories.items if m.fact_type == "observation" and m.text == "Redis keys expire after an hour"
@@ -135,7 +135,7 @@ async def test_a_rewritten_observation_shows_its_new_text_in_the_same_file(clien
     await client.aretain(bank_id=bank_id, content="Redis cache update", tags=[TEAM_A])
     await settled(bank_id)
 
-    after = _placed(await client.memory.get_memory_tree(bank_id))
+    after = _placed(await client.memory.get_observation_tree(bank_id))
     assert REWRITTEN in after and "Redis keys expire after an hour" not in after
     # Same file as before the rewrite, and every other observation stayed put.
     assert after[REWRITTEN] == before["Redis keys expire after an hour"] == "all.md"

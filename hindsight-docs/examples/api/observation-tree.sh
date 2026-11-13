@@ -1,17 +1,17 @@
 #!/bin/bash
-# Memory tree API examples for Hindsight (there is no CLI command yet, so curl)
-# Run: bash examples/api/memory-tree.sh
+# Observation tree examples for the Hindsight CLI
+# Run: bash examples/api/observation-tree.sh
 
 set -e
 
 HINDSIGHT_URL="${HINDSIGHT_API_URL:-http://localhost:8888}"
-BANK_ID="memory-tree-demo-bank-cli"
+BANK_ID="observation-tree-demo-bank-cli"
 OUT_DIR=$(mktemp -d)
 
 # =============================================================================
 # Setup (not shown in docs)
 # =============================================================================
-hindsight bank create "$BANK_ID" --name "Memory Tree Demo"
+hindsight bank create "$BANK_ID" --name "Observation Tree Demo"
 # Item-level tags (the CLI's retain has only the deprecated document tags), so the scoped
 # call below has something to show.
 for item in \
@@ -28,23 +28,16 @@ sleep 5
 # =============================================================================
 
 # [docs:get-tree]
-# The whole bank: folders, topic files and each folder's index.md.
-curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memory-tree" | jq '.observation_count'
+# The whole bank: folders, topic files and each folder's index.md (-o json for the full tree).
+hindsight memory observation-tree "$BANK_ID"
 
 # Only one scope: the same tag filters as recall.
-curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memory-tree?tags=team:platform&tags_match=any_strict" \
-  | jq '[.. | .files? // empty | .[] | .path]'
+hindsight memory observation-tree "$BANK_ID" --tags team:platform --tags-match any_strict
 # [/docs:get-tree]
 
 # [docs:write-bundle]
 # Write the bundle to disk: each file's markdown at its path.
-curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memory-tree" \
-  | jq -c '.. | .files? // empty | .[] | {path, content}' \
-  | while read -r file; do
-      path="$OUT_DIR/$(jq -r .path <<<"$file")"
-      mkdir -p "$(dirname "$path")"
-      jq -r .content <<<"$file" > "$path"
-    done
+hindsight memory observation-tree "$BANK_ID" --out "$OUT_DIR"
 # [/docs:write-bundle]
 test -f "$OUT_DIR/index.md"
 
@@ -53,4 +46,4 @@ test -f "$OUT_DIR/index.md"
 # =============================================================================
 curl -s -X DELETE "$HINDSIGHT_URL/v1/default/banks/$BANK_ID" > /dev/null
 
-echo "memory-tree.sh: All examples passed"
+echo "observation-tree.sh: All examples passed"

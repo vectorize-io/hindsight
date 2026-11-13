@@ -19,23 +19,23 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List
-from hindsight_client_api.models.memory_tree_file_kind import MemoryTreeFileKind
-from hindsight_client_api.models.memory_tree_observation import MemoryTreeObservation
+from hindsight_client_api.models.observation_tree_file_kind import ObservationTreeFileKind
+from hindsight_client_api.models.observation_tree_observation import ObservationTreeObservation
 from typing import Optional, Set
 from typing_extensions import Self
 
-class MemoryTreeFile(BaseModel):
+class ObservationTreeFile(BaseModel):
     """
-    A markdown file in the memory tree: a folder's index.md or one topic (an OKF concept).
+    A markdown file in the observation tree: a folder's index.md or one topic (an OKF concept).
     """ # noqa: E501
     path: StrictStr = Field(description="Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.")
     name: StrictStr
-    kind: MemoryTreeFileKind = Field(description="`index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.")
+    kind: ObservationTreeFileKind = Field(description="`index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.")
     title: StrictStr
     observation_count: StrictInt = Field(description="Observations in the topic, or in the whole folder for an index.")
     about: List[StrictStr] = Field(description="The entities that set this topic apart from its siblings.")
     related: List[StrictStr] = Field(description="Paths of related topic files elsewhere in the tree.")
-    observations: List[MemoryTreeObservation] = Field(description="What the file lists, best-supported first.")
+    observations: List[ObservationTreeObservation] = Field(description="What the file lists, best-supported first.")
     content: StrictStr = Field(description="The same file as markdown, with dates and source counts on every line.")
     __properties: ClassVar[List[str]] = ["path", "name", "kind", "title", "observation_count", "about", "related", "observations", "content"]
 
@@ -57,7 +57,7 @@ class MemoryTreeFile(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of MemoryTreeFile from a JSON string"""
+        """Create an instance of ObservationTreeFile from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -89,7 +89,7 @@ class MemoryTreeFile(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of MemoryTreeFile from a dict"""
+        """Create an instance of ObservationTreeFile from a dict"""
         if obj is None:
             return None
 
@@ -104,7 +104,7 @@ class MemoryTreeFile(BaseModel):
             "observation_count": obj.get("observation_count"),
             "about": obj.get("about"),
             "related": obj.get("related"),
-            "observations": [MemoryTreeObservation.from_dict(_item) for _item in obj["observations"]] if obj.get("observations") is not None else None,
+            "observations": [ObservationTreeObservation.from_dict(_item) for _item in obj["observations"]] if obj.get("observations") is not None else None,
             "content": obj.get("content")
         })
         return _obj

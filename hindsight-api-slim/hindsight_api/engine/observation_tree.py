@@ -1,4 +1,4 @@
-"""Memory tree: a bank's observations laid out as a bounded tree of folders and files.
+"""Observation tree: a bank's observations laid out as a bounded tree of folders and files.
 
 No LLM. Observations are grouped by the entities they are about (rare entities weigh more,
 ids and near-ubiquitous entities are ignored), split recursively with spherical k-means until a
@@ -522,7 +522,7 @@ def _split_misc(node: _Node, observations: list[TreeObservation]) -> None:
     node.children = children
 
 
-def build_memory_tree(observations: list[TreeObservation], bank_title: str = "Memories") -> TreeFolder:
+def build_observation_tree(observations: list[TreeObservation], bank_title: str = "Memories") -> TreeFolder:
     """Lay ``observations`` out as a tree. Deterministic: the same input gives the same tree.
 
     Rebuilt on every call (a stored tree would need one per tag scope), so stability comes from

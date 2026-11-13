@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
   if (!bankId) return missingQueryParam(request, "bank_id");
 
   const searchParams = request.nextUrl.searchParams;
-  const response = await sdk.getMemoryTree({
+  const response = await sdk.getObservationTree({
     client: lowLevelClient,
     path: { bank_id: bankId },
     query: {
@@ -17,5 +17,5 @@ export async function GET(request: NextRequest) {
       tag_groups: searchParams.get("tag_groups") ?? undefined,
     },
   });
-  return respondWithSdk(response, "Failed to get memory tree", { request });
+  return respondWithSdk(response, "Failed to get observation tree", { request });
 }

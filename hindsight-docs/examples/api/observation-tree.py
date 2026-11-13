@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Memory tree API examples for Hindsight — the bank's observations as markdown files.
-Run: python examples/api/memory-tree.py
+Observation tree API examples for Hindsight — the bank's observations as markdown files.
+Run: python examples/api/observation-tree.py
 """
 import asyncio
 import os
@@ -10,7 +10,7 @@ import tempfile
 from hindsight_client import Hindsight
 
 HINDSIGHT_URL = os.getenv("HINDSIGHT_API_URL", "http://localhost:8888")
-BANK_ID = "memory-tree-demo-bank"
+BANK_ID = "observation-tree-demo-bank"
 
 
 async def wait_for_idle(client, bank_id, *, attempts=120, interval=0.5):
@@ -33,7 +33,7 @@ async def main():
     # Setup (not shown in docs)
     # =========================================================================
     client = Hindsight(base_url=HINDSIGHT_URL)
-    await client.acreate_bank(bank_id=BANK_ID, name="Memory Tree Demo")
+    await client.acreate_bank(bank_id=BANK_ID, name="Observation Tree Demo")
     await client.aretain(bank_id=BANK_ID, content="The API runs on Kubernetes behind an nginx ingress.", tags=["team:platform"])
     await client.aretain(bank_id=BANK_ID, content="Redis keys expire after an hour.", tags=["team:platform"])
     await client.aretain(bank_id=BANK_ID, content="The GPU nodes serve Gemma with vLLM.", tags=["team:ml"])
@@ -46,7 +46,7 @@ async def main():
 
     # [docs:get-tree]
     # The whole bank: folders, topic files and each folder's index.md.
-    tree = await client.memory.get_memory_tree(bank_id=BANK_ID)
+    tree = await client.memory.get_observation_tree(bank_id=BANK_ID)
     print(f"{tree.observation_count} observations")
 
     def walk(folder):
@@ -58,7 +58,7 @@ async def main():
     walk(tree)
 
     # Only one scope: the same tag filters as recall.
-    platform = await client.memory.get_memory_tree(bank_id=BANK_ID, tags=["team:platform"], tags_match="any_strict")
+    platform = await client.memory.get_observation_tree(bank_id=BANK_ID, tags=["team:platform"], tags_match="any_strict")
     walk(platform)
     # [/docs:get-tree]
 
@@ -81,7 +81,7 @@ async def main():
     # Cleanup (not shown in docs)
     # =========================================================================
     await client.adelete_bank(bank_id=BANK_ID)
-    print("memory-tree.py: All examples passed")
+    print("observation-tree.py: All examples passed")
 
 
 asyncio.run(main())

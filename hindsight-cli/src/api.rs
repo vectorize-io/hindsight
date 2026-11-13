@@ -742,6 +742,30 @@ impl ApiClient {
         })
     }
 
+    /// The bank's observations as a tree of topic files, optionally for one tag scope.
+    pub fn get_observation_tree(
+        &self,
+        bank_id: &str,
+        tags: &[String],
+        tags_match: Option<types::TagsMatch>,
+    ) -> Result<types::ObservationTreeFolder> {
+        let tags = tags.to_vec();
+        self.runtime.block_on(async {
+            let response = self
+                .client
+                .get_observation_tree(
+                    bank_id,
+                    None, // tag_groups
+                    (!tags.is_empty()).then_some(&tags),
+                    tags_match,
+                    None, // authorization
+                )
+                .humanized()
+                .await?;
+            Ok(response.into_inner())
+        })
+    }
+
     // --- Bank Methods ---
 
     pub fn create_bank(

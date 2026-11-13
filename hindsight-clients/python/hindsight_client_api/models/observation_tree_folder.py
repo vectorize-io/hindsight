@@ -19,20 +19,20 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List
-from hindsight_client_api.models.memory_tree_file import MemoryTreeFile
+from hindsight_client_api.models.observation_tree_file import ObservationTreeFile
 from typing import Optional, Set
 from typing_extensions import Self
 
-class MemoryTreeFolder(BaseModel):
+class ObservationTreeFolder(BaseModel):
     """
-    A topic folder in the memory tree.
+    A topic folder in the observation tree.
     """ # noqa: E501
     path: StrictStr = Field(description="Path from the tree root; empty for the root.")
     name: StrictStr
     title: StrictStr = Field(description="Human-readable topic name.")
     observation_count: StrictInt
-    folders: List[MemoryTreeFolder]
-    files: List[MemoryTreeFile]
+    folders: List[ObservationTreeFolder]
+    files: List[ObservationTreeFile]
     __properties: ClassVar[List[str]] = ["path", "name", "title", "observation_count", "folders", "files"]
 
     model_config = ConfigDict(
@@ -53,7 +53,7 @@ class MemoryTreeFolder(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of MemoryTreeFolder from a JSON string"""
+        """Create an instance of ObservationTreeFolder from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -92,7 +92,7 @@ class MemoryTreeFolder(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of MemoryTreeFolder from a dict"""
+        """Create an instance of ObservationTreeFolder from a dict"""
         if obj is None:
             return None
 
@@ -104,11 +104,11 @@ class MemoryTreeFolder(BaseModel):
             "name": obj.get("name"),
             "title": obj.get("title"),
             "observation_count": obj.get("observation_count"),
-            "folders": [MemoryTreeFolder.from_dict(_item) for _item in obj["folders"]] if obj.get("folders") is not None else None,
-            "files": [MemoryTreeFile.from_dict(_item) for _item in obj["files"]] if obj.get("files") is not None else None
+            "folders": [ObservationTreeFolder.from_dict(_item) for _item in obj["folders"]] if obj.get("folders") is not None else None,
+            "files": [ObservationTreeFile.from_dict(_item) for _item in obj["files"]] if obj.get("files") is not None else None
         })
         return _obj
 
 # TODO: Rewrite to not use raise_errors
-MemoryTreeFolder.model_rebuild(raise_errors=False)
+ObservationTreeFolder.model_rebuild(raise_errors=False)
 

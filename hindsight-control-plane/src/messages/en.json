@@ -186,8 +186,8 @@
     "cloneIncludeHistory": "History",
     "cloneIncludeHistoryHint": "Audit log and LLM request traces.",
     "cloneNothingSelected": "Choose at least one thing to copy.",
-    "memoryTree": "Observations",
-    "memoryTreeDescription": "Everything this bank has learned, as a folder of markdown files you can browse, search and export — the same files an agent can list and grep. Each topic file holds all of its observations; each folder's index.md gives an overview."
+    "observationTree": "Observations",
+    "observationTreeDescription": "Everything this bank has learned, as a folder of markdown files you can browse, search and export — the same files an agent can list and grep. Each topic file holds all of its observations; each folder's index.md gives an overview."
   },
   "bankProfile": {
     "noBankSelected": "No Bank Selected",
@@ -2700,7 +2700,7 @@
       }
     }
   },
-  "memoryTree": {
+  "observationTree": {
     "empty": "No observations in this bank yet.",
     "pickFile": "Pick a file on the left.",
     "findPlaceholder": "Find in memories (text or regex)",

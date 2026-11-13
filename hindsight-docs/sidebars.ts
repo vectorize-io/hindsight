@@ -51,8 +51,8 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'developer/memory-tree',
-          label: 'Memory Tree',
+          id: 'developer/observation-tree',
+          label: 'Observation Tree',
           customProps: { icon: 'lu-folder-tree' },
         },
         {

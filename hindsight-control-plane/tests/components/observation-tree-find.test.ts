@@ -4,10 +4,10 @@ import {
   findPattern,
   treeConstellation,
   clusterLabels,
-} from "@/components/memory-tree-view";
-import type { MemoryTreeFile } from "@/lib/api";
+} from "@/components/observation-tree-view";
+import type { ObservationTreeFile } from "@/lib/api";
 
-const topic = (path: string, texts: string[]): MemoryTreeFile => ({
+const topic = (path: string, texts: string[]): ObservationTreeFile => ({
   path,
   name: path.split("/").pop()!,
   kind: "topic",
@@ -19,7 +19,7 @@ const topic = (path: string, texts: string[]): MemoryTreeFile => ({
   content: "",
 });
 
-describe("memory tree find", () => {
+describe("observation tree find", () => {
   const files = [
     topic("gemma/vllm.md", ["Gemma runs on vLLM", "NVFP4 is faster"]),
     topic("postgres.md", ["Postgres locks rows"]),
@@ -44,7 +44,7 @@ describe("memory tree find", () => {
   });
 });
 
-describe("memory tree constellation", () => {
+describe("observation tree constellation", () => {
   it("makes one star per observation and bridges related topics, even one-sided", () => {
     // Only one side lists the relation: the bridge must still be drawn.
     const a = topic("gemma/vllm.md", ["a0", "a1"]);

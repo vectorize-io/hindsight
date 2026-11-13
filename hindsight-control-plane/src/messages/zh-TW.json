@@ -186,8 +186,8 @@
     "cloneIncludeHistory": "歷史",
     "cloneIncludeHistoryHint": "稽核紀錄與 LLM 請求追蹤。",
     "cloneNothingSelected": "請至少選擇一項要複製的內容。",
-    "memoryTree": "觀察",
-    "memoryTreeDescription": "此記憶庫學到的一切，以可瀏覽、搜尋和匯出的 Markdown 資料夾呈現——與代理可以列出和用 grep 搜尋的是同一批檔案。每個主題檔案包含其全部觀察；每個資料夾的 index.md 提供概覽。"
+    "observationTree": "觀察",
+    "observationTreeDescription": "此記憶庫學到的一切，以可瀏覽、搜尋和匯出的 Markdown 資料夾呈現——與代理可以列出和用 grep 搜尋的是同一批檔案。每個主題檔案包含其全部觀察；每個資料夾的 index.md 提供概覽。"
   },
   "bankProfile": {
     "noBankSelected": "未選擇記憶庫",
@@ -2700,7 +2700,7 @@
       }
     }
   },
-  "memoryTree": {
+  "observationTree": {
     "empty": "此庫還沒有觀察。",
     "pickFile": "請在左側選擇一個檔案。",
     "findPlaceholder": "在記憶中尋找（文字或正規表示式）",

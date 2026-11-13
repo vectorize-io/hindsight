@@ -10,7 +10,7 @@ use hindsight_client::types;
 
 /// Parse a --tags-match string into the generated TagsMatch enum, rejecting
 /// unknown values so a typo fails loudly instead of silently changing scope.
-fn parse_tags_match(value: &str) -> Result<types::TagsMatch> {
+pub(crate) fn parse_tags_match(value: &str) -> Result<types::TagsMatch> {
     Ok(match value.to_lowercase().as_str() {
         "any" => types::TagsMatch::Any,
         "all" => types::TagsMatch::All,

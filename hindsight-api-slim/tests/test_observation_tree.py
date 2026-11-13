@@ -1,11 +1,17 @@
-"""The memory tree groups observations by subject, keeps every one, and is deterministic."""
+"""The observation tree groups observations by subject, keeps every one, and is deterministic."""
 
 import json
 import random
 import re
 from datetime import datetime, timezone
 
-from hindsight_api.engine.memory_tree import LEAF_MAX, OKF_VERSION, TreeObservation, build_memory_tree, iter_files
+from hindsight_api.engine.observation_tree import (
+    LEAF_MAX,
+    OKF_VERSION,
+    TreeObservation,
+    build_observation_tree,
+    iter_files,
+)
 
 
 def _bank() -> list[TreeObservation]:
@@ -33,7 +39,7 @@ def _bank() -> list[TreeObservation]:
 
 def test_groups_by_subject_and_keeps_everything():
     obs = _bank()
-    tree = build_memory_tree(obs)
+    tree = build_observation_tree(obs)
 
     topics = [f for f in iter_files(tree) if f.kind == "topic"]
     placed = [o.id for f in topics for o in f.observations]
@@ -52,8 +58,8 @@ def test_groups_by_subject_and_keeps_everything():
 
 
 def test_is_deterministic():
-    a = build_memory_tree(_bank())
-    b = build_memory_tree(_bank())
+    a = build_observation_tree(_bank())
+    b = build_observation_tree(_bank())
     assert [(f.path, f.content) for f in iter_files(a)] == [(f.path, f.content) for f in iter_files(b)]
 
 
@@ -86,7 +92,7 @@ def _realistic_bank(seed: int = 7, size: int = 2500) -> list[TreeObservation]:
 
 
 def _files_of(obs: list[TreeObservation]) -> dict[str, str]:
-    tree = build_memory_tree(obs)
+    tree = build_observation_tree(obs)
     return {o.id: f.path for f in iter_files(tree) if f.kind == "topic" for o in f.observations}
 
 
@@ -99,7 +105,7 @@ def _kept(before: dict[str, str], after: dict[str, str]) -> float:
 def test_input_order_does_not_change_the_tree():
     obs = _realistic_bank()
     shuffled = random.Random(1).sample(obs, len(obs))
-    a, b = build_memory_tree(obs), build_memory_tree(shuffled)
+    a, b = build_observation_tree(obs), build_observation_tree(shuffled)
     assert [(f.path, f.content) for f in iter_files(a)] == [(f.path, f.content) for f in iter_files(b)]
 
 
@@ -140,7 +146,7 @@ def test_an_observation_that_fits_no_topic_goes_to_misc():
 def test_misc_is_a_file_never_a_folder():
     """No folder called misc (no misc/misc/misc.md): a folder's leftovers are misc.md, or one
     misc-YYYY-MM.md per month once there are more than fit in one file."""
-    tree = build_memory_tree(_realistic_bank())
+    tree = build_observation_tree(_realistic_bank())
     paths = [f.path for f in iter_files(tree)]
     assert not any("misc/" in p for p in paths), [p for p in paths if "misc/" in p]
     misc = [p.rsplit("/", 1)[-1] for p in paths if p.rsplit("/", 1)[-1].startswith("misc")]
@@ -162,7 +168,7 @@ def test_a_big_misc_is_split_by_month():
         )
         for i in range(LEAF_MAX * 2)
     ]
-    names = sorted(f.path for f in iter_files(build_memory_tree(obs)) if f.kind == "topic")
+    names = sorted(f.path for f in iter_files(build_observation_tree(obs)) if f.kind == "topic")
     assert names == ["misc-2026-09.md", "misc-2026-10.md", "misc-2026-11.md"]
 
 
@@ -177,7 +183,7 @@ def test_a_month_too_big_for_one_file_is_split_by_week():
         )
         for i in range(LEAF_MAX * 2)
     ]
-    names = sorted(f.path for f in iter_files(build_memory_tree(obs)) if f.kind == "topic")
+    names = sorted(f.path for f in iter_files(build_observation_tree(obs)) if f.kind == "topic")
     assert names == ["misc-2026-w45.md", "misc-2026-w46.md"]
 
 
@@ -194,7 +200,7 @@ def test_the_tree_is_an_open_knowledge_format_bundle():
     """OKF v0.2 (https://okf.md/spec/): every concept file has frontmatter with a non-empty type,
     index.md is reserved for folder overviews and carries no frontmatter except the root's
     okf_version, timestamps carry a UTC offset, and links are bundle-relative and resolve."""
-    files = list(iter_files(build_memory_tree(_realistic_bank())))
+    files = list(iter_files(build_observation_tree(_realistic_bank())))
     paths = {f.path for f in files}
     for f in files:
         meta = _frontmatter(f.content)
@@ -223,7 +229,7 @@ def test_frontmatter_timestamps_carry_an_offset():
         )
         for i in range(3)
     ]
-    meta = _frontmatter(next(f for f in iter_files(build_memory_tree(obs)) if f.kind == "topic").content)
+    meta = _frontmatter(next(f for f in iter_files(build_observation_tree(obs)) if f.kind == "topic").content)
     assert meta is not None and meta["timestamp"] == "2026-10-03T00:00:00+00:00"
 
 
@@ -239,14 +245,14 @@ def _subjects(names: list[str], per: int = LEAF_MAX) -> list[TreeObservation]:
 
 def test_a_topic_never_takes_a_reserved_name():
     """An entity called "Index" must not produce a topic file that overwrites index.md."""
-    paths = [f.path for f in iter_files(build_memory_tree(_subjects(["Index", "Log", "Misc", "Redis"])))]
+    paths = [f.path for f in iter_files(build_observation_tree(_subjects(["Index", "Log", "Misc", "Redis"])))]
     assert len(paths) == len(set(paths)), paths
     assert paths.count("index.md") == 1
     assert "log.md" not in paths
 
 
 def test_non_latin_names_keep_their_letters():
-    paths = {f.path for f in iter_files(build_memory_tree(_subjects(["北京", "東京", "서울", "Москва", "हिन्दी"])))}
+    paths = {f.path for f in iter_files(build_observation_tree(_subjects(["北京", "東京", "서울", "Москва", "हिन्दी"])))}
     assert {"北京.md", "東京.md", "서울.md", "москва.md", "हिन्दी.md"} <= paths, paths
 
 
@@ -265,7 +271,7 @@ def test_every_path_is_lowercase():
         for i in range(LEAF_MAX * 2)
     ]
     for obs in [*banks, weeks]:
-        paths = [f.path for f in iter_files(build_memory_tree(obs))]
+        paths = [f.path for f in iter_files(build_observation_tree(obs))]
         assert all(p == p.lower() for p in paths), [p for p in paths if p != p.lower()]
 
 
@@ -277,10 +283,10 @@ def test_a_bank_small_enough_for_one_file_titles_its_topic_and_keeps_its_path():
         for e in ["Kafka", "Nginx", "Postgres", "Redis"]
         for i in range(2)
     ]
-    topics = [f for f in iter_files(build_memory_tree(obs)) if f.kind == "topic"]
+    topics = [f for f in iter_files(build_observation_tree(obs)) if f.kind == "topic"]
     assert [(f.path, f.title) for f in topics] == [("all.md", "Kafka · Nginx")]
     more = obs + [
         TreeObservation(id=f"Aardvark-{i}", text=f"Aardvark fact {i}", proof_count=1, entities=["Aardvark"])
         for i in range(2)
     ]
-    assert [f.path for f in iter_files(build_memory_tree(more)) if f.kind == "topic"] == ["all.md"]
+    assert [f.path for f in iter_files(build_observation_tree(more)) if f.kind == "topic"] == ["all.md"]

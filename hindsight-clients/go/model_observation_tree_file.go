@@ -16,16 +16,16 @@ import (
 	"fmt"
 )
 
-// checks if the MemoryTreeFile type satisfies the MappedNullable interface at compile time
-var _ MappedNullable = &MemoryTreeFile{}
+// checks if the ObservationTreeFile type satisfies the MappedNullable interface at compile time
+var _ MappedNullable = &ObservationTreeFile{}
 
-// MemoryTreeFile A markdown file in the memory tree: a folder's index.md or one topic (an OKF concept).
-type MemoryTreeFile struct {
+// ObservationTreeFile A markdown file in the observation tree: a folder's index.md or one topic (an OKF concept).
+type ObservationTreeFile struct {
 	// Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.
 	Path string `json:"path"`
 	Name string `json:"name"`
 	// `index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.
-	Kind MemoryTreeFileKind `json:"kind"`
+	Kind ObservationTreeFileKind `json:"kind"`
 	Title string `json:"title"`
 	// Observations in the topic, or in the whole folder for an index.
 	ObservationCount int32 `json:"observation_count"`
@@ -34,19 +34,19 @@ type MemoryTreeFile struct {
 	// Paths of related topic files elsewhere in the tree.
 	Related []string `json:"related"`
 	// What the file lists, best-supported first.
-	Observations []MemoryTreeObservation `json:"observations"`
+	Observations []ObservationTreeObservation `json:"observations"`
 	// The same file as markdown, with dates and source counts on every line.
 	Content string `json:"content"`
 }
 
-type _MemoryTreeFile MemoryTreeFile
+type _ObservationTreeFile ObservationTreeFile
 
-// NewMemoryTreeFile instantiates a new MemoryTreeFile object
+// NewObservationTreeFile instantiates a new ObservationTreeFile object
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewMemoryTreeFile(path string, name string, kind MemoryTreeFileKind, title string, observationCount int32, about []string, related []string, observations []MemoryTreeObservation, content string) *MemoryTreeFile {
-	this := MemoryTreeFile{}
+func NewObservationTreeFile(path string, name string, kind ObservationTreeFileKind, title string, observationCount int32, about []string, related []string, observations []ObservationTreeObservation, content string) *ObservationTreeFile {
+	this := ObservationTreeFile{}
 	this.Path = path
 	this.Name = name
 	this.Kind = kind
@@ -59,16 +59,16 @@ func NewMemoryTreeFile(path string, name string, kind MemoryTreeFileKind, title 
 	return &this
 }
 
-// NewMemoryTreeFileWithDefaults instantiates a new MemoryTreeFile object
+// NewObservationTreeFileWithDefaults instantiates a new ObservationTreeFile object
 // This constructor will only assign default values to properties that have it defined,
 // but it doesn't guarantee that properties required by API are set
-func NewMemoryTreeFileWithDefaults() *MemoryTreeFile {
-	this := MemoryTreeFile{}
+func NewObservationTreeFileWithDefaults() *ObservationTreeFile {
+	this := ObservationTreeFile{}
 	return &this
 }
 
 // GetPath returns the Path field value
-func (o *MemoryTreeFile) GetPath() string {
+func (o *ObservationTreeFile) GetPath() string {
 	if o == nil {
 		var ret string
 		return ret
@@ -79,7 +79,7 @@ func (o *MemoryTreeFile) GetPath() string {
 
 // GetPathOk returns a tuple with the Path field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetPathOk() (*string, bool) {
+func (o *ObservationTreeFile) GetPathOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -87,12 +87,12 @@ func (o *MemoryTreeFile) GetPathOk() (*string, bool) {
 }
 
 // SetPath sets field value
-func (o *MemoryTreeFile) SetPath(v string) {
+func (o *ObservationTreeFile) SetPath(v string) {
 	o.Path = v
 }
 
 // GetName returns the Name field value
-func (o *MemoryTreeFile) GetName() string {
+func (o *ObservationTreeFile) GetName() string {
 	if o == nil {
 		var ret string
 		return ret
@@ -103,7 +103,7 @@ func (o *MemoryTreeFile) GetName() string {
 
 // GetNameOk returns a tuple with the Name field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetNameOk() (*string, bool) {
+func (o *ObservationTreeFile) GetNameOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -111,14 +111,14 @@ func (o *MemoryTreeFile) GetNameOk() (*string, bool) {
 }
 
 // SetName sets field value
-func (o *MemoryTreeFile) SetName(v string) {
+func (o *ObservationTreeFile) SetName(v string) {
 	o.Name = v
 }
 
 // GetKind returns the Kind field value
-func (o *MemoryTreeFile) GetKind() MemoryTreeFileKind {
+func (o *ObservationTreeFile) GetKind() ObservationTreeFileKind {
 	if o == nil {
-		var ret MemoryTreeFileKind
+		var ret ObservationTreeFileKind
 		return ret
 	}
 
@@ -127,7 +127,7 @@ func (o *MemoryTreeFile) GetKind() MemoryTreeFileKind {
 
 // GetKindOk returns a tuple with the Kind field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetKindOk() (*MemoryTreeFileKind, bool) {
+func (o *ObservationTreeFile) GetKindOk() (*ObservationTreeFileKind, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -135,12 +135,12 @@ func (o *MemoryTreeFile) GetKindOk() (*MemoryTreeFileKind, bool) {
 }
 
 // SetKind sets field value
-func (o *MemoryTreeFile) SetKind(v MemoryTreeFileKind) {
+func (o *ObservationTreeFile) SetKind(v ObservationTreeFileKind) {
 	o.Kind = v
 }
 
 // GetTitle returns the Title field value
-func (o *MemoryTreeFile) GetTitle() string {
+func (o *ObservationTreeFile) GetTitle() string {
 	if o == nil {
 		var ret string
 		return ret
@@ -151,7 +151,7 @@ func (o *MemoryTreeFile) GetTitle() string {
 
 // GetTitleOk returns a tuple with the Title field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetTitleOk() (*string, bool) {
+func (o *ObservationTreeFile) GetTitleOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -159,12 +159,12 @@ func (o *MemoryTreeFile) GetTitleOk() (*string, bool) {
 }
 
 // SetTitle sets field value
-func (o *MemoryTreeFile) SetTitle(v string) {
+func (o *ObservationTreeFile) SetTitle(v string) {
 	o.Title = v
 }
 
 // GetObservationCount returns the ObservationCount field value
-func (o *MemoryTreeFile) GetObservationCount() int32 {
+func (o *ObservationTreeFile) GetObservationCount() int32 {
 	if o == nil {
 		var ret int32
 		return ret
@@ -175,7 +175,7 @@ func (o *MemoryTreeFile) GetObservationCount() int32 {
 
 // GetObservationCountOk returns a tuple with the ObservationCount field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetObservationCountOk() (*int32, bool) {
+func (o *ObservationTreeFile) GetObservationCountOk() (*int32, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -183,12 +183,12 @@ func (o *MemoryTreeFile) GetObservationCountOk() (*int32, bool) {
 }
 
 // SetObservationCount sets field value
-func (o *MemoryTreeFile) SetObservationCount(v int32) {
+func (o *ObservationTreeFile) SetObservationCount(v int32) {
 	o.ObservationCount = v
 }
 
 // GetAbout returns the About field value
-func (o *MemoryTreeFile) GetAbout() []string {
+func (o *ObservationTreeFile) GetAbout() []string {
 	if o == nil {
 		var ret []string
 		return ret
@@ -199,7 +199,7 @@ func (o *MemoryTreeFile) GetAbout() []string {
 
 // GetAboutOk returns a tuple with the About field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetAboutOk() ([]string, bool) {
+func (o *ObservationTreeFile) GetAboutOk() ([]string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -207,12 +207,12 @@ func (o *MemoryTreeFile) GetAboutOk() ([]string, bool) {
 }
 
 // SetAbout sets field value
-func (o *MemoryTreeFile) SetAbout(v []string) {
+func (o *ObservationTreeFile) SetAbout(v []string) {
 	o.About = v
 }
 
 // GetRelated returns the Related field value
-func (o *MemoryTreeFile) GetRelated() []string {
+func (o *ObservationTreeFile) GetRelated() []string {
 	if o == nil {
 		var ret []string
 		return ret
@@ -223,7 +223,7 @@ func (o *MemoryTreeFile) GetRelated() []string {
 
 // GetRelatedOk returns a tuple with the Related field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetRelatedOk() ([]string, bool) {
+func (o *ObservationTreeFile) GetRelatedOk() ([]string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -231,14 +231,14 @@ func (o *MemoryTreeFile) GetRelatedOk() ([]string, bool) {
 }
 
 // SetRelated sets field value
-func (o *MemoryTreeFile) SetRelated(v []string) {
+func (o *ObservationTreeFile) SetRelated(v []string) {
 	o.Related = v
 }
 
 // GetObservations returns the Observations field value
-func (o *MemoryTreeFile) GetObservations() []MemoryTreeObservation {
+func (o *ObservationTreeFile) GetObservations() []ObservationTreeObservation {
 	if o == nil {
-		var ret []MemoryTreeObservation
+		var ret []ObservationTreeObservation
 		return ret
 	}
 
@@ -247,7 +247,7 @@ func (o *MemoryTreeFile) GetObservations() []MemoryTreeObservation {
 
 // GetObservationsOk returns a tuple with the Observations field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetObservationsOk() ([]MemoryTreeObservation, bool) {
+func (o *ObservationTreeFile) GetObservationsOk() ([]ObservationTreeObservation, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -255,12 +255,12 @@ func (o *MemoryTreeFile) GetObservationsOk() ([]MemoryTreeObservation, bool) {
 }
 
 // SetObservations sets field value
-func (o *MemoryTreeFile) SetObservations(v []MemoryTreeObservation) {
+func (o *ObservationTreeFile) SetObservations(v []ObservationTreeObservation) {
 	o.Observations = v
 }
 
 // GetContent returns the Content field value
-func (o *MemoryTreeFile) GetContent() string {
+func (o *ObservationTreeFile) GetContent() string {
 	if o == nil {
 		var ret string
 		return ret
@@ -271,7 +271,7 @@ func (o *MemoryTreeFile) GetContent() string {
 
 // GetContentOk returns a tuple with the Content field value
 // and a boolean to check if the value has been set.
-func (o *MemoryTreeFile) GetContentOk() (*string, bool) {
+func (o *ObservationTreeFile) GetContentOk() (*string, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -279,11 +279,11 @@ func (o *MemoryTreeFile) GetContentOk() (*string, bool) {
 }
 
 // SetContent sets field value
-func (o *MemoryTreeFile) SetContent(v string) {
+func (o *ObservationTreeFile) SetContent(v string) {
 	o.Content = v
 }
 
-func (o MemoryTreeFile) MarshalJSON() ([]byte, error) {
+func (o ObservationTreeFile) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
 		return []byte{}, err
@@ -291,7 +291,7 @@ func (o MemoryTreeFile) MarshalJSON() ([]byte, error) {
 	return json.Marshal(toSerialize)
 }
 
-func (o MemoryTreeFile) ToMap() (map[string]interface{}, error) {
+func (o ObservationTreeFile) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["path"] = o.Path
 	toSerialize["name"] = o.Name
@@ -305,7 +305,7 @@ func (o MemoryTreeFile) ToMap() (map[string]interface{}, error) {
 	return toSerialize, nil
 }
 
-func (o *MemoryTreeFile) UnmarshalJSON(data []byte) (err error) {
+func (o *ObservationTreeFile) UnmarshalJSON(data []byte) (err error) {
 	// This validates that all required properties are included in the JSON object
 	// by unmarshalling the object into a generic map with string keys and checking
 	// that every required field exists as a key in the generic map.
@@ -335,52 +335,52 @@ func (o *MemoryTreeFile) UnmarshalJSON(data []byte) (err error) {
 		}
 	}
 
-	varMemoryTreeFile := _MemoryTreeFile{}
+	varObservationTreeFile := _ObservationTreeFile{}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	err = decoder.Decode(&varMemoryTreeFile)
+	err = decoder.Decode(&varObservationTreeFile)
 
 	if err != nil {
 		return err
 	}
 
-	*o = MemoryTreeFile(varMemoryTreeFile)
+	*o = ObservationTreeFile(varObservationTreeFile)
 
 	return err
 }
 
-type NullableMemoryTreeFile struct {
-	value *MemoryTreeFile
+type NullableObservationTreeFile struct {
+	value *ObservationTreeFile
 	isSet bool
 }
 
-func (v NullableMemoryTreeFile) Get() *MemoryTreeFile {
+func (v NullableObservationTreeFile) Get() *ObservationTreeFile {
 	return v.value
 }
 
-func (v *NullableMemoryTreeFile) Set(val *MemoryTreeFile) {
+func (v *NullableObservationTreeFile) Set(val *ObservationTreeFile) {
 	v.value = val
 	v.isSet = true
 }
 
-func (v NullableMemoryTreeFile) IsSet() bool {
+func (v NullableObservationTreeFile) IsSet() bool {
 	return v.isSet
 }
 
-func (v *NullableMemoryTreeFile) Unset() {
+func (v *NullableObservationTreeFile) Unset() {
 	v.value = nil
 	v.isSet = false
 }
 
-func NewNullableMemoryTreeFile(val *MemoryTreeFile) *NullableMemoryTreeFile {
-	return &NullableMemoryTreeFile{value: val, isSet: true}
+func NewNullableObservationTreeFile(val *ObservationTreeFile) *NullableObservationTreeFile {
+	return &NullableObservationTreeFile{value: val, isSet: true}
 }
 
-func (v NullableMemoryTreeFile) MarshalJSON() ([]byte, error) {
+func (v NullableObservationTreeFile) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.value)
 }
 
-func (v *NullableMemoryTreeFile) UnmarshalJSON(src []byte) error {
+func (v *NullableObservationTreeFile) UnmarshalJSON(src []byte) error {
 	v.isSet = true
 	return json.Unmarshal(src, &v.value)
 }

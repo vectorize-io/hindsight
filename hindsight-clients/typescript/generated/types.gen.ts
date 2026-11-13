@@ -4042,149 +4042,6 @@ export type MemoryTimeseriesBucket = {
 };
 
 /**
- * MemoryTreeFile
- *
- * A markdown file in the memory tree: a folder's index.md or one topic (an OKF concept).
- */
-export type MemoryTreeFile = {
-  /**
-   * Path
-   *
-   * Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.
-   */
-  path: string;
-  /**
-   * Name
-   */
-  name: string;
-  /**
-   * `index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.
-   */
-  kind: MemoryTreeFileKind;
-  /**
-   * Title
-   */
-  title: string;
-  /**
-   * Observation Count
-   *
-   * Observations in the topic, or in the whole folder for an index.
-   */
-  observation_count: number;
-  /**
-   * About
-   *
-   * The entities that set this topic apart from its siblings.
-   */
-  about: Array<string>;
-  /**
-   * Related
-   *
-   * Paths of related topic files elsewhere in the tree.
-   */
-  related: Array<string>;
-  /**
-   * Observations
-   *
-   * What the file lists, best-supported first.
-   */
-  observations: Array<MemoryTreeObservation>;
-  /**
-   * Content
-   *
-   * The same file as markdown, with dates and source counts on every line.
-   */
-  content: string;
-};
-
-/**
- * MemoryTreeFileKind
- *
- * What a memory-tree file is. A named enum, not a Literal: inline enums are named after
- * their field by the generated Rust client, and ``kind`` already names the page node enum
- * there (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``).
- */
-export type MemoryTreeFileKind = "index" | "topic";
-
-/**
- * MemoryTreeFolder
- *
- * A topic folder in the memory tree.
- */
-export type MemoryTreeFolder = {
-  /**
-   * Path
-   *
-   * Path from the tree root; empty for the root.
-   */
-  path: string;
-  /**
-   * Name
-   */
-  name: string;
-  /**
-   * Title
-   *
-   * Human-readable topic name.
-   */
-  title: string;
-  /**
-   * Observation Count
-   */
-  observation_count: number;
-  /**
-   * Folders
-   */
-  folders: Array<MemoryTreeFolder>;
-  /**
-   * Files
-   */
-  files: Array<MemoryTreeFile>;
-};
-
-/**
- * MemoryTreeObservation
- *
- * An observation as the memory tree lists it.
- */
-export type MemoryTreeObservation = {
-  /**
-   * Id
-   */
-  id: string;
-  /**
-   * Text
-   */
-  text: string;
-  /**
-   * Proof Count
-   *
-   * How many source memories back it.
-   */
-  proof_count: number;
-  /**
-   * Occurred Start
-   */
-  occurred_start?: string | null;
-  /**
-   * Occurred End
-   */
-  occurred_end?: string | null;
-  /**
-   * Mentioned At
-   */
-  mentioned_at?: string | null;
-  /**
-   * Updated At
-   */
-  updated_at?: string | null;
-  /**
-   * Tags
-   */
-  tags: Array<string>;
-};
-
-/**
  * MemoryUnitListItem
  *
  * One row of the memory-unit listing.
@@ -5282,6 +5139,149 @@ export type ObservationScopesResponse = {
    * Offset this page started at
    */
   offset: number;
+};
+
+/**
+ * ObservationTreeFile
+ *
+ * A markdown file in the observation tree: a folder's index.md or one topic (an OKF concept).
+ */
+export type ObservationTreeFile = {
+  /**
+   * Path
+   *
+   * Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.
+   */
+  path: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * `index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.
+   */
+  kind: ObservationTreeFileKind;
+  /**
+   * Title
+   */
+  title: string;
+  /**
+   * Observation Count
+   *
+   * Observations in the topic, or in the whole folder for an index.
+   */
+  observation_count: number;
+  /**
+   * About
+   *
+   * The entities that set this topic apart from its siblings.
+   */
+  about: Array<string>;
+  /**
+   * Related
+   *
+   * Paths of related topic files elsewhere in the tree.
+   */
+  related: Array<string>;
+  /**
+   * Observations
+   *
+   * What the file lists, best-supported first.
+   */
+  observations: Array<ObservationTreeObservation>;
+  /**
+   * Content
+   *
+   * The same file as markdown, with dates and source counts on every line.
+   */
+  content: string;
+};
+
+/**
+ * ObservationTreeFileKind
+ *
+ * What a observation-tree file is. A named enum, not a Literal: inline enums are named after
+ * their field by the generated Rust client, and ``kind`` already names the page node enum
+ * there (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``).
+ */
+export type ObservationTreeFileKind = "index" | "topic";
+
+/**
+ * ObservationTreeFolder
+ *
+ * A topic folder in the observation tree.
+ */
+export type ObservationTreeFolder = {
+  /**
+   * Path
+   *
+   * Path from the tree root; empty for the root.
+   */
+  path: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Title
+   *
+   * Human-readable topic name.
+   */
+  title: string;
+  /**
+   * Observation Count
+   */
+  observation_count: number;
+  /**
+   * Folders
+   */
+  folders: Array<ObservationTreeFolder>;
+  /**
+   * Files
+   */
+  files: Array<ObservationTreeFile>;
+};
+
+/**
+ * ObservationTreeObservation
+ *
+ * An observation as the observation tree lists it.
+ */
+export type ObservationTreeObservation = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Text
+   */
+  text: string;
+  /**
+   * Proof Count
+   *
+   * How many source memories back it.
+   */
+  proof_count: number;
+  /**
+   * Occurred Start
+   */
+  occurred_start?: string | null;
+  /**
+   * Occurred End
+   */
+  occurred_end?: string | null;
+  /**
+   * Mentioned At
+   */
+  mentioned_at?: string | null;
+  /**
+   * Updated At
+   */
+  updated_at?: string | null;
+  /**
+   * Tags
+   */
+  tags: Array<string>;
 };
 
 /**
@@ -8411,7 +8411,7 @@ export type ListEntitiesResponses = {
 
 export type ListEntitiesResponse = ListEntitiesResponses[keyof ListEntitiesResponses];
 
-export type GetMemoryTreeData = {
+export type GetObservationTreeData = {
   body?: never;
   headers?: {
     /**
@@ -8445,10 +8445,10 @@ export type GetMemoryTreeData = {
      */
     tag_groups?: string | null;
   };
-  url: "/v1/default/banks/{bank_id}/memory-tree";
+  url: "/v1/default/banks/{bank_id}/observations/tree";
 };
 
-export type GetMemoryTreeErrors = {
+export type GetObservationTreeErrors = {
   /**
    * The bank does not exist.
    */
@@ -8459,16 +8459,17 @@ export type GetMemoryTreeErrors = {
   422: HttpValidationError;
 };
 
-export type GetMemoryTreeError = GetMemoryTreeErrors[keyof GetMemoryTreeErrors];
+export type GetObservationTreeError = GetObservationTreeErrors[keyof GetObservationTreeErrors];
 
-export type GetMemoryTreeResponses = {
+export type GetObservationTreeResponses = {
   /**
    * Successful Response
    */
-  200: MemoryTreeFolder;
+  200: ObservationTreeFolder;
 };
 
-export type GetMemoryTreeResponse = GetMemoryTreeResponses[keyof GetMemoryTreeResponses];
+export type GetObservationTreeResponse =
+  GetObservationTreeResponses[keyof GetObservationTreeResponses];
 
 export type GetEntityGraphData = {
   body?: never;

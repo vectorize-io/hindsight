@@ -707,7 +707,7 @@ if TYPE_CHECKING:
     from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse, AuditLogSummary
     from .memories import MemoriesExtension, MemoryScopeWatermark, ReflectFreshness
     from .memories.base import AttachmentRef, EntityResolverHandle, StoredMemory
-    from .memory_tree import TreeFolder
+    from .observation_tree import TreeFolder
     from .prompt_preview import PromptPreview
     from .retain.attachment_content import AttachmentOccurrence, LoadedAttachment, RetainAttachment
     from .retain.attachment_store import StoredAttachment
@@ -16871,7 +16871,7 @@ class MemoryEngine(MemoryEngineInterface):
                 offset=offset,
             )
 
-    async def get_memory_tree(
+    async def get_observation_tree(
         self,
         bank_id: str,
         *,
@@ -16880,7 +16880,7 @@ class MemoryEngine(MemoryEngineInterface):
         tag_groups: list[TagGroup] | None = None,
         request_context: "RequestContext",
     ) -> "TreeFolder":
-        """The bank's observations as a bounded tree of topic folders (see ``memory_tree``). No LLM.
+        """The bank's observations as a bounded tree of topic folders (see ``observation_tree``). No LLM.
 
         ``tags`` / ``tags_match`` / ``tag_groups`` scope the tree the way they scope recall: only
         matching observations are grouped, so a scope gets its own topics, not a filtered copy of
@@ -16890,7 +16890,7 @@ class MemoryEngine(MemoryEngineInterface):
         # Cache by the bank's last write once banks are large.
         """
         from .memories import get_memories
-        from .memory_tree import TreeObservation, build_memory_tree
+        from .observation_tree import TreeObservation, build_observation_tree
 
         await self._authenticate_tenant(request_context)
         tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_MEMORY_UNITS, request_context)
@@ -16929,7 +16929,7 @@ class MemoryEngine(MemoryEngineInterface):
             for u in units
         ]
         # CPU-bound (~0.1s per few thousand observations): off the event loop, like the entity graph.
-        return await asyncio.to_thread(build_memory_tree, observations, bank_id)
+        return await asyncio.to_thread(build_observation_tree, observations, bank_id)
 
     async def get_entity_graph(
         self,

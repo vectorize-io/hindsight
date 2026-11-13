@@ -1,8 +1,8 @@
 
 
-# Memory Tree
+# Observation Tree
 
-The **memory tree** lays out everything a bank has learned as a folder of markdown files: one file per topic, every [observation](./observations.md) in exactly one file, and an `index.md` in each folder that says what is inside. It is the same bundle for a person browsing it in the control plane, an agent running `ls` and `grep` over it, or a tool importing it.
+The **observation tree** lays out everything a bank has learned as a folder of markdown files: one file per topic, every [observation](./observations.md) in exactly one file, and an `index.md` in each folder that says what is inside. It is the same bundle for a person browsing it in the control plane, an agent running `ls` and `grep` over it, or a tool importing it.
 
 > **📝 Experimental**
 >
@@ -11,7 +11,7 @@ The endpoint and the file layout may still change.
 
 Recall answers a question you already know how to ask. A tree answers the one before it: *what does this bank know?* An agent starting work on a codebase can read the root `index.md`, open the folder that matters, and `grep` the topic files, the same way it explores source code, without guessing a query first. A person can skim the same files to audit what was learned, spot mistakes, and export it.
 
-[Pages](./pages.md) cover a few questions in depth, written and refreshed by an LLM. The memory tree covers *everything*, verbatim: it shows each observation as stored, grouped and named by an algorithm, so it costs nothing to build and can be rebuilt on every request.
+[Pages](./pages.md) cover a few questions in depth, written and refreshed by an LLM. The observation tree covers *everything*, verbatim: it shows each observation as stored, grouped and named by an algorithm, so it costs nothing to build and can be rebuilt on every request.
 
 ## What It Looks Like
 
@@ -91,13 +91,13 @@ Open a bank, go to **Pages → Observations**:
 
 ## Using the API
 
-`GET /v1/default/banks/{bank_id}/memory-tree` returns the root folder: each folder has `folders` and `files`, and each file has its `path`, `kind` (`index` or `topic`), `title`, `about`, `related`, `observations`, and its full markdown in `content`.
+`GET /v1/default/banks/{bank_id}/observations/tree` returns the root folder: each folder has `folders` and `files`, and each file has its `path`, `kind` (`index` or `topic`), `title`, `about`, `related`, `observations`, and its full markdown in `content`.
 
 ### Python
 
 ```python
 # The whole bank: folders, topic files and each folder's index.md.
-tree = await client.memory.get_memory_tree(bank_id=BANK_ID)
+tree = await client.memory.get_observation_tree(bank_id=BANK_ID)
 print(f"{tree.observation_count} observations")
 
 def walk(folder):
@@ -109,7 +109,7 @@ def walk(folder):
 walk(tree)
 
 # Only one scope: the same tag filters as recall.
-platform = await client.memory.get_memory_tree(bank_id=BANK_ID, tags=["team:platform"], tags_match="any_strict")
+platform = await client.memory.get_observation_tree(bank_id=BANK_ID, tags=["team:platform"], tags_match="any_strict")
 walk(platform)
 ```
 
@@ -118,7 +118,7 @@ walk(platform)
 ```javascript
 // The whole bank: folders, topic files and each folder's index.md.
 const apiClient = createClient(createConfig({ baseUrl: HINDSIGHT_URL }));
-const { data: tree } = await sdk.getMemoryTree({ client: apiClient, path: { bank_id: BANK_ID } });
+const { data: tree } = await sdk.getObservationTree({ client: apiClient, path: { bank_id: BANK_ID } });
 console.log(`${tree.observation_count} observations`);
 
 const walk = (folder) => {
@@ -128,7 +128,7 @@ const walk = (folder) => {
 walk(tree);
 
 // Only one scope: the same tag filters as recall.
-const { data: platform } = await sdk.getMemoryTree({
+const { data: platform } = await sdk.getObservationTree({
     client: apiClient,
     path: { bank_id: BANK_ID },
     query: { tags: ['team:platform'], tags_match: 'any_strict' },
@@ -139,26 +139,25 @@ walk(platform);
 ### CLI
 
 ```bash
-# The whole bank: folders, topic files and each folder's index.md.
-curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memory-tree" | jq '.observation_count'
+# The whole bank: folders, topic files and each folder's index.md (-o json for the full tree).
+hindsight memory observation-tree "$BANK_ID"
 
 # Only one scope: the same tag filters as recall.
-curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memory-tree?tags=team:platform&tags_match=any_strict" \
-  | jq '[.. | .files? // empty | .[] | .path]'
+hindsight memory observation-tree "$BANK_ID" --tags team:platform --tags-match any_strict
 ```
 
 ### Go
 
 ```go
 // The whole bank: folders, topic files and each folder's index.md.
-tree, _, err := client.MemoryAPI.GetMemoryTree(ctx, mtBankID).Execute()
+tree, _, err := client.MemoryAPI.GetObservationTree(ctx, mtBankID).Execute()
 if err != nil {
 	panic(err)
 }
 fmt.Printf("%d observations\n", tree.GetObservationCount())
 
-var walk func(folder hindsight.MemoryTreeFolder)
-walk = func(folder hindsight.MemoryTreeFolder) {
+var walk func(folder hindsight.ObservationTreeFolder)
+walk = func(folder hindsight.ObservationTreeFolder) {
 	for _, f := range folder.GetFiles() {
 		fmt.Printf("/%s (%d)\n", f.GetPath(), f.GetObservationCount())
 	}
@@ -169,7 +168,7 @@ walk = func(folder hindsight.MemoryTreeFolder) {
 walk(*tree)
 
 // Only one scope: the same tag filters as recall.
-platform, _, err := client.MemoryAPI.GetMemoryTree(ctx, mtBankID).
+platform, _, err := client.MemoryAPI.GetObservationTree(ctx, mtBankID).
 	Tags([]string{"team:platform"}).TagsMatch("any_strict").Execute()
 if err != nil {
 	panic(err)
@@ -214,21 +213,15 @@ write(tree);
 
 ```bash
 # Write the bundle to disk: each file's markdown at its path.
-curl -s "$HINDSIGHT_URL/v1/default/banks/$BANK_ID/memory-tree" \
-  | jq -c '.. | .files? // empty | .[] | {path, content}' \
-  | while read -r file; do
-      path="$OUT_DIR/$(jq -r .path <<<"$file")"
-      mkdir -p "$(dirname "$path")"
-      jq -r .content <<<"$file" > "$path"
-    done
+hindsight memory observation-tree "$BANK_ID" --out "$OUT_DIR"
 ```
 
 ### Go
 
 ```go
 // Write the bundle to disk: each file's markdown at its path.
-var write func(folder hindsight.MemoryTreeFolder)
-write = func(folder hindsight.MemoryTreeFolder) {
+var write func(folder hindsight.ObservationTreeFolder)
+write = func(folder hindsight.ObservationTreeFolder) {
 	for _, f := range folder.GetFiles() {
 		path := filepath.Join(outDir, f.GetPath())
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

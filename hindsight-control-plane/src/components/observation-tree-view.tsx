@@ -15,9 +15,9 @@ import {
 } from "lucide-react";
 import {
   client,
-  type MemoryTreeFile,
-  type MemoryTreeFolder,
-  type MemoryTreeObservation,
+  type ObservationTreeFile,
+  type ObservationTreeFolder,
+  type ObservationTreeObservation,
 } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import { Spinner } from "@/components/ui/spinner";
@@ -49,7 +49,7 @@ function matches(re: RegExp, text: string): boolean {
 }
 
 /** Matches per topic file: observations whose text matches, plus the file's own title/path. */
-export function findMatches(files: MemoryTreeFile[], re: RegExp): Map<string, number> {
+export function findMatches(files: ObservationTreeFile[], re: RegExp): Map<string, number> {
   const hits = new Map<string, number>();
   for (const f of files) {
     if (f.kind !== "topic") continue;
@@ -100,12 +100,12 @@ const CLUSTER_COLORS = [
  *  topics are pulled right after it, so bridges join neighbours instead of crossing the map.
  *  (Every observation also used to link to its hub: the cluster's blob already shows that,
  *  and the spokes drew a bright star over every cluster.) */
-export function treeConstellation(files: MemoryTreeFile[]): GraphData {
+export function treeConstellation(files: ObservationTreeFile[]): GraphData {
   const topics = files.filter((f) => f.kind === "topic" && f.observations.length > 0);
   const byPath = new Map(topics.map((f) => [f.path, f]));
-  const ordered: MemoryTreeFile[] = [];
+  const ordered: ObservationTreeFile[] = [];
   const placed = new Set<string>();
-  const place = (f: MemoryTreeFile) => {
+  const place = (f: ObservationTreeFile) => {
     if (placed.has(f.path)) return;
     placed.add(f.path);
     ordered.push(f);
@@ -142,7 +142,7 @@ export function treeConstellation(files: MemoryTreeFile[]): GraphData {
 
 /** Topic titles for the constellation; two topics with the same title (in different
  *  folders) get their folder appended, so no two clusters read the same. */
-export function clusterLabels(files: MemoryTreeFile[]): Map<string, string> {
+export function clusterLabels(files: ObservationTreeFile[]): Map<string, string> {
   const topics = files.filter((f) => f.kind === "topic");
   const count = new Map<string, number>();
   for (const f of topics) count.set(f.title, (count.get(f.title) ?? 0) + 1);
@@ -173,7 +173,7 @@ function day(s: string | null | undefined, locale: string): string {
 }
 
 /** When it happened if known, else when it was mentioned. */
-function when(o: MemoryTreeObservation, locale: string): string {
+function when(o: ObservationTreeObservation, locale: string): string {
   const start = day(o.occurred_start, locale);
   const end = day(o.occurred_end, locale);
   if (start && end && start !== end) return `${start} – ${end}`;
@@ -181,9 +181,9 @@ function when(o: MemoryTreeObservation, locale: string): string {
 }
 
 function collect(
-  folder: MemoryTreeFolder,
-  files: MemoryTreeFile[],
-  folders: Map<string, MemoryTreeFolder>
+  folder: ObservationTreeFolder,
+  files: ObservationTreeFile[],
+  folders: Map<string, ObservationTreeFolder>
 ) {
   folders.set(folder.path, folder);
   files.push(...folder.files);
@@ -196,7 +196,7 @@ function parentsOf(path: string): string[] {
 }
 
 interface TreeProps {
-  folder: MemoryTreeFolder;
+  folder: ObservationTreeFolder;
   depth: number;
   open: Set<string>;
   close: (path: string) => void;
@@ -205,7 +205,7 @@ interface TreeProps {
   hits: Map<string, number> | null;
 }
 
-function folderHits(folder: MemoryTreeFolder, hits: Map<string, number>): number {
+function folderHits(folder: ObservationTreeFolder, hits: Map<string, number>): number {
   return (
     folder.files.reduce((n, f) => n + (hits.get(f.path) ?? 0), 0) +
     folder.folders.reduce((n, sub) => n + folderHits(sub, hits), 0)
@@ -237,7 +237,7 @@ function TreeItems({ folder, depth, open, close, selected, select, hits }: TreeP
     hits ? hits.has(f.path) : f.name !== INDEX || depth === 0
   );
   const folders = hits ? folder.folders.filter((sub) => folderHits(sub, hits) > 0) : folder.folders;
-  const fileRow = (f: MemoryTreeFile) => (
+  const fileRow = (f: ObservationTreeFile) => (
     <li key={f.path}>
       <div
         className={rowClass(selected === f.path)}
@@ -312,11 +312,11 @@ function ObservationRow({
   re,
   onOpen,
 }: {
-  o: MemoryTreeObservation;
+  o: ObservationTreeObservation;
   re: RegExp | null;
   onOpen: (id: string) => void;
 }) {
-  const t = useTranslations("memoryTree");
+  const t = useTranslations("observationTree");
   const locale = useLocale();
   const date = when(o, locale);
   return (
@@ -353,10 +353,10 @@ function ObservationRow({
   );
 }
 
-export function MemoryTreeView() {
-  const t = useTranslations("memoryTree");
+export function ObservationTreeView() {
+  const t = useTranslations("observationTree");
   const { currentBank: bankId } = useBank();
-  const [tree, setTree] = useState<MemoryTreeFolder | null>(null);
+  const [tree, setTree] = useState<ObservationTreeFolder | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState(INDEX);
@@ -379,7 +379,7 @@ export function MemoryTreeView() {
     setSelected(INDEX);
     setOpen(new Set());
     client
-      .getMemoryTree(bankId, {
+      .getObservationTree(bankId, {
         tags: scopeTags,
         tags_match: scopeMatch === "all" ? "all_strict" : "any_strict",
       })
@@ -391,8 +391,8 @@ export function MemoryTreeView() {
   }, [bankId, scopeTags, scopeMatch]);
 
   const { files, byPath, folders } = useMemo(() => {
-    const all: MemoryTreeFile[] = [];
-    const dirs = new Map<string, MemoryTreeFolder>();
+    const all: ObservationTreeFile[] = [];
+    const dirs = new Map<string, ObservationTreeFolder>();
     if (tree) collect(tree, all, dirs);
     return { files: all, byPath: new Map(all.map((f) => [f.path, f])), folders: dirs };
   }, [tree]);
@@ -473,7 +473,7 @@ export function MemoryTreeView() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${(bankId ?? "bank").replace(/[^\w.-]+/g, "_")}-memory-tree.zip`;
+    a.download = `${(bankId ?? "bank").replace(/[^\w.-]+/g, "_")}-observation-tree.zip`;
     a.click();
     URL.revokeObjectURL(url);
   };

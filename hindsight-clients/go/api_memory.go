@@ -870,102 +870,65 @@ func (a *MemoryAPIService) GetMemoryExecute(r ApiGetMemoryRequest) (interface{},
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
-type ApiGetMemoryTreeRequest struct {
+type ApiGetObservationHistoryRequest struct {
 	ctx context.Context
 	ApiService *MemoryAPIService
 	bankId string
-	tags *[]string
-	tagsMatch *string
-	tagGroups *string
+	memoryId string
 	authorization *string
 }
 
-// Only group observations carrying these tags (the scope), as in recall.
-func (r ApiGetMemoryTreeRequest) Tags(tags []string) ApiGetMemoryTreeRequest {
-	r.tags = &tags
-	return r
-}
-
-// How &#x60;tags&#x60; match (same modes as recall).
-func (r ApiGetMemoryTreeRequest) TagsMatch(tagsMatch string) ApiGetMemoryTreeRequest {
-	r.tagsMatch = &tagsMatch
-	return r
-}
-
-// Compound tag filter as a JSON-encoded list of tag groups — the same shape &#x60;tag_groups&#x60; takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with &#x60;tags&#x60;.
-func (r ApiGetMemoryTreeRequest) TagGroups(tagGroups string) ApiGetMemoryTreeRequest {
-	r.tagGroups = &tagGroups
-	return r
-}
-
-func (r ApiGetMemoryTreeRequest) Authorization(authorization string) ApiGetMemoryTreeRequest {
+func (r ApiGetObservationHistoryRequest) Authorization(authorization string) ApiGetObservationHistoryRequest {
 	r.authorization = &authorization
 	return r
 }
 
-func (r ApiGetMemoryTreeRequest) Execute() (*MemoryTreeFolder, *http.Response, error) {
-	return r.ApiService.GetMemoryTreeExecute(r)
+func (r ApiGetObservationHistoryRequest) Execute() (interface{}, *http.Response, error) {
+	return r.ApiService.GetObservationHistoryExecute(r)
 }
 
 /*
-GetMemoryTree Get the memory tree
+GetObservationHistory Get observation history
 
-Everything the bank has learned, as a bundle of markdown files an agent can list, read and grep like any folder, or that can be exported and mounted. Observations are grouped by the entities they are about into a bounded tree of topics: each topic is one file listing every observation in it, and each folder has an `index.md` with its topics and best-supported observations. The bundle follows the Open Knowledge Format (https://okf.md/spec/). Built on request, deterministically, so a file keeps its path as the bank changes. Experimental.
+Get the full history of an observation, with each change's source facts resolved to their text.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
- @return ApiGetMemoryTreeRequest
+ @param memoryId
+ @return ApiGetObservationHistoryRequest
 */
-func (a *MemoryAPIService) GetMemoryTree(ctx context.Context, bankId string) ApiGetMemoryTreeRequest {
-	return ApiGetMemoryTreeRequest{
+func (a *MemoryAPIService) GetObservationHistory(ctx context.Context, bankId string, memoryId string) ApiGetObservationHistoryRequest {
+	return ApiGetObservationHistoryRequest{
 		ApiService: a,
 		ctx: ctx,
 		bankId: bankId,
+		memoryId: memoryId,
 	}
 }
 
 // Execute executes the request
-//  @return MemoryTreeFolder
-func (a *MemoryAPIService) GetMemoryTreeExecute(r ApiGetMemoryTreeRequest) (*MemoryTreeFolder, *http.Response, error) {
+//  @return interface{}
+func (a *MemoryAPIService) GetObservationHistoryExecute(r ApiGetObservationHistoryRequest) (interface{}, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodGet
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  *MemoryTreeFolder
+		localVarReturnValue  interface{}
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "MemoryAPIService.GetMemoryTree")
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "MemoryAPIService.GetObservationHistory")
 	if err != nil {
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/memory-tree"
+	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/memories/{memory_id}/history"
 	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"memory_id"+"}", url.PathEscape(parameterValueToString(r.memoryId, "memoryId")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
-	if r.tags != nil {
-		t := *r.tags
-		if reflect.TypeOf(t).Kind() == reflect.Slice {
-			s := reflect.ValueOf(t)
-			for i := 0; i < s.Len(); i++ {
-				parameterAddToHeaderOrQuery(localVarQueryParams, "tags", s.Index(i).Interface(), "form", "multi")
-			}
-		} else {
-			parameterAddToHeaderOrQuery(localVarQueryParams, "tags", t, "form", "multi")
-		}
-	}
-	if r.tagsMatch != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "tags_match", r.tagsMatch, "form", "")
-	} else {
-		var defaultValue string = "any"
-		r.tagsMatch = &defaultValue
-	}
-	if r.tagGroups != nil {
-		parameterAddToHeaderOrQuery(localVarQueryParams, "tag_groups", r.tagGroups, "form", "")
-	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -1033,65 +996,102 @@ func (a *MemoryAPIService) GetMemoryTreeExecute(r ApiGetMemoryTreeRequest) (*Mem
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
-type ApiGetObservationHistoryRequest struct {
+type ApiGetObservationTreeRequest struct {
 	ctx context.Context
 	ApiService *MemoryAPIService
 	bankId string
-	memoryId string
+	tags *[]string
+	tagsMatch *string
+	tagGroups *string
 	authorization *string
 }
 
-func (r ApiGetObservationHistoryRequest) Authorization(authorization string) ApiGetObservationHistoryRequest {
+// Only group observations carrying these tags (the scope), as in recall.
+func (r ApiGetObservationTreeRequest) Tags(tags []string) ApiGetObservationTreeRequest {
+	r.tags = &tags
+	return r
+}
+
+// How &#x60;tags&#x60; match (same modes as recall).
+func (r ApiGetObservationTreeRequest) TagsMatch(tagsMatch string) ApiGetObservationTreeRequest {
+	r.tagsMatch = &tagsMatch
+	return r
+}
+
+// Compound tag filter as a JSON-encoded list of tag groups — the same shape &#x60;tag_groups&#x60; takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with &#x60;tags&#x60;.
+func (r ApiGetObservationTreeRequest) TagGroups(tagGroups string) ApiGetObservationTreeRequest {
+	r.tagGroups = &tagGroups
+	return r
+}
+
+func (r ApiGetObservationTreeRequest) Authorization(authorization string) ApiGetObservationTreeRequest {
 	r.authorization = &authorization
 	return r
 }
 
-func (r ApiGetObservationHistoryRequest) Execute() (interface{}, *http.Response, error) {
-	return r.ApiService.GetObservationHistoryExecute(r)
+func (r ApiGetObservationTreeRequest) Execute() (*ObservationTreeFolder, *http.Response, error) {
+	return r.ApiService.GetObservationTreeExecute(r)
 }
 
 /*
-GetObservationHistory Get observation history
+GetObservationTree Get the observation tree
 
-Get the full history of an observation, with each change's source facts resolved to their text.
+The bank's observations, everything it has learned, as a bundle of markdown files an agent can list, read and grep like any folder, or that can be exported and mounted. Observations are grouped by the entities they are about into a bounded tree of topics: each topic is one file listing every observation in it, and each folder has an `index.md` with its topics and best-supported observations. The bundle follows the Open Knowledge Format (https://okf.md/spec/). Built on request, deterministically, so a file keeps its path as the bank changes. Experimental.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
- @param memoryId
- @return ApiGetObservationHistoryRequest
+ @return ApiGetObservationTreeRequest
 */
-func (a *MemoryAPIService) GetObservationHistory(ctx context.Context, bankId string, memoryId string) ApiGetObservationHistoryRequest {
-	return ApiGetObservationHistoryRequest{
+func (a *MemoryAPIService) GetObservationTree(ctx context.Context, bankId string) ApiGetObservationTreeRequest {
+	return ApiGetObservationTreeRequest{
 		ApiService: a,
 		ctx: ctx,
 		bankId: bankId,
-		memoryId: memoryId,
 	}
 }
 
 // Execute executes the request
-//  @return interface{}
-func (a *MemoryAPIService) GetObservationHistoryExecute(r ApiGetObservationHistoryRequest) (interface{}, *http.Response, error) {
+//  @return ObservationTreeFolder
+func (a *MemoryAPIService) GetObservationTreeExecute(r ApiGetObservationTreeRequest) (*ObservationTreeFolder, *http.Response, error) {
 	var (
 		localVarHTTPMethod   = http.MethodGet
 		localVarPostBody     interface{}
 		formFiles            []formFile
-		localVarReturnValue  interface{}
+		localVarReturnValue  *ObservationTreeFolder
 	)
 
-	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "MemoryAPIService.GetObservationHistory")
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "MemoryAPIService.GetObservationTree")
 	if err != nil {
 		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
 	}
 
-	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/memories/{memory_id}/history"
+	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/observations/tree"
 	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
-	localVarPath = strings.Replace(localVarPath, "{"+"memory_id"+"}", url.PathEscape(parameterValueToString(r.memoryId, "memoryId")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.tags != nil {
+		t := *r.tags
+		if reflect.TypeOf(t).Kind() == reflect.Slice {
+			s := reflect.ValueOf(t)
+			for i := 0; i < s.Len(); i++ {
+				parameterAddToHeaderOrQuery(localVarQueryParams, "tags", s.Index(i).Interface(), "form", "multi")
+			}
+		} else {
+			parameterAddToHeaderOrQuery(localVarQueryParams, "tags", t, "form", "multi")
+		}
+	}
+	if r.tagsMatch != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tags_match", r.tagsMatch, "form", "")
+	} else {
+		var defaultValue string = "any"
+		r.tagsMatch = &defaultValue
+	}
+	if r.tagGroups != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tag_groups", r.tagGroups, "form", "")
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 

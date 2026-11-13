@@ -19,7 +19,7 @@ import { MemoryDefenseSection } from "@/components/memory-defense-section";
 import { BankStatsView } from "@/components/bank-stats-view";
 import { BankOperationsView } from "@/components/bank-operations-view";
 import { MentalModelsView } from "@/components/mental-models-view";
-import { MemoryTreeView } from "@/components/memory-tree-view";
+import { ObservationTreeView } from "@/components/observation-tree-view";
 import { WebhooksView } from "@/components/webhooks-view";
 import { AuditLogsView } from "@/components/audit-logs-view";
 import { LLMRequestsView } from "@/components/llm-requests-view";
@@ -703,7 +703,7 @@ export default function BankPage() {
                     tabs={[
                       { id: "pages", label: t("pages") },
                       { id: "models", label: t("mentalModels") },
-                      { id: "tree", label: t("memoryTree") },
+                      { id: "tree", label: t("observationTree") },
                     ]}
                   />
 
@@ -723,9 +723,9 @@ export default function BankPage() {
                   {pagesTab === "tree" && (
                     <div>
                       <p className="text-sm text-muted-foreground mb-4">
-                        {t("memoryTreeDescription")}
+                        {t("observationTreeDescription")}
                       </p>
-                      <MemoryTreeView key={bankId ?? "no-bank"} />
+                      <ObservationTreeView key={bankId ?? "no-bank"} />
                     </div>
                   )}
                 </div>

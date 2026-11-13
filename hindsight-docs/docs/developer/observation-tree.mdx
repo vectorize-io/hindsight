@@ -5,14 +5,14 @@ sidebar_position: 8
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import CodeSnippet from '@site/src/components/CodeSnippet';
-import treePy from '!!raw-loader!@site/examples/api/memory-tree.py';
-import treeMjs from '!!raw-loader!@site/examples/api/memory-tree.mjs';
-import treeSh from '!!raw-loader!@site/examples/api/memory-tree.sh';
-import treeGo from '!!raw-loader!@site/examples/api/memory-tree.go';
+import treePy from '!!raw-loader!@site/examples/api/observation-tree.py';
+import treeMjs from '!!raw-loader!@site/examples/api/observation-tree.mjs';
+import treeSh from '!!raw-loader!@site/examples/api/observation-tree.sh';
+import treeGo from '!!raw-loader!@site/examples/api/observation-tree.go';
 
-# Memory Tree
+# Observation Tree
 
-The **memory tree** lays out everything a bank has learned as a folder of markdown files: one file per topic, every [observation](./observations) in exactly one file, and an `index.md` in each folder that says what is inside. It is the same bundle for a person browsing it in the control plane, an agent running `ls` and `grep` over it, or a tool importing it.
+The **observation tree** lays out everything a bank has learned as a folder of markdown files: one file per topic, every [observation](./observations) in exactly one file, and an `index.md` in each folder that says what is inside. It is the same bundle for a person browsing it in the control plane, an agent running `ls` and `grep` over it, or a tool importing it.
 
 :::note Experimental
 The endpoint and the file layout may still change.
@@ -22,7 +22,7 @@ The endpoint and the file layout may still change.
 
 Recall answers a question you already know how to ask. A tree answers the one before it: *what does this bank know?* An agent starting work on a codebase can read the root `index.md`, open the folder that matters, and `grep` the topic files, the same way it explores source code, without guessing a query first. A person can skim the same files to audit what was learned, spot mistakes, and export it.
 
-[Pages](./pages) cover a few questions in depth, written and refreshed by an LLM. The memory tree covers *everything*, verbatim: it shows each observation as stored, grouped and named by an algorithm, so it costs nothing to build and can be rebuilt on every request.
+[Pages](./pages) cover a few questions in depth, written and refreshed by an LLM. The observation tree covers *everything*, verbatim: it shows each observation as stored, grouped and named by an algorithm, so it costs nothing to build and can be rebuilt on every request.
 
 ## What It Looks Like
 
@@ -102,7 +102,7 @@ Open a bank, go to **Pages → Observations**:
 
 ## Using the API
 
-`GET /v1/default/banks/{bank_id}/memory-tree` returns the root folder: each folder has `folders` and `files`, and each file has its `path`, `kind` (`index` or `topic`), `title`, `about`, `related`, `observations`, and its full markdown in `content`.
+`GET /v1/default/banks/{bank_id}/observations/tree` returns the root folder: each folder has `folders` and `files`, and each file has its `path`, `kind` (`index` or `topic`), `title`, `about`, `related`, `observations`, and its full markdown in `content`.
 
 <Tabs>
 <TabItem value="python" label="Python">
