@@ -5318,7 +5318,7 @@ class MemoryEngine(MemoryEngineInterface):
                     # into a counted RetryTaskAt here, a long ingest's batches used up their retries on a
                     # backlog that clears by itself, and the poller saw it only on the last one. Only the
                     # deferred task types for now: a memory-bank retain hits the same counted retry, but
-                    # changing how retain retries is its own change (tracked in an issue), not this one.
+                    # changing how retain retries is its own change (#6528), not this one.
                     raise
                 # exc_info, not a bare print_exc(): the traceback is the only pointer
                 # to the offending call site, and under production log volume the
