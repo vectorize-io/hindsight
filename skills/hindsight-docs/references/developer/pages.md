@@ -57,6 +57,8 @@ The folder tree becomes real directories, each page a real markdown file with YA
 
 The same content is available as a portable markdown bundle over the API, for exporting or committing elsewhere.
 
+Pages answer a few questions in depth. To browse *everything* a bank has learned, every observation grouped into topic files without spending a model call, see the [Observation Tree](./observation-tree.md).
+
 ---
 
 ## Searchable

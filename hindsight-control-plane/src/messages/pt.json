@@ -185,7 +185,9 @@
     "cloneIncludeBankConfigHint": "Sobrescritas de configuração, diretivas e webhooks — a cópia chamará os mesmos endpoints.",
     "cloneIncludeHistory": "Histórico",
     "cloneIncludeHistoryHint": "Log de auditoria e rastros de requisições ao LLM.",
-    "cloneNothingSelected": "Escolha pelo menos um item para copiar."
+    "cloneNothingSelected": "Escolha pelo menos um item para copiar.",
+    "observationTree": "Observações",
+    "observationTreeDescription": "Tudo o que este banco aprendeu, como uma pasta de arquivos markdown que você pode navegar, pesquisar e exportar — os mesmos arquivos que um agente pode listar e pesquisar com grep. Cada arquivo de tópico contém todas as suas observações; o index.md de cada pasta dá uma visão geral."
   },
   "bankProfile": {
     "noBankSelected": "Nenhum Banco Selecionado",
@@ -2697,5 +2699,28 @@
         }
       }
     }
+  },
+  "observationTree": {
+    "empty": "Este banco ainda não tem observações.",
+    "pickFile": "Escolha um arquivo à esquerda.",
+    "findPlaceholder": "Buscar nas memórias (texto ou regex)",
+    "showRaw": ".md bruto",
+    "exportZip": "Exportar .zip",
+    "recencyLegend": "recência · mencionado",
+    "showRendered": "Formatado",
+    "clearFind": "Limpar",
+    "noMatches": "Nenhum resultado.",
+    "matchSummary": "{matches, plural, one {# resultado} other {# resultados}} em {files, plural, one {# arquivo} other {# arquivos}}",
+    "matchesInFile": "{shown} de {total} correspondem",
+    "observationCount": "{count, plural, one {# observação} other {# observações}}",
+    "sources": "{count, plural, one {# fonte} other {# fontes}}",
+    "updated": "atualizado {when}",
+    "related": "Relacionados:",
+    "topics": "Tópicos",
+    "bestSupported": "Mais bem fundamentadas",
+    "observations": "Observações",
+    "filesMode": "Arquivos",
+    "constellationMode": "Constelação",
+    "sourcesLegend": "fontes"
   }
 }

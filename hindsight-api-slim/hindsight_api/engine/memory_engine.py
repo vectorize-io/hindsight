@@ -707,6 +707,7 @@ if TYPE_CHECKING:
     from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse, AuditLogSummary
     from .memories import MemoriesExtension, MemoryScopeWatermark, ReflectFreshness
     from .memories.base import AttachmentRef, EntityResolverHandle, StoredMemory
+    from .observation_tree import TreeFolder
     from .prompt_preview import PromptPreview
     from .retain.attachment_content import AttachmentOccurrence, LoadedAttachment, RetainAttachment
     from .retain.attachment_store import StoredAttachment
@@ -16869,6 +16870,66 @@ class MemoryEngine(MemoryEngineInterface):
                 limit=limit,
                 offset=offset,
             )
+
+    async def get_observation_tree(
+        self,
+        bank_id: str,
+        *,
+        tags: list[str] | None = None,
+        tags_match: TagsMatch = "any",
+        tag_groups: list[TagGroup] | None = None,
+        request_context: "RequestContext",
+    ) -> "TreeFolder":
+        """The bank's observations as a bounded tree of topic folders (see ``observation_tree``). No LLM.
+
+        ``tags`` / ``tags_match`` / ``tag_groups`` scope the tree the way they scope recall: only
+        matching observations are grouped, so a scope gets its own topics, not a filtered copy of
+        the whole bank's.
+
+        # ponytail: scans every observation and rebuilds on each call (~0.06s for 2.5k observations).
+        # Cache by the bank's last write once banks are large.
+        """
+        from .memories import get_memories
+        from .observation_tree import TreeObservation, build_observation_tree
+
+        await self._authenticate_tenant(request_context)
+        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.LIST_MEMORY_UNITS, request_context)
+        await self._require_bank_exists(bank_id)
+        tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
+        # The caller's tag scope narrows the tree like any other read's.
+        if tag_scope:
+            tag_groups = [*(tag_groups or []), *tag_scope]
+        store = get_memories()
+        async with self._store_read_conn(bank_id) as conn:
+            units = await store.scan_all_memories(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                fact_types=["observation"],
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups or None,
+            )
+            # An observation inherits its source memories' entities.
+            entity_map = await store.entity_map_for_units(
+                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[u.unit_id for u in units]
+            )
+        observations = [
+            TreeObservation(
+                id=u.unit_id,
+                text=u.text,
+                proof_count=u.proof_count or 1,
+                entities=[e["canonical_name"] for e in entity_map.get(u.unit_id, [])],
+                occurred_start=u.occurred_start,
+                occurred_end=u.occurred_end,
+                mentioned_at=u.mentioned_at,
+                updated_at=u.updated_at,
+                tags=list(u.tags or []),
+            )
+            for u in units
+        ]
+        # CPU-bound (~0.1s per few thousand observations): off the event loop, like the entity graph.
+        return await asyncio.to_thread(build_observation_tree, observations, bank_id)
 
     async def get_entity_graph(
         self,

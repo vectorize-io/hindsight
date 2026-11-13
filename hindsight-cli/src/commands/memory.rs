@@ -10,6 +10,7 @@ use crate::output::{self, OutputFormat};
 use crate::ui;
 
 // Import types from generated client
+use hindsight_client::types;
 use hindsight_client::types::{
     Budget, ChunkIncludeOptions, FactsIncludeOptions, IncludeOptions, ReflectIncludeOptions,
     TagsMatch, TemporalWindow,
@@ -1097,5 +1098,128 @@ mod tests {
 
         assert_eq!(result.type_.as_deref(), Some("world"));
         assert_eq!(result.entities, Some(vec![]));
+    }
+}
+
+/// Write every file of an observation tree under `dir`, at its path; returns how many.
+fn write_bundle(folder: &types::ObservationTreeFolder, dir: &std::path::Path) -> Result<usize> {
+    let mut written = 0;
+    for file in &folder.files {
+        // Only plain relative paths: a server could send `../x.md` or `/etc/x` and write
+        // outside `dir` (Hindsight's own never does; the CLI can point at any server).
+        let relative = std::path::Path::new(&file.path);
+        if !relative
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            anyhow::bail!(
+                "refusing to write '{}': not a plain relative path",
+                file.path
+            );
+        }
+        let path = dir.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        }
+        fs::write(&path, &file.content).with_context(|| format!("writing {}", path.display()))?;
+        written += 1;
+    }
+    for sub in &folder.folders {
+        written += write_bundle(sub, dir)?;
+    }
+    Ok(written)
+}
+
+fn print_tree_files(folder: &types::ObservationTreeFolder) {
+    for file in &folder.files {
+        println!(
+            "  {} {}",
+            file.path,
+            ui::dim(&format!("({})", file.observation_count))
+        );
+    }
+    for sub in &folder.folders {
+        print_tree_files(sub);
+    }
+}
+
+/// Show the bank's observations as a tree of topic files, or write it to `out`.
+pub fn observation_tree(
+    client: &ApiClient,
+    bank_id: &str,
+    tags: Vec<String>,
+    tags_match: Option<String>,
+    out: Option<PathBuf>,
+    output_format: OutputFormat,
+) -> Result<()> {
+    let tags_match = tags_match
+        .as_deref()
+        .map(crate::commands::mental_model::parse_tags_match)
+        .transpose()?;
+    let tree = client.get_observation_tree(bank_id, &tags, tags_match)?;
+    if let Some(dir) = out {
+        let written = write_bundle(&tree, &dir)?;
+        if output_format == OutputFormat::Pretty {
+            let noun = if written == 1 { "file" } else { "files" };
+            ui::print_success(&format!("Wrote {written} {noun} to {}", dir.display()));
+        }
+        return Ok(());
+    }
+    if output_format == OutputFormat::Pretty {
+        ui::print_section_header(&format!(
+            "Observation tree: {bank_id} ({} observations)",
+            tree.observation_count
+        ));
+        print_tree_files(&tree);
+        Ok(())
+    } else {
+        output::print_output(&tree, output_format)
+    }
+}
+
+#[cfg(test)]
+mod observation_tree_tests {
+    use super::*;
+
+    #[test]
+    fn writes_every_file_at_its_path() {
+        let tree: types::ObservationTreeFolder = serde_json::from_value(serde_json::json!({
+            "path": "", "name": "", "title": "bank", "observation_count": 1,
+            "files": [{"path": "index.md", "name": "index.md", "kind": "index", "title": "bank",
+                       "observation_count": 1, "about": [], "related": [], "observations": [],
+                       "content": "# bank\n"}],
+            "folders": [{"path": "gemma", "name": "gemma", "title": "Gemma", "observation_count": 1,
+                "folders": [],
+                "files": [{"path": "gemma/vllm.md", "name": "vllm.md", "kind": "topic", "title": "vLLM",
+                           "observation_count": 1, "about": [], "related": [], "observations": [],
+                           "content": "---\ntype: Memory Topic\n---\n"}]}]
+        }))
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("hindsight-tree-test-{}", std::process::id()));
+        assert_eq!(write_bundle(&tree, &dir).unwrap(), 2);
+        assert_eq!(
+            fs::read_to_string(dir.join("index.md")).unwrap(),
+            "# bank\n"
+        );
+        assert!(fs::read_to_string(dir.join("gemma/vllm.md"))
+            .unwrap()
+            .starts_with("---\ntype:"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_paths_that_leave_the_folder() {
+        for bad in ["../x.md", "/tmp/x.md", "a/../../x.md"] {
+            let tree: types::ObservationTreeFolder = serde_json::from_value(serde_json::json!({
+                "path": "", "name": "", "title": "bank", "observation_count": 0, "folders": [],
+                "files": [{"path": bad, "name": "x.md", "kind": "topic", "title": "x",
+                           "observation_count": 0, "about": [], "related": [], "observations": [],
+                           "content": "x"}]
+            }))
+            .unwrap();
+            let dir =
+                std::env::temp_dir().join(format!("hindsight-tree-bad-{}", std::process::id()));
+            assert!(write_bundle(&tree, &dir).is_err(), "{bad} was written");
+        }
     }
 }

@@ -6,6 +6,7 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
+import dataclasses
 import gc
 import json
 import logging
@@ -19,6 +20,7 @@ import uuid
 from collections.abc import Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from enum import StrEnum
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from urllib.parse import quote, unquote
@@ -806,6 +808,55 @@ class EntityListItem(BaseModel):
     first_seen: str | None = None
     last_seen: str | None = None
     metadata: dict[str, Any] | None = None
+
+
+class ObservationTreeObservation(BaseModel):
+    """An observation as the observation tree lists it."""
+
+    id: str
+    text: str
+    proof_count: int = Field(description="How many source memories back it.")
+    occurred_start: datetime | None = None
+    occurred_end: datetime | None = None
+    mentioned_at: datetime | None = None
+    updated_at: datetime | None = None
+    tags: list[str]
+
+
+class ObservationTreeFileKind(StrEnum):
+    """What a observation-tree file is. A named enum, not a Literal: inline enums are named after
+    their field by the generated Rust client, and ``kind`` already names the page node enum
+    there (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``)."""
+
+    INDEX = "index"
+    TOPIC = "topic"
+
+
+class ObservationTreeFile(BaseModel):
+    """A markdown file in the observation tree: a folder's index.md or one topic (an OKF concept)."""
+
+    path: str = Field(description="Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.")
+    name: str
+    kind: ObservationTreeFileKind = Field(
+        description="`index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic."
+    )
+    title: str
+    observation_count: int = Field(description="Observations in the topic, or in the whole folder for an index.")
+    about: list[str] = Field(description="The entities that set this topic apart from its siblings.")
+    related: list[str] = Field(description="Paths of related topic files elsewhere in the tree.")
+    observations: list[ObservationTreeObservation] = Field(description="What the file lists, best-supported first.")
+    content: str = Field(description="The same file as markdown, with dates and source counts on every line.")
+
+
+class ObservationTreeFolder(BaseModel):
+    """A topic folder in the observation tree."""
+
+    path: str = Field(description="Path from the tree root; empty for the root.")
+    name: str
+    title: str = Field(description="Human-readable topic name.")
+    observation_count: int
+    folders: list["ObservationTreeFolder"]
+    files: list[ObservationTreeFile]
 
 
 class EntityListResponse(BaseModel):
@@ -6130,6 +6181,49 @@ def _register_routes(app: FastAPI):
             raise
         except Exception as e:
             raise _internal_error(e, f"/v1/default/banks/{bank_id}/entities")
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/observations/tree",
+        response_model=ObservationTreeFolder,
+        summary="Get the observation tree",
+        description=(
+            "The bank's observations, everything it has learned, as a bundle of markdown files an agent can list, read and grep "
+            "like any folder, or that can be exported and mounted. Observations are grouped by the entities they "
+            "are about into a bounded tree of topics: each topic is one file listing every observation in it, "
+            "and each folder has an `index.md` with its topics and best-supported observations. The bundle "
+            "follows the Open Knowledge Format (https://okf.md/spec/). Built on request, deterministically, so "
+            "a file keeps its path as the bank changes. Experimental."
+        ),
+        operation_id="get_observation_tree",
+        tags=["Memory"],
+        responses=_BANK_NOT_FOUND_RESPONSES,
+    )
+    async def api_get_observation_tree(
+        bank_id: str,
+        tags: list[str] | None = Query(
+            default=None,
+            description="Only group observations carrying these tags (the scope), as in recall.",
+        ),
+        tags_match: TagsMatch = Query(default="any", description="How `tags` match (same modes as recall)."),
+        tag_groups: str | None = Query(default=None, description=_TAG_GROUPS_QUERY_DESCRIPTION),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        """Return the observation tree for a bank, optionally for one tag scope."""
+        try:
+            tree = await app.state.memory.get_observation_tree(
+                bank_id,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=_parse_tag_groups_query(tag_groups, tags),
+                request_context=request_context,
+            )
+            return ObservationTreeFolder.model_validate(dataclasses.asdict(tree))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/observations/tree")
 
     @app.get(
         "/v1/default/banks/{bank_id}/entities/graph",

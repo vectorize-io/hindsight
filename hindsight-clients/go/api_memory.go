@@ -996,6 +996,169 @@ func (a *MemoryAPIService) GetObservationHistoryExecute(r ApiGetObservationHisto
 	return localVarReturnValue, localVarHTTPResponse, nil
 }
 
+type ApiGetObservationTreeRequest struct {
+	ctx context.Context
+	ApiService *MemoryAPIService
+	bankId string
+	tags *[]string
+	tagsMatch *string
+	tagGroups *string
+	authorization *string
+}
+
+// Only group observations carrying these tags (the scope), as in recall.
+func (r ApiGetObservationTreeRequest) Tags(tags []string) ApiGetObservationTreeRequest {
+	r.tags = &tags
+	return r
+}
+
+// How &#x60;tags&#x60; match (same modes as recall).
+func (r ApiGetObservationTreeRequest) TagsMatch(tagsMatch string) ApiGetObservationTreeRequest {
+	r.tagsMatch = &tagsMatch
+	return r
+}
+
+// Compound tag filter as a JSON-encoded list of tag groups — the same shape &#x60;tag_groups&#x60; takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with &#x60;tags&#x60;.
+func (r ApiGetObservationTreeRequest) TagGroups(tagGroups string) ApiGetObservationTreeRequest {
+	r.tagGroups = &tagGroups
+	return r
+}
+
+func (r ApiGetObservationTreeRequest) Authorization(authorization string) ApiGetObservationTreeRequest {
+	r.authorization = &authorization
+	return r
+}
+
+func (r ApiGetObservationTreeRequest) Execute() (*ObservationTreeFolder, *http.Response, error) {
+	return r.ApiService.GetObservationTreeExecute(r)
+}
+
+/*
+GetObservationTree Get the observation tree
+
+The bank's observations, everything it has learned, as a bundle of markdown files an agent can list, read and grep like any folder, or that can be exported and mounted. Observations are grouped by the entities they are about into a bounded tree of topics: each topic is one file listing every observation in it, and each folder has an `index.md` with its topics and best-supported observations. The bundle follows the Open Knowledge Format (https://okf.md/spec/). Built on request, deterministically, so a file keeps its path as the bank changes. Experimental.
+
+ @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+ @param bankId
+ @return ApiGetObservationTreeRequest
+*/
+func (a *MemoryAPIService) GetObservationTree(ctx context.Context, bankId string) ApiGetObservationTreeRequest {
+	return ApiGetObservationTreeRequest{
+		ApiService: a,
+		ctx: ctx,
+		bankId: bankId,
+	}
+}
+
+// Execute executes the request
+//  @return ObservationTreeFolder
+func (a *MemoryAPIService) GetObservationTreeExecute(r ApiGetObservationTreeRequest) (*ObservationTreeFolder, *http.Response, error) {
+	var (
+		localVarHTTPMethod   = http.MethodGet
+		localVarPostBody     interface{}
+		formFiles            []formFile
+		localVarReturnValue  *ObservationTreeFolder
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "MemoryAPIService.GetObservationTree")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/observations/tree"
+	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+
+	if r.tags != nil {
+		t := *r.tags
+		if reflect.TypeOf(t).Kind() == reflect.Slice {
+			s := reflect.ValueOf(t)
+			for i := 0; i < s.Len(); i++ {
+				parameterAddToHeaderOrQuery(localVarQueryParams, "tags", s.Index(i).Interface(), "form", "multi")
+			}
+		} else {
+			parameterAddToHeaderOrQuery(localVarQueryParams, "tags", t, "form", "multi")
+		}
+	}
+	if r.tagsMatch != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tags_match", r.tagsMatch, "form", "")
+	} else {
+		var defaultValue string = "any"
+		r.tagsMatch = &defaultValue
+	}
+	if r.tagGroups != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "tag_groups", r.tagGroups, "form", "")
+	}
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	if r.authorization != nil {
+		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 422 {
+			var v HTTPValidationError
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+					newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
 type ApiListMemoriesRequest struct {
 	ctx context.Context
 	ApiService *MemoryAPIService

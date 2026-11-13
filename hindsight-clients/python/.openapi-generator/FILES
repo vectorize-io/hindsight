@@ -159,6 +159,10 @@ hindsight_client_api/models/observation_id_sample.py
 hindsight_client_api/models/observation_scope.py
 hindsight_client_api/models/observation_scopes.py
 hindsight_client_api/models/observation_scopes_response.py
+hindsight_client_api/models/observation_tree_file.py
+hindsight_client_api/models/observation_tree_file_kind.py
+hindsight_client_api/models/observation_tree_folder.py
+hindsight_client_api/models/observation_tree_observation.py
 hindsight_client_api/models/operation_progress.py
 hindsight_client_api/models/operation_response.py
 hindsight_client_api/models/operation_status_response.py

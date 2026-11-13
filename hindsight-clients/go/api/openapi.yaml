@@ -1046,6 +1046,93 @@ paths:
       summary: List entities
       tags:
       - Entities
+  /v1/default/banks/{bank_id}/observations/tree:
+    get:
+      description: "The bank's observations, everything it has learned, as a bundle\
+        \ of markdown files an agent can list, read and grep like any folder, or that\
+        \ can be exported and mounted. Observations are grouped by the entities they\
+        \ are about into a bounded tree of topics: each topic is one file listing\
+        \ every observation in it, and each folder has an `index.md` with its topics\
+        \ and best-supported observations. The bundle follows the Open Knowledge Format\
+        \ (https://okf.md/spec/). Built on request, deterministically, so a file keeps\
+        \ its path as the bank changes. Experimental."
+      operationId: get_observation_tree
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: "Only group observations carrying these tags (the scope), as\
+          \ in recall."
+        explode: true
+        in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - description: How `tags` match (same modes as recall).
+        explode: true
+        in: query
+        name: tags_match
+        required: false
+        schema:
+          default: any
+          description: How `tags` match (same modes as recall).
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        style: form
+      - description: "Compound tag filter as a JSON-encoded list of tag groups — the\
+          \ same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve}\
+          \ and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually\
+          \ exclusive with `tags`."
+        explode: true
+        in: query
+        name: tag_groups
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationTreeFolder'
+          description: Successful Response
+        "404":
+          description: The bank does not exist.
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get the observation tree
+      tags:
+      - Memory
   /v1/default/banks/{bank_id}/entities/graph:
     get:
       description: Return a graph of entities (nodes) and their co-occurrences (edges)
@@ -11892,6 +11979,259 @@ components:
       - scopes
       - total
       title: ObservationScopesResponse
+    ObservationTreeFile:
+      description: "A markdown file in the observation tree: a folder's index.md or\
+        \ one topic (an OKF concept)."
+      example:
+        path: path
+        observation_count: 6
+        related:
+        - related
+        - related
+        kind: index
+        observations:
+        - occurred_start: 2000-01-23T04:56:07.000+00:00
+          proof_count: 1
+          updated_at: 2000-01-23T04:56:07.000+00:00
+          occurred_end: 2000-01-23T04:56:07.000+00:00
+          mentioned_at: 2000-01-23T04:56:07.000+00:00
+          id: id
+          text: text
+          tags:
+          - tags
+          - tags
+        - occurred_start: 2000-01-23T04:56:07.000+00:00
+          proof_count: 1
+          updated_at: 2000-01-23T04:56:07.000+00:00
+          occurred_end: 2000-01-23T04:56:07.000+00:00
+          mentioned_at: 2000-01-23T04:56:07.000+00:00
+          id: id
+          text: text
+          tags:
+          - tags
+          - tags
+        name: name
+        about:
+        - about
+        - about
+        title: title
+        content: content
+      properties:
+        path:
+          description: "Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`."
+          title: Path
+          type: string
+        name:
+          title: Name
+          type: string
+        kind:
+          $ref: '#/components/schemas/ObservationTreeFileKind'
+        title:
+          title: Title
+          type: string
+        observation_count:
+          description: "Observations in the topic, or in the whole folder for an index."
+          title: Observation Count
+          type: integer
+        about:
+          description: The entities that set this topic apart from its siblings.
+          items:
+            type: string
+          type: array
+        related:
+          description: Paths of related topic files elsewhere in the tree.
+          items:
+            type: string
+          type: array
+        observations:
+          description: "What the file lists, best-supported first."
+          items:
+            $ref: '#/components/schemas/ObservationTreeObservation'
+          type: array
+        content:
+          description: "The same file as markdown, with dates and source counts on\
+            \ every line."
+          title: Content
+          type: string
+      required:
+      - about
+      - content
+      - kind
+      - name
+      - observation_count
+      - observations
+      - path
+      - related
+      - title
+      title: ObservationTreeFile
+    ObservationTreeFileKind:
+      description: |-
+        What a observation-tree file is. A named enum, not a Literal: inline enums are named after
+        their field by the generated Rust client, and ``kind`` already names the page node enum
+        there (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``).
+      enum:
+      - index
+      - topic
+      title: ObservationTreeFileKind
+      type: string
+    ObservationTreeFolder:
+      description: A topic folder in the observation tree.
+      example:
+        path: path
+        observation_count: 0
+        folders:
+        - null
+        - null
+        name: name
+        files:
+        - path: path
+          observation_count: 6
+          related:
+          - related
+          - related
+          kind: index
+          observations:
+          - occurred_start: 2000-01-23T04:56:07.000+00:00
+            proof_count: 1
+            updated_at: 2000-01-23T04:56:07.000+00:00
+            occurred_end: 2000-01-23T04:56:07.000+00:00
+            mentioned_at: 2000-01-23T04:56:07.000+00:00
+            id: id
+            text: text
+            tags:
+            - tags
+            - tags
+          - occurred_start: 2000-01-23T04:56:07.000+00:00
+            proof_count: 1
+            updated_at: 2000-01-23T04:56:07.000+00:00
+            occurred_end: 2000-01-23T04:56:07.000+00:00
+            mentioned_at: 2000-01-23T04:56:07.000+00:00
+            id: id
+            text: text
+            tags:
+            - tags
+            - tags
+          name: name
+          about:
+          - about
+          - about
+          title: title
+          content: content
+        - path: path
+          observation_count: 6
+          related:
+          - related
+          - related
+          kind: index
+          observations:
+          - occurred_start: 2000-01-23T04:56:07.000+00:00
+            proof_count: 1
+            updated_at: 2000-01-23T04:56:07.000+00:00
+            occurred_end: 2000-01-23T04:56:07.000+00:00
+            mentioned_at: 2000-01-23T04:56:07.000+00:00
+            id: id
+            text: text
+            tags:
+            - tags
+            - tags
+          - occurred_start: 2000-01-23T04:56:07.000+00:00
+            proof_count: 1
+            updated_at: 2000-01-23T04:56:07.000+00:00
+            occurred_end: 2000-01-23T04:56:07.000+00:00
+            mentioned_at: 2000-01-23T04:56:07.000+00:00
+            id: id
+            text: text
+            tags:
+            - tags
+            - tags
+          name: name
+          about:
+          - about
+          - about
+          title: title
+          content: content
+        title: title
+      properties:
+        path:
+          description: Path from the tree root; empty for the root.
+          title: Path
+          type: string
+        name:
+          title: Name
+          type: string
+        title:
+          description: Human-readable topic name.
+          title: Title
+          type: string
+        observation_count:
+          title: Observation Count
+          type: integer
+        folders:
+          items:
+            $ref: '#/components/schemas/ObservationTreeFolder'
+          type: array
+        files:
+          items:
+            $ref: '#/components/schemas/ObservationTreeFile'
+          type: array
+      required:
+      - files
+      - folders
+      - name
+      - observation_count
+      - path
+      - title
+      title: ObservationTreeFolder
+    ObservationTreeObservation:
+      description: An observation as the observation tree lists it.
+      example:
+        occurred_start: 2000-01-23T04:56:07.000+00:00
+        proof_count: 1
+        updated_at: 2000-01-23T04:56:07.000+00:00
+        occurred_end: 2000-01-23T04:56:07.000+00:00
+        mentioned_at: 2000-01-23T04:56:07.000+00:00
+        id: id
+        text: text
+        tags:
+        - tags
+        - tags
+      properties:
+        id:
+          title: Id
+          type: string
+        text:
+          title: Text
+          type: string
+        proof_count:
+          description: How many source memories back it.
+          title: Proof Count
+          type: integer
+        occurred_start:
+          format: date-time
+          nullable: true
+          type: string
+        occurred_end:
+          format: date-time
+          nullable: true
+          type: string
+        mentioned_at:
+          format: date-time
+          nullable: true
+          type: string
+        updated_at:
+          format: date-time
+          nullable: true
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+      required:
+      - id
+      - proof_count
+      - tags
+      - text
+      title: ObservationTreeObservation
     OperationProgress:
       description: |-
         Last-known progress snapshot for a long-running async operation.

@@ -1510,6 +1510,126 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/observations/tree": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Get the observation tree",
+        "description": "The bank's observations, everything it has learned, as a bundle of markdown files an agent can list, read and grep like any folder, or that can be exported and mounted. Observations are grouped by the entities they are about into a bounded tree of topics: each topic is one file listing every observation in it, and each folder has an `index.md` with its topics and best-supported observations. The bundle follows the Open Knowledge Format (https://okf.md/spec/). Built on request, deterministically, so a file keeps its path as the bank changes. Experimental.",
+        "operationId": "get_observation_tree",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only group observations carrying these tags (the scope), as in recall.",
+              "title": "Tags"
+            },
+            "description": "Only group observations carrying these tags (the scope), as in recall."
+          },
+          {
+            "name": "tags_match",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "any",
+                "all",
+                "any_strict",
+                "all_strict",
+                "exact"
+              ],
+              "type": "string",
+              "description": "How `tags` match (same modes as recall).",
+              "default": "any",
+              "title": "Tags Match"
+            },
+            "description": "How `tags` match (same modes as recall)."
+          },
+          {
+            "name": "tag_groups",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.",
+              "title": "Tag Groups"
+            },
+            "description": "Compound tag filter as a JSON-encoded list of tag groups \u2014 the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`."
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservationTreeFolder"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/entities/graph": {
       "get": {
         "tags": [
@@ -17376,6 +17496,212 @@
           ],
           "total": 3
         }
+      },
+      "ObservationTreeFile": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ObservationTreeFileKind",
+            "description": "`index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic."
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count",
+            "description": "Observations in the topic, or in the whole folder for an index."
+          },
+          "about": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "About",
+            "description": "The entities that set this topic apart from its siblings."
+          },
+          "related": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Related",
+            "description": "Paths of related topic files elsewhere in the tree."
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/ObservationTreeObservation"
+            },
+            "type": "array",
+            "title": "Observations",
+            "description": "What the file lists, best-supported first."
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "The same file as markdown, with dates and source counts on every line."
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "name",
+          "kind",
+          "title",
+          "observation_count",
+          "about",
+          "related",
+          "observations",
+          "content"
+        ],
+        "title": "ObservationTreeFile",
+        "description": "A markdown file in the observation tree: a folder's index.md or one topic (an OKF concept)."
+      },
+      "ObservationTreeFileKind": {
+        "type": "string",
+        "enum": [
+          "index",
+          "topic"
+        ],
+        "title": "ObservationTreeFileKind",
+        "description": "What a observation-tree file is. A named enum, not a Literal: inline enums are named after\ntheir field by the generated Rust client, and ``kind`` already names the page node enum\nthere (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``)."
+      },
+      "ObservationTreeFolder": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "description": "Path from the tree root; empty for the root."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Human-readable topic name."
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count"
+          },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/ObservationTreeFolder"
+            },
+            "type": "array",
+            "title": "Folders"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/ObservationTreeFile"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "name",
+          "title",
+          "observation_count",
+          "folders",
+          "files"
+        ],
+        "title": "ObservationTreeFolder",
+        "description": "A topic folder in the observation tree."
+      },
+      "ObservationTreeObservation": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "proof_count": {
+            "type": "integer",
+            "title": "Proof Count",
+            "description": "How many source memories back it."
+          },
+          "occurred_start": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred Start"
+          },
+          "occurred_end": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred End"
+          },
+          "mentioned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mentioned At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "proof_count",
+          "tags"
+        ],
+        "title": "ObservationTreeObservation",
+        "description": "An observation as the observation tree lists it."
       },
       "OperationProgress": {
         "properties": {

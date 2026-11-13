@@ -5142,6 +5142,149 @@ export type ObservationScopesResponse = {
 };
 
 /**
+ * ObservationTreeFile
+ *
+ * A markdown file in the observation tree: a folder's index.md or one topic (an OKF concept).
+ */
+export type ObservationTreeFile = {
+  /**
+   * Path
+   *
+   * Path from the tree root, e.g. `gemma/vllm.md` or `gemma/index.md`.
+   */
+  path: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * `index`: a folder's overview (OKF's reserved `index.md`) and best-supported observations. `topic`: every observation in one topic.
+   */
+  kind: ObservationTreeFileKind;
+  /**
+   * Title
+   */
+  title: string;
+  /**
+   * Observation Count
+   *
+   * Observations in the topic, or in the whole folder for an index.
+   */
+  observation_count: number;
+  /**
+   * About
+   *
+   * The entities that set this topic apart from its siblings.
+   */
+  about: Array<string>;
+  /**
+   * Related
+   *
+   * Paths of related topic files elsewhere in the tree.
+   */
+  related: Array<string>;
+  /**
+   * Observations
+   *
+   * What the file lists, best-supported first.
+   */
+  observations: Array<ObservationTreeObservation>;
+  /**
+   * Content
+   *
+   * The same file as markdown, with dates and source counts on every line.
+   */
+  content: string;
+};
+
+/**
+ * ObservationTreeFileKind
+ *
+ * What a observation-tree file is. A named enum, not a Literal: inline enums are named after
+ * their field by the generated Rust client, and ``kind`` already names the page node enum
+ * there (an inline ``kind`` here took the name and broke the CLI's ``Kind::Folder``).
+ */
+export type ObservationTreeFileKind = "index" | "topic";
+
+/**
+ * ObservationTreeFolder
+ *
+ * A topic folder in the observation tree.
+ */
+export type ObservationTreeFolder = {
+  /**
+   * Path
+   *
+   * Path from the tree root; empty for the root.
+   */
+  path: string;
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Title
+   *
+   * Human-readable topic name.
+   */
+  title: string;
+  /**
+   * Observation Count
+   */
+  observation_count: number;
+  /**
+   * Folders
+   */
+  folders: Array<ObservationTreeFolder>;
+  /**
+   * Files
+   */
+  files: Array<ObservationTreeFile>;
+};
+
+/**
+ * ObservationTreeObservation
+ *
+ * An observation as the observation tree lists it.
+ */
+export type ObservationTreeObservation = {
+  /**
+   * Id
+   */
+  id: string;
+  /**
+   * Text
+   */
+  text: string;
+  /**
+   * Proof Count
+   *
+   * How many source memories back it.
+   */
+  proof_count: number;
+  /**
+   * Occurred Start
+   */
+  occurred_start?: string | null;
+  /**
+   * Occurred End
+   */
+  occurred_end?: string | null;
+  /**
+   * Mentioned At
+   */
+  mentioned_at?: string | null;
+  /**
+   * Updated At
+   */
+  updated_at?: string | null;
+  /**
+   * Tags
+   */
+  tags: Array<string>;
+};
+
+/**
  * OperationProgress
  *
  * Last-known progress snapshot for a long-running async operation.
@@ -8267,6 +8410,66 @@ export type ListEntitiesResponses = {
 };
 
 export type ListEntitiesResponse = ListEntitiesResponses[keyof ListEntitiesResponses];
+
+export type GetObservationTreeData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Tags
+     *
+     * Only group observations carrying these tags (the scope), as in recall.
+     */
+    tags?: Array<string> | null;
+    /**
+     * Tags Match
+     *
+     * How `tags` match (same modes as recall).
+     */
+    tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+    /**
+     * Tag Groups
+     *
+     * Compound tag filter as a JSON-encoded list of tag groups — the same shape `tag_groups` takes in a recall body (leaves {tags, match, resolve} and {and: [...]}, {or: [...]}, {not: ...}; groups are AND-ed). Mutually exclusive with `tags`.
+     */
+    tag_groups?: string | null;
+  };
+  url: "/v1/default/banks/{bank_id}/observations/tree";
+};
+
+export type GetObservationTreeErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetObservationTreeError = GetObservationTreeErrors[keyof GetObservationTreeErrors];
+
+export type GetObservationTreeResponses = {
+  /**
+   * Successful Response
+   */
+  200: ObservationTreeFolder;
+};
+
+export type GetObservationTreeResponse =
+  GetObservationTreeResponses[keyof GetObservationTreeResponses];
 
 export type GetEntityGraphData = {
   body?: never;

@@ -76,6 +76,39 @@ export interface WebhookHttpConfig {
   params: Record<string, string>;
 }
 
+export interface ObservationTreeObservation {
+  id: string;
+  text: string;
+  proof_count: number;
+  occurred_start?: string | null;
+  occurred_end?: string | null;
+  mentioned_at?: string | null;
+  updated_at?: string | null;
+  tags: string[];
+}
+
+export interface ObservationTreeFile {
+  path: string;
+  name: string;
+  /** `index`: a folder's overview (OKF's index.md). `topic`: every observation in one topic. */
+  kind: "index" | "topic";
+  title: string;
+  observation_count: number;
+  about: string[];
+  related: string[];
+  observations: ObservationTreeObservation[];
+  content: string;
+}
+
+export interface ObservationTreeFolder {
+  path: string;
+  name: string;
+  title: string;
+  observation_count: number;
+  folders: ObservationTreeFolder[];
+  files: ObservationTreeFile[];
+}
+
 export interface PageNode {
   id: string;
   kind: "folder" | "page";
@@ -946,6 +979,13 @@ export class ControlPlaneClient {
       limit: number;
       offset: number;
     }>(`/api/entities?${queryParams}`);
+  }
+
+  /** The bank's observations as a tree of topic folders (experimental, no LLM). */
+  async getObservationTree(bankId: string, filter?: TagFilter) {
+    const params = new URLSearchParams({ bank_id: bankId });
+    if (filter) appendTagFilter(params, filter);
+    return this.fetchApi<ObservationTreeFolder>(`/api/observations/tree?${params}`);
   }
 
   /**

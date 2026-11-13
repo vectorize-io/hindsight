@@ -185,7 +185,9 @@
     "cloneIncludeBankConfigHint": "設定覆寫、指令同 Webhook — 副本會叫同一批 Webhook 端點。",
     "cloneIncludeHistory": "歷史",
     "cloneIncludeHistoryHint": "稽核紀錄同 LLM 請求追蹤。",
-    "cloneNothingSelected": "最少揀一樣嚟複製。"
+    "cloneNothingSelected": "最少揀一樣嚟複製。",
+    "observationTree": "觀察",
+    "observationTreeDescription": "呢個記憶庫學到嘅一切，以一個可以瀏覽、搜尋同匯出嘅 Markdown 檔案資料夾呈現——同代理可以列出同用 grep 搜尋嘅係同一批檔案。每個主題檔案包含佢所有觀察；每個資料夾嘅 index.md 提供概覽。"
   },
   "bankProfile": {
     "noBankSelected": "未選擇記憶庫",
@@ -2697,5 +2699,28 @@
         }
       }
     }
+  },
+  "observationTree": {
+    "empty": "呢個庫仲未有觀察。",
+    "pickFile": "喺左邊揀一個檔案。",
+    "findPlaceholder": "喺記憶入面搵（文字或正則表達式）",
+    "showRaw": "原始 .md",
+    "exportZip": "匯出 .zip",
+    "recencyLegend": "新近度 · 提及",
+    "showRendered": "排版顯示",
+    "clearFind": "清除",
+    "noMatches": "搵唔到。",
+    "matchSummary": "{files}個檔案入面有{matches}個結果",
+    "matchesInFile": "{total}個入面有{shown}個符合",
+    "observationCount": "{count}個觀察",
+    "sources": "{count}個來源",
+    "updated": "{when}更新",
+    "related": "相關：",
+    "topics": "主題",
+    "bestSupported": "最多支持",
+    "observations": "觀察",
+    "filesMode": "檔案",
+    "constellationMode": "星圖",
+    "sourcesLegend": "來源"
   }
 }

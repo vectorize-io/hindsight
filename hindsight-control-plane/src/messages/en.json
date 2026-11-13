@@ -185,7 +185,9 @@
     "cloneIncludeBankConfigHint": "Config overrides, directives and webhooks — the copy will call the same webhook endpoints.",
     "cloneIncludeHistory": "History",
     "cloneIncludeHistoryHint": "Audit log and LLM request traces.",
-    "cloneNothingSelected": "Choose at least one thing to copy."
+    "cloneNothingSelected": "Choose at least one thing to copy.",
+    "observationTree": "Observations",
+    "observationTreeDescription": "Everything this bank has learned, as a folder of markdown files you can browse, search and export — the same files an agent can list and grep. Each topic file holds all of its observations; each folder's index.md gives an overview."
   },
   "bankProfile": {
     "noBankSelected": "No Bank Selected",
@@ -2697,5 +2699,28 @@
         }
       }
     }
+  },
+  "observationTree": {
+    "empty": "No observations in this bank yet.",
+    "pickFile": "Pick a file on the left.",
+    "findPlaceholder": "Find in memories (text or regex)",
+    "showRaw": "Raw .md",
+    "exportZip": "Export .zip",
+    "recencyLegend": "recency · mentioned",
+    "showRendered": "Rendered",
+    "clearFind": "Clear",
+    "noMatches": "No matches.",
+    "matchSummary": "{matches, plural, one {# match} other {# matches}} in {files, plural, one {# file} other {# files}}",
+    "matchesInFile": "{shown} of {total} match",
+    "observationCount": "{count, plural, one {# observation} other {# observations}}",
+    "sources": "{count, plural, one {# source} other {# sources}}",
+    "updated": "updated {when}",
+    "related": "Related:",
+    "topics": "Topics",
+    "bestSupported": "Best supported",
+    "observations": "Observations",
+    "filesMode": "Files",
+    "constellationMode": "Constellation",
+    "sourcesLegend": "sources"
   }
 }
