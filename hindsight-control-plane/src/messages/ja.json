@@ -2704,6 +2704,8 @@
     "empty": "このバンクにはまだ観察がありません。",
     "pickFile": "左のファイルを選択してください。",
     "findPlaceholder": "メモリを検索（テキストまたは正規表現）",
+    "showRaw": "生の .md",
+    "showRendered": "整形表示",
     "clearFind": "クリア",
     "noMatches": "一致なし。",
     "matchSummary": "{files}ファイルで{matches}件一致",

@@ -327,6 +327,7 @@ export function MemoryTreeView() {
   const [query, setQuery] = useState("");
   const [openMemory, setOpenMemory] = useState<string | null>(null);
   const [mode, setMode] = useState<"files" | "constellation">("files");
+  const [raw, setRaw] = useState(false);
 
   // Scope: the tree is rebuilt from the matching observations only, so a scope gets its own
   // topics. Strict modes, like the entities page: a tag should not pull in untagged memories.
@@ -496,10 +497,23 @@ export function MemoryTreeView() {
         </aside>
 
         <main className="flex-1 min-w-0 overflow-y-auto bg-background">
-          <div className="sticky top-0 z-10 border-b border-border bg-muted px-4 py-2 font-mono text-xs text-muted-foreground truncate">
-            /{selected}
+          <div className="sticky top-0 z-10 border-b border-border bg-muted px-4 py-2 font-mono text-xs text-muted-foreground flex items-center gap-2">
+            <span className="truncate flex-1">/{selected}</span>
+            {file && (
+              <button
+                onClick={() => setRaw((r) => !r)}
+                className="shrink-0 rounded px-2 py-0.5 border border-border bg-background hover:text-foreground"
+              >
+                {raw ? t("showRendered") : t("showRaw")}
+              </button>
+            )}
           </div>
-          {file ? (
+          {file && raw ? (
+            // Exactly what the API returns for this file: the markdown an agent would read.
+            <pre className="p-4 sm:p-8 text-xs font-mono whitespace-pre-wrap break-words text-foreground">
+              {file.content}
+            </pre>
+          ) : file ? (
             <div className="p-4 sm:p-8 max-w-3xl mx-auto">
               <h2 className="text-2xl font-bold text-foreground">{file.title}</h2>
               <p className="mt-1 text-sm text-muted-foreground">

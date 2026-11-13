@@ -2704,6 +2704,8 @@
     "empty": "此库还没有观察。",
     "pickFile": "请在左侧选择一个文件。",
     "findPlaceholder": "在记忆中查找（文本或正则）",
+    "showRaw": "原始 .md",
+    "showRendered": "渲染视图",
     "clearFind": "清除",
     "noMatches": "没有匹配。",
     "matchSummary": "{files} 个文件中有 {matches} 处匹配",

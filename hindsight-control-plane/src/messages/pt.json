@@ -2704,6 +2704,8 @@
     "empty": "Este banco ainda não tem observações.",
     "pickFile": "Escolha um arquivo à esquerda.",
     "findPlaceholder": "Buscar nas memórias (texto ou regex)",
+    "showRaw": ".md bruto",
+    "showRendered": "Formatado",
     "clearFind": "Limpar",
     "noMatches": "Nenhum resultado.",
     "matchSummary": "{matches, plural, one {# resultado} other {# resultados}} em {files, plural, one {# arquivo} other {# arquivos}}",

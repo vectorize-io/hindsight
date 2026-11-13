@@ -2704,6 +2704,8 @@
     "empty": "Este banco aún no tiene observaciones.",
     "pickFile": "Elige un archivo a la izquierda.",
     "findPlaceholder": "Buscar en memorias (texto o regex)",
+    "showRaw": ".md sin formato",
+    "showRendered": "Con formato",
     "clearFind": "Borrar",
     "noMatches": "Sin coincidencias.",
     "matchSummary": "{matches, plural, one {# coincidencia} other {# coincidencias}} en {files, plural, one {# archivo} other {# archivos}}",

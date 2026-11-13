@@ -2704,6 +2704,8 @@
     "empty": "Diese Bank hat noch keine Beobachtungen.",
     "pickFile": "Wähle links eine Datei.",
     "findPlaceholder": "In Erinnerungen suchen (Text oder Regex)",
+    "showRaw": "Roh-.md",
+    "showRendered": "Formatiert",
     "clearFind": "Leeren",
     "noMatches": "Keine Treffer.",
     "matchSummary": "{matches, plural, one {# Treffer} other {# Treffer}} in {files, plural, one {# Datei} other {# Dateien}}",

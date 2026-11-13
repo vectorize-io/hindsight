@@ -2704,6 +2704,8 @@
     "empty": "No observations in this bank yet.",
     "pickFile": "Pick a file on the left.",
     "findPlaceholder": "Find in memories (text or regex)",
+    "showRaw": "Raw .md",
+    "showRendered": "Rendered",
     "clearFind": "Clear",
     "noMatches": "No matches.",
     "matchSummary": "{matches, plural, one {# match} other {# matches}} in {files, plural, one {# file} other {# files}}",

@@ -2704,6 +2704,8 @@
     "empty": "此庫還沒有觀察。",
     "pickFile": "請在左側選擇一個檔案。",
     "findPlaceholder": "在記憶中尋找（文字或正規表示式）",
+    "showRaw": "原始 .md",
+    "showRendered": "渲染檢視",
     "clearFind": "清除",
     "noMatches": "沒有符合項目。",
     "matchSummary": "{files} 個檔案中有 {matches} 處符合",

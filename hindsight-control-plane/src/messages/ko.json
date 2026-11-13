@@ -2704,6 +2704,8 @@
     "empty": "이 뱅크에는 아직 관찰이 없습니다.",
     "pickFile": "왼쪽에서 파일을 선택하세요.",
     "findPlaceholder": "메모리에서 찾기 (텍스트 또는 정규식)",
+    "showRaw": "원본 .md",
+    "showRendered": "렌더링",
     "clearFind": "지우기",
     "noMatches": "일치 항목 없음.",
     "matchSummary": "{files}개 파일에서 {matches}개 일치",
