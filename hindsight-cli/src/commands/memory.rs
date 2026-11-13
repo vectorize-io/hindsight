@@ -1105,7 +1105,19 @@ mod tests {
 fn write_bundle(folder: &types::ObservationTreeFolder, dir: &std::path::Path) -> Result<usize> {
     let mut written = 0;
     for file in &folder.files {
-        let path = dir.join(&file.path);
+        // Only plain relative paths: a server could send `../x.md` or `/etc/x` and write
+        // outside `dir` (Hindsight's own never does; the CLI can point at any server).
+        let relative = std::path::Path::new(&file.path);
+        if !relative
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            anyhow::bail!(
+                "refusing to write '{}': not a plain relative path",
+                file.path
+            );
+        }
+        let path = dir.join(relative);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
@@ -1147,8 +1159,10 @@ pub fn observation_tree(
     let tree = client.get_observation_tree(bank_id, &tags, tags_match)?;
     if let Some(dir) = out {
         let written = write_bundle(&tree, &dir)?;
-        let noun = if written == 1 { "file" } else { "files" };
-        println!("Wrote {written} {noun} to {}", dir.display());
+        if output_format == OutputFormat::Pretty {
+            let noun = if written == 1 { "file" } else { "files" };
+            ui::print_success(&format!("Wrote {written} {noun} to {}", dir.display()));
+        }
         return Ok(());
     }
     if output_format == OutputFormat::Pretty {
@@ -1191,5 +1205,21 @@ mod observation_tree_tests {
             .unwrap()
             .starts_with("---\ntype:"));
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_paths_that_leave_the_folder() {
+        for bad in ["../x.md", "/tmp/x.md", "a/../../x.md"] {
+            let tree: types::ObservationTreeFolder = serde_json::from_value(serde_json::json!({
+                "path": "", "name": "", "title": "bank", "observation_count": 0, "folders": [],
+                "files": [{"path": bad, "name": "x.md", "kind": "topic", "title": "x",
+                           "observation_count": 0, "about": [], "related": [], "observations": [],
+                           "content": "x"}]
+            }))
+            .unwrap();
+            let dir =
+                std::env::temp_dir().join(format!("hindsight-tree-bad-{}", std::process::id()));
+            assert!(write_bundle(&tree, &dir).is_err(), "{bad} was written");
+        }
     }
 }
