@@ -13,7 +13,7 @@ import posixpath
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -31,7 +31,8 @@ UBIQUITOUS_SHARE = 0.33
 SEED_OVERLAP = 0.5
 # A row with no seed entity joins a group only if the group carries this share of its entity weight.
 SHARE_TO_JOIN = 0.25
-OTHER_NAME = "other"
+# What fits no topic in a folder; split by month, then ISO week, once it outgrows LEAF_MAX.
+MISC_NAME = "misc"
 README = "README.md"
 
 # Speaker roles the extractor attaches to almost everything.
@@ -299,7 +300,7 @@ def _name_children(
         )
         child.top_entities = [name for score, name in reversed(scored) if score > 0][:5]
         if child.rest:
-            slug = OTHER_NAME
+            slug = MISC_NAME
         else:
             slug = _slug(child.seed) if child.seed else "-".join(_slug(e) for e in child.top_entities[:2]) or "topic"
         base, i = slug, 2
@@ -315,16 +316,23 @@ def _leaves(node: _Node) -> list[_Node]:
     return [node] if not node.children else [leaf for c in node.children for leaf in _leaves(c)]
 
 
-def _day(d: datetime | None) -> str:
-    return d.date().isoformat() if d else ""
+def _stamp(d: datetime | None) -> str:
+    """Date and time in UTC, the way observation notes write them. (A day alone was off by
+    one: a fact "on the 18th" in UTC+2 is stored as 22:00 on the 17th, so the line said the
+    17th while the note in the same text said 2026-09-18 07:46.)"""
+    return d.astimezone(UTC).strftime("%Y-%m-%d %H:%M") if d else ""
+
+
+def _shown(o: TreeObservation) -> datetime | None:
+    return o.occurred_start or o.occurred_end or o.mentioned_at
 
 
 def _when(o: TreeObservation) -> str:
     """When it happened if known, else when it was mentioned."""
-    start, end = _day(o.occurred_start), _day(o.occurred_end)
+    start, end = _stamp(o.occurred_start), _stamp(o.occurred_end)
     if start and end and start != end:
         return f"{start}..{end}"
-    return start or end or _day(o.mentioned_at)
+    return start or end or _stamp(o.mentioned_at)
 
 
 def _line(o: TreeObservation) -> str:
@@ -351,7 +359,7 @@ def _ranked(node: _Node, observations: list[TreeObservation]) -> list[TreeObserv
 def _render_topic(node: _Node, observations: list[TreeObservation], related: list[_Node]) -> TreeFile:
     title = _title(node)
     ranked = _ranked(node, observations)
-    lines = [f"# {title}", "", f"{len(ranked)} observations."]
+    lines = [f"# {title}", "", f"{len(ranked)} observations. Times are UTC."]
     if node.top_entities:
         lines += ["", "**About:** " + ", ".join(node.top_entities)]
     if related:
@@ -412,6 +420,45 @@ def _render(
     return folder
 
 
+def _split_misc(node: _Node, observations: list[TreeObservation]) -> None:
+    """Split every misc file over LEAF_MAX into one file per month of its observations' dates
+    (and a month over LEAF_MAX into ISO weeks). Calendar buckets, not misc-1/misc-2: an
+    observation's month or week never changes, so it never moves file."""
+    children: list[_Node] = []
+    for child in node.children:
+        if child.rest and not child.children and len(child.members) > LEAF_MAX:
+            by_month: dict[str, list[int]] = {}
+            for i in child.members:
+                d = _shown(observations[i])
+                by_month.setdefault(d.astimezone(UTC).strftime("%Y-%m") if d else "undated", []).append(int(i))
+            # A month still over LEAF_MAX splits once more, by ISO week; no further.
+            buckets: dict[str, list[int]] = {}
+            for month, ids in by_month.items():
+                if len(ids) <= LEAF_MAX or month == "undated":
+                    buckets[month] = ids
+                    continue
+                for i in ids:
+                    d = _shown(observations[i])
+                    week = d.astimezone(UTC).strftime("%G-W%V") if d else "undated"
+                    buckets.setdefault(week, []).append(i)
+            for key in sorted(buckets):
+                slug = f"{MISC_NAME}-{key}"
+                children.append(
+                    _Node(
+                        members=np.array(buckets[key]),
+                        centroid=None,
+                        top_entities=child.top_entities,
+                        slug=slug,
+                        path=posixpath.join(node.path, slug),
+                        rest=True,
+                    )
+                )
+        else:
+            _split_misc(child, observations)
+            children.append(child)
+    node.children = children
+
+
 def build_memory_tree(observations: list[TreeObservation], bank_title: str = "Memories") -> TreeFolder:
     """Lay ``observations`` out as a tree. Deterministic: the same input gives the same tree.
 
@@ -437,9 +484,10 @@ def build_memory_tree(observations: list[TreeObservation], bank_title: str = "Me
             rest.members = np.concatenate([rest.members, np.array(without)])
         else:
             root.children.append(
-                _Node(members=np.array(without), centroid=None, slug=OTHER_NAME, path=OTHER_NAME, rest=True)
+                _Node(members=np.array(without), centroid=None, slug=MISC_NAME, path=MISC_NAME, rest=True)
             )
 
+    _split_misc(root, observations)
     leaves = [leaf for leaf in _leaves(root) if leaf.centroid is not None and leaf is not root]
     related: dict[str, list[_Node]] = {}
     if len(leaves) > 1:

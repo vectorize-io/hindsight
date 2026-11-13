@@ -1,6 +1,7 @@
 """The memory tree groups observations by subject, keeps every one, and is deterministic."""
 
 import random
+import re
 from datetime import datetime, timezone
 
 from hindsight_api.engine.memory_tree import LEAF_MAX, TreeObservation, build_memory_tree, iter_files
@@ -42,11 +43,11 @@ def test_groups_by_subject_and_keeps_everything():
         assert len(subjects) == 1, f"{f.path} mixes {subjects}"
 
     paths = {f.path for f in topics}
-    assert "other.md" in paths
+    assert "misc.md" in paths
     assert not any("pr" in p.split("-") or "user" in p for p in paths)
     assert all(f.path.endswith("README.md") for f in iter_files(tree) if f.kind == "readme")
     # Each line carries its date and source count, so grep sees them.
-    assert "(2026-10-01 · 1 sources)" in next(f for f in topics if f.path != "other.md").content
+    assert "(2026-10-01 00:00 · 1 sources)" in next(f for f in topics if f.path != "misc.md").content
 
 
 def test_is_deterministic():
@@ -121,7 +122,7 @@ def test_adding_a_few_observations_keeps_the_rest_in_place():
     assert _kept(before, _files_of(obs + extra)) >= 0.95
 
 
-def test_an_observation_that_fits_no_topic_goes_to_other():
+def test_an_observation_that_fits_no_topic_goes_to_misc():
     """The real case: a fact about deleting a document's request history, whose only shared
     entity ("document") a few observations in unrelated subjects also carry. It must not be
     forced into a topic."""
@@ -132,14 +133,48 @@ def test_an_observation_that_fits_no_topic_goes_to_other():
         id="stray", text="delete a document's request history", proof_count=1, entities=["delete_document", "document"]
     )
     where = _files_of(obs + [stray])
-    assert where["stray"].endswith("other.md"), where["stray"]
+    assert where["stray"].rsplit("/", 1)[-1].startswith("misc"), where["stray"]
 
 
-def test_other_is_a_file_never_a_folder():
-    """At most one other.md per folder, and no folder called other (no other/other/other.md)."""
+def test_misc_is_a_file_never_a_folder():
+    """No folder called misc (no misc/misc/misc.md): a folder's leftovers are misc.md, or one
+    misc-YYYY-MM.md per month once there are more than fit in one file."""
     tree = build_memory_tree(_realistic_bank())
     paths = [f.path for f in iter_files(tree)]
-    assert not any("other/" in p for p in paths), [p for p in paths if "other/" in p]
-    folders = {p.rsplit("/", 1)[0] if "/" in p else "" for p in paths}
-    for d in folders:
-        assert sum(p == f"{d}/other.md".lstrip("/") for p in paths) <= 1
+    assert not any("misc/" in p for p in paths), [p for p in paths if "misc/" in p]
+    misc = [p.rsplit("/", 1)[-1] for p in paths if p.rsplit("/", 1)[-1].startswith("misc")]
+    assert misc
+    assert all(name == "misc.md" or re.fullmatch(r"misc-(\d{4}-(\d{2}|W\d{2})|undated)\.md", name) for name in misc), (
+        misc
+    )
+
+
+def test_a_big_misc_is_split_by_month():
+    """Months, not misc-1/misc-2: an observation's month never changes, so it never moves file."""
+    obs = [
+        TreeObservation(
+            id=f"m{i}",
+            text=f"stray {i}",
+            proof_count=1,
+            entities=[f"oneoff-{i}"],
+            mentioned_at=datetime(2026, 9 + i % 3, 1 + i % 28, tzinfo=timezone.utc),
+        )
+        for i in range(LEAF_MAX * 2)
+    ]
+    names = sorted(f.path for f in iter_files(build_memory_tree(obs)) if f.kind == "topic")
+    assert names == ["misc-2026-09.md", "misc-2026-10.md", "misc-2026-11.md"]
+
+
+def test_a_month_too_big_for_one_file_is_split_by_week():
+    obs = [
+        TreeObservation(
+            id=f"m{i}",
+            text=f"stray {i}",
+            proof_count=1,
+            entities=[f"oneoff-{i}"],
+            mentioned_at=datetime(2026, 11, 2 + i % 14, tzinfo=timezone.utc),  # Mon 2 .. Sun 15 Nov
+        )
+        for i in range(LEAF_MAX * 2)
+    ]
+    names = sorted(f.path for f in iter_files(build_memory_tree(obs)) if f.kind == "topic")
+    assert names == ["misc-2026-W45.md", "misc-2026-W46.md"]

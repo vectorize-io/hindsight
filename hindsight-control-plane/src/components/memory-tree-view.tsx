@@ -156,10 +156,6 @@ function parentsOf(path: string): string[] {
   return ["", ...parts.map((_, i) => parts.slice(0, i + 1).join("/"))];
 }
 
-function displayName(f: MemoryTreeFile): string {
-  return f.name.replace(/\.md$/, "");
-}
-
 interface TreeProps {
   folder: MemoryTreeFolder;
   depth: number;
@@ -212,7 +208,7 @@ function TreeItems({ folder, depth, open, close, selected, select, hits }: TreeP
       >
         <span className="w-3.5 flex-shrink-0" />
         <FileText className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
-        <span className="text-sm truncate">{f.kind === "readme" ? f.name : displayName(f)}</span>
+        <span className="text-sm truncate">{f.name}</span>
         {f.kind === "topic" && (
           <Count n={hits?.get(f.path) ?? f.observation_count} hit={hits !== null} />
         )}
@@ -538,7 +534,7 @@ export function MemoryTreeView() {
                     <span key={p}>
                       {i > 0 && ", "}
                       <button className="text-primary hover:underline" onClick={() => select(p)}>
-                        {p.replace(/\.md$/, "")}
+                        {p}
                       </button>
                     </span>
                   ))}
@@ -560,7 +556,7 @@ export function MemoryTreeView() {
                         .filter((f) => f.kind === "topic")
                         .map((f) => ({
                           path: f.path,
-                          label: displayName(f),
+                          label: f.name,
                           title: f.title,
                           n: f.observation_count,
                           folder: false,
