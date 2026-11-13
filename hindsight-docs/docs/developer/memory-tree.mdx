@@ -2,6 +2,14 @@
 sidebar_position: 8
 ---
 
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+import treePy from '!!raw-loader!@site/examples/api/memory-tree.py';
+import treeMjs from '!!raw-loader!@site/examples/api/memory-tree.mjs';
+import treeSh from '!!raw-loader!@site/examples/api/memory-tree.sh';
+import treeGo from '!!raw-loader!@site/examples/api/memory-tree.go';
+
 # Memory Tree
 
 The **memory tree** lays out everything a bank has learned as a folder of markdown files: one file per topic, every [observation](./observations) in exactly one file, and an `index.md` in each folder that says what is inside. It is the same bundle for a person browsing it in the control plane, an agent running `ls` and `grep` over it, or a tool importing it.
@@ -67,7 +75,7 @@ Grouping uses the entities each observation is about (inherited from the facts i
 1. Entities that say nothing about a subject are ignored: ids, hashes, IP addresses, speaker roles, and entities on more than a third of the bank.
 2. Each folder starts its groups from its strongest entities, skipping one that mostly appears alongside one already chosen. An observation joins the group of the starting entity it carries most.
 3. An observation that carries none of them joins the group it shares the most entities with, and only if that is at least a quarter of its weight. Otherwise it goes to the folder's `misc` file, rather than into a topic it has little to do with.
-4. A group with more than 120 observations becomes a folder and is split the same way. A `misc` file that grows past 120 splits by month (`misc-2026-11.md`), then by ISO week (`misc-2026-W45.md`).
+4. A group with more than 120 observations becomes a folder and is split the same way, when it can be: a group with no two distinct entities to split on stays one file. A `misc` file that grows past 120 splits by month (`misc-2026-11.md`), then by ISO week (`misc-2026-w45.md`).
 
 ### Stable Paths
 
@@ -94,14 +102,41 @@ Open a bank, go to **Pages → Observations**:
 
 ## Using the API
 
-```bash
-curl "http://localhost:8888/v1/default/banks/my-bank/memory-tree"
+`GET /v1/default/banks/{bank_id}/memory-tree` returns the root folder: each folder has `folders` and `files`, and each file has its `path`, `kind` (`index` or `topic`), `title`, `about`, `related`, `observations`, and its full markdown in `content`.
 
-# Only observations tagged team:a (same tag filters as recall)
-curl "http://localhost:8888/v1/default/banks/my-bank/memory-tree?tags=team:a&tags_match=any_strict"
-```
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={treePy} section="get-tree" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={treeMjs} section="get-tree" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={treeSh} section="get-tree" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={treeGo} section="get-tree" language="go" />
+</TabItem>
+</Tabs>
 
-The response is the root folder: each folder has `folders` and `files`, and each file has its `path`, `kind` (`index` or `topic`), `title`, `about`, `related`, `observations`, and its full markdown in `content`. To write the bundle to disk, write each file's `content` to its `path`.
+To write the bundle to disk, write each file's `content` to its `path`:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={treePy} section="write-bundle" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={treeMjs} section="write-bundle" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={treeSh} section="write-bundle" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={treeGo} section="write-bundle" language="go" />
+</TabItem>
+</Tabs>
+
+### Parameters
 
 | Parameter | Description |
 |---|---|

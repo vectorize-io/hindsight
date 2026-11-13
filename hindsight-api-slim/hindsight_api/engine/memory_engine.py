@@ -16886,8 +16886,8 @@ class MemoryEngine(MemoryEngineInterface):
         matching observations are grouped, so a scope gets its own topics, not a filtered copy of
         the whole bank's.
 
-        # ponytail: scans every observation and rebuilds on each call (~0.2s for 2.5k observations).
-        # Cache by the bank's last write, or persist the tree, once banks are large.
+        # ponytail: scans every observation and rebuilds on each call (~0.06s for 2.5k observations).
+        # Cache by the bank's last write once banks are large.
         """
         from .memories import get_memories
         from .memory_tree import TreeObservation, build_memory_tree
@@ -16901,7 +16901,7 @@ class MemoryEngine(MemoryEngineInterface):
             tag_groups = [*(tag_groups or []), *tag_scope]
         store = get_memories()
         async with self._store_read_conn(bank_id) as conn:
-            units = await store._scan_all_memories(
+            units = await store.scan_all_memories(
                 conn=conn,
                 fq_table=fq_table,
                 bank_id=bank_id,
@@ -16928,7 +16928,8 @@ class MemoryEngine(MemoryEngineInterface):
             )
             for u in units
         ]
-        return build_memory_tree(observations, bank_title=bank_id)
+        # CPU-bound (~0.1s per few thousand observations): off the event loop, like the entity graph.
+        return await asyncio.to_thread(build_memory_tree, observations, bank_id)
 
     async def get_entity_graph(
         self,

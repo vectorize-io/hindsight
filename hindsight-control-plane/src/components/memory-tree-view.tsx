@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   CalendarDays,
   ChevronDown,
@@ -161,18 +161,23 @@ function clusterColor(key: string): string {
   return CLUSTER_COLORS[h % CLUSTER_COLORS.length];
 }
 
-function day(s?: string | null): string {
+// In the viewer's language, in UTC like the markdown beside it ("Times are UTC").
+function day(s: string | null | undefined, locale: string): string {
   return s
-    ? new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    ? new Date(s).toLocaleString(locale, {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone: "UTC",
+      }) + " UTC"
     : "";
 }
 
 /** When it happened if known, else when it was mentioned. */
-function when(o: MemoryTreeObservation): string {
-  const start = day(o.occurred_start);
-  const end = day(o.occurred_end);
+function when(o: MemoryTreeObservation, locale: string): string {
+  const start = day(o.occurred_start, locale);
+  const end = day(o.occurred_end, locale);
   if (start && end && start !== end) return `${start} – ${end}`;
-  return start || end || day(o.mentioned_at);
+  return start || end || day(o.mentioned_at, locale);
 }
 
 function collect(
@@ -312,7 +317,8 @@ function ObservationRow({
   onOpen: (id: string) => void;
 }) {
   const t = useTranslations("memoryTree");
-  const date = when(o);
+  const locale = useLocale();
+  const date = when(o, locale);
   return (
     <li
       className="group cursor-pointer border-b border-border py-3 last:border-b-0 hover:bg-muted/40 -mx-2 px-2 rounded-sm"

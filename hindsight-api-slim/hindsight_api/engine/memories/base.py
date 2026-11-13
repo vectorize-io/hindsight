@@ -65,7 +65,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 logger = logging.getLogger(__name__)
 
-#: The page :meth:`MemoriesExtension._scan_all_memories` asks for — no larger than a store's page
+#: The page :meth:`MemoriesExtension.scan_all_memories` asks for — no larger than a store's page
 #: cap, so every page is served whole.
 _SCAN_ALL_PAGE = 1000
 
@@ -2056,7 +2056,7 @@ class MemoriesExtension(Extension, ABC):
         returns rather than what it reads.
         """
 
-    async def _scan_all_memories(self, **filters: Any) -> list[StoredMemory]:
+    async def scan_all_memories(self, **filters: Any) -> list[StoredMemory]:
         """Every memory :meth:`scan_memories` matches for ``filters``, paged to the end.
 
         Never one oversized page: a store caps what one page holds, so a single call with a huge
@@ -3133,7 +3133,7 @@ class MemoriesExtension(Extension, ABC):
             # take it off, so the payload is the same shape on either backend.
             "attachment_filenames": document_attachment_filenames(_rec),
         }
-        _units = await self._scan_all_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
+        _units = await self.scan_all_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
         doc["unit_count"] = len(_units)
         doc["world_count"] = sum(1 for m in _units if m.fact_type == "world")
         doc["experience_count"] = sum(1 for m in _units if m.fact_type == "experience")
@@ -3152,7 +3152,7 @@ class MemoriesExtension(Extension, ABC):
 
         Default: a scan of the document's memories and :meth:`document_memory_counts`. Postgres
         reads `memory_units`."""
-        sources = await self._scan_all_memories(
+        sources = await self.scan_all_memories(
             conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, fact_types=["experience", "world"]
         )
         _doc_counts = await self.document_memory_counts(
@@ -3301,7 +3301,7 @@ class MemoriesExtension(Extension, ABC):
         :meth:`delete_stale_observations` (which requeues surviving co-sources) and
         :meth:`mark_consolidated`. Postgres runs the same cascade as SQL."""
         invalidated_obs = 0
-        _doc_units = await self._scan_all_memories(
+        _doc_units = await self.scan_all_memories(
             conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
         )
         from ..consolidation.consolidator import write_scopes_changed
@@ -3475,7 +3475,7 @@ class MemoriesExtension(Extension, ABC):
         if fact_type in ("experience", "world"):
             unit_ids = [
                 m.unit_id
-                for m in await self._scan_all_memories(
+                for m in await self.scan_all_memories(
                     conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=[fact_type]
                 )
             ]
@@ -3534,7 +3534,7 @@ class MemoriesExtension(Extension, ABC):
         await self.delete_observations(conn=conn, fq_table=fq_table, bank_id=bank_id)
         src_ids = [
             m.unit_id
-            for m in await self._scan_all_memories(
+            for m in await self.scan_all_memories(
                 conn=conn, fq_table=fq_table, bank_id=bank_id, fact_types=["experience", "world"]
             )
         ]
@@ -3823,7 +3823,7 @@ class MemoriesExtension(Extension, ABC):
         from ..consolidation.consolidator import write_scopes_changed
         from ..metadata_utils import drop_null_values
 
-        units = await self._scan_all_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
+        units = await self.scan_all_memories(conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id)
         # Metadata too, not just tags: a survivor left carrying the PREVIOUS retain's metadata is
         # exactly what this exists to prevent — measured on an append, older units still read
         # {"source": "email"} after a retain carrying {"source": "crm"}.

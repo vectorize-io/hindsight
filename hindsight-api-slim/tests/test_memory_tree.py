@@ -48,7 +48,7 @@ def test_groups_by_subject_and_keeps_everything():
     assert not any("pr" in p.split("-") or "user" in p for p in paths)
     assert all(f.path.endswith("index.md") for f in iter_files(tree) if f.kind == "index")
     # Each line carries its date and source count, so grep sees them.
-    assert "(2026-10-01 00:00 · 1 sources)" in next(f for f in topics if f.path != "misc.md").content
+    assert "(2026-10-01 00:00 · 1 source)" in next(f for f in topics if f.path != "misc.md").content
 
 
 def test_is_deterministic():
@@ -145,7 +145,7 @@ def test_misc_is_a_file_never_a_folder():
     assert not any("misc/" in p for p in paths), [p for p in paths if "misc/" in p]
     misc = [p.rsplit("/", 1)[-1] for p in paths if p.rsplit("/", 1)[-1].startswith("misc")]
     assert misc
-    assert all(name == "misc.md" or re.fullmatch(r"misc-(\d{4}-(\d{2}|W\d{2})|undated)\.md", name) for name in misc), (
+    assert all(name == "misc.md" or re.fullmatch(r"misc-(\d{4}-(\d{2}|w\d{2})|undated)\.md", name) for name in misc), (
         misc
     )
 
@@ -178,7 +178,7 @@ def test_a_month_too_big_for_one_file_is_split_by_week():
         for i in range(LEAF_MAX * 2)
     ]
     names = sorted(f.path for f in iter_files(build_memory_tree(obs)) if f.kind == "topic")
-    assert names == ["misc-2026-W45.md", "misc-2026-W46.md"]
+    assert names == ["misc-2026-w45.md", "misc-2026-w46.md"]
 
 
 def _frontmatter(content: str) -> dict[str, str] | None:
@@ -225,3 +225,45 @@ def test_frontmatter_timestamps_carry_an_offset():
     ]
     meta = _frontmatter(next(f for f in iter_files(build_memory_tree(obs)) if f.kind == "topic").content)
     assert meta is not None and meta["timestamp"] == "2026-10-03T00:00:00+00:00"
+
+
+def _subjects(names: list[str], per: int = LEAF_MAX) -> list[TreeObservation]:
+    """``per`` observations about each named entity, plus a shared noise entity per pair so
+    the bank is big enough to split."""
+    return [
+        TreeObservation(id=f"{n}-{i}", text=f"{n} fact {i}", proof_count=1, entities=[n, f"{n}-detail-{i % 5}"])
+        for n in names
+        for i in range(per)
+    ]
+
+
+def test_a_topic_never_takes_a_reserved_name():
+    """An entity called "Index" must not produce a topic file that overwrites index.md."""
+    paths = [f.path for f in iter_files(build_memory_tree(_subjects(["Index", "Log", "Misc", "Redis"])))]
+    assert len(paths) == len(set(paths)), paths
+    assert paths.count("index.md") == 1
+    assert "log.md" not in paths
+
+
+def test_non_latin_names_keep_their_letters():
+    paths = {f.path for f in iter_files(build_memory_tree(_subjects(["北京", "東京", "서울", "Москва"])))}
+    assert {"北京.md", "東京.md", "서울.md", "москва.md"} <= paths, paths
+
+
+def test_every_path_is_lowercase():
+    """Folder and file names are lowercase, including week files (misc-2026-w45.md), so a
+    case-insensitive filesystem (macOS, Windows) cannot fold two files into one."""
+    banks = [_realistic_bank(), _subjects(["Redis", "GPU", "Postgres", "Москва"])]
+    weeks = [
+        TreeObservation(
+            id=f"m{i}",
+            text=f"stray {i}",
+            proof_count=1,
+            entities=[f"oneoff-{i}"],
+            mentioned_at=datetime(2026, 11, 2 + i % 14, tzinfo=timezone.utc),
+        )
+        for i in range(LEAF_MAX * 2)
+    ]
+    for obs in [*banks, weeks]:
+        paths = [f.path for f in iter_files(build_memory_tree(obs))]
+        assert all(p == p.lower() for p in paths), [p for p in paths if p != p.lower()]

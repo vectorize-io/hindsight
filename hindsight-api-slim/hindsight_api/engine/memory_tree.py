@@ -18,8 +18,10 @@ import math
 import posixpath
 import re
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Literal
 
 import numpy as np
 
@@ -42,6 +44,8 @@ SHARE_TO_JOIN = 0.25
 # What fits no topic in a folder; split by month, then ISO week, once it outgrows LEAF_MAX.
 MISC_NAME = "misc"
 INDEX = "index.md"
+# OKF reserves index.md and log.md: no topic may take those names.
+_RESERVED = frozenset({"index", "log"})
 OKF_VERSION = "0.2"
 OKF_TYPE = "Memory Topic"
 
@@ -70,7 +74,7 @@ class TreeFile:
     name: str
     # "index" (a folder's overview, OKF's reserved index.md) or "topic" (one topic, every
     # observation in it).
-    kind: str
+    kind: Literal["index", "topic"]
     title: str
     observation_count: int
     about: list[str]
@@ -113,7 +117,9 @@ def _useful(name: str) -> bool:
 
 
 def _slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "topic"
+    """Lowercase letters and digits of any script, joined by dashes (北京 stays 北京: an
+    ASCII-only slug turned every non-Latin name into topic, topic-2, ...)."""
+    return re.sub(r"[\W_]+", "-", text.lower())[:40].strip("-") or "topic"
 
 
 @dataclass
@@ -314,6 +320,9 @@ def _name_children(
             slug = MISC_NAME
         else:
             slug = _slug(child.seed) if child.seed else "-".join(_slug(e) for e in child.top_entities[:2]) or "topic"
+        if not child.rest and (slug in _RESERVED or slug == MISC_NAME or slug.startswith(f"{MISC_NAME}-")):
+            # A topic named index would overwrite the folder's index.md; misc-* would read as leftovers.
+            slug = f"{slug}-topic"
         base, i = slug, 2
         while slug in used:
             slug, i = f"{base}-{i}", i + 1
@@ -348,12 +357,13 @@ def _when(o: TreeObservation) -> str:
 
 def _line(o: TreeObservation) -> str:
     text = " ".join(o.text.split())
-    meta = [m for m in (_when(o), f"{o.proof_count} sources") if m]
+    meta = [m for m in (_when(o), f"{o.proof_count} source{'' if o.proof_count == 1 else 's'}") if m]
     return f"- {text} ({' · '.join(meta)})"
 
 
 def _file_path(node: _Node) -> str:
-    return node.path + ".md" if not node.children else posixpath.join(node.path, INDEX)
+    # The root is always a folder, even with no topics (an empty bank), so its overview is index.md.
+    return node.path + ".md" if node.path and not node.children else posixpath.join(node.path, INDEX)
 
 
 def _title(node: _Node) -> str:
@@ -477,7 +487,7 @@ def _split_misc(node: _Node, observations: list[TreeObservation]) -> None:
                     continue
                 for i in ids:
                     d = _shown(observations[i])
-                    week = d.astimezone(UTC).strftime("%G-W%V") if d else "undated"
+                    week = d.astimezone(UTC).strftime("%G-w%V") if d else "undated"
                     buckets.setdefault(week, []).append(i)
             for key in sorted(buckets):
                 slug = f"{MISC_NAME}-{key}"
@@ -542,7 +552,7 @@ def build_memory_tree(observations: list[TreeObservation], bank_title: str = "Me
     return _render(root, observations, related, bank_title)
 
 
-def iter_files(folder: TreeFolder):
+def iter_files(folder: TreeFolder) -> Iterator[TreeFile]:
     yield from folder.files
     for sub in folder.folders:
         yield from iter_files(sub)

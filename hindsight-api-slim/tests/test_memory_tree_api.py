@@ -98,7 +98,7 @@ async def test_memory_tree_groups_observations_into_topic_files(
     assert len(topics) == 4
     for f in topics:
         assert len({o["text"].split()[0] for o in f["observations"]}) == 1, f"{f['path']} mixes subjects"
-        assert "(2026-10-05 12:00 · 1 sources)" in f["content"]
+        assert "(2026-10-05 12:00 · 1 source)" in f["content"]
     assert {f["path"] for f in _files(tree) if f["kind"] == "index"} == {"index.md"}
 
 
@@ -109,7 +109,9 @@ async def test_memory_tree_of_an_empty_bank(api_client: httpx.AsyncClient, memor
 
     response = await api_client.get(f"/v1/default/banks/{bank_id}/memory-tree")
     assert response.status_code == 200, response.text
-    assert response.json()["observation_count"] == 0
+    tree = response.json()
+    assert tree["observation_count"] == 0
+    assert [f["path"] for f in _files(tree)] == ["index.md"]
 
 
 @pytest.mark.asyncio
