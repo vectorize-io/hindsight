@@ -16,9 +16,14 @@ These pin the classification, not the wording of any one message: what must hold
 backpressure refusal defers (no retry consumed) and everything else still fails.
 """
 
+import uuid
+
 import pytest
 
+from hindsight_api.engine.embeddings import REEMBED_GUARD_SQLSTATE
+from hindsight_api.models import RequestContext
 from hindsight_api.worker.backpressure import is_store_backpressure
+from hindsight_api.worker.exceptions import DeferOperation, RetryTaskAt
 
 
 class _AioRpcErrorLike(Exception):
@@ -120,3 +125,49 @@ def test_an_upstream_429_is_recognised_through_wrapping_and_nothing_else_is():
     assert not is_upstream_rate_limit(raised(500))
     assert not is_upstream_rate_limit(raised(400))
     assert not is_upstream_rate_limit(ValueError("429 in a message is not a status"))
+
+
+# --- the engine hands a shed to the poller untouched (#6528) ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_retain_the_store_sheds_reaches_the_poller_as_is(memory, monkeypatch):
+    """Turned into a counted `RetryTaskAt`, a shed would spend one of the retain's few retries.
+
+    The poller only defers what it can recognise, so the engine must re-raise the store's own
+    error for every task type, not just the ones that know about backpressure.
+    """
+
+    async def shedding_retain(_task_dict: object) -> None:
+        raise RuntimeError("retain failed") from _shed_error()
+
+    monkeypatch.setattr(memory, "_handle_batch_retain", shedding_retain)
+    bank_id = f"test-store-shed-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id, request_context=RequestContext(internal=True))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await memory.execute_task({"type": "batch_retain", "bank_id": bank_id, "contents": [{"content": "x"}]})
+    assert not isinstance(exc_info.value, RetryTaskAt)
+    assert is_store_backpressure(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_the_reembed_guard_keeps_its_own_deferral(memory, monkeypatch):
+    """The re-embed write guard's refusal also says "writes are shed".
+
+    It is not a store backlog: it clears once a server on the new embedding model runs the task, so
+    it keeps its own deferral and never counts toward the store-shed cap.
+    """
+
+    class _Guard(Exception):
+        sqlstate = REEMBED_GUARD_SQLSTATE
+
+    async def guarded_retain(_task_dict: object) -> None:
+        raise _Guard("hindsight re-embed: writes are shed until this server runs embedding model new-model")
+
+    monkeypatch.setattr(memory, "_handle_batch_retain", guarded_retain)
+    bank_id = f"test-store-shed-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id, request_context=RequestContext(internal=True))
+
+    with pytest.raises(DeferOperation):
+        await memory.execute_task({"type": "batch_retain", "bank_id": bank_id, "contents": [{"content": "x"}]})
