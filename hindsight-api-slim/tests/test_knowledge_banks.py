@@ -618,7 +618,8 @@ async def _scored(memory, bank_id: str, query: str) -> list:
     from hindsight_api.knowledge.store import SearchFilters
 
     request = SearchRequest(query=query, query_image=None, filters=SearchFilters())
-    return await get_knowledge_service(memory)._search(bank_id, request)
+    service = get_knowledge_service(memory)
+    return await service._search(bank_id, request, await service._embed_query(request))
 
 
 async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, memory, kb, monkeypatch):

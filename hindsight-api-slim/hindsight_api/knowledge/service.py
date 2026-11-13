@@ -1652,19 +1652,41 @@ class KnowledgeService:
     async def search(
         self, bank_id: str, request: SearchRequest, request_context: RequestContext
     ) -> list[SearchResultItem]:
-        await self._open_bank(bank_id, KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK, request_context)
-        return await self._within_budget(bank_id, await self._search(bank_id, request), request.max_tokens)
+        # One `[knowledge_search-timing]` line per search, phase by phase, as an ingest batch has: a
+        # slow search is otherwise only attributable by guessing which of the bank checks, the
+        # embedder, the store or the budget's context reads it was.
+        async with _timing.retain_timing(op="knowledge_search", bank_id=bank_id, store=type(self.store).__name__):
+            has_query = (
+                bool((request.query or "").strip())
+                or request.query_image is not None
+                or request.query_video is not None
+            )
+            if not has_query:
+                raise KnowledgeBankError("search needs a query, a query_image or a query_video")
+            # The query is embedded while the bank is opened, not after: the embedding reads nothing
+            # of the bank, and the two are each a network round trip. The store is not touched until
+            # the bank is open, so a caller refused by the checks still learns nothing about it.
+            embedding = asyncio.ensure_future(self._embed_query(request))
+            try:
+                async with _timing.timed("open_bank"):
+                    await self._open_bank(bank_id, KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK, request_context)
+            except BaseException:
+                embedding.cancel()
+                raise
+            vector = await embedding
+            async with _timing.timed("store.search"):
+                hits = await self._search(bank_id, request, vector)
+            async with _timing.timed("context"):
+                return await self._within_budget(bank_id, hits, request.max_tokens)
 
-    async def _search(self, bank_id: str, request: SearchRequest) -> list[SearchHit]:
-        has_query = (
-            bool((request.query or "").strip()) or request.query_image is not None or request.query_video is not None
-        )
-        if not has_query:
-            raise KnowledgeBankError("search needs a query, a query_image or a query_video")
-        try:
-            vector = await self.embedder.embed_query(request.query, request.query_image, request.query_video)
-        except UnsupportedModalityError as exc:
-            raise KnowledgeBankError(str(exc), 415) from exc
+    async def _embed_query(self, request: SearchRequest) -> list[float]:
+        async with _timing.timed("embed"):
+            try:
+                return await self.embedder.embed_query(request.query, request.query_image, request.query_video)
+            except UnsupportedModalityError as exc:
+                raise KnowledgeBankError(str(exc), 415) from exc
+
+    async def _search(self, bank_id: str, request: SearchRequest, vector: list[float]) -> list[SearchHit]:
         return await self.store.search(
             bank_id,
             vector,
