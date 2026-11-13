@@ -690,7 +690,9 @@
         "retain_mission": "여기에 먼저 붙어 일반 추출 규칙보다 우선합니다.",
         "retain_optional_fact_dimensions": "모델이 \"N/A\"를 쓰는 대신 \"언제\", \"어디서\", \"누가\", \"왜\"를 비워 둘 수 있게 합니다."
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "지식 뱅크",
+    "linkedKnowledgeBanksDescription": "이 뱅크의 리플렉트는 연결된 지식 뱅크도 검색하며, 그 문서를 상충하는 기억보다 우선합니다. 리콜과 멘탈 모델은 문서를 읽지 않습니다."
   },
   "bankOperations": {
     "title": "백그라운드 작업",
@@ -2547,14 +2549,10 @@
     },
     "linked": {
       "title": "지식 뱅크",
-      "description": "이 뱅크의 리플렉트는 연결된 지식 뱅크도 검색하며, 그 문서를 상충하는 기억보다 우선합니다. 리콜과 멘탈 모델은 문서를 읽지 않습니다.",
       "none": "아직 지식 뱅크가 없습니다.",
-      "createOne": "지식 뱅크 만들기",
-      "counts": "{documents, plural, other {문서 #개}} · {passages, plural, other {구절 #개}}",
-      "open": "열기",
-      "missing": "더 이상 존재하지 않음",
-      "save": "연결 저장",
-      "saved": "연결된 지식 뱅크를 저장했습니다"
+      "noneLinked": "연결된 항목 없음",
+      "search": "지식 뱅크 검색…",
+      "missing": "더 이상 존재하지 않음"
     },
     "selector": {
       "select": "지식 뱅크 선택...",

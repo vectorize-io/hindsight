@@ -690,7 +690,9 @@
         "retain_mission": "會擺喺呢度，行先過一般擷取規則。",
         "retain_optional_fact_dimensions": "會畀模型將「幾時」、「喺邊」、「邊個」同「點解」留空，而唔係寫「N/A」。"
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "文件庫",
+    "linkedKnowledgeBanksDescription": "喺呢個庫反思嗰陣,都會搜尋連結咗嘅文件庫,文件優先過同佢有衝突嘅記憶。召回同心智模型唔會讀呢啲文件。"
   },
   "bankOperations": {
     "title": "背景作業",
@@ -2547,14 +2549,10 @@
     },
     "linked": {
       "title": "文件庫",
-      "description": "喺呢個庫反思嗰陣,都會搜尋連結咗嘅文件庫,文件優先過同佢有衝突嘅記憶。召回同心智模型唔會讀呢啲文件。",
       "none": "未有文件庫。",
-      "createOne": "新增文件庫",
-      "counts": "{documents, plural, other {# 份文件}} · {passages, plural, other {# 個段落}}",
-      "open": "打開",
-      "missing": "已經唔存在",
-      "save": "儲存連結",
-      "saved": "已儲存連咗嘅文件庫"
+      "noneLinked": "未連結",
+      "search": "搜尋知識庫…",
+      "missing": "已經唔存在"
     },
     "selector": {
       "select": "揀一個文件庫...",

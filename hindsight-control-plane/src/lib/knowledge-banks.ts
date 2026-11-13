@@ -224,6 +224,23 @@ export function fileToBase64(file: Blob): Promise<string> {
 }
 
 /** Builds the multipart body of `POST /{bank}/files/ingest`: `files` parts plus the aligned `request` JSON. */
+/** Groups items, in order, into batches of at most `maxBytes`; an item bigger than that goes alone. */
+export function packUploads<T>(items: T[], size: (item: T) => number, maxBytes: number): T[][] {
+  const batches: T[][] = [];
+  let bytes = 0;
+  for (const item of items) {
+    const last = batches[batches.length - 1];
+    if (last && bytes + size(item) <= maxBytes) {
+      last.push(item);
+      bytes += size(item);
+    } else {
+      batches.push([item]);
+      bytes = size(item);
+    }
+  }
+  return batches;
+}
+
 export function buildUploadForm(files: File[], options: FileUploadOptions[]): FormData {
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);

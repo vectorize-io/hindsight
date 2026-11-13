@@ -11,6 +11,7 @@ import {
   formatMs,
   formatWindow,
   knowledgeApi,
+  packUploads,
   parseTags,
   proxiedMediaUrl,
 } from "@/lib/knowledge-banks";
@@ -76,6 +77,15 @@ describe("buildUploadForm", () => {
     expect(JSON.parse(form.get("request") as string)).toEqual({
       files: [{ tags: ["v2"] }, { document_id: "b", tags: [] }],
     });
+  });
+});
+
+describe("packUploads", () => {
+  it("packs in order up to the cap, and sends an oversized item alone", () => {
+    const id = (n: number) => n;
+    expect(packUploads([10, 20, 30, 50, 5], id, 60)).toEqual([[10, 20, 30], [50, 5]]);
+    expect(packUploads([100, 1, 1], id, 60)).toEqual([[100], [1, 1]]);
+    expect(packUploads([], id, 60)).toEqual([]);
   });
 });
 

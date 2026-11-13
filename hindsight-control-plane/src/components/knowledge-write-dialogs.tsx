@@ -19,7 +19,7 @@ import {
 import { toast } from "sonner";
 
 import { client } from "@/lib/api";
-import { formatBytes, parseTags, uploadKnowledgeFiles } from "@/lib/knowledge-banks";
+import { formatBytes, packUploads, parseTags, uploadKnowledgeFiles } from "@/lib/knowledge-banks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -71,9 +71,12 @@ function stage(file: File): StagedFile {
   };
 }
 
-// One request per file rather than one multipart with all of them: each file then
-// gets its own progress bar and its own error, and one bad file does not fail the rest.
-const UPLOAD_CONCURRENCY = 3;
+// The files go up together, as few requests as fit, so one upload is one parent operation
+// with a child per file. Requests stay under the proxy's 100 MB default body cap, which
+// truncates silently; a file bigger than that goes alone. This used to be one request per
+// file (3 at a time) so one bad file could not fail the rest; the server checks every file
+// before storing any, so now a bad file fails its batch, and the batch's rows show why.
+const UPLOAD_BATCH_BYTES = 90 * 1024 * 1024;
 
 export type AddDocumentTab = "text" | "upload";
 
@@ -142,51 +145,36 @@ export function KnowledgeAddDocumentDialog({
     );
   };
 
-  /** The failure's reason, or null; `unchanged` when the server already had this exact file. */
-  const uploadOne = async (
-    f: StagedFile
-  ): Promise<{ error: string | null; unchanged: boolean }> => {
-    update(f.key, { state: "uploading", progress: 0, error: null });
-    try {
-      const result = await uploadKnowledgeFiles(
-        bankId,
-        [f.file],
-        [
-          {
-            tags: parseTags(f.tags),
-            ...(f.documentId.trim() ? { document_id: f.documentId.trim() } : {}),
-          },
-        ],
-        (progress) => update(f.key, { progress })
-      );
-      update(f.key, { state: "done", progress: 1 });
-      return { error: null, unchanged: result.unchanged_document_ids.length > 0 };
-    } catch (e) {
-      const reason = (e as Error).message;
-      update(f.key, { state: "failed", error: reason });
-      return { error: reason, unchanged: false };
-    }
-  };
-
   const uploadAll = async () => {
     setBusy(true);
-    const queue = [...pending];
     let ok = 0;
     let unchanged = 0;
     let failed = 0;
     let firstError: string | null = null;
-    const worker = async () => {
-      for (let next = queue.shift(); next; next = queue.shift()) {
-        const { error, unchanged: same } = await uploadOne(next);
-        if (error === null && same) unchanged += 1;
-        else if (error === null) ok += 1;
-        else {
-          failed += 1;
-          firstError ??= error;
-        }
+    for (const batch of packUploads(pending, (f) => f.file.size, UPLOAD_BATCH_BYTES)) {
+      for (const f of batch) update(f.key, { state: "uploading", progress: 0, error: null });
+      try {
+        const result = await uploadKnowledgeFiles(
+          bankId,
+          batch.map((f) => f.file),
+          batch.map((f) => ({
+            tags: parseTags(f.tags),
+            ...(f.documentId.trim() ? { document_id: f.documentId.trim() } : {}),
+          })),
+          (progress) => {
+            for (const f of batch) update(f.key, { progress });
+          }
+        );
+        for (const f of batch) update(f.key, { state: "done", progress: 1 });
+        unchanged += result.unchanged_document_ids.length;
+        ok += batch.length - result.unchanged_document_ids.length;
+      } catch (e) {
+        const reason = (e as Error).message;
+        for (const f of batch) update(f.key, { state: "failed", error: reason });
+        failed += batch.length;
+        firstError ??= reason;
       }
-    };
-    await Promise.all(Array.from({ length: UPLOAD_CONCURRENCY }, worker));
+    }
     setBusy(false);
     if (ok > 0) {
       toast.success(t("uploaded", { count: ok }));

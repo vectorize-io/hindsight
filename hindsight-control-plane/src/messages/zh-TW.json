@@ -690,7 +690,9 @@
         "retain_mission": "會放在這裡，優先於一般擷取規則。",
         "retain_optional_fact_dimensions": "允許模型將「何時」、「何地」、「何人」和「為何」留空，而不是寫「N/A」。"
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "文件庫",
+    "linkedKnowledgeBanksDescription": "在此庫上反思時,也會搜尋連結的文件庫,文件優先於與之衝突的記憶。召回和心智模型不會讀取這些文件。"
   },
   "bankOperations": {
     "title": "背景作業",
@@ -2547,14 +2549,10 @@
     },
     "linked": {
       "title": "文件庫",
-      "description": "在此庫上反思時,也會搜尋連結的文件庫,文件優先於與之衝突的記憶。召回和心智模型不會讀取這些文件。",
       "none": "尚無文件庫。",
-      "createOne": "新增文件庫",
-      "counts": "{documents, plural, other {# 份文件}} · {passages, plural, other {# 個段落}}",
-      "open": "開啟",
-      "missing": "已不存在",
-      "save": "儲存連結",
-      "saved": "已儲存連結的文件庫"
+      "noneLinked": "未連結",
+      "search": "搜尋知識庫…",
+      "missing": "已不存在"
     },
     "selector": {
       "select": "選擇文件庫...",

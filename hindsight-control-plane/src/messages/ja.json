@@ -690,7 +690,9 @@
         "retain_mission": "ここに前置きされ、一般的な抽出ルールより優先されます。",
         "retain_optional_fact_dimensions": "「いつ」「どこで」「誰が」「なぜ」を「N/A」と書かずに空のままにできるようにします。"
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "ナレッジバンク",
+    "linkedKnowledgeBanksDescription": "このバンクのリフレクトは、リンクしたナレッジバンクも検索し、そのドキュメントを矛盾する記憶より優先します。リコールとメンタルモデルはドキュメントを読みません。"
   },
   "bankOperations": {
     "title": "バックグラウンド操作",
@@ -2547,14 +2549,10 @@
     },
     "linked": {
       "title": "ナレッジバンク",
-      "description": "このバンクのリフレクトは、リンクしたナレッジバンクも検索し、そのドキュメントを矛盾する記憶より優先します。リコールとメンタルモデルはドキュメントを読みません。",
       "none": "ナレッジバンクはまだありません。",
-      "createOne": "ナレッジバンクを作成",
-      "counts": "{documents, plural, other {# 件のドキュメント}} · {passages, plural, other {# 件のパッセージ}}",
-      "open": "開く",
-      "missing": "存在しません",
-      "save": "リンクを保存",
-      "saved": "リンクしたナレッジバンクを保存しました"
+      "noneLinked": "リンクなし",
+      "search": "ナレッジバンクを検索…",
+      "missing": "存在しません"
     },
     "selector": {
       "select": "ナレッジバンクを選択...",

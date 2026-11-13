@@ -690,7 +690,9 @@
         "retain_mission": "Would be prepended here, taking priority over the general extraction rules.",
         "retain_optional_fact_dimensions": "Would let the model leave \"when\", \"where\", \"who\" and \"why\" empty instead of writing \"N/A\"."
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "Knowledge banks",
+    "linkedKnowledgeBanksDescription": "Reflect on this bank also searches the linked knowledge banks, and treats their documents as the authority over conflicting memories. Recall and mental models don't read them."
   },
   "bankOperations": {
     "title": "Background Operations",
@@ -2547,14 +2549,10 @@
     },
     "linked": {
       "title": "Knowledge banks",
-      "description": "Reflect on this bank also searches the linked knowledge banks, and treats their documents as the authority over conflicting memories. Recall and mental models don't read them.",
       "none": "There are no knowledge banks yet.",
-      "createOne": "Create a knowledge bank",
-      "counts": "{documents, plural, one {# doc} other {# docs}} · {passages, plural, one {# passage} other {# passages}}",
-      "open": "Open",
-      "missing": "No longer exists",
-      "save": "Save links",
-      "saved": "Linked knowledge banks saved"
+      "noneLinked": "None linked",
+      "search": "Search knowledge banks…",
+      "missing": "No longer exists"
     },
     "selector": {
       "select": "Select a knowledge bank...",

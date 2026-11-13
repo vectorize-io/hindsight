@@ -690,7 +690,9 @@
         "retain_mission": "Se antepondría aquí, con prioridad sobre las reglas generales de extracción.",
         "retain_optional_fact_dimensions": "Permitiría al modelo dejar vacíos «cuándo», «dónde», «quién» y «por qué» en lugar de escribir «N/A»."
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "Bancos de conocimiento",
+    "linkedKnowledgeBanksDescription": "El reflect de este banco también busca en los bancos de conocimiento vinculados, y sus documentos prevalecen sobre los recuerdos que los contradicen. El recall y los modelos mentales no los leen."
   },
   "bankOperations": {
     "title": "Operaciones en segundo plano",
@@ -2547,14 +2549,10 @@
     },
     "linked": {
       "title": "Bancos de conocimiento",
-      "description": "El reflect de este banco también busca en los bancos de conocimiento vinculados, y sus documentos prevalecen sobre los recuerdos que los contradicen. El recall y los modelos mentales no los leen.",
       "none": "Aún no hay bancos de conocimiento.",
-      "createOne": "Crear un banco de conocimiento",
-      "counts": "{documents, plural, one {# documento} other {# documentos}} · {passages, plural, one {# pasaje} other {# pasajes}}",
-      "open": "Abrir",
-      "missing": "Ya no existe",
-      "save": "Guardar vínculos",
-      "saved": "Bancos de conocimiento vinculados guardados"
+      "noneLinked": "Ninguna vinculada",
+      "search": "Buscar bancos de conocimiento…",
+      "missing": "Ya no existe"
     },
     "selector": {
       "select": "Selecciona un banco de conocimiento...",

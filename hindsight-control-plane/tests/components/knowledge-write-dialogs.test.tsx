@@ -19,6 +19,7 @@ vi.mock("sonner", () => ({ toast }));
 
 const { ControlPlaneClient } = await import("@/lib/api");
 const { client } = await import("@/lib/api");
+const knowledgeBanks = await import("@/lib/knowledge-banks");
 const { KnowledgeAddDocumentDialog } = await import("@/components/knowledge-write-dialogs");
 
 afterEach(() => {
@@ -80,5 +81,28 @@ describe("KnowledgeAddDocumentDialog", () => {
     fireEvent.click(screen.getByText("addDocumentSubmit"));
     await waitFor(() => expect(toast.info).toHaveBeenCalledWith("writtenUnchanged"));
     expect(toast.success).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("KnowledgeAddDocumentDialog upload", () => {
+  it("sends the picked files in one request, so they become one operation", async () => {
+    const upload = vi
+      .spyOn(knowledgeBanks, "uploadKnowledgeFiles")
+      .mockResolvedValue({ document_ids: ["a", "b", "c"], operation_ids: ["op"], unchanged_document_ids: [] });
+    const files = ["a.pdf", "b.png", "c.txt"].map((n) => new File(["x"], n));
+    render(
+      <KnowledgeAddDocumentDialog
+        bankId="docs"
+        open
+        initialTab="upload"
+        initialFiles={files}
+        onOpenChange={() => {}}
+        onWritten={() => {}}
+      />
+    );
+    fireEvent.click(screen.getByText("uploadFiles"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("uploaded"));
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect((upload.mock.calls[0][1] as File[]).map((f) => f.name)).toEqual(["a.pdf", "b.png", "c.txt"]);
   });
 });

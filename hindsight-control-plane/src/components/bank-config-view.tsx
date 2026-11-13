@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useBank } from "@/lib/bank-context";
 import { useFeatures } from "@/lib/features-context";
+import { LinkedKnowledgeBanksPicker } from "@/components/linked-knowledge-banks";
 import { client, type BankAliasEntry } from "@/lib/api";
 import { PreviewPromptButton } from "@/components/prompt-preview-dialog";
 import { TagFilterInput } from "@/components/tag-filter-input";
@@ -119,6 +120,8 @@ type MCPEdits = {
   // server default; read from the overrides so saving the tool list never
   // pins the bank to whatever zone the server happens to resolve today.
   default_timezone: string | null;
+  // Knowledge banks reflect also searches; null = none linked.
+  knowledge_banks: string[] | null;
 };
 
 type GeminiSafetySetting = {
@@ -378,6 +381,7 @@ function mcpSlice(config: Record<string, any>, overrides: Record<string, any>): 
   return {
     mcp_enabled_tools: normalizeMcpTools(config.mcp_enabled_tools),
     default_timezone: overrides.default_timezone ?? null,
+    knowledge_banks: config.knowledge_banks?.length ? config.knowledge_banks : null,
   };
 }
 
@@ -696,13 +700,19 @@ export function BankConfigView() {
     setMcpSaving(true);
     setMcpError(null);
     try {
-      const response = await client.updateBankConfig(bankId, mcpEdits);
+      // knowledge_banks only when the feature is on: otherwise the field is not ours to touch.
+      const { knowledge_banks, ...rest } = mcpEdits;
+      const response = await client.updateBankConfig(
+        bankId,
+        features?.knowledge_banks ? mcpEdits : rest
+      );
       // The resolved zone comes back from the server: a cleared override falls
       // back to a server default this page does not otherwise know.
       setBaseConfig((prev) => ({
         ...prev,
         mcp_enabled_tools: mcpEdits.mcp_enabled_tools,
         default_timezone: response.config?.default_timezone,
+        knowledge_banks: features?.knowledge_banks ? knowledge_banks : prev.knowledge_banks,
       }));
       setBaseOverrides((prev) => {
         const next = { ...prev };
@@ -1302,6 +1312,19 @@ export function BankConfigView() {
           onSave={saveMCP}
         >
           <BankAliasRows bankId={bankId} />
+          {features?.knowledge_banks && (
+            <FieldRow
+              label={t("linkedKnowledgeBanksLabel")}
+              description={t("linkedKnowledgeBanksDescription")}
+            >
+              <LinkedKnowledgeBanksPicker
+                value={mcpEdits.knowledge_banks ?? []}
+                onChange={(ids) =>
+                  setMcpEdits((prev) => ({ ...prev, knowledge_banks: ids.length ? ids : null }))
+                }
+              />
+            </FieldRow>
+          )}
           <FieldRow label={t("defaultTimezoneLabel")} description={t("defaultTimezoneDescription")}>
             <Input
               list="bank-config-timezones"

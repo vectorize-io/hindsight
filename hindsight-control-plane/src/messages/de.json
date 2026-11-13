@@ -690,7 +690,9 @@
         "retain_mission": "Würde hier vorangestellt und hätte Vorrang vor den allgemeinen Extraktionsregeln.",
         "retain_optional_fact_dimensions": "Würde dem Modell erlauben, „wann“, „wo“, „wer“ und „warum“ leer zu lassen, statt „N/A“ zu schreiben."
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "Wissensbänke",
+    "linkedKnowledgeBanksDescription": "Reflect auf dieser Bank durchsucht auch die verknüpften Wissensbänke, und deren Dokumente haben Vorrang vor widersprechenden Erinnerungen. Recall und Mental Models lesen sie nicht."
   },
   "bankOperations": {
     "title": "Hintergrundoperationen",
@@ -2547,14 +2549,10 @@
     },
     "linked": {
       "title": "Wissensbänke",
-      "description": "Reflect auf dieser Bank durchsucht auch die verknüpften Wissensbänke, und deren Dokumente haben Vorrang vor widersprechenden Erinnerungen. Recall und Mental Models lesen sie nicht.",
       "none": "Es gibt noch keine Wissensbänke.",
-      "createOne": "Wissensbank erstellen",
-      "counts": "{documents, plural, one {# Dokument} other {# Dokumente}} · {passages, plural, one {# Abschnitt} other {# Abschnitte}}",
-      "open": "Öffnen",
-      "missing": "Existiert nicht mehr",
-      "save": "Verknüpfungen speichern",
-      "saved": "Verknüpfte Wissensbänke gespeichert"
+      "noneLinked": "Keine verknüpft",
+      "search": "Wissensdatenbanken suchen…",
+      "missing": "Existiert nicht mehr"
     },
     "selector": {
       "select": "Wissensbank auswählen...",

@@ -690,7 +690,9 @@
         "retain_mission": "会被放在这里，优先于通用提取规则。",
         "retain_optional_fact_dimensions": "允许模型将“何时”、“何地”、“何人”和“为何”留空，而不是写“N/A”。"
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "文档库",
+    "linkedKnowledgeBanksDescription": "在此库上反思时,也会搜索关联的文档库,文档优先于与之冲突的记忆。召回和心智模型不会读取这些文档。"
   },
   "bankOperations": {
     "title": "后台操作",
@@ -2547,14 +2549,10 @@
     },
     "linked": {
       "title": "文档库",
-      "description": "在此库上反思时,也会搜索关联的文档库,文档优先于与之冲突的记忆。召回和心智模型不会读取这些文档。",
       "none": "暂无文档库。",
-      "createOne": "新建文档库",
-      "counts": "{documents, plural, other {# 个文档}} · {passages, plural, other {# 个段落}}",
-      "open": "打开",
-      "missing": "已不存在",
-      "save": "保存关联",
-      "saved": "已保存关联的文档库"
+      "noneLinked": "未关联",
+      "search": "搜索知识库…",
+      "missing": "已不存在"
     },
     "selector": {
       "select": "选择文档库...",
