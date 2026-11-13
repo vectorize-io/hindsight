@@ -1772,3 +1772,16 @@ async def test_the_search_budget_sets_how_deep_it_ranks(api_client, kb):
     assert len(await _search(api_client, kb, **deep)) == len(items)  # mid, the default, holds them all
     bad = await api_client.post(f"{KB}/{kb}/search", json={"query": "red", "budget": "huge"})
     assert bad.status_code == 422
+
+
+async def test_a_text_with_a_nul_byte_is_stored_and_spares_its_batch(api_client, kb):
+    # Postgres text cannot hold NUL: one such text used to fail every document ingested with it.
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest",
+        json={"items": [{"document_id": "nul", "text": "debt\x00 ratio"}, {"document_id": "ok", "text": "fine"}]},
+    )
+    assert r.status_code == 200, r.text
+    for doc in ("nul", "ok"):
+        detail = (await api_client.get(f"{KB}/{kb}/documents/{doc}")).json()
+        assert detail["status"] == "ready", detail
+    assert (await api_client.get(f"{KB}/{kb}/documents/nul")).json()["passages"][0]["text"] == "debt ratio"

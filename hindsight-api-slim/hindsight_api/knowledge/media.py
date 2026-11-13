@@ -72,6 +72,14 @@ class PassageDraft:
     # A PDF page's text layer as embedded: ``text`` without the running headers and footers.
     embed_text: str | None = None
 
+    def __post_init__(self) -> None:
+        # Postgres text cannot hold NUL, and one NUL failed every document in the same ingest
+        # batch (BRIGHT-Pro economics lost 100). Every passage is built here, so strip it once.
+        for name in ("text", "embed_text"):
+            value = getattr(self, name)
+            if value and "\x00" in value:
+                object.__setattr__(self, name, value.replace("\x00", ""))
+
     @property
     def extension(self) -> str:
         return {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "audio/mp4": "m4a"}.get(
