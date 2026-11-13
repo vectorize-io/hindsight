@@ -103,6 +103,7 @@ from ..metrics import get_metrics_collector
 from ..schema_context import _current_bank_id, _current_schema, get_current_schema
 from ..tracing import create_operation_span, extract_task_trace_context, inject_task_trace_context
 from ..utils import mask_network_location
+from ..worker.backpressure import RATE_LIMIT_DEFERRED_TASKS, is_store_backpressure, is_upstream_rate_limit
 from ..worker.exceptions import DeferOperation, RetryTaskAt, format_task_error
 from ..worker.stage import set_stage
 from .audit import AuditLogger, audit_context
@@ -700,6 +701,7 @@ if TYPE_CHECKING:
     from hindsight_api.config_resolver import ValidatedBankConfigUpdate
     from hindsight_api.models import RequestContext
 
+    from ..knowledge.service import KnowledgeService
     from ..webhooks.url_guard import GuardedWebhookClient
     from . import bank_aliases as bank_aliases_mod
     from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse, AuditLogSummary
@@ -3068,6 +3070,8 @@ class MemoryEngine(MemoryEngineInterface):
         memory_llm_base_url = memory_llm_base_url or config.get_llm_base_url() or None
         # Track pg0 instance (if used)
         self._pg0: EmbeddedPostgres | None = None
+        # The knowledge-bank service, created on first use (knowledge/service.py get_knowledge_service).
+        self._knowledge_service: KnowledgeService | None = None
 
         # Initialize PostgreSQL connection URL
         # The actual URL will be set during initialize() after starting the server
@@ -5306,6 +5310,19 @@ class MemoryEngine(MemoryEngineInterface):
                     # failure of the task, and it clears once a server on the new model runs it.
                     logger.warning(f"Task deferred: {task_type} needs a server on the new embedding model ({e})")
                     raise DeferOperation(exec_date=datetime.now(UTC) + timedelta(seconds=60), reason=str(e)) from e
+                if task_type in RATE_LIMIT_DEFERRED_TASKS and is_upstream_rate_limit(e):
+                    # The embedder still rate-limiting after its own retries: not a failure, and not a
+                    # retry to count. Passed up as is for the poller to defer, with its own backoff and
+                    # count (worker/poller.py, worker/backpressure.RATE_LIMIT_DEFERRED_TASKS).
+                    raise
+                if task_type in RATE_LIMIT_DEFERRED_TASKS and is_store_backpressure(e):
+                    # The store shedding the write while its indexing catches up: the poller defers that
+                    # without counting a retry (worker/backpressure.py), but only if it sees it. Turned
+                    # into a counted RetryTaskAt here, a long ingest's batches used up their retries on a
+                    # backlog that clears by itself, and the poller saw it only on the last one. Only the
+                    # deferred task types for now: a memory-bank retain hits the same counted retry, but
+                    # changing how retain retries is its own change (#6528), not this one.
+                    raise
                 # exc_info, not a bare print_exc(): the traceback is the only pointer
                 # to the offending call site, and under production log volume the
                 # stderr copy is unattributed and rotates away first (issue #3218).

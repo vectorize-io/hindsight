@@ -2455,10 +2455,10 @@
       "documentsTitle": "ドキュメント",
       "documentsDescription": "このバンク内のファイルとテキスト。それぞれパッセージに分割して埋め込まれます。ここにファイルをドロップするとアップロードできます。",
       "searchTitle": "検索",
-      "searchDescription": "テキストクエリ、画像、またはその両方を使い、意味でパッセージを検索します。"
+      "searchDescription": "テキスト、画像、動画クリップを単独または組み合わせて、1 つのランキングでパッセージを探します。"
     },
     "documents": {
-      "filterPlaceholder": "名前、タイトル、ID で絞り込み…",
+      "filterPlaceholder": "ファイル名または ID で絞り込み…",
       "kindFilter": "種類で絞り込み",
       "statusFilter": "ステータスで絞り込み",
       "allKinds": "すべての種類",
@@ -2514,26 +2514,23 @@
       "originalUnsupported": "このファイル形式はブラウザでプレビューできません。"
     },
     "search": {
-      "placeholder": "意味で検索(例: API キーをローテーションするには?)",
-      "addImage": "画像",
-      "imageHint": "画像を貼り付け、ドロップ、または選択して検索できます。テキストと組み合わせることもできます。",
-      "modeMeaning": "意味で検索",
-      "modeExact": "完全一致",
-      "modeHelp": "完全一致は、語句をそのまま含むパッセージを探します（コード、ID、名前）。テキストのみが対象です：テキストファイルとPDFのテキストレイヤー。",
+      "placeholder": "検索(例:API キーをローテーションするには?)",
+      "addMedia": "画像 / 動画",
+      "mediaHint": "画像または MP4 クリップを貼り付け、ドロップ、または選択して検索できます。テキストと組み合わせることもできます。",
       "imageQuery": "この画像で検索中",
-      "removeImage": "画像を削除",
-      "notAnImage": "検索クエリに使えるのは画像だけです",
-      "pastedImage": "貼り付けた画像",
+      "videoQuery": "この動画で検索中",
+      "removeMedia": "削除",
+      "notMedia": "検索クエリに使えるのは画像か MP4 動画だけです",
+      "pastedMedia": "貼り付けたファイル",
       "topK": "件数",
       "submit": "検索",
-      "filters": "フィルター",
+      "options": "オプション",
       "tags": "タグ",
       "tagsMatch": "タグの一致条件",
       "tagsAny": "いずれか",
       "tagsAll": "すべて",
       "noResults": "この検索に一致するパッセージはありません。",
-      "idle": "このバンクのパッセージをテキストまたは画像で検索します。",
-      "scoreHelp": "クエリとパッセージのコサイン類似度",
+      "idle": "テキスト、画像、動画クリップ、またはその組み合わせでこのバンクを検索します。",
       "openPassage": "ドキュメントで開く",
       "failed": "検索に失敗しました",
       "mediaTypes": "メディアの種類",
@@ -2600,7 +2597,7 @@
       "textTokens": "テキストパッセージのサイズ(トークン)",
       "seconds": "{count, plural, other {# 秒}}",
       "linkTitle": "メモリバンク",
-      "linkDescription": "このバンクをリンクしたメモリバンクは、リコール時にこのバンクのパッセージを信頼できる情報源として受け取ります。",
+      "linkDescription": "このバンクをリンクしたメモリーバンクの reflect はこのバンクも検索し、そのドキュメントを権威として扱います。",
       "linkHowTo": "メモリバンクからリンクします: メモリバンクを開き、バンク設定 → 設定 → ナレッジバンク へ進みます。",
       "delete": "バンクを削除",
       "mediaTypes": "書き込めるメディアの種類"
@@ -2621,7 +2618,9 @@
       "tagsFor": "{name} のタグ",
       "uploaded": "{count, plural, other {# 件のファイルをアップロードしました}}。準備ができると検索できるようになります。",
       "someFailed": "{count, plural, other {# 件のファイル}}のアップロードに失敗しました",
-      "written": "ドキュメントを追加しました。準備ができると検索できるようになります。"
+      "written": "ドキュメントを追加しました。検索できます。",
+      "unchanged": "{count, plural, other {# 件のファイル}}は変更なし:すでに同じ内容で取り込まれています。",
+      "writtenUnchanged": "変更なし:このドキュメントはすでに同じ内容で取り込まれています。"
     }
   }
 }

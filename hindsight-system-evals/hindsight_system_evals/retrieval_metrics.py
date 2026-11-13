@@ -122,10 +122,44 @@ def ndcg_at_k(ranked: list[str], relevant: dict[str, int], k: int) -> float:
     NFCorpus and TREC-COVID need no second implementation.
     """
     gain = sum(relevant.get(document_id, 0) / math.log2(rank + 2) for rank, document_id in enumerate(ranked[:k]))
-    ideal = sum(
-        grade / math.log2(rank + 2) for rank, grade in enumerate(sorted(relevant.values(), reverse=True)[:k])
-    )
+    ideal = sum(grade / math.log2(rank + 2) for rank, grade in enumerate(sorted(relevant.values(), reverse=True)[:k]))
     return (gain / ideal) if ideal else 0.0
+
+
+def alpha_ndcg_at_k(
+    ranked: list[str], aspect_of: dict[str, str], weight: dict[str, float], k: int, alpha: float = 0.5
+) -> float:
+    """BRIGHT-Pro's aspect-weighted alpha-nDCG@k: a gold document scores its aspect's weight, cut by
+    ``(1 - alpha)`` for every earlier hit on the same aspect, over ``log2(rank + 1)``.
+
+    ``aspect_of`` maps each gold document to its one aspect, ``weight`` each aspect to its weight
+    (normalised to sum to 1 per query). The ideal is greedy: each rank takes the aspect with the
+    largest next gain. Both follow ``retrieval/evaluation/alpha-ndcg-evaluation.py`` in
+    yale-nlp/Bright-Pro, so the number compares with the paper's Table 2.
+    """
+    seen: dict[str, int] = {}
+    dcg = 0.0
+    for rank, document_id in enumerate(ranked[:k], start=1):
+        aspect = aspect_of.get(document_id)
+        if aspect is None:
+            continue
+        dcg += weight[aspect] * (1 - alpha) ** seen.get(aspect, 0) / math.log2(rank + 1)
+        seen[aspect] = seen.get(aspect, 0) + 1
+
+    remaining: dict[str, int] = {}
+    for aspect in aspect_of.values():
+        remaining[aspect] = remaining.get(aspect, 0) + 1
+    used = dict.fromkeys(remaining, 0)
+    ideal = 0.0
+    for rank in range(1, k + 1):
+        open_aspects = [a for a, n in remaining.items() if n > 0]
+        if not open_aspects:
+            break
+        best = max(open_aspects, key=lambda a: weight[a] * (1 - alpha) ** used[a])
+        ideal += weight[best] * (1 - alpha) ** used[best] / math.log2(rank + 1)
+        remaining[best] -= 1
+        used[best] += 1
+    return dcg / ideal if ideal else 0.0
 
 
 def reciprocal_rank_at_k(ranked: list[str], relevant: dict[str, int], k: int | None = None) -> float:

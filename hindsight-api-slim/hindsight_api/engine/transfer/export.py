@@ -126,6 +126,8 @@ _SKIP_TABLES = frozenset(
         "kb_documents",
         "kb_passages",
         "kb_passage_vectors",
+        "kb_staged_passages",
+        "kb_staged_passage_vectors",
     }
 )
 # Derived columns dropped from carried rows so the target regenerates them with

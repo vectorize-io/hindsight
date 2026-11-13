@@ -87,6 +87,8 @@ BACKUP_TABLES = [
     "kb_documents",
     "kb_passages",
     "kb_passage_vectors",
+    "kb_staged_passages",
+    "kb_staged_passage_vectors",
     "audit_log",
     "llm_requests",
     "graph_maintenance_queue",

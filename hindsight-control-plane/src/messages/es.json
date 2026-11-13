@@ -2455,10 +2455,10 @@
       "documentsTitle": "Documentos",
       "documentsDescription": "Archivos y texto de este banco. Cada uno se divide en pasajes y se generan sus embeddings; suelta archivos en cualquier parte para subirlos.",
       "searchTitle": "Búsqueda",
-      "searchDescription": "Encuentra pasajes por significado, con una consulta de texto, una imagen o ambas."
+      "searchDescription": "Encuentra pasajes con texto, una imagen o un clip de vídeo, solos o juntos, en una sola lista ordenada."
     },
     "documents": {
-      "filterPlaceholder": "Filtrar por nombre, título o id…",
+      "filterPlaceholder": "Filtrar por nombre de archivo o id…",
       "kindFilter": "Filtrar por tipo",
       "statusFilter": "Filtrar por estado",
       "allKinds": "Todos los tipos",
@@ -2514,26 +2514,23 @@
       "originalUnsupported": "Este tipo de archivo no se puede previsualizar en el navegador."
     },
     "search": {
-      "placeholder": "Busca por significado, p. ej. ¿cómo roto una clave de API?",
-      "addImage": "Imagen",
-      "imageHint": "Pega, suelta o elige una imagen para buscar con ella, sola o con texto.",
-      "modeMeaning": "Por significado",
-      "modeExact": "Texto exacto",
-      "modeHelp": "Texto exacto encuentra pasajes que contienen las palabras tal cual (códigos, ids, nombres). Solo lee texto: archivos de texto y la capa de texto de los PDF.",
+      "placeholder": "Buscar, p. ej. ¿cómo roto una clave de API?",
+      "addMedia": "Imagen / vídeo",
+      "mediaHint": "Pega, suelta o elige una imagen o un clip MP4 para buscar con él, solo o con texto.",
       "imageQuery": "Buscando con esta imagen",
-      "removeImage": "Quitar imagen",
-      "notAnImage": "Solo se pueden usar imágenes como consulta",
-      "pastedImage": "Imagen pegada",
+      "videoQuery": "Buscando con este vídeo",
+      "removeMedia": "Quitar",
+      "notMedia": "Solo una imagen o un vídeo MP4 puede ser una consulta",
+      "pastedMedia": "Archivo pegado",
       "topK": "Resultados",
       "submit": "Buscar",
-      "filters": "Filtros",
+      "options": "Opciones",
       "tags": "Etiquetas",
       "tagsMatch": "Coincidencia de etiquetas",
       "tagsAny": "Cualquiera",
       "tagsAll": "Todas",
       "noResults": "Ningún pasaje coincide con esta búsqueda.",
-      "idle": "Busca en los pasajes de este banco por texto o con una imagen.",
-      "scoreHelp": "Similitud coseno entre la consulta y el pasaje",
+      "idle": "Busca en este banco con texto, una imagen, un clip de vídeo o cualquier combinación.",
       "openPassage": "Abrir en el documento",
       "failed": "La búsqueda falló",
       "mediaTypes": "Tipos de medio",
@@ -2600,7 +2597,7 @@
       "textTokens": "Tamaño de pasaje de texto (tokens)",
       "seconds": "{count, plural, one {# segundo} other {# segundos}}",
       "linkTitle": "Bancos de memoria",
-      "linkDescription": "Los bancos de memoria que vinculan este banco reciben sus pasajes en recall, como fuente autorizada.",
+      "linkDescription": "Reflect en un banco de memoria que enlaza este banco también lo busca y trata sus documentos como la autoridad.",
       "linkHowTo": "Vincúlalo desde un banco de memoria: abre el banco de memoria y ve a Configuración del banco → Configuración → Bancos de conocimiento.",
       "delete": "Eliminar banco",
       "mediaTypes": "Tipos de medio que puede escribir"
@@ -2621,7 +2618,9 @@
       "tagsFor": "Etiquetas de {name}",
       "uploaded": "{count, plural, one {# archivo subido} other {# archivos subidos}}. Se podrá buscar en cuanto esté listo.",
       "someFailed": "{count, plural, one {# archivo no se pudo subir} other {# archivos no se pudieron subir}}",
-      "written": "Documento añadido. Se podrá buscar en cuanto esté listo."
+      "written": "Documento añadido y buscable.",
+      "unchanged": "{count, plural, one {# archivo sin cambios} other {# archivos sin cambios}}: ya ingerido tal cual.",
+      "writtenUnchanged": "Sin cambios: este documento ya está ingerido tal cual."
     }
   }
 }

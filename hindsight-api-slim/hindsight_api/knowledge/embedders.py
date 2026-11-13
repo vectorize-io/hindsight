@@ -21,13 +21,18 @@ mp4 window) so an API provider can send them as they are and a local one decodes
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import threading
+import weakref
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+import orjson
+
+from ..engine.retain import timing as _timing
 from . import media
 
 if TYPE_CHECKING:
@@ -82,8 +87,13 @@ class KnowledgeEmbedder(ABC):
         """One vector per passage, in order."""
 
     @abstractmethod
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
-        """The vector a search compares passages against."""
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        """The vector a search compares passages against. Text, an image and a video can come together:
+        they go to the model as one interleaved input and come back as one vector, the way these models
+        embed a mixed query, rather than weighing separately embedded parts by hand. EmbeddingGemma 2
+        takes one medium per input, so there an image and a video are embedded apart (``_one_medium_each``)."""
 
 
 class LocalGemmaEmbedder(KnowledgeEmbedder):
@@ -196,13 +206,28 @@ class LocalGemmaEmbedder(KnowledgeEmbedder):
 
         return await asyncio.to_thread(run)
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
-        if image is not None:
-            inp: Any = {"image": media.open_image(image)}
-            if text:
-                inp["text"] = f"{_QUERY_PREFIX}{text} <|image|>"
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        if image is not None and video is not None:
+            return await _one_medium_each(self, text, image, video)
+        if image is None and video is None:
+            inp: Any = f"{_QUERY_PREFIX}{text or ''}"
         else:
-            inp = f"{_QUERY_PREFIX}{text or ''}"
+            inp = {}
+            placeholders = ""
+            if image is not None:
+                inp["image"], placeholders = media.open_image(image), "<|image|>"
+            if video is not None:
+                # Picture and soundtrack, as a video passage is embedded (see _model_input).
+                inp["video"] = media.decode_video_frames(video)
+                placeholders += "<|video|>"
+                pcm = media.decode_audio_pcm(video, required=False)
+                if pcm is not None and pcm.size:
+                    inp["audio"] = {"array": pcm, "sampling_rate": media.PCM_RATE}
+                    placeholders += "<|audio|>"
+            if text:
+                inp["text"] = f"{_QUERY_PREFIX}{text} {placeholders}"
         vectors = await asyncio.to_thread(self._encode, [inp])
         return vectors[0]
 
@@ -291,7 +316,9 @@ class GeminiEmbedder(KnowledgeEmbedder):
     async def embed_documents(self, items: list[EmbedInput]) -> list[list[float]]:
         return await self._embed([self._content(item) for item in items])
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
         from google.genai import types
 
         parts = []
@@ -299,10 +326,47 @@ class GeminiEmbedder(KnowledgeEmbedder):
             parts.append(types.Part.from_text(text=f"{_QUERY_PREFIX}{text}"))
         if image is not None:
             parts.append(types.Part.from_bytes(data=image, mime_type=media.sniff_image_mime(image)))
+        if video is not None:
+            parts.append(types.Part.from_bytes(data=video, mime_type="video/mp4"))
         return (await self._embed([types.Content(parts=parts)]))[0]
 
 
 _MEDIA_CONCURRENCY = 4  # media requests in flight per embed call (see OpenAIEmbedder.embed_documents)
+# Keyed by the loop itself, weakly. It was keyed by ``id(loop)``: ids are reused, so a new loop could
+# pick up a stale semaphore bound to a dead one. Each loop only reads and writes its own entry, from its
+# own thread, so single get/set calls under the GIL stay as safe across threads as the plain dict was.
+# ponytail: a semaphore that has ever made a caller wait holds its loop strongly, so that loop's entry
+# (and the loop) is not freed; a few bytes per short-lived loop, as before. Key a plain dict by loop and
+# drop it on loop close if processes that churn loops under contention ever show it.
+_IN_FLIGHT: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[int, asyncio.Semaphore]] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+@contextlib.asynccontextmanager
+async def _in_flight():
+    """One of this process's ``knowledge_embeddings_max_in_flight`` slots for a remote embedder request,
+    per event loop (a semaphore belongs to the loop it is used on). Time spent waiting for one is the
+    ``embed.wait_slot`` phase of the ingest batch it serves."""
+    from ..config import get_config
+
+    limit = get_config().knowledge_embeddings_max_in_flight
+    if limit <= 0:
+        yield
+        return
+    key = asyncio.get_running_loop()
+    held = _IN_FLIGHT.get(key)
+    if held is None or held[0] != limit:
+        held = _IN_FLIGHT[key] = (limit, asyncio.Semaphore(limit))
+    async with _timing.timed("embed.wait_slot"):
+        await held[1].acquire()
+    try:
+        yield
+    finally:
+        held[1].release()
+
+
+_TEXT_CONCURRENCY = 8  # text batches in flight per embed call, beside the media
 
 
 class _RemoteEmbedder(KnowledgeEmbedder):
@@ -323,9 +387,12 @@ class _RemoteEmbedder(KnowledgeEmbedder):
         from ..engine.remote_retry import RetryPolicy, acall_with_retry
 
         async def call() -> dict[str, Any]:
-            async with self._session.get().post(self._url, json=body) as response:
+            # The process-wide cap is taken per attempt, not around the retries: a request backing off
+            # before its next attempt must not hold a slot another could use.
+            async with _in_flight(), self._session.get().post(self._url, json=body) as response:
                 await raise_for_status(response)
-                return await response.json()
+                # orjson: 768 floats per vector parse 4x faster than with json (0.03 ms against 0.12).
+                return await response.json(loads=orjson.loads)
 
         # A dropped connection or a 5xx must not fail a whole document's ingest: retry transient errors
         # with the memory banks' embedding policy, with more budget since ingest is not latency-bound.
@@ -341,6 +408,32 @@ class _RemoteEmbedder(KnowledgeEmbedder):
         if vectors and not self.dimension:
             self.dimension = len(vectors[0])
         return vectors
+
+
+#: A batch holds up to ``batch_size`` times this many characters, and never more than this many inputs.
+#: 800 is what one input carried on average (8 inputs, a page text plus its 128-token units, were ~6.4k
+#: characters on ViDoRe hr); the default batch size of 32 makes that ~25k characters a request. Counting
+#: inputs alone sent sentences (~40 tokens) 8 to a request. Twice this (fewer, bigger
+#: requests) helped a remote embedder but cost a GPU-bound one 12%: more batches in flight instead
+#: (``_TEXT_CONCURRENCY``) serves both.
+_BATCH_UNIT_CHARS = 800
+_MAX_BATCH_INPUTS = 64
+
+
+def _token_batches(texts: list[tuple[int, str]], batch_size: int) -> list[list[tuple[int, str]]]:
+    budget = max(1, batch_size) * _BATCH_UNIT_CHARS
+    batches: list[list[tuple[int, str]]] = []
+    current: list[tuple[int, str]] = []
+    size = 0
+    for item in texts:
+        if current and (size + len(item[1]) > budget or len(current) >= _MAX_BATCH_INPUTS):
+            batches.append(current)
+            current, size = [], 0
+        current.append(item)
+        size += len(item[1])
+    if current:
+        batches.append(current)
+    return batches
 
 
 def _data_url(data: bytes, mime: str) -> str:
@@ -415,31 +508,48 @@ class OpenAIEmbedder(_RemoteEmbedder):
         texts = [
             (i, _document_text(item.text or "", item.title)) for i, item in enumerate(items) if item.modality == "text"
         ]
-        for start in range(0, len(texts), self._batch_size):
-            chunk = texts[start : start + self._batch_size]
-            for (i, _), vector in zip(
-                chunk, await self._post({"input": [t for _, t in chunk]}, len(chunk)), strict=True
-            ):
-                out[i] = vector
-        media_items = [(i, item) for i, item in enumerate(items) if item.modality != "text"]
-        # One request per media passage, a few at a time: firing a document's every page at once
-        # (times every document ingesting) flooded the server and its proxy, and each reset sent a
-        # whole document back to the retry queue. A server batches on its side; more in flight buys nothing.
-        for start in range(0, len(media_items), _MEDIA_CONCURRENCY):
-            chunk = media_items[start : start + _MEDIA_CONCURRENCY]
-            vectors = await asyncio.gather(*(self._embed_media(item) for _, item in chunk))
+        # One request per media passage and one per text batch, a few in flight at once: firing a
+        # document's every page at once (times every document ingesting) flooded the server and its
+        # proxy, and each reset sent a whole document back to the retry queue. They used to go in fixed
+        # groups (texts one batch at a time, then media four at a time, each group waiting on its
+        # slowest); a slot now frees as soon as its request returns. Text batches have their own, wider
+        # gate: a PDF page now sends several (units, sentences), each small and quick for the model, so
+        # against a remote embedder they wait on the network, not on compute. Media keep the narrow gate
+        # that stopped the resets.
+        slots = asyncio.Semaphore(_MEDIA_CONCURRENCY)
+        text_slots = asyncio.Semaphore(_TEXT_CONCURRENCY)
+
+        # Each HTTP request is timed apart from the `embed` round it serves: a round slow because each
+        # request is slow and one slow because it makes many need opposite fixes.
+        async def text_batch(chunk: list[tuple[int, str]]) -> None:
+            async with text_slots, _timing.timed("embed.request"):
+                vectors = await self._post({"input": [t for _, t in chunk]}, len(chunk))
             for (i, _), vector in zip(chunk, vectors, strict=True):
                 out[i] = vector
+
+        async def one_media(i: int, item: EmbedInput) -> None:
+            async with slots, _timing.timed("embed.request"):
+                out[i] = await self._embed_media(item)
+
+        await asyncio.gather(
+            *(text_batch(chunk) for chunk in _token_batches(texts, self._batch_size)),
+            *(one_media(i, item) for i, item in enumerate(items) if item.modality != "text"),
+        )
         return [v for v in out if v is not None]
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
-        if image is None:
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        if image is None and video is None:
             return (await self._post({"input": [f"{_QUERY_PREFIX}{text or ''}"]}, 1))[0]
-        if "image" not in self.modalities:
-            raise UnsupportedModalityError(f"{self.model} does not embed images")
-        content: list[dict[str, Any]] = [
-            {"type": "image_url", "image_url": {"url": _data_url(image, media.sniff_image_mime(image))}}
-        ]
+        _require(self, image=image, video=video)
+        if image is not None and video is not None:
+            return await _one_medium_each(self, text, image, video)
+        content: list[dict[str, Any]] = []
+        if image is not None:
+            content.append({"type": "image_url", "image_url": {"url": _data_url(image, media.sniff_image_mime(image))}})
+        if video is not None:
+            content.append({"type": "video_url", "video_url": {"url": _data_url(video, "video/mp4")}})
         if text:
             content.append({"type": "text", "text": f"{_QUERY_PREFIX}{text}"})
         return (await self._post({"messages": [{"role": "user", "content": content}]}, 1))[0]
@@ -494,10 +604,14 @@ class VoyageEmbedder(_RemoteEmbedder):
     async def embed_documents(self, items: list[EmbedInput]) -> list[list[float]]:
         return await self._embed([self._content(item) for item in items], "document")
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
         content: list[dict[str, Any]] = [{"type": "text", "text": text}] if text else []
         if image is not None:
             content.append({"type": "image_base64", "image_base64": _data_url(image, media.sniff_image_mime(image))})
+        if video is not None:
+            content.append({"type": "video_base64", "video_base64": _data_url(video, "video/mp4")})
         return (await self._embed([content], "query"))[0]
 
 
@@ -552,7 +666,10 @@ class CohereEmbedder(_RemoteEmbedder):
     async def embed_documents(self, items: list[EmbedInput]) -> list[list[float]]:
         return await self._embed([self._input(item) for item in items], "search_document")
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        _require(self, image=image, video=video)
         content: list[dict[str, Any]] = [{"type": "text", "text": text}] if text else []
         if image is not None:
             content.append({"type": "image_url", "image_url": {"url": _data_url(image, media.sniff_image_mime(image))}})
@@ -596,9 +713,11 @@ class TextEmbedder(KnowledgeEmbedder):
         backend = await self._backend()
         return await backend.encode_documents([_titled(i.text or "", i.title) for i in items])
 
-    async def embed_query(self, text: str | None, image: bytes | None = None) -> list[float]:
-        if image is not None:
-            raise UnsupportedModalityError("image queries need a multimodal knowledge embedder")
+    async def embed_query(
+        self, text: str | None, image: bytes | None = None, video: bytes | None = None
+    ) -> list[float]:
+        if image is not None or video is not None:
+            raise UnsupportedModalityError("image and video queries need a multimodal knowledge embedder")
         backend = await self._backend()
         return (await backend.encode_query([text or ""]))[0]
 
@@ -613,6 +732,22 @@ def _text_embedder(own: HindsightConfig | None, memory_embeddings: Embeddings) -
 
 class UnsupportedModalityError(ValueError):
     """The configured embedder cannot embed this kind of content."""
+
+
+async def _one_medium_each(embedder: KnowledgeEmbedder, text: str | None, image: bytes, video: bytes) -> list[float]:
+    """A query with an image and a video, for EmbeddingGemma 2, which embeds one medium per input (our
+    server answers 400 to two: "one request is one embedding"): the text with each medium, then the
+    normalized mean of the two vectors. An equal split, the one weight that needs no tuning; the
+    providers that take both in one input (Gemini, Voyage) get one."""
+    a, b = await asyncio.gather(embedder.embed_query(text, image), embedder.embed_query(text, None, video))
+    return media.l2_normalize([x + y for x, y in zip(a, b, strict=True)])
+
+
+def _require(embedder: KnowledgeEmbedder, *, image: bytes | None, video: bytes | None) -> None:
+    """Refuse a query medium the model does not embed, before any request is made."""
+    for name, data in (("image", image), ("video", video)):
+        if data is not None and name not in embedder.modalities:
+            raise UnsupportedModalityError(f"{embedder.model} does not embed {name}s")
 
 
 def create_knowledge_embedder(config: ConfigLike, memory_embeddings: Embeddings) -> KnowledgeEmbedder:

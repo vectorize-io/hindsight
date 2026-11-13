@@ -641,7 +641,10 @@ def noisy_personal_bank() -> Scenario:
             twin=("lucia", spec["Lucia"].birthday.split()[0].lower()),
         ),
         Fact(
-            f"Franco is based in {spec['Franco'].city}.", later, ("Franco",), twin=("franco", spec["Franco"].city.lower())
+            f"Franco is based in {spec['Franco'].city}.",
+            later,
+            ("Franco",),
+            twin=("franco", spec["Franco"].city.lower()),
         ),
     )
     return Scenario(

@@ -33,6 +33,17 @@ dependencies = [
 # graded ones. A C extension, so the test skips rather than fails where no wheel
 # exists.
 reference-metrics = ["pytrec_eval-terrier>=0.5.6"]
+# The knowledge-bank suites (`evals/knowledge`, `evals/knowledge_agent`): dataset
+# downloads (Hugging Face, parquet), the PDFs cut from ViDoRe's source files, and
+# BM25 for EnterpriseRAG-Bench's hard negatives when the slice is rebuilt. Optional,
+# so the nightly job (plain `uv sync`) skips those suites instead of downloading GBs.
+knowledge = [
+    "huggingface_hub>=0.24",
+    "pyarrow>=15",
+    "pypdfium2>=4.30",
+    "pillow>=10.1",
+    "bm25s>=0.2",
+]
 
 [tool.uv.sources]
 # editable, for the same reason the system tests give: a copied client silently

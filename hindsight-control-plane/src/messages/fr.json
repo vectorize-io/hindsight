@@ -2455,10 +2455,10 @@
       "documentsTitle": "Documents",
       "documentsDescription": "Fichiers et textes de cette banque. Chacun est découpé en passages puis vectorisé ; déposez des fichiers n’importe où ici pour les importer.",
       "searchTitle": "Recherche",
-      "searchDescription": "Trouvez des passages par le sens, avec une requête texte, une image, ou les deux."
+      "searchDescription": "Trouvez des passages avec du texte, une image ou un clip vidéo, seuls ou ensemble, en une seule liste classée."
     },
     "documents": {
-      "filterPlaceholder": "Filtrer par nom, titre ou id…",
+      "filterPlaceholder": "Filtrer par nom de fichier ou identifiant…",
       "kindFilter": "Filtrer par type",
       "statusFilter": "Filtrer par statut",
       "allKinds": "Tous les types",
@@ -2514,26 +2514,23 @@
       "originalUnsupported": "Ce type de fichier ne peut pas être prévisualisé dans le navigateur."
     },
     "search": {
-      "placeholder": "Recherchez par le sens, p. ex. comment renouveler une clé d’API ?",
-      "addImage": "Image",
-      "imageHint": "Collez, déposez ou choisissez une image pour lancer une recherche, seule ou avec du texte.",
-      "modeMeaning": "Par le sens",
-      "modeExact": "Texte exact",
-      "modeHelp": "Le texte exact trouve les passages qui contiennent les mots tels quels (codes, identifiants, noms). Il ne lit que du texte : fichiers texte et couche texte des PDF.",
+      "placeholder": "Rechercher, p. ex. comment faire tourner une clé d’API ?",
+      "addMedia": "Image / vidéo",
+      "mediaHint": "Collez, déposez ou choisissez une image ou un clip MP4 pour lancer une recherche, seul ou avec du texte.",
       "imageQuery": "Recherche avec cette image",
-      "removeImage": "Retirer l’image",
-      "notAnImage": "Seules des images peuvent servir de requête",
-      "pastedImage": "Image collée",
+      "videoQuery": "Recherche avec cette vidéo",
+      "removeMedia": "Retirer",
+      "notMedia": "Seule une image ou une vidéo MP4 peut servir de requête",
+      "pastedMedia": "Fichier collé",
       "topK": "Résultats",
       "submit": "Rechercher",
-      "filters": "Filtres",
+      "options": "Options",
       "tags": "Tags",
       "tagsMatch": "Correspondance des tags",
       "tagsAny": "Au moins un",
       "tagsAll": "Tous",
       "noResults": "Aucun passage ne correspond à cette recherche.",
-      "idle": "Recherchez dans les passages de cette banque par texte ou par image.",
-      "scoreHelp": "Similarité cosinus entre la requête et le passage",
+      "idle": "Recherchez dans cette banque par texte, image, clip vidéo, ou n’importe quel mélange.",
       "openPassage": "Ouvrir dans le document",
       "failed": "La recherche a échoué",
       "mediaTypes": "Types de média",
@@ -2600,7 +2597,7 @@
       "textTokens": "Taille des passages de texte (tokens)",
       "seconds": "{count, plural, one {# seconde} other {# secondes}}",
       "linkTitle": "Banques de mémoire",
-      "linkDescription": "Les banques de mémoire liées à cette banque reçoivent ses passages lors du recall, comme source de référence.",
+      "linkDescription": "Reflect sur une banque de mémoire qui lie cette banque la recherche aussi, et considère ses documents comme faisant autorité.",
       "linkHowTo": "Liez-la depuis une banque de mémoire : ouvrez la banque de mémoire, puis Configuration de la banque → Configuration → Banques de connaissances.",
       "delete": "Supprimer la banque",
       "mediaTypes": "Types de média qu’elle peut écrire"
@@ -2621,7 +2618,9 @@
       "tagsFor": "Tags pour {name}",
       "uploaded": "{count, plural, one {# fichier importé} other {# fichiers importés}}. Il sera consultable par recherche dès qu’il sera prêt.",
       "someFailed": "Échec de l’import de {count, plural, one {# fichier} other {# fichiers}}",
-      "written": "Document ajouté. Il sera consultable par recherche dès qu’il sera prêt."
+      "written": "Document ajouté et consultable.",
+      "unchanged": "{count, plural, one {# fichier inchangé} other {# fichiers inchangés}} : déjà ingéré tel quel.",
+      "writtenUnchanged": "Inchangé : ce document est déjà ingéré tel quel."
     }
   }
 }

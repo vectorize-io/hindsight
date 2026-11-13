@@ -1,8 +1,7 @@
 "use client";
 
-// Semantic search over a knowledge bank's passages, by text, by an image, or both.
-// The image can be pasted, dropped, or picked; it goes to the API as base64.
-
+// One search over a knowledge bank: text, an image and an MP4 clip in any combination make one
+// query (the server embeds them together), ranked in one list across every media type.
 import * as React from "react";
 import { useTranslations } from "next-intl";
 import {
@@ -15,19 +14,17 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-
 import { client } from "@/lib/api";
 import {
   MEDIA_TYPES,
   fileToBase64,
   parseTags,
-  groupByMediaType,
   type KnowledgeSearchRequest,
   type KnowledgeSearchResponse,
   type MediaType,
 } from "@/lib/knowledge-banks";
 import { cn } from "@/lib/utils";
-import { KindIcon, SearchResultCard, SearchResultGrid } from "@/components/knowledge-passage";
+import { SearchResultCard, SearchResultGrid } from "@/components/knowledge-passage";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,12 +42,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const NEIGHBOR_OPTIONS = [0, 1, 2];
+const NEIGHBOR_OPTIONS = [0, 1, 2, 3, 4, 5]; // the API's range
+const MAX_TOP_K = 200; // the API's limit
 
-interface QueryImage {
+interface QueryMedia {
   base64: string;
   previewUrl: string;
   name: string;
+}
+
+/** What a dropped, pasted or chosen file can be in a query: an image or an MP4 clip. */
+function queryKind(file: File): "image" | "video" | null {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type === "video/mp4") return "video";
+  return null;
 }
 
 export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
@@ -58,62 +63,69 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
   const tKinds = useTranslations("knowledgeBanks.kinds");
   const tRecall = useTranslations("searchDebug");
   const [query, setQuery] = React.useState("");
-  // "exact" runs grep: the words as written (codes, ids), on text only — no image, no filters.
-  const [mode, setMode] = React.useState<"meaning" | "exact">("meaning");
-  const [image, setImage] = React.useState<QueryImage | null>(null);
+  const [image, setImage] = React.useState<QueryMedia | null>(null);
+  const [video, setVideo] = React.useState<QueryMedia | null>(null);
   const [topK, setTopK] = React.useState(10);
   const [neighbors, setNeighbors] = React.useState(1);
-  const [showFilters, setShowFilters] = React.useState(false);
+  const [showOptions, setShowOptions] = React.useState(false);
   const [tags, setTags] = React.useState("");
   const [tagsMatch, setTagsMatch] = React.useState<"any" | "all">("any");
   const [mediaTypes, setMediaTypes] = React.useState<MediaType[]>([]);
   const [searching, setSearching] = React.useState(false);
   const [response, setResponse] = React.useState<KnowledgeSearchResponse | null>(null);
+  // Timed here: the response carries no timing.
+  const [tookMs, setTookMs] = React.useState(0);
   const [viewMode, setViewMode] = React.useState<"results" | "json">("results");
   const [error, setError] = React.useState<string | null>(null);
   const [dragOver, setDragOver] = React.useState(false);
   const fileRef = React.useRef<HTMLInputElement>(null);
 
-  // Free the preview's object URL when the image is replaced or the panel unmounts.
+  // Free a preview's object URL when it is replaced or the panel unmounts.
   React.useEffect(() => {
     if (!image) return;
     return () => URL.revokeObjectURL(image.previewUrl);
   }, [image]);
+  React.useEffect(() => {
+    if (!video) return;
+    return () => URL.revokeObjectURL(video.previewUrl);
+  }, [video]);
 
-  const setImageFile = async (file: File) => {
-    if (!file.type.startsWith("image/")) {
-      toast.warning(t("notAnImage"));
+  const setMediaFile = async (file: File) => {
+    const kind = queryKind(file);
+    if (!kind) {
+      toast.warning(t("notMedia"));
       return;
     }
-    setImage({
+    const media = {
       base64: await fileToBase64(file),
       previewUrl: URL.createObjectURL(file),
-      name: file.name || t("pastedImage"),
-    });
+      name: file.name || t("pastedMedia"),
+    };
+    (kind === "image" ? setImage : setVideo)(media);
   };
 
-  const canSearch =
-    (mode === "exact" ? query.trim() !== "" : query.trim() !== "" || image !== null) && !searching;
-  const activeFilters = parseTags(tags).length + mediaTypes.length;
+  const hasQuery = query.trim() !== "" || image !== null || video !== null;
+  const canSearch = hasQuery && !searching;
+  const activeOptions = parseTags(tags).length + mediaTypes.length;
 
   const search = async () => {
     if (!canSearch) return;
     const parsedTags = parseTags(tags);
-    // Exact text is the same search call with `pattern` instead of a query: the words as
-    // typed (codes, ids), no image.
-    const exact = mode === "exact";
     const body: KnowledgeSearchRequest = {
-      top_k: Math.min(200, Math.max(1, topK || 10)),
+      top_k: Math.min(MAX_TOP_K, Math.max(1, topK || 10)),
       neighbors,
-      ...(query.trim() ? (exact ? { pattern: query.trim() } : { query: query.trim() }) : {}),
-      ...(image && !exact ? { query_image: image.base64 } : {}),
+      ...(query.trim() ? { query: query.trim() } : {}),
+      ...(image ? { query_image: image.base64 } : {}),
+      ...(video ? { query_video: video.base64 } : {}),
       ...(parsedTags.length ? { tags: parsedTags, tags_match: tagsMatch } : {}),
       ...(mediaTypes.length ? { media_types: mediaTypes } : {}),
     };
     setSearching(true);
     setError(null);
+    const started = performance.now();
     try {
       setResponse(await client.searchKnowledgeBank(bankId, body));
+      setTookMs(performance.now() - started);
     } catch (e) {
       // Shown as a banner over the results, with the server's reason: a 503 says the
       // embedder is unreachable, which is not something a toast should hide.
@@ -124,6 +136,27 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
     }
   };
 
+  const attached: {
+    kind: "image" | "video";
+    media: QueryMedia;
+    label: string;
+    clear: () => void;
+  }[] = [];
+  if (image)
+    attached.push({
+      kind: "image",
+      media: image,
+      label: t("imageQuery"),
+      clear: () => setImage(null),
+    });
+  if (video)
+    attached.push({
+      kind: "video",
+      media: video,
+      label: t("videoQuery"),
+      clear: () => setVideo(null),
+    });
+
   return (
     <div className="space-y-6">
       <div
@@ -131,12 +164,12 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
           "space-y-4 rounded-xl border border-border bg-card p-4 transition-colors",
           dragOver && "border-primary bg-primary/5"
         )}
-        // An image pasted or dropped anywhere on the form becomes the query image.
+        // An image or a clip pasted or dropped anywhere on the form joins the query.
         onPaste={(e) => {
-          const file = Array.from(e.clipboardData.files).find((f) => f.type.startsWith("image/"));
+          const file = Array.from(e.clipboardData.files).find((f) => queryKind(f) !== null);
           if (file) {
             e.preventDefault();
-            setImageFile(file);
+            setMediaFile(file);
           }
         }}
         onDragOver={(e) => {
@@ -150,7 +183,7 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
           setDragOver(false);
           if (!file) return;
           e.preventDefault();
-          setImageFile(file);
+          setMediaFile(file);
         }}
       >
         <form
@@ -172,69 +205,16 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
             />
           </div>
           <div className="flex flex-wrap gap-2">
-            <div className="flex h-10 gap-1 rounded-lg bg-muted p-1" title={t("modeHelp")}>
-              {(["meaning", "exact"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  aria-pressed={mode === m}
-                  onClick={() => setMode(m)}
-                  className={`whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors ${
-                    mode === m
-                      ? "bg-background shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {m === "meaning" ? t("modeMeaning") : t("modeExact")}
-                </button>
-              ))}
-            </div>
             <Button
               type="button"
               variant="outline"
               className="h-10"
-              disabled={mode === "exact"}
               onClick={() => fileRef.current?.click()}
-              title={t("imageHint")}
+              title={t("mediaHint")}
             >
               <ImagePlus className="mr-1.5 h-4 w-4" />
-              {t("addImage")}
+              {t("addMedia")}
             </Button>
-            <div className="flex items-center gap-1.5">
-              <Label htmlFor="kb-top-k" className="whitespace-nowrap text-xs text-muted-foreground">
-                {t("topK")}
-              </Label>
-              <Input
-                id="kb-top-k"
-                type="number"
-                min={1}
-                max={200}
-                value={topK}
-                onChange={(e) => setTopK(Number(e.target.value))}
-                className="h-10 w-20"
-              />
-            </div>
-            {/* Passages on each side of a text hit, returned as its context. */}
-            <div className="flex items-center gap-1.5" title={t("contextHelp")}>
-              <Label
-                htmlFor="kb-neighbors"
-                className="whitespace-nowrap text-xs text-muted-foreground"
-              >
-                {t("context")}
-              </Label>
-              <Select value={String(neighbors)} onValueChange={(v) => setNeighbors(Number(v))}>
-                <SelectTrigger id="kb-neighbors" className="h-10 w-16">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {NEIGHBOR_OPTIONS.map((n) => (
-                    <SelectItem key={n} value={String(n)}>
-                      {n}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
             <Button type="submit" className="h-10" disabled={!canSearch}>
               {searching ? (
                 <Spinner size="sm" className="mr-2" />
@@ -248,58 +228,71 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
         <input
           ref={fileRef}
           type="file"
-          accept="image/*"
+          accept="image/*,video/mp4"
           className="hidden"
-          data-testid="kb-search-image-input"
+          data-testid="kb-search-media-input"
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) setImageFile(file);
+            if (file) setMediaFile(file);
             e.target.value = "";
           }}
         />
 
-        {image ? (
-          <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-2">
-            <img src={image.previewUrl} alt="" className="h-16 w-16 rounded object-cover" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{image.name}</p>
-              <p className="text-xs text-muted-foreground">{t("imageQuery")}</p>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 p-0"
-              onClick={() => setImage(null)}
-              aria-label={t("removeImage")}
-              title={t("removeImage")}
-            >
-              <X className="h-4 w-4" />
-            </Button>
+        {attached.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {attached.map(({ kind, media: m, label, clear }) => (
+              <div
+                key={kind}
+                className="flex min-w-0 max-w-full flex-1 items-center gap-3 rounded-lg border border-border bg-muted/30 p-2 sm:max-w-sm"
+              >
+                {kind === "video" ? (
+                  <video src={m.previewUrl} muted className="h-16 w-16 rounded object-cover" />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element -- a local blob preview
+                  <img src={m.previewUrl} alt="" className="h-16 w-16 rounded object-cover" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{m.name}</p>
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0"
+                  onClick={clear}
+                  aria-label={t("removeMedia")}
+                  title={t("removeMedia")}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">{t("imageHint")}</p>
+          <p className="text-xs text-muted-foreground">{t("mediaHint")}</p>
         )}
 
         <div>
           <button
             type="button"
-            onClick={() => setShowFilters((v) => !v)}
+            onClick={() => setShowOptions((v) => !v)}
             className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground hover:text-foreground"
-            aria-expanded={showFilters}
+            aria-expanded={showOptions}
           >
-            {showFilters ? (
+            {showOptions ? (
               <ChevronDown className="h-4 w-4" />
             ) : (
               <ChevronRight className="h-4 w-4" />
             )}
-            {t("filters")}
-            {activeFilters > 0 && (
+            {t("options")}
+            {activeOptions > 0 && (
               <span className="ml-1 rounded-full bg-primary/15 px-1.5 text-xs text-primary">
-                {activeFilters}
+                {activeOptions}
               </span>
             )}
           </button>
-          {showFilters && (
+          {showOptions && (
             <div className="mt-3 grid gap-4 md:grid-cols-2">
               <div className="min-w-0 space-y-1.5">
                 <Label htmlFor="kb-search-tags">{t("tags")}</Label>
@@ -341,6 +334,36 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
                 </div>
                 <p className="text-xs text-muted-foreground">{t("mediaTypesHelp")}</p>
               </div>
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="kb-top-k">{t("topK")}</Label>
+                  <Input
+                    id="kb-top-k"
+                    type="number"
+                    min={1}
+                    max={MAX_TOP_K}
+                    value={topK}
+                    onChange={(e) => setTopK(Number(e.target.value))}
+                    className="w-24"
+                  />
+                </div>
+                {/* Passages on each side of a text hit, returned as its context. */}
+                <div className="space-y-1.5" title={t("contextHelp")}>
+                  <Label htmlFor="kb-neighbors">{t("context")}</Label>
+                  <Select value={String(neighbors)} onValueChange={(v) => setNeighbors(Number(v))}>
+                    <SelectTrigger id="kb-neighbors" className="w-20">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {NEIGHBOR_OPTIONS.map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {n}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -365,20 +388,21 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
       {response && (
         <div className={cn("space-y-4 transition-opacity", searching && "opacity-50")}>
           {/* Same summary row and Results/JSON switch as the Recall view. */}
-          <div className="flex items-center gap-6 text-sm">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">{tRecall("resultsLabel")}</span>
               <span className="font-semibold">{response.results.length}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-muted-foreground">{tRecall("durationLabel")}</span>
-              <span className="font-semibold">{(response.took_ms / 1000).toFixed(2)}s</span>
+              <span className="font-semibold">{(tookMs / 1000).toFixed(2)}s</span>
             </div>
             <div className="flex-1" />
             <div className="flex gap-1 bg-muted p-1 rounded-lg">
               {(["results", "json"] as const).map((mode) => (
                 <button
                   key={mode}
+                  type="button"
                   onClick={() => setViewMode(mode)}
                   className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                     viewMode === mode
@@ -408,30 +432,17 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
               <p className="text-sm text-muted-foreground">{t("noResults")}</p>
             </div>
           ) : (
-            <div className="space-y-6">
-              {groupByMediaType(response.results).map(({ mediaType, hits }) => (
-                <section key={mediaType}>
-                  <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-                    <KindIcon kind={mediaType} />
-                    {tKinds(mediaType)}
-                    <span className="font-normal text-muted-foreground tabular-nums">
-                      ({hits.length})
-                    </span>
-                  </h3>
-                  <SearchResultGrid>
-                    {hits.map(({ result, rank }) => (
-                      <SearchResultCard
-                        key={`${result.document_id}-${result.index}`}
-                        result={result}
-                        bankId={bankId}
-                        rank={rank}
-                        view="search"
-                      />
-                    ))}
-                  </SearchResultGrid>
-                </section>
+            // One ranked list, in the server's order: the ranking already spans media types.
+            <SearchResultGrid>
+              {response.results.map((result, i) => (
+                <SearchResultCard
+                  key={`${result.document_id}-${result.index}`}
+                  result={result}
+                  bankId={bankId}
+                  rank={i + 1}
+                />
               ))}
-            </div>
+            </SearchResultGrid>
           )}
         </div>
       )}

@@ -351,6 +351,10 @@ class MetricsCollectorBase:
         """Record one phase of a retain."""
         raise NotImplementedError
 
+    def record_knowledge_ingest_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        """Record one phase of a knowledge-bank ingest batch. A no-op here rather than abstract, so a
+        collector that predates knowledge banks keeps working."""
+
     def record_validator_phase(self, operation: str, hook: str, seconds: float):
         """Record one operation-validator hook (`hook` is "pre" or "post")."""
         raise NotImplementedError
@@ -450,6 +454,9 @@ class NoOpMetricsCollector(MetricsCollectorBase):
 
     def record_retain_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
         add_phase(f"retain.{phase}", seconds)
+
+    def record_knowledge_ingest_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        add_phase(f"knowledge_ingest.{phase}", seconds)
 
     def record_validator_phase(self, operation: str, hook: str, seconds: float):
         pass
@@ -588,6 +595,19 @@ class MetricsCollector(MetricsCollectorBase):
         self.retain_phase_calls = self.meter.create_counter(
             name="hindsight.retain.phase.calls",
             description="Number of times a retain phase ran -- the round-trip count per phase",
+            unit="calls",
+        )
+        # The same breakdown for one knowledge-bank ingest batch: reading the stored files, splitting,
+        # embedding, writing passage media and committing to the knowledge store. Phases overlap only
+        # where a batch parallelises them; read each against `wall` in the `[knowledge_ingest-timing]` log.
+        self.knowledge_ingest_phase_duration = self.meter.create_histogram(
+            name="hindsight.knowledge_ingest.phase.duration",
+            description="Time attributed to one phase of a knowledge-bank ingest batch",
+            unit="s",
+        )
+        self.knowledge_ingest_phase_calls = self.meter.create_counter(
+            name="hindsight.knowledge_ingest.phase.calls",
+            description="Number of times a knowledge-ingest phase ran -- the round-trip count per phase",
             unit="calls",
         )
         # The operation validator runs OUTSIDE the recall/retain timers -- `validate_*` before the
@@ -931,6 +951,15 @@ class MetricsCollector(MetricsCollectorBase):
             attrs["store"] = store
         self.retain_phase_duration.record(seconds, attrs)
         self.retain_phase_calls.add(calls, attrs)
+
+    def record_knowledge_ingest_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        """Record one phase of a knowledge-bank ingest batch, labelled like a retain phase."""
+        add_phase(f"knowledge_ingest.{phase}", seconds)
+        attrs = {"phase": phase, **self._tenant_attrs()}
+        if store:
+            attrs["store"] = store
+        self.knowledge_ingest_phase_duration.record(seconds, attrs)
+        self.knowledge_ingest_phase_calls.add(calls, attrs)
 
     def record_validator_phase(self, operation: str, hook: str, seconds: float):
         """Record one operation-validator hook. `hook` is "pre" or "post"."""

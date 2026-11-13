@@ -105,10 +105,45 @@ def _pg_upgrade() -> None:
                 REFERENCES {schema}kb_passages(bank_id, document_id, idx) ON DELETE CASCADE
         )
     """)
+    # A document too big to hold in memory is ingested in pieces: each piece of its next version is
+    # staged here, out of sight of every read, and its commit moves them into kb_passages in one
+    # transaction (knowledge/store.py, PassageStage). The search text is made there, once the
+    # document's language is known.
+    op.execute(f"""
+        CREATE TABLE IF NOT EXISTS {schema}kb_staged_passages (
+            bank_id TEXT NOT NULL,
+            document_id TEXT NOT NULL,
+            idx INT NOT NULL,
+            modality TEXT NOT NULL,
+            text TEXT,
+            page INT,
+            start_ms INT,
+            end_ms INT,
+            media_key TEXT,
+            embedding vector NOT NULL,
+            PRIMARY KEY (bank_id, document_id, idx),
+            FOREIGN KEY (bank_id, document_id) REFERENCES {schema}kb_documents(bank_id, document_id) ON DELETE CASCADE
+        )
+    """)
+    op.execute(f"""
+        CREATE TABLE IF NOT EXISTS {schema}kb_staged_passage_vectors (
+            bank_id TEXT NOT NULL,
+            document_id TEXT NOT NULL,
+            idx INT NOT NULL,
+            role TEXT NOT NULL,
+            n INT NOT NULL,
+            embedding vector NOT NULL,
+            PRIMARY KEY (bank_id, document_id, idx, role, n),
+            FOREIGN KEY (bank_id, document_id, idx)
+                REFERENCES {schema}kb_staged_passages(bank_id, document_id, idx) ON DELETE CASCADE
+        )
+    """)
 
 
 def _pg_downgrade() -> None:
     schema = _pg_schema_prefix()
+    op.execute(f"DROP TABLE IF EXISTS {schema}kb_staged_passage_vectors")
+    op.execute(f"DROP TABLE IF EXISTS {schema}kb_staged_passages")
     op.execute(f"DROP TABLE IF EXISTS {schema}kb_passage_vectors")
     op.execute(f"DROP TABLE IF EXISTS {schema}kb_passages")
     op.execute(f"DROP TABLE IF EXISTS {schema}kb_documents")

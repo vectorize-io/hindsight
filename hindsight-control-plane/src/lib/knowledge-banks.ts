@@ -74,19 +74,18 @@ export interface KnowledgeSearchResult extends KnowledgePassage {
   document_id: string;
   filename: string | null;
   tags: string[];
-  score: number;
   document_url: string;
   /** Text hits: the hit merged with its neighbouring passages (see `neighbors`). */
   context?: string | null;
   context_first_index?: number | null;
   context_last_index?: number | null;
-  /** Set on the `documents` section of a memory-bank recall: which knowledge bank it came from. */
-  bank_id?: string;
 }
 
 export interface KnowledgeSearchRequest {
   query?: string;
   query_image?: string;
+  /** Base64 MP4 clip; combined with the text and the image into one query. */
+  query_video?: string;
   top_k: number;
   tags?: string[];
   tags_match?: "any" | "all";
@@ -94,15 +93,11 @@ export interface KnowledgeSearchRequest {
   media_types?: MediaType[];
   /** Passages on each side of a text hit to return as `context` (0..5, server default 1). */
   neighbors?: number;
-  /** Exact text (case-insensitive); alone, documents with the most matching passages come first. */
-  pattern?: string;
-  /** Treat `pattern` as a POSIX regular expression. */
-  regex?: boolean;
 }
 
+/** Results best first: the server sends ranks, not scores (they mean nothing across queries). */
 export interface KnowledgeSearchResponse {
   results: KnowledgeSearchResult[];
-  took_ms: number;
 }
 
 export interface KnowledgeIngestResponse {
@@ -128,7 +123,7 @@ export function knowledgeApi(...segments: string[]): string {
 }
 
 /**
- * The API hands out `media_url`/`file_url` as dataplane paths
+ * The API hands out `passage_url`/`document_url` as dataplane paths
  * (`/v1/default/knowledge-banks/...`); the browser reaches them through the proxy.
  */
 export function proxiedMediaUrl(apiPath: string): string {
@@ -237,7 +232,7 @@ export function uploadKnowledgeFiles(
 ): Promise<KnowledgeIngestResponse> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", withBasePath(knowledgeApi(bankId, "files/ingest")));
+    xhr.open("POST", withBasePath(knowledgeApi(bankId, "files", "ingest")));
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total);
     };
@@ -309,20 +304,6 @@ export function fillTimeseries(
     buckets[i].passages += b.passages;
   }
   return { trunc, buckets };
-}
-
-/**
- * Hits split by media type, each hit keeping its overall rank. Groups are ordered by
- * their best hit, so the type of the top result comes first.
- */
-export function groupByMediaType(results: KnowledgeSearchResult[]) {
-  const groups = new Map<MediaType, { result: KnowledgeSearchResult; rank: number }[]>();
-  results.forEach((result, i) => {
-    const hits = groups.get(result.media_type) ?? [];
-    hits.push({ result, rank: i + 1 });
-    groups.set(result.media_type, hits);
-  });
-  return [...groups].map(([mediaType, hits]) => ({ mediaType, hits }));
 }
 
 /**

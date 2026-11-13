@@ -2455,10 +2455,10 @@
       "documentsTitle": "文件",
       "documentsDescription": "此庫中的檔案和文字。每份文件都會切分為段落並嵌入;將檔案拖放到此處任意位置即可上傳。",
       "searchTitle": "搜尋",
-      "searchDescription": "透過文字查詢、圖片或兩者,依語意尋找段落。"
+      "searchDescription": "用文字、圖片或影片片段(單獨或一起)尋找段落,結果為一個排序清單。"
     },
     "documents": {
-      "filterPlaceholder": "依名稱、標題或 ID 篩選…",
+      "filterPlaceholder": "依檔名或 ID 篩選…",
       "kindFilter": "依類型篩選",
       "statusFilter": "依狀態篩選",
       "allKinds": "所有類型",
@@ -2514,26 +2514,23 @@
       "originalUnsupported": "此檔案類型無法在瀏覽器中預覽。"
     },
     "search": {
-      "placeholder": "依語意搜尋,例如:如何輪替 API 金鑰?",
-      "addImage": "圖片",
-      "imageHint": "貼上、拖放或選擇一張圖片來搜尋,可單獨使用或搭配文字。",
-      "modeMeaning": "依意義",
-      "modeExact": "精確文字",
-      "modeHelp": "精確文字會找出原樣包含這些字詞的段落（代碼、ID、名稱）。只讀取文字：文字檔與 PDF 的文字層。",
+      "placeholder": "搜尋,例如:如何輪替 API 金鑰?",
+      "addMedia": "圖片 / 影片",
+      "mediaHint": "貼上、拖放或選擇一張圖片或一段 MP4 影片來搜尋,可單獨使用或搭配文字。",
       "imageQuery": "正在以此圖片搜尋",
-      "removeImage": "移除圖片",
-      "notAnImage": "只能使用圖片作為搜尋查詢",
-      "pastedImage": "貼上的圖片",
+      "videoQuery": "正在以此影片搜尋",
+      "removeMedia": "移除",
+      "notMedia": "只能使用圖片或 MP4 影片作為搜尋查詢",
+      "pastedMedia": "貼上的檔案",
       "topK": "結果數",
       "submit": "搜尋",
-      "filters": "篩選",
+      "options": "選項",
       "tags": "標籤",
       "tagsMatch": "標籤比對",
       "tagsAny": "任一",
       "tagsAll": "全部",
       "noResults": "沒有符合此搜尋的段落。",
-      "idle": "以文字或圖片搜尋此庫中的段落。",
-      "scoreHelp": "查詢與段落之間的餘弦相似度",
+      "idle": "用文字、圖片、影片片段或它們的任意組合搜尋此庫。",
       "openPassage": "在文件中開啟",
       "failed": "搜尋失敗",
       "mediaTypes": "媒體類型",
@@ -2600,7 +2597,7 @@
       "textTokens": "文字段落大小(token)",
       "seconds": "{count, plural, other {# 秒}}",
       "linkTitle": "記憶庫",
-      "linkDescription": "關聯此庫的記憶庫在召回時會取得其中的段落,作為權威來源。",
+      "linkDescription": "連結了此庫的記憶庫在 reflect 時也會搜尋它,並以其文件為準。",
       "linkHowTo": "從記憶庫關聯:開啟記憶庫,然後前往 庫設定 → 設定 → 文件庫。",
       "delete": "刪除庫",
       "mediaTypes": "可寫入的媒體類型"
@@ -2621,7 +2618,9 @@
       "tagsFor": "{name} 的標籤",
       "uploaded": "{count, plural, other {已上傳 # 個檔案}}。就緒後即可搜尋。",
       "someFailed": "{count, plural, other {# 個檔案}}上傳失敗",
-      "written": "文件已新增。就緒後即可搜尋。"
+      "written": "文件已新增,可以搜尋。",
+      "unchanged": "{count, plural, other {# 個檔案}}未變更:已按原樣匯入。",
+      "writtenUnchanged": "未變更:此文件已按原樣匯入。"
     }
   }
 }

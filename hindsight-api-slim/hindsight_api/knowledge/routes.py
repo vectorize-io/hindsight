@@ -6,7 +6,6 @@ import base64
 import binascii
 import json
 import mimetypes
-import time
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import datetime
@@ -187,6 +186,11 @@ class KnowledgeTimeseriesResponse(BaseModel):
 class KnowledgeSearchRequest(BaseModel):
     query: str | None = Field(default=None, description="Text query.")
     query_image: str | None = Field(default=None, description="Base64 image to search with (alone or with text).")
+    query_video: str | None = Field(
+        default=None,
+        description="Base64 MP4 clip to search with. Text, image and video can be combined: they are "
+        "embedded together as one query.",
+    )
     top_k: int = Field(default=10, ge=1, le=200)
     tags: list[str] | None = None
     tags_match: Literal["any", "all"] = Field(default="any", title="Knowledge Tags Match")
@@ -201,26 +205,12 @@ class KnowledgeSearchRequest(BaseModel):
     media_types: list[Literal["document", "image", "audio", "video", "text"]] | None = Field(
         default=None, title="Knowledge Media Types"
     )
-    pattern: str | None = Field(
-        default=None,
-        description="Exact text (case-insensitive), e.g. an error code or a name. Passages containing it rank "
-        "above all others; without `query`/`query_image`, documents are ranked by how many passages match.",
-    )
-    regex: bool = Field(
-        default=False,
-        description="Treat `pattern` as a POSIX regular expression (case-insensitive), e.g. `timebox|time-box`.",
-    )
 
 
 class KnowledgeSearchResult(KnowledgePassageResponse):
     document_id: str
     filename: str | None
     tags: list[str]
-    score: float = Field(
-        description="Relevance: cosine similarity, fused with keyword matching when the query and document "
-        "share a language, plus 1 when the passage contains `pattern`. Without a query, the number of the "
-        "document's passages that contain `pattern`. Comparable within one response only."
-    )
     document_url: str
     context: str | None = Field(
         default=None, description="The hit with its neighbouring passages (text only; see `neighbors`)."
@@ -230,8 +220,10 @@ class KnowledgeSearchResult(KnowledgePassageResponse):
 
 
 class KnowledgeSearchResponse(BaseModel):
+    """Results best first. Ranks are what a caller compares: scores are fused per query and mean nothing
+    across responses, so the response does not carry them."""
+
     results: list[KnowledgeSearchResult]
-    took_ms: float
 
 
 # --- mapping --------------------------------------------------------------------------------
@@ -293,7 +285,6 @@ def search_result(bank_id: str, hit: SearchHit) -> KnowledgeSearchResult:
         document_id=d.document_id,
         filename=d.filename,
         tags=d.tags,
-        score=round(hit.score, 6),
         document_url=f"{_doc_url(bank_id, d.document_id)}/file",
     )
 
@@ -323,6 +314,14 @@ def _content_type(upload: UploadFile) -> str:
 
 
 def _http_error(exc: Exception) -> HTTPException:
+    # A store shedding the call (indexing behind its writers) is "not now": 503 with Retry-After, the
+    # memory banks' own rule, not a 500 that tells a bulk ingest its request is broken. Imported here:
+    # api/http.py builds this router, so a module-level import would load the whole of it first.
+    from ..api.http import _store_unavailable
+
+    unavailable = _store_unavailable(exc)
+    if unavailable is not None:
+        return unavailable
     if isinstance(exc, KnowledgeBankError):
         return HTTPException(status_code=exc.status_code, detail=str(exc))
     if isinstance(exc, OperationValidationError):
@@ -641,17 +640,20 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
     @router.post(
         "/{bank_id}/search",
         response_model=KnowledgeSearchResponse,
-        summary="Search passages by meaning (text or image query) and exact text",
+        summary="Search passages by meaning: a text, image or video query, alone or combined",
         operation_id="search_knowledge_bank",
     )
     async def search(
         bank_id: str, body: KnowledgeSearchRequest, request: Request, rc: RequestContext = Depends(get_request_context)
     ) -> KnowledgeSearchResponse:
-        started = time.perf_counter()
         try:
             image = base64.b64decode(body.query_image, validate=True) if body.query_image else None
         except (binascii.Error, ValueError) as exc:
             raise HTTPException(status_code=400, detail="query_image must be base64") from exc
+        try:
+            video = base64.b64decode(body.query_video, validate=True) if body.query_video else None
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="query_video must be base64") from exc
         filters = SearchFilters(
             tags=body.tags,
             tags_match=body.tags_match,
@@ -664,18 +666,15 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
                 SearchRequest(
                     query=body.query,
                     query_image=image,
+                    query_video=video,
                     top_k=body.top_k,
                     filters=filters,
                     neighbors=body.neighbors,
-                    pattern=body.pattern,
-                    regex=body.regex,
                 ),
                 rc,
             )
         except Exception as exc:
             raise _http_error(exc) from exc
-        return KnowledgeSearchResponse(
-            results=[item_result(bank_id, h) for h in hits], took_ms=round((time.perf_counter() - started) * 1000, 1)
-        )
+        return KnowledgeSearchResponse(results=[item_result(bank_id, h) for h in hits])
 
     return router

@@ -342,9 +342,7 @@ async def _page_nodes(client: Hindsight, bank_id: str) -> list[PageNode]:
     def walk(nodes) -> None:
         for node in nodes or []:
             if getattr(node, "kind", None) == "page":
-                out.append(
-                    PageNode(id=node.id, name=node.name, mental_model_id=getattr(node, "mental_model_id", None))
-                )
+                out.append(PageNode(id=node.id, name=node.name, mental_model_id=getattr(node, "mental_model_id", None)))
             walk(getattr(node, "children", None))
 
     walk(getattr(tree, "roots", None))

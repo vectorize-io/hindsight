@@ -2455,10 +2455,10 @@
       "documentsTitle": "Documentos",
       "documentsDescription": "Arquivos e textos deste banco. Cada um é dividido em trechos e recebe embeddings; solte arquivos em qualquer lugar aqui para enviá-los.",
       "searchTitle": "Pesquisa",
-      "searchDescription": "Encontre trechos pelo significado, com uma consulta de texto, uma imagem ou ambos."
+      "searchDescription": "Encontre trechos com texto, uma imagem ou um clipe de vídeo, sozinhos ou juntos, numa só lista ordenada."
     },
     "documents": {
-      "filterPlaceholder": "Filtrar por nome, título ou id…",
+      "filterPlaceholder": "Filtrar por nome de arquivo ou id…",
       "kindFilter": "Filtrar por tipo",
       "statusFilter": "Filtrar por status",
       "allKinds": "Todos os tipos",
@@ -2514,26 +2514,23 @@
       "originalUnsupported": "Este tipo de arquivo não pode ser visualizado no navegador."
     },
     "search": {
-      "placeholder": "Pesquise pelo significado, ex.: como rotaciono uma chave de API?",
-      "addImage": "Imagem",
-      "imageHint": "Cole, solte ou escolha uma imagem para pesquisar com ela, sozinha ou com texto.",
-      "modeMeaning": "Por significado",
-      "modeExact": "Texto exato",
-      "modeHelp": "Texto exato encontra trechos que contêm as palavras como escritas (códigos, ids, nomes). Só lê texto: arquivos de texto e a camada de texto dos PDFs.",
+      "placeholder": "Pesquisar, p. ex. como faço a rotação de uma chave de API?",
+      "addMedia": "Imagem / vídeo",
+      "mediaHint": "Cole, solte ou escolha uma imagem ou um clipe MP4 para pesquisar com ele, sozinho ou com texto.",
       "imageQuery": "Pesquisando com esta imagem",
-      "removeImage": "Remover imagem",
-      "notAnImage": "Somente imagens podem ser usadas como consulta",
-      "pastedImage": "Imagem colada",
+      "videoQuery": "Pesquisando com este vídeo",
+      "removeMedia": "Remover",
+      "notMedia": "Somente uma imagem ou um vídeo MP4 pode ser uma consulta",
+      "pastedMedia": "Arquivo colado",
       "topK": "Resultados",
       "submit": "Pesquisar",
-      "filters": "Filtros",
+      "options": "Opções",
       "tags": "Tags",
       "tagsMatch": "Correspondência de tags",
       "tagsAny": "Qualquer",
       "tagsAll": "Todas",
       "noResults": "Nenhum trecho corresponde a esta pesquisa.",
-      "idle": "Pesquise os trechos deste banco por texto ou por imagem.",
-      "scoreHelp": "Similaridade de cosseno entre a consulta e o trecho",
+      "idle": "Pesquise neste banco com texto, uma imagem, um clipe de vídeo ou qualquer combinação.",
       "openPassage": "Abrir no documento",
       "failed": "A pesquisa falhou",
       "mediaTypes": "Tipos de mídia",
@@ -2600,7 +2597,7 @@
       "textTokens": "Tamanho do trecho de texto (tokens)",
       "seconds": "{count, plural, one {# segundo} other {# segundos}}",
       "linkTitle": "Bancos de memória",
-      "linkDescription": "Bancos de memória que vinculam este banco recebem seus trechos no recall, como fonte de referência.",
+      "linkDescription": "O reflect em um banco de memória que vincula este banco também o pesquisa e trata seus documentos como a autoridade.",
       "linkHowTo": "Vincule-o a partir de um banco de memória: abra o banco de memória e vá em Configuração do banco → Configuração → Bancos de conhecimento.",
       "delete": "Excluir banco",
       "mediaTypes": "Tipos de mídia que pode gravar"
@@ -2621,7 +2618,9 @@
       "tagsFor": "Tags de {name}",
       "uploaded": "{count, plural, one {# arquivo enviado} other {# arquivos enviados}}. Ficará pesquisável assim que estiver pronto.",
       "someFailed": "{count, plural, one {# arquivo não pôde ser enviado} other {# arquivos não puderam ser enviados}}",
-      "written": "Documento adicionado. Ficará pesquisável assim que estiver pronto."
+      "written": "Documento adicionado e pesquisável.",
+      "unchanged": "{count, plural, one {# arquivo sem alterações} other {# arquivos sem alterações}}: já ingerido como está.",
+      "writtenUnchanged": "Sem alterações: este documento já está ingerido como está."
     }
   }
 }

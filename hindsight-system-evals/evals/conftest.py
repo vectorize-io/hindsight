@@ -26,8 +26,16 @@ from hindsight_system_evals import (
     wait_until_settled,
 )
 from hindsight_system_evals.pages import SettleFn
+from hindsight_system_evals.report import (
+    KNOWLEDGE,
+    RECORDED,
+    ModelConfig,
+    ModelRef,
+    RunReport,
+    by_category,
+    summarise,
+)
 from hindsight_system_evals.target import ENV_API_KEY, ENV_API_URL
-from hindsight_system_evals.report import RECORDED, ModelConfig, ModelRef, RunReport, by_category, summarise
 
 BANK_PREFIX = "syseval-"
 
@@ -185,8 +193,11 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         correct=overall.correct,
         correct_rate=(overall.correct / overall.total) if overall.total else None,
         trap_count=overall.trap_count,
-        by_kind={kind: summarise([r for r in RECORDED if r.kind == kind]) for kind in sorted({r.kind for r in RECORDED})},
+        by_kind={
+            kind: summarise([r for r in RECORDED if r.kind == kind]) for kind in sorted({r.kind for r in RECORDED})
+        },
         by_category=by_category(RECORDED),
         items=RECORDED,
+        knowledge=KNOWLEDGE,
     )
     Path(output).write_text(report.to_json(), encoding="utf-8")

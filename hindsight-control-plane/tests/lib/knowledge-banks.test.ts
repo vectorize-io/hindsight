@@ -6,7 +6,6 @@ import {
   errorMessage,
   fillTimeseries,
   firstPassageUrl,
-  groupByMediaType,
   isPicturePassage,
   splitContext,
   formatBytes,
@@ -15,8 +14,6 @@ import {
   knowledgeApi,
   parseTags,
   proxiedMediaUrl,
-  type KnowledgeSearchResult,
-  type MediaType,
 } from "@/lib/knowledge-banks";
 
 describe("formatting", () => {
@@ -144,26 +141,6 @@ describe("fillTimeseries", () => {
     expect(trunc).toBe("hour");
     expect(buckets).toHaveLength(24);
     expect(buckets[23]).toMatchObject({ time: "2026-11-05T12:00:00.000Z", passages: 3 });
-  });
-});
-
-describe("groupByMediaType", () => {
-  it("groups hits by media type, ordered by each group's best hit, keeping overall ranks", () => {
-    const hit = (document_id: string, media_type: MediaType) =>
-      ({ document_id, media_type }) as KnowledgeSearchResult;
-    const groups = groupByMediaType([
-      hit("a", "document"),
-      hit("b", "audio"),
-      hit("c", "document"),
-      hit("d", "image"),
-    ]);
-    expect(
-      groups.map((g) => [g.mediaType, g.hits.map((h) => `${h.result.document_id}#${h.rank}`)])
-    ).toEqual([
-      ["document", ["a#1", "c#3"]],
-      ["audio", ["b#2"]],
-      ["image", ["d#4"]],
-    ]);
   });
 });
 

@@ -2,8 +2,7 @@
 
 // The pieces every knowledge-bank screen shows: a document's kind and status, one
 // passage rendered by its modality (page image, image, audio window, video window,
-// text), and a search hit. The search panel and the memory-bank recall view both
-// render hits, so the card lives here once.
+// text), and a search hit.
 
 import * as React from "react";
 import Link from "next/link";
@@ -151,21 +150,6 @@ export function PassageMedia({
   );
 }
 
-function ScoreBar({ score }: { score: number }) {
-  const t = useTranslations("knowledgeBanks.search");
-  const pct = Math.max(0, Math.min(1, score)) * 100;
-  return (
-    <div className="flex items-center gap-2" title={t("scoreHelp")}>
-      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full bg-primary/70" style={{ width: `${pct}%` }} />
-      </div>
-      <span className="font-mono text-xs tabular-nums text-muted-foreground">
-        {score.toFixed(3)}
-      </span>
-    </div>
-  );
-}
-
 /**
  * A text hit: the passage that matched, and on demand the context around it (its
  * neighbouring passages, merged by the server) with the hit highlighted inside it.
@@ -230,19 +214,17 @@ export function SearchResultCard({
   result,
   bankId,
   rank,
-  view = "documents",
 }: {
   result: KnowledgeSearchResult;
   bankId: string;
   rank?: number;
-  /** The bank page section the document dialog opens over (search keeps its results). */
-  view?: "documents" | "search";
 }) {
   const t = useTranslations("knowledgeBanks.search");
   const label = documentLabel(result);
   const href = knowledgeBankRoute(
-    result.bank_id ?? bankId,
-    `?view=${view}&doc=${encodeURIComponent(result.document_id)}&passage=${result.index}`
+    bankId,
+    // The document dialog opens over the search view, which keeps its results.
+    `?view=search&doc=${encodeURIComponent(result.document_id)}&passage=${result.index}`
   );
   const playable = result.media_type === "audio" || result.media_type === "video";
   return (
@@ -283,13 +265,7 @@ export function SearchResultCard({
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
           <span className="tabular-nums">
             <PassageLocation passage={result} />
-            {result.bank_id && (
-              <span className="ml-2 font-mono text-[11px] text-muted-foreground/70">
-                {result.bank_id}
-              </span>
-            )}
           </span>
-          <ScoreBar score={result.score} />
         </div>
         {result.tags.length > 0 && (
           <div className="flex flex-wrap gap-1">

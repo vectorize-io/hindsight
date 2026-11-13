@@ -2,7 +2,7 @@
 
 Unlike a memory bank nothing here calls an LLM. A file becomes passages, the passages are embedded
 (here by the stub's lexical embeddings, the memory banks' embedder), and search ranks them by
-meaning and, with ``pattern``, by exact text. The story walks one bank through that whole life,
+meaning, best first. The story walks one bank through that whole life,
 through the HTTP API alone: the parts that only meet here are the sync and async ingest paths, the
 worker, search over what they wrote, and the replace and delete paths that must leave search
 consistent.
@@ -10,6 +10,7 @@ consistent.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import uuid
 from collections.abc import AsyncIterator
@@ -64,36 +65,37 @@ async def test_a_sync_ingest_returns_once_every_document_is_searchable(kb, knowl
         "page": None,
         "context": None,
     }
-    assert hit["filename"] == "keys.md" and hit["score"] > 0
+    assert hit["filename"] == "keys.md" and "score" not in hit and set(r.body) == {"results"}
     assert (await _hits(kb, knowledge_bank, query="when are invoices emailed", top_k=1)) == ["billing"]
     bank = (await kb.get(knowledge_bank)).body
     assert (bank["document_count"], bank["ready_count"], bank["failed_count"]) == (3, 3, 0)
 
 
-async def test_an_async_ingest_is_one_operation_the_worker_finishes(kb, knowledge_bank):
+async def test_an_async_ingest_is_one_operation_the_worker_finishes_even_split_into_children(client, kb, knowledge_bank):
+    # Over a child's byte budget (1 MiB by default): the notes fill one child and the manual, bigger than
+    # the budget on its own, is a second, so the worker runs the upload as two children. The one operation
+    # the caller holds completes only once both have. (A request carries at most 100 items, under the
+    # 100 documents a child holds, so only bytes can split a JSON ingest.)
     items = [{"document_id": f"note-{n}", "text": f"note {n} about the red pipeline"} for n in range(30)]
+    items.append({"document_id": "manual", "text": "Unrelated filler words. " * 46_000})
     r = await kb.ingest(knowledge_bank, items, wait=False)
 
     assert r.status == 202, r.body
     # One operation for the whole batch, named for every document it carries.
-    assert len(r.body["operation_ids"]) == 30 and len(set(r.body["operation_ids"])) == 1
-    await kb.wait_until_processed(knowledge_bank, 30)
+    assert len(r.body["operation_ids"]) == 31 and len(set(r.body["operation_ids"])) == 1
+    [parent_id] = set(r.body["operation_ids"])
+    await kb.wait_until_processed(knowledge_bank, 31, timeout=60.0)
     page = (await kb.documents(knowledge_bank, status="ready", limit=1)).body
-    assert page["total"] == 30
+    assert page["total"] == 31
     assert (await _hits(kb, knowledge_bank, query="note 7", top_k=1)) == ["note-7"]
-
-
-async def test_pattern_finds_the_exact_code_meaning_search_does_not(kb, knowledge_bank):
-    await kb.ingest(knowledge_bank, [{"document_id": d, "text": t} for d, t in GUIDES.items()])
-
-    # Without a query, a pattern alone ranks documents by their matching passages.
-    assert (await _hits(kb, knowledge_bank, pattern="zx-4417")) == ["outage"]
-    # With one, the exact match ranks above everything that only matches by meaning.
-    with_query = await _hits(kb, knowledge_bank, query="monthly security settings", pattern="ZX-4417")
-    assert with_query[0] == "outage"
-    assert (await _hits(kb, knowledge_bank, pattern=r"ZX-\d{4}", regex=True)) == ["outage"]
-    r = await kb.search(knowledge_bank, pattern="(", regex=True)
-    assert r.status == 400 and "invalid regular expression" in r.body["detail"]
+    # The children are only visible as the bank's operations: the parent plus two of them.
+    ops = (await client.operations.list_operations(knowledge_bank, limit=100)).operations
+    ingests = [op for op in ops if op.task_type == "knowledge_ingest"]
+    assert len(ingests) == 3 and parent_id in {op.id for op in ingests}, ingests
+    deadline = asyncio.get_running_loop().time() + 30
+    while (status := await client.operations.get_operation_status(knowledge_bank, parent_id)).status != "completed":
+        assert status.status in ("pending", "processing") and asyncio.get_running_loop().time() < deadline, status
+        await asyncio.sleep(0.2)
 
 
 async def test_a_text_hit_comes_back_with_its_neighbouring_passages(kb, knowledge_bank):

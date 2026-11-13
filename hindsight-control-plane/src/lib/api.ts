@@ -2464,10 +2464,10 @@ export class ControlPlaneClient {
     });
   }
 
-  async createKnowledgeBank(bankId: string, name?: string) {
+  async createKnowledgeBank(bankId: string) {
     return this.fetchApi<KnowledgeBank>(knowledgeApi(), {
       method: "POST",
-      body: JSON.stringify({ bank_id: bankId, ...(name ? { name } : {}) }),
+      body: JSON.stringify({ bank_id: bankId }),
     });
   }
 
@@ -2523,9 +2523,10 @@ export class ControlPlaneClient {
       tags: string[];
     }
   ) {
-    return this.fetchApi<KnowledgeIngestResponse>(knowledgeApi(bankId, "documents"), {
+    // Text ingest is POST /ingest with `items`, processed in the request by default (no /documents POST).
+    return this.fetchApi<KnowledgeIngestResponse>(knowledgeApi(bankId, "ingest"), {
       method: "POST",
-      body: JSON.stringify({ documents: [doc] }),
+      body: JSON.stringify({ items: [doc] }),
     });
   }
 

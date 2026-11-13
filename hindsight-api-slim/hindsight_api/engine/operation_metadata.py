@@ -59,6 +59,37 @@ class BatchRetainChildMetadata:
 
 
 @dataclass
+class KnowledgeIngestParentMetadata:
+    """Metadata for the parent operation of an async knowledge ingest (always a parent, even for one child).
+
+    Same keys the raw dict it replaced carried, so operations written before still read the same."""
+
+    document_ids: list[str]
+    num_sub_batches: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON serialization."""
+        return asdict(self)
+
+
+@dataclass
+class KnowledgeIngestChildMetadata:
+    """Metadata for one child operation of an async knowledge ingest: a slice of the parent's documents.
+
+    ``parent_operation_id``/``sub_batch_index``/``total_sub_batches`` are the keys a batch retain's
+    children carry, which the parent's completion check reads for both."""
+
+    parent_operation_id: str
+    sub_batch_index: int
+    total_sub_batches: int
+    document_ids: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for JSON serialization."""
+        return asdict(self)
+
+
+@dataclass
 class RetainMetadata:
     """Metadata for regular retain operations (non-batched, deprecated async path)."""
 

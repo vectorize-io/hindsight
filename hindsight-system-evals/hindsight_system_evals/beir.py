@@ -25,9 +25,9 @@ from __future__ import annotations
 import json
 import os
 import random
-from typing import TypeVar
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -95,7 +95,7 @@ def load_beir_slice() -> BeirSlice:
     or it reports a number the real run cannot reproduce.
     """
     if directory := os.getenv("HINDSIGHT_EVAL_BEIR_DIR"):
-        sliced = _read_beir_directory(Path(directory))
+        sliced = read_beir_directory(Path(directory))
     else:
         sliced = _read_fixture(FIXTURE)
 
@@ -106,9 +106,7 @@ def load_beir_slice() -> BeirSlice:
 
 def _read_fixture(path: Path) -> BeirSlice:
     if not path.exists():
-        raise RuntimeError(
-            f"{path} is missing. Cut it with: uv run python -m hindsight_system_evals.beir build"
-        )
+        raise RuntimeError(f"{path} is missing. Cut it with: uv run python -m hindsight_system_evals.beir build")
     payload = json.loads(path.read_text(encoding="utf-8"))
     return BeirSlice(
         name=payload["name"],
@@ -182,16 +180,14 @@ def _query_sort_key(query_id: str) -> tuple[int, int, str]:
     return (0, int(query_id), "") if query_id.isdigit() else (1, 0, query_id)
 
 
-def _read_beir_directory(directory: Path, *, split: str = "test") -> BeirSlice:
+def read_beir_directory(directory: Path, *, split: str = "test") -> BeirSlice:
     """A whole unpacked BEIR dataset, unsliced — for a full-corpus run."""
     qrels = _read_qrels(directory / "qrels" / f"{split}.tsv")
     corpus = {row.id: row for row in _read_jsonl(directory / "corpus.jsonl", _CorpusRow)}
     queries = {row.id: row for row in _read_jsonl(directory / "queries.jsonl", _QueryRow)}
     return BeirSlice(
         name=directory.name,
-        documents=tuple(
-            BeirDocument(id=row.id, title=row.title, text=row.text) for _, row in sorted(corpus.items())
-        ),
+        documents=tuple(BeirDocument(id=row.id, title=row.title, text=row.text) for _, row in sorted(corpus.items())),
         queries=tuple(
             # Gold documents absent from the corpus are dropped: they would hold a
             # perfect run below 1.0 for a reason that is not Hindsight's. BEIR's own
@@ -255,7 +251,7 @@ def build(output: Path = FIXTURE) -> BeirSlice:
     with tempfile.TemporaryDirectory() as scratch:
         archive.extractall(scratch)
         root = next(path for path in Path(scratch).iterdir() if (path / "corpus.jsonl").exists())
-        sliced = cut_slice(_read_beir_directory(root))
+        sliced = cut_slice(read_beir_directory(root))
     _write(sliced, output)
     return sliced
 

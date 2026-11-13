@@ -294,3 +294,20 @@ def test_numeric_query_ids_sort_numerically(tmp_path, monkeypatch):
 
     monkeypatch.setenv("HINDSIGHT_EVAL_BEIR_DIR", str(tmp_path))
     assert [q.id for q in load_beir_slice().queries] == ["2", "10"]
+
+
+def test_alpha_ndcg_matches_bright_pro_hand_example():
+    """Two aspects (A 0.6, B 0.4), gold a1/a2 on A and b1 on B, ranked [a1, x, a2, b1]:
+    DCG = .6 + .6*.5/log2(4) + .4/log2(5); the ideal takes A, then B (.4/log2 3 beats .3/log2 3), then A."""
+    import math
+
+    from hindsight_system_evals.retrieval_metrics import alpha_ndcg_at_k
+
+    aspect_of = {"a1": "A", "a2": "A", "b1": "B"}
+    weight = {"A": 0.6, "B": 0.4}
+    dcg = 0.6 + 0.3 / 2 + 0.4 / math.log2(5)
+    ideal = 0.6 + 0.4 / math.log2(3) + 0.3 / 2
+    got = alpha_ndcg_at_k(["a1", "x", "a2", "b1"], aspect_of, weight, 25)
+    assert abs(got - dcg / ideal) < 1e-9
+    assert alpha_ndcg_at_k(["a1", "b1", "a2"], aspect_of, weight, 25) == 1.0
+    assert alpha_ndcg_at_k(["x"], aspect_of, weight, 25) == 0.0

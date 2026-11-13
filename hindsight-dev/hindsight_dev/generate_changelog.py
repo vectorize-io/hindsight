@@ -89,6 +89,10 @@ TABLE_VOLUME: dict[str, VolumeTier] = {
     "kb_documents": MEDIUM_VOLUME,
     "kb_passages": HIGH_VOLUME,
     "kb_passage_vectors": HIGH_VOLUME,
+    # The pieces of a document too big to ingest in one go, held only until it commits: empty at rest,
+    # never more than the documents being ingested at that moment.
+    "kb_staged_passages": LOW_VOLUME,
+    "kb_staged_passage_vectors": LOW_VOLUME,
     # Configuration-sized: a handful of rows per bank or tenant.
     "banks": LOW_VOLUME,
     "bank_aliases": LOW_VOLUME,

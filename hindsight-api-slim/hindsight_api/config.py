@@ -1002,6 +1002,7 @@ ENV_KNOWLEDGE_EMBEDDINGS_BASE_URL = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BASE_URL
 ENV_KNOWLEDGE_EMBEDDINGS_MODALITIES = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODALITIES"
 ENV_KNOWLEDGE_EMBEDDINGS_DEVICE = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_DEVICE"
 ENV_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE"
+ENV_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT = "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT"
 # Media types (document, image, audio, video, text) this server refuses to ingest, comma-separated,
 # whatever its embedder could embed: e.g. "video,audio" to skip the cost of decoding clips.
 ENV_KNOWLEDGE_DISABLED_MEDIA_TYPES = "HINDSIGHT_API_KNOWLEDGE_DISABLED_MEDIA_TYPES"
@@ -1017,6 +1018,8 @@ ENV_KNOWLEDGE_PDF_TEXT_WEIGHT = "HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT"
 ENV_KNOWLEDGE_PDF_BANDS = "HINDSIGHT_API_KNOWLEDGE_PDF_BANDS"
 ENV_KNOWLEDGE_KEYWORD_WEIGHT = "HINDSIGHT_API_KNOWLEDGE_KEYWORD_WEIGHT"
 ENV_KNOWLEDGE_TEXT_PASSAGE_TOKENS = "HINDSIGHT_API_KNOWLEDGE_TEXT_PASSAGE_TOKENS"
+ENV_KNOWLEDGE_INGEST_CHILD_BYTES = "HINDSIGHT_API_KNOWLEDGE_INGEST_CHILD_BYTES"
+ENV_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB = "HINDSIGHT_API_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB"
 ENV_KNOWLEDGE_STORE_EXTENSION = "HINDSIGHT_API_KNOWLEDGE_STORE_EXTENSION"
 # Knowledge-bank ingestion strategies (knowledge/ingest_strategy.py): named mappings of file types to
 # the extension that pre-processes them (JSON, {name: {file_type: {"extension": "module:Class",
@@ -1151,6 +1154,7 @@ WORKER_SLOT_TYPE_DEFAULTS: dict[str, int] = {
     "import_bank": 0,
     "export_bank": 0,
     "clone_bank": 0,
+    "knowledge_ingest": 0,
 }
 
 
@@ -2047,7 +2051,12 @@ DEFAULT_KNOWLEDGE_EMBEDDINGS_LOCAL_MODEL = "google/embeddinggemma-2"
 DEFAULT_KNOWLEDGE_EMBEDDINGS_GEMINI_MODEL = "gemini-embedding-2"
 DEFAULT_KNOWLEDGE_EMBEDDINGS_VOYAGE_MODEL = "voyage-multimodal-3.5"
 DEFAULT_KNOWLEDGE_EMBEDDINGS_COHERE_MODEL = "embed-v4.0"
-DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE = 8
+DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE = 32  # 8 left a GPU embedder idle between requests; 64 ran fine on dev
+# Requests to a remote knowledge embedder in flight at once from this process, across every ingest
+# batch and search. Each batch already caps its own, but a worker runs many batches, and their sum is
+# what the embedder (and any proxy in front of it) sees: past what it takes, it answers 429 and the
+# requests only come back later. 0 removes the cap.
+DEFAULT_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT = 16
 DEFAULT_KNOWLEDGE_IMAGE_TOKENS = 280  # EmbeddingGemma 2 vision token budget per image (70..1120)
 DEFAULT_KNOWLEDGE_MAX_FILE_MB = 500
 DEFAULT_KNOWLEDGE_MAX_MEDIA_SECONDS = 7200  # 2h of audio/video per file
@@ -2056,13 +2065,30 @@ DEFAULT_KNOWLEDGE_AUDIO_WINDOW_SECONDS = 60
 DEFAULT_KNOWLEDGE_VIDEO_WINDOW_SECONDS = 30
 DEFAULT_KNOWLEDGE_MEDIA_OVERLAP_SECONDS = 5
 DEFAULT_KNOWLEDGE_PDF_PAGE_PIXELS = 1536  # Longest side of a rendered PDF page
-# A PDF page's score = (1 - w) * image score + w * text-layer score (PDF_GEMMA.md: 0.6 best on ViDoRe V3)
-DEFAULT_KNOWLEDGE_PDF_TEXT_WEIGHT = 0.6
+# A PDF page's score = (1 - w) * image score + w * best text score (its chunks, sentences, page text).
+# 0.6 was best on ViDoRe V3 before sentence vectors (PDF_GEMMA.md). With them, ViDoRe hr peaks at 0.7-0.8 on
+# both EmbeddingGemma 2 and Gemini Embedding 2 and is flat over 0.6-0.8: one value that holds across models.
+DEFAULT_KNOWLEDGE_PDF_TEXT_WEIGHT = 0.7
 # Three sharper horizontal band crops per PDF page as extra vectors: +0.4 nDCG@10 for half the ingest speed.
 DEFAULT_KNOWLEDGE_PDF_BANDS = False
 # Keyword match weight, fused only for documents in the query's language (PDF_GEMMA.md: 0.2 best).
 DEFAULT_KNOWLEDGE_KEYWORD_WEIGHT = 0.2
-DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS = 128  # structure-aware; best on LegalBench-RAG (CHUNKING.md)
+# Structure-aware passages. 128 was best on LegalBench-RAG at a fixed budget of returned text (CHUNKING.md);
+# 256 beat it on every benchmark launch uses (EmbeddingGemma 2): SciFact 83.7 -> 84.2 nDCG@10,
+# EnterpriseRAG search 66.1 -> 67.6 (recall@10 77.1 -> 81.5), with half the passages. 512 led on
+# SciFact alone (85.6) and lost 3 points on EnterpriseRAG's per-category mean.
+DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS = 256
+# An async knowledge ingest is split into child operations of about this many bytes of stored files,
+# each its own worker task, so one big upload spreads across every free slot. Bytes, because the
+# passage count is only known once a file is split; a file over the budget is a child on its own.
+# A batch's memory is bounded by the budget below, not by its size, so a child can be big: 1 MiB is
+# ~3,000 text passages, or a few PDFs.
+DEFAULT_KNOWLEDGE_INGEST_CHILD_BYTES = 1024 * 1024
+# Bytes of cut-but-uncommitted passages (text, files, vectors) one knowledge ingest batch may hold, as
+# RETAIN_MEMORY_BUDGET_MB bounds a retain: at the budget the batch commits what it has and waits. One
+# document is always held whole (its passages are replaced in one write), so a single document over the
+# budget still goes through. Budget for WORKER_MAX_SLOTS concurrent batches. 0 turns it off.
+DEFAULT_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB = 128
 DEFAULT_ENABLE_FILE_UPLOAD_API = True  # Enable file upload endpoint
 DEFAULT_FILE_DELETE_AFTER_RETAIN = True  # Delete file bytes after retain (saves storage)
 DEFAULT_STORE_DOCUMENT_TEXT = True  # Persist raw source text in documents.original_text / chunks.chunk_text
@@ -4309,6 +4335,7 @@ class HindsightConfig:
     knowledge_embeddings_modalities: str = "text,image"  # openai provider: what the remote model embeds
     knowledge_embeddings_device: str | None = None  # None: auto (cuda, mps, cpu)
     knowledge_embeddings_batch_size: int = DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE
+    knowledge_embeddings_max_in_flight: int = DEFAULT_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT
     knowledge_disabled_media_types: frozenset[str] = frozenset()
     #: The "text" knowledge provider's own embeddings config (HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_*),
     #: or None to use the memory banks' embedder.
@@ -4325,6 +4352,8 @@ class HindsightConfig:
     knowledge_pdf_bands: bool = DEFAULT_KNOWLEDGE_PDF_BANDS
     knowledge_keyword_weight: float = DEFAULT_KNOWLEDGE_KEYWORD_WEIGHT
     knowledge_text_passage_tokens: int = DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS
+    knowledge_ingest_child_bytes: int = DEFAULT_KNOWLEDGE_INGEST_CHILD_BYTES
+    knowledge_ingest_memory_budget_mb: int = DEFAULT_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB
     knowledge_store_extension: str | None = None
     ingest_strategies: dict | None = None
     ingest_default_strategy: str | None = None
@@ -5802,6 +5831,9 @@ class HindsightConfig:
             knowledge_embeddings_batch_size=int(
                 os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE, str(DEFAULT_KNOWLEDGE_EMBEDDINGS_BATCH_SIZE))
             ),
+            knowledge_embeddings_max_in_flight=int(
+                os.getenv(ENV_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT, str(DEFAULT_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT))
+            ),
             knowledge_image_tokens=int(os.getenv(ENV_KNOWLEDGE_IMAGE_TOKENS, str(DEFAULT_KNOWLEDGE_IMAGE_TOKENS))),
             knowledge_disabled_media_types=_parse_knowledge_media_types(os.getenv(ENV_KNOWLEDGE_DISABLED_MEDIA_TYPES)),
             knowledge_max_file_mb=int(os.getenv(ENV_KNOWLEDGE_MAX_FILE_MB, str(DEFAULT_KNOWLEDGE_MAX_FILE_MB))),
@@ -5830,6 +5862,12 @@ class HindsightConfig:
             ),
             knowledge_text_passage_tokens=int(
                 os.getenv(ENV_KNOWLEDGE_TEXT_PASSAGE_TOKENS, str(DEFAULT_KNOWLEDGE_TEXT_PASSAGE_TOKENS))
+            ),
+            knowledge_ingest_child_bytes=int(
+                os.getenv(ENV_KNOWLEDGE_INGEST_CHILD_BYTES, str(DEFAULT_KNOWLEDGE_INGEST_CHILD_BYTES))
+            ),
+            knowledge_ingest_memory_budget_mb=int(
+                os.getenv(ENV_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB, str(DEFAULT_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB))
             ),
             knowledge_store_extension=os.getenv(ENV_KNOWLEDGE_STORE_EXTENSION) or None,
             ingest_strategies=_parse_ingest_strategies(os.getenv(ENV_INGEST_STRATEGIES)),

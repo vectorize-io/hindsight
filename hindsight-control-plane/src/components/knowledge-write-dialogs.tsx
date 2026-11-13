@@ -3,7 +3,7 @@
 // Adding documents to a knowledge bank. Same dialog as a memory bank's "Add Document"
 // (bank-selector.tsx): the same shell, Text / Upload Files tabs, file rows that expand
 // into Document and Tags sub-tabs, and footer — minus what a knowledge bank has no use
-// for (context, event date, strategy, entities, metadata). Tags are the only labels.
+// for (context, event date, entities, metadata). Tags are the only labels.
 
 import * as React from "react";
 import { useTranslations } from "next-intl";
@@ -39,7 +39,7 @@ import {
 
 /** File types the API splits into passages; the picker offers these first. */
 const ACCEPTED_FILE_TYPES =
-  "application/pdf,image/*,audio/*,video/*,text/*,.md,.markdown,.json,.csv,.html,.docx,.pptx,.xlsx,.doc,.ppt,.xls";
+  "application/pdf,image/*,audio/*,video/*,text/*,.md,.markdown,.rst,.json,.jsonl,.csv,.tsv,.yaml,.yml,.xml,.html,.htm,.epub,.docx,.pptx,.xlsx,.xls";
 
 // The underline sub-tabs of the memory dialog's per-file and advanced sections.
 const SUB_TAB =
@@ -151,10 +151,13 @@ export function KnowledgeAddDocumentDialog({
     );
   };
 
-  const uploadOne = async (f: StagedFile): Promise<string | null> => {
+  /** The failure's reason, or null; `unchanged` when the server already had this exact file. */
+  const uploadOne = async (
+    f: StagedFile
+  ): Promise<{ error: string | null; unchanged: boolean }> => {
     update(f.key, { state: "uploading", progress: 0, error: null });
     try {
-      await uploadKnowledgeFiles(
+      const result = await uploadKnowledgeFiles(
         bankId,
         [f.file],
         [
@@ -166,11 +169,11 @@ export function KnowledgeAddDocumentDialog({
         (progress) => update(f.key, { progress })
       );
       update(f.key, { state: "done", progress: 1 });
-      return null;
+      return { error: null, unchanged: result.unchanged_document_ids.length > 0 };
     } catch (e) {
       const reason = (e as Error).message;
       update(f.key, { state: "failed", error: reason });
-      return reason;
+      return { error: reason, unchanged: false };
     }
   };
 
@@ -178,12 +181,14 @@ export function KnowledgeAddDocumentDialog({
     setBusy(true);
     const queue = pending.filter((f) => !tooLarge(f));
     let ok = 0;
+    let unchanged = 0;
     let failed = 0;
     let firstError: string | null = null;
     const worker = async () => {
       for (let next = queue.shift(); next; next = queue.shift()) {
-        const error = await uploadOne(next);
-        if (error === null) ok += 1;
+        const { error, unchanged: same } = await uploadOne(next);
+        if (error === null && same) unchanged += 1;
+        else if (error === null) ok += 1;
         else {
           failed += 1;
           firstError ??= error;
@@ -196,6 +201,8 @@ export function KnowledgeAddDocumentDialog({
       toast.success(t("uploaded", { count: ok }));
       onWritten();
     }
+    // An identical file is not ingested again: say so, rather than "uploaded".
+    if (unchanged > 0) toast.info(t("unchanged", { count: unchanged }));
     // The server's reason in the toast too (e.g. "knowledge embedder unavailable"), not
     // only on each file's row, so a failure that hit every file reads at a glance.
     if (failed === 0) onOpenChange(false);
@@ -205,13 +212,14 @@ export function KnowledgeAddDocumentDialog({
   const writeText = async () => {
     setBusy(true);
     try {
-      await client.writeKnowledgeTextDocument(bankId, {
+      const result = await client.writeKnowledgeTextDocument(bankId, {
         text,
         ...(filename.trim() ? { filename: filename.trim() } : {}),
         ...(documentId.trim() ? { document_id: documentId.trim() } : {}),
         tags: parseTags(tags),
       });
-      toast.success(t("written"));
+      if (result.unchanged_document_ids.length > 0) toast.info(t("writtenUnchanged"));
+      else toast.success(t("written"));
       onOpenChange(false);
       onWritten();
     } catch {

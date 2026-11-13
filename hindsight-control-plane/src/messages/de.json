@@ -2455,10 +2455,10 @@
       "documentsTitle": "Dokumente",
       "documentsDescription": "Dateien und Texte in dieser Bank. Jedes Dokument wird in Abschnitte zerlegt und eingebettet; zum Hochladen Dateien einfach hier ablegen.",
       "searchTitle": "Suche",
-      "searchDescription": "Abschnitte nach Bedeutung finden – per Textanfrage, Bild oder beidem."
+      "searchDescription": "Finde Passagen mit Text, einem Bild oder einem Videoclip, einzeln oder zusammen, in einer Rangliste."
     },
     "documents": {
-      "filterPlaceholder": "Nach Name, Titel oder ID filtern…",
+      "filterPlaceholder": "Nach Dateiname oder ID filtern…",
       "kindFilter": "Nach Art filtern",
       "statusFilter": "Nach Status filtern",
       "allKinds": "Alle Arten",
@@ -2514,26 +2514,23 @@
       "originalUnsupported": "Dieser Dateityp kann im Browser nicht angezeigt werden."
     },
     "search": {
-      "placeholder": "Nach Bedeutung suchen, z. B. Wie rotiere ich einen API-Schlüssel?",
-      "addImage": "Bild",
-      "imageHint": "Füge ein Bild ein, lege es ab oder wähle es aus, um damit zu suchen, allein oder mit Text.",
-      "modeMeaning": "Nach Bedeutung",
-      "modeExact": "Exakter Text",
-      "modeHelp": "Exakter Text findet Passagen, die die Wörter genau so enthalten (Codes, IDs, Namen). Gelesen wird nur Text: Textdateien und die Textebene von PDFs.",
+      "placeholder": "Suchen, z. B. wie rotiere ich einen API-Schlüssel?",
+      "addMedia": "Bild / Video",
+      "mediaHint": "Füge ein Bild oder einen MP4-Clip ein, lege ihn ab oder wähle ihn aus, um damit zu suchen, allein oder mit Text.",
       "imageQuery": "Suche mit diesem Bild",
-      "removeImage": "Bild entfernen",
-      "notAnImage": "Nur Bilder können als Suchanfrage verwendet werden",
-      "pastedImage": "Eingefügtes Bild",
+      "videoQuery": "Suche mit diesem Video",
+      "removeMedia": "Entfernen",
+      "notMedia": "Nur ein Bild oder ein MP4-Video kann eine Suchanfrage sein",
+      "pastedMedia": "Eingefügte Datei",
       "topK": "Ergebnisse",
       "submit": "Suchen",
-      "filters": "Filter",
+      "options": "Optionen",
       "tags": "Tags",
       "tagsMatch": "Tag-Abgleich",
       "tagsAny": "Beliebig",
       "tagsAll": "Alle",
       "noResults": "Keine Abschnitte passen zu dieser Suche.",
-      "idle": "Durchsuche die Abschnitte dieser Bank per Text oder Bild.",
-      "scoreHelp": "Kosinus-Ähnlichkeit zwischen Anfrage und Abschnitt",
+      "idle": "Durchsuche diese Bank mit Text, einem Bild, einem Videoclip oder einer beliebigen Kombination.",
       "openPassage": "Im Dokument öffnen",
       "failed": "Suche fehlgeschlagen",
       "mediaTypes": "Medientypen",
@@ -2600,7 +2597,7 @@
       "textTokens": "Größe der Textabschnitte (Tokens)",
       "seconds": "{count, plural, one {# Sekunde} other {# Sekunden}}",
       "linkTitle": "Speicherbänke",
-      "linkDescription": "Speicherbänke, die diese Bank verknüpfen, erhalten beim Recall ihre Abschnitte als maßgebliche Quelle.",
+      "linkDescription": "Reflect auf einer Memory Bank, die diese Bank verknüpft, durchsucht sie ebenfalls und behandelt ihre Dokumente als maßgeblich.",
       "linkHowTo": "Verknüpfe sie von einer Speicherbank aus: Öffne die Speicherbank, dann Bank-Konfiguration → Konfiguration → Wissensbänke.",
       "delete": "Bank löschen",
       "mediaTypes": "Medientypen, die sie schreiben kann"
@@ -2621,7 +2618,9 @@
       "tagsFor": "Tags für {name}",
       "uploaded": "{count, plural, one {# Datei hochgeladen} other {# Dateien hochgeladen}}. Sie wird durchsuchbar, sobald sie bereit ist.",
       "someFailed": "{count, plural, one {# Datei konnte} other {# Dateien konnten}} nicht hochgeladen werden",
-      "written": "Dokument hinzugefügt. Es wird durchsuchbar, sobald es bereit ist."
+      "written": "Dokument hinzugefügt und durchsuchbar.",
+      "unchanged": "{count, plural, one {# Datei} other {# Dateien}} unverändert: bereits genau so aufgenommen.",
+      "writtenUnchanged": "Unverändert: dieses Dokument ist bereits genau so aufgenommen."
     }
   }
 }

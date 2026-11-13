@@ -1,0 +1,8 @@
+name: hindsight_knowledge
+version: 0.1.0
+description: "Search and read a Hindsight knowledge bank (HINDSIGHT_KNOWLEDGE_API_URL, HINDSIGHT_KNOWLEDGE_BANK)."
+author: Vectorize
+kind: standalone
+provides_tools:
+  - knowledge_search
+  - knowledge_read

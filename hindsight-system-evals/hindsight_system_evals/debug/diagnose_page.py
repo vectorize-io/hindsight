@@ -40,6 +40,7 @@ from hindsight_system_evals.pages import create_page, facts, prepare_bank, quest
 from hindsight_system_evals.server import start_eval_server
 from hindsight_system_evals.waiting import wait_until_settled
 
+
 def _excerpt(text: str, limit: int = 400) -> str:
     flat = " ".join((text or "").split())
     return flat[:limit] + ("…" if len(flat) > limit else "")

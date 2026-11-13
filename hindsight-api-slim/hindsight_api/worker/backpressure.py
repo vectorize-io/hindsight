@@ -48,6 +48,11 @@ def is_store_backpressure(exc: BaseException) -> bool:
     cur: BaseException | None = exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
+        # Matched by wording only, not by `StoreWriteUnavailable` type: a deferral here has no cap
+        # (#6529), and a store that raises that type for good (a cutover that never ends, a test that
+        # raises it on purpose) then deferred for ever. Matching it by type took the api-slim CI shard
+        # that runs those tests down every time, until the runner was killed. Add the type once #6529
+        # caps the deferrals.
         text = str(cur)
         if any(marker in text for marker in _BACKPRESSURE_MARKERS):
             return True
@@ -76,6 +81,33 @@ def is_append_conflict(exc: BaseException) -> bool:
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
         if isinstance(cur, (ConcurrentAppendConflict, StoreWriteConflict)):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+#: Task types whose upstream 429s are deferred instead of failed. Knowledge ingest only: an LLM can answer
+#: 429 for a quota that is used up, which never clears, so a retain's or a reflect's 429 keeps failing as
+#: before. Shared by the engine (which passes such a 429 up) and the poller (which defers it); the engine
+#: used to test ``task_type == "knowledge_ingest"`` on its own, which could drift from the poller's set.
+RATE_LIMIT_DEFERRED_TASKS = frozenset({"knowledge_ingest"})
+
+
+def is_upstream_rate_limit(exc: BaseException) -> bool:
+    """Is `exc` an upstream (an embedder, through its gateway) answering 429, "too many requests"?
+
+    Like a shedding store, it says nothing about the payload and clears as the upstream's load does —
+    but only after the call's own retries ran out, so the load lasted longer than they cover. Walks the
+    cause/context chain like the others; the status is read with `remote_retry.status_code_of`, which
+    knows the attribute each HTTP client keeps it on.
+    """
+    from ..engine.remote_retry import status_code_of
+
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if status_code_of(cur) == 429:
             return True
         cur = cur.__cause__ or cur.__context__
     return False

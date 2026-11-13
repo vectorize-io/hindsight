@@ -106,7 +106,9 @@ function DocumentCard({
   const ready = doc.status === "ready" && doc.passage_count > 0;
   const preview = proxiedMediaUrl(firstPassageUrl(doc));
   let thumb: React.ReactNode = <KindIcon kind={doc.media_type} className="h-10 w-10 opacity-70" />;
-  if (ready && (doc.media_type === "document" || doc.media_type === "image")) {
+  // Only PDF pages and images have a picture: Office and HTML files are split as text.
+  const picture = doc.media_type === "image" || (doc.media_type === "document" && isPdf(doc));
+  if (ready && picture) {
     thumb = (
       <img src={preview} alt="" loading="lazy" className="h-full w-full bg-white object-contain" />
     );
@@ -590,5 +592,11 @@ export function KnowledgeDocumentsView({
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function isPdf(doc: KnowledgeDocument): boolean {
+  return (
+    doc.content_type === "application/pdf" || (doc.filename ?? "").toLowerCase().endsWith(".pdf")
   );
 }
