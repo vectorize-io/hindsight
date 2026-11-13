@@ -73,6 +73,13 @@ _APPEND_CONFLICT_DEFER_COUNT_KEY = "append_conflict_defers"
 _RATE_LIMIT_DEFER_BASE_SECONDS = 15.0
 _RATE_LIMIT_DEFER_COUNT_KEY = "rate_limit_defers"
 
+# How many times a store may shed one task before the task fails. Unlike a lost append race, a
+# shed has no winner that finishes: a store that never recovers (say a cutover that never ends)
+# would defer the task forever, silently (#6529). 180 deferrals at the default 120s is ~6 hours,
+# far past any backlog a healthy store drains.
+_STORE_BACKPRESSURE_DEFER_COUNT_KEY = "store_backpressure_defers"
+_STORE_BACKPRESSURE_MAX_DEFERS = 180
+
 
 def _append_conflict_defer_seconds(defer_count: int, base: float = _APPEND_CONFLICT_DEFER_BASE_SECONDS) -> float:
     """Jittered exponential backoff for the ``defer_count``-th deferral (1-based)."""
@@ -1138,11 +1145,12 @@ class WorkerPoller:
 
     async def _defer_count(self, task: ClaimedTask, key: str = _APPEND_CONFLICT_DEFER_COUNT_KEY) -> int:
         """How many times this task has already been deferred for the reason ``key`` counts: a lost
-        append race by default, an upstream still rate-limiting with ``_RATE_LIMIT_DEFER_COUNT_KEY``.
-        (Was ``_append_conflict_defer_count``; renamed once it counted rate-limit deferrals too.)
+        append race by default, an upstream still rate-limiting with ``_RATE_LIMIT_DEFER_COUNT_KEY``,
+        a store shedding the write with ``_STORE_BACKPRESSURE_DEFER_COUNT_KEY``.
+        (Was ``_append_conflict_defer_count``; renamed once it counted more than append races.)
 
-        Only drives the backoff and the log line, so a read that fails is not worth failing the
-        task over — it falls back to 0, i.e. the shortest delay.
+        Drives backoff, caps and log lines, so a read that fails is not worth failing the task
+        over — it falls back to 0.
         """
         table = fq_table("async_operations", task.schema)
         try:
@@ -1288,6 +1296,8 @@ class WorkerPoller:
         the engine's own ``except`` blocks — the ones that fire a consolidation
         failure webhook — are skipped. Without this notification a timed-out
         consolidation would be the single failure mode subscribers never hear about.
+        Also used when the store sheds a task past its cap: the engine re-raises a shed
+        untouched, so its failure handling is skipped there too.
         """
         if self._on_wall_timeout is None:
             return
@@ -1374,17 +1384,30 @@ class WorkerPoller:
             # documents in flight when the backlog crosses the bound — the task's small retry
             # budget runs out while the store is still legitimately shedding. Checked before the
             # failure path so the operation keeps its retries for things that are actually wrong.
+            # A shed is counted, and capped: a store that never recovers (a cutover that never ends)
+            # would otherwise defer the task forever and nobody would hear of it (#6529).
+            stuck_store = ""
             if is_store_backpressure(e):
-                retry_at = datetime.now(timezone.utc) + timedelta(seconds=_backpressure_defer_seconds())
-                logger.warning(
-                    "Task %s deferred until %s: store backpressure (%s)",
-                    task.operation_id,
-                    retry_at,
-                    str(e)[:200],
+                defers = await self._defer_count(task, _STORE_BACKPRESSURE_DEFER_COUNT_KEY) + 1
+                if defers <= _STORE_BACKPRESSURE_MAX_DEFERS:
+                    retry_at = datetime.now(timezone.utc) + timedelta(seconds=_backpressure_defer_seconds())
+                    logger.warning(
+                        "Task %s deferred until %s: store backpressure (deferral #%d): %s",
+                        task.operation_id,
+                        retry_at,
+                        defers,
+                        str(e)[:200],
+                    )
+                    reason = f"store backpressure (deferral #{defers}): {str(e)[:400]}"
+                    metadata = {_STORE_BACKPRESSURE_DEFER_COUNT_KEY: defers}
+                    await self._write_terminal(
+                        task, "deferred", lambda: self._defer_all(task, retry_at, reason, metadata)
+                    )
+                    return
+                stuck_store = (
+                    f"the store kept shedding this write: deferred {_STORE_BACKPRESSURE_MAX_DEFERS} times "
+                    "for backpressure and never accepted it. Last error: "
                 )
-                reason = f"store backpressure: {str(e)[:400]}"
-                await self._write_terminal(task, "deferred", lambda: self._defer_all(task, retry_at, reason))
-                return
             # An embedder still answering 429 after its own retries is the same shape of answer for a
             # knowledge ingest: "not now". Failing it is what lost whole PDFs on a busy gateway; the
             # batch commits nothing on a transient error, and a document it committed before is
@@ -1442,10 +1465,16 @@ class WorkerPoller:
                 return
             # exc_info rather than print_exc(): the stderr copy carries no task id
             # and is the first thing lost to log rotation (issue #3218).
-            error_message = format_task_error(e)
+            error_message = stuck_store + format_task_error(e)
             logger.error(f"Task {task.operation_id} failed: {error_message}", exc_info=True)
             await self._write_terminal(task, "failed", lambda: self._mark_all_failed(task, error_message))
             terminal_success = False
+            if stuck_store:
+                # The engine re-raised the shed untouched, so none of its failure handling ran: no
+                # consolidation webhook, no failed-refresh record. This hook is the one that fires
+                # them for a failure the engine never saw. `.backoff` marks it a temporary failure,
+                # so a refresh is recorded as failed without pausing its automatic triggers.
+                await self._notify_wall_timeout(task, error_message, "store_backpressure.backoff")
         else:
             # Outside the except clauses on purpose: the work already ran, so a
             # failing 'completed' write must never be turned into 'failed'.

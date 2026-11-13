@@ -5315,13 +5315,12 @@ class MemoryEngine(MemoryEngineInterface):
                     # retry to count. Passed up as is for the poller to defer, with its own backoff and
                     # count (worker/poller.py, worker/backpressure.RATE_LIMIT_DEFERRED_TASKS).
                     raise
-                if task_type in RATE_LIMIT_DEFERRED_TASKS and is_store_backpressure(e):
-                    # The store shedding the write while its indexing catches up: the poller defers that
-                    # without counting a retry (worker/backpressure.py), but only if it sees it. Turned
-                    # into a counted RetryTaskAt here, a long ingest's batches used up their retries on a
-                    # backlog that clears by itself, and the poller saw it only on the last one. Only the
-                    # deferred task types for now: a memory-bank retain hits the same counted retry, but
-                    # changing how retain retries is its own change (#6528), not this one.
+                if is_store_backpressure(e):
+                    # A store shedding the write is "not now", whatever the task. Re-raised as is so
+                    # the poller defers it with its own backoff and cap; turned into a RetryTaskAt
+                    # below it would spend a retry, and a long backlog would fail the task (#6528).
+                    # Checked after the embedding-model mismatch: the re-embed guard's refusal also
+                    # says "writes are shed", but it has its own delay and must never hit the cap.
                     raise
                 # exc_info, not a bare print_exc(): the traceback is the only pointer
                 # to the offending call site, and under production log volume the
