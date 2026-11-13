@@ -1333,7 +1333,11 @@ class KnowledgeService:
             # so its documents stay on their way whatever the retries left.
             from ..worker.backpressure import is_store_backpressure, is_upstream_rate_limit
 
-            on_its_way = retries_left or is_upstream_rate_limit(exc) or is_store_backpressure(exc)
+            # A ValueError is permanent (the engine marks the operation failed without a retry, e.g. a
+            # write at another vector size than the bank's): left pending, its documents would wait for
+            # a retry that never comes.
+            permanent = isinstance(exc, ValueError)
+            on_its_way = not permanent and (retries_left or is_upstream_rate_limit(exc) or is_store_backpressure(exc))
             status: DocumentStatus = "pending" if on_its_way else "failed"
             note = f"retrying after: {exc!r}" if on_its_way else repr(exc)
             await self.store.set_statuses(

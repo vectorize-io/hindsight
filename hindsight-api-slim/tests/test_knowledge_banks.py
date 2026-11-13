@@ -1579,3 +1579,19 @@ async def test_a_store_shedding_a_batch_defers_it_without_using_a_retry(
     row = await _run_as_worker(memory, poller, child, retry_count=0)
     assert row["status"] == "pending" and (row["retry_count"] or 0) == 0, row
     assert (await service.store.get_documents(kb, ["b"]))["b"].status == "pending"
+
+
+async def test_a_batch_that_fails_for_good_fails_its_documents_not_leaves_them_pending(
+    api_client, memory, kb, fake_embedder, monkeypatch
+):
+    store = get_knowledge_service(memory).store
+
+    async def other_size(*_a, **_k):
+        raise ValueError("knowledge bank holds vectors of 768 dimensions, but this ingest makes 384")
+
+    monkeypatch.setattr(store, "replace_passages", other_size)
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "v", "text": "red"}], "async": True})
+    assert r.status_code == 202, r.text
+    # The engine does not retry a ValueError, so a pending document would wait for ever.
+    doc = (await api_client.get(f"{KB}/{kb}/documents/v")).json()
+    assert doc["status"] == "failed" and "768 dimensions" in (doc["error"] or ""), doc
