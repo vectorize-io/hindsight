@@ -619,7 +619,7 @@ page), and the list is scored against the right documents:
 - **recall@k**: the share of right documents in the top *k* (for an image: is the photo in the
   top 1, 5, 10).
 
-Scores, ingest rate and search latency (p50/p95, timed by the client) go to `--output` under
+Scores, ingest rate and search latency (p50/p95, timed by the client). The ranked scoring asks search for its largest token budget so every ranked candidate comes back; text hits then also carry their surrounding passages (up to five a side), so search latency is not comparable with runs from before the budget (`top_k` with `neighbors=0`), and adjacent hits of one text document come back as one result, which leaves document-level rankings unchanged go to `--output` under
 `knowledge`; `eval-table` prints them per case, one column per run. The asserts only catch a
 broken pipeline (a failed document, a query with no results).
 
@@ -641,7 +641,10 @@ uv run eval-table gemma.json pplx.json                                       # c
 Compare embedders one server per run. A server this package starts takes them as
 `HINDSIGHT_EVAL_SET_KNOWLEDGE_EMBEDDINGS_PROVIDER` / `_MODEL` / `_BASE_URL` / `_MODALITIES`
 (they reach it as `HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_*`); with `--api-url`, start the server
-with those settings yourself. A case whose media type the embedder cannot write is skipped.
+with those settings yourself. The server does not say which embedder it runs, so a result is labelled
+`HINDSIGHT_EVAL_KNOWLEDGE_EMBEDDER` (else the `_SET_` provider and model above, else `unknown`), and
+a case is skipped unless its media type is in `HINDSIGHT_EVAL_KNOWLEDGE_MEDIA_TYPES` (comma separated;
+all of them by default).
 `HINDSIGHT_EVAL_KNOWLEDGE_SEARCH_CONCURRENCY` (4) is how many searches run at once (latency is
 reported with it), `HINDSIGHT_EVAL_KNOWLEDGE_INGEST_TIMEOUT` (seconds, 6 h) how long a corpus
 may take to be ready.
@@ -715,7 +718,7 @@ with two tools from the `hindsight_knowledge` plugin
 
 | tool | what it does |
 |---|---|
-| `knowledge_search` | the bank's search (`top_k`, `tags`, `neighbors`), hits grouped by document, each headed by its document id |
+| `knowledge_search` | the bank's search (`max_tokens`, `tags`), hits grouped by document, each headed by its document id, with the text around it that fits the budget |
 | `knowledge_read` | a document's original text by id, in pages |
 
 Both call the server; the plugin keeps no copy of the bank. A `knowledge_grep` tool (exact text

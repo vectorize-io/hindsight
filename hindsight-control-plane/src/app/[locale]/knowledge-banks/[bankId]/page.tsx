@@ -9,21 +9,37 @@ import { FileText, Home, Library, Search, Settings } from "lucide-react";
 import { client } from "@/lib/api";
 import { useBank } from "@/lib/bank-context";
 import {
+  DOCUMENT_STATUSES,
   knowledgeBankRoute,
+  MEDIA_TYPES,
+  type DocumentStatus,
   type KnowledgeBank,
-  type KnowledgeConfig,
+  type MediaType,
 } from "@/lib/knowledge-banks";
 import { BankSelector } from "@/components/bank-selector";
 import { Sidebar, type SidebarItem } from "@/components/sidebar";
 import { KnowledgeBankHome } from "@/components/knowledge-bank-home";
-import { KnowledgeBankSettings } from "@/components/knowledge-bank-settings";
-import { KnowledgeDocumentsView } from "@/components/knowledge-documents-view";
+import {
+  KnowledgeBankSettings,
+  SETTINGS_TABS,
+  type SettingsTab,
+} from "@/components/knowledge-bank-settings";
+import {
+  DOCUMENT_LAYOUTS,
+  KnowledgeDocumentsView,
+  type DocumentsLayout,
+} from "@/components/knowledge-documents-view";
 import { KnowledgeDocumentDialog } from "@/components/knowledge-document-dialog";
 import { KnowledgeSearchPanel } from "@/components/knowledge-search-panel";
 import { Button } from "@/components/ui/button";
 
 type Section = "home" | "documents" | "search" | "settings";
 const SECTIONS: Section[] = ["home", "documents", "search", "settings"];
+
+/** `value` when it is one of `allowed`, else undefined: a bad link is ignored, not obeyed. */
+function oneOf<T extends string>(value: string | null, allowed: readonly T[]): T | undefined {
+  return allowed.find((a) => a === value);
+}
 
 export default function KnowledgeBankPage() {
   const params = useParams<{ bankId: string }>();
@@ -38,10 +54,16 @@ export default function KnowledgeBankPage() {
   const openDoc = searchParams.get("doc");
   const passageParam = searchParams.get("passage");
   const highlightPassage = passageParam != null ? Number(passageParam) : null;
+  // Links from Home open the documents list filtered (?kind=, ?status=) or as a constellation (?layout=).
+  const requestedKind = oneOf<MediaType>(searchParams.get("kind"), MEDIA_TYPES);
+  const requestedStatus = oneOf<DocumentStatus>(searchParams.get("status"), DOCUMENT_STATUSES);
+  const requestedLayout = oneOf<DocumentsLayout>(searchParams.get("layout"), DOCUMENT_LAYOUTS);
+  // Settings' sub-tab, in the URL like a memory bank's `bankConfigTab`.
+  const settingsTab =
+    oneOf<SettingsTab>(searchParams.get("settingsTab"), SETTINGS_TABS) ?? "general";
 
   const [bank, setBank] = useState<KnowledgeBank | null>(null);
   const [missing, setMissing] = useState(false);
-  const [config, setConfig] = useState<KnowledgeConfig | null>(null);
 
   useEffect(() => {
     setCurrentBank(null);
@@ -57,17 +79,16 @@ export default function KnowledgeBankPage() {
 
   useEffect(() => {
     loadBank();
-    client
-      .getKnowledgeConfig()
-      .then(setConfig)
-      .catch(() => setConfig(null));
   }, [loadBank]);
 
   const go = (query: string) => router.push(knowledgeBankRoute(bankId, query));
   const goSection = (section: Section) => go(section === "home" ? "" : `?view=${section}`);
   // The document dialog opens over whichever section asked for it, and closing it
   // returns there, like the memory bank documents dialog.
-  const openDocument = (id: string) => go(`?view=${view}&doc=${encodeURIComponent(id)}`);
+  const openDocument = (id: string, passage?: number) =>
+    go(
+      `?view=${view}&doc=${encodeURIComponent(id)}${passage != null ? `&passage=${passage}` : ""}`
+    );
   const closeDocument = () =>
     router.replace(knowledgeBankRoute(bankId, view === "home" ? "" : `?view=${view}`));
 
@@ -112,7 +133,7 @@ export default function KnowledgeBankPage() {
               ) : (
                 <>
                   {view === "home" && (
-                    <KnowledgeBankHome bank={bank} config={config} onOpenDocument={openDocument} />
+                    <KnowledgeBankHome bank={bank} onOpenDocument={openDocument} />
                   )}
 
                   {/* Documents and search stay mounted while hidden, so switching back
@@ -125,9 +146,11 @@ export default function KnowledgeBankPage() {
                     <p className="mb-6 text-muted-foreground">{t("documentsDescription")}</p>
                     <KnowledgeDocumentsView
                       bankId={bankId}
-                      config={config}
                       onOpenDocument={openDocument}
                       onChanged={loadBank}
+                      requestedKind={requestedKind}
+                      requestedStatus={requestedStatus}
+                      requestedLayout={requestedLayout}
                     />
                   </div>
                   <div className={view === "search" ? undefined : "hidden"}>
@@ -139,7 +162,8 @@ export default function KnowledgeBankPage() {
                   {view === "settings" && (
                     <KnowledgeBankSettings
                       bank={bank}
-                      config={config}
+                      tab={settingsTab}
+                      onTabChange={(tab) => go(`?view=settings&settingsTab=${tab}`)}
                       onDeleted={() => router.push("/knowledge-banks")}
                     />
                   )}

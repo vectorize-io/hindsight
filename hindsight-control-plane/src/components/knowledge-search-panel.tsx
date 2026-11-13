@@ -17,11 +17,13 @@ import { toast } from "sonner";
 import { client } from "@/lib/api";
 import {
   MEDIA_TYPES,
+  SEARCH_BUDGETS,
   fileToBase64,
   parseTags,
   type KnowledgeSearchRequest,
   type KnowledgeSearchResponse,
   type MediaType,
+  type SearchBudget,
 } from "@/lib/knowledge-banks";
 import { cn } from "@/lib/utils";
 import { SearchResultCard, SearchResultGrid } from "@/components/knowledge-passage";
@@ -42,8 +44,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const NEIGHBOR_OPTIONS = [0, 1, 2, 3, 4, 5]; // the API's range
-const MAX_TOP_K = 200; // the API's limit
+const DEFAULT_MAX_TOKENS = 4096; // the API's default
+const MAX_MAX_TOKENS = 1_000_000; // the API's limit
 
 interface QueryMedia {
   base64: string;
@@ -65,8 +67,8 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
   const [query, setQuery] = React.useState("");
   const [image, setImage] = React.useState<QueryMedia | null>(null);
   const [video, setVideo] = React.useState<QueryMedia | null>(null);
-  const [topK, setTopK] = React.useState(10);
-  const [neighbors, setNeighbors] = React.useState(1);
+  const [maxTokens, setMaxTokens] = React.useState(DEFAULT_MAX_TOKENS);
+  const [budget, setBudget] = React.useState<SearchBudget>("mid");
   const [showOptions, setShowOptions] = React.useState(false);
   const [tags, setTags] = React.useState("");
   const [tagsMatch, setTagsMatch] = React.useState<"any" | "all">("any");
@@ -112,8 +114,8 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
     if (!canSearch) return;
     const parsedTags = parseTags(tags);
     const body: KnowledgeSearchRequest = {
-      top_k: Math.min(MAX_TOP_K, Math.max(1, topK || 10)),
-      neighbors,
+      max_tokens: Math.min(MAX_MAX_TOKENS, Math.max(1, maxTokens || DEFAULT_MAX_TOKENS)),
+      ...(budget !== "mid" ? { budget } : {}),
       ...(query.trim() ? { query: query.trim() } : {}),
       ...(image ? { query_image: image.base64 } : {}),
       ...(video ? { query_video: video.base64 } : {}),
@@ -334,35 +336,39 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
                 </div>
                 <p className="text-xs text-muted-foreground">{t("mediaTypesHelp")}</p>
               </div>
-              <div className="flex flex-wrap items-end gap-4">
-                <div className="space-y-1.5">
-                  <Label htmlFor="kb-top-k">{t("topK")}</Label>
-                  <Input
-                    id="kb-top-k"
-                    type="number"
-                    min={1}
-                    max={MAX_TOP_K}
-                    value={topK}
-                    onChange={(e) => setTopK(Number(e.target.value))}
-                    className="w-24"
-                  />
+              <div className="min-w-0 space-y-1.5">
+                <Label htmlFor="kb-max-tokens">{t("maxTokens")}</Label>
+                <Input
+                  id="kb-max-tokens"
+                  type="number"
+                  min={1}
+                  max={MAX_MAX_TOKENS}
+                  value={maxTokens}
+                  onChange={(e) => setMaxTokens(Number(e.target.value))}
+                  className="w-32"
+                />
+                <p className="text-xs text-muted-foreground">{t("maxTokensHelp")}</p>
+              </div>
+              <div className="min-w-0 space-y-1.5">
+                <span className="text-sm font-medium leading-none">{t("budget")}</span>
+                <div className="flex h-10 w-fit gap-1 rounded-lg bg-muted p-1">
+                  {SEARCH_BUDGETS.map((b) => (
+                    <button
+                      key={b}
+                      type="button"
+                      aria-pressed={budget === b}
+                      onClick={() => setBudget(b)}
+                      className={`rounded-md px-3 text-sm font-medium transition-colors ${
+                        budget === b
+                          ? "bg-background shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {t(b === "low" ? "budgetLow" : b === "mid" ? "budgetMid" : "budgetHigh")}
+                    </button>
+                  ))}
                 </div>
-                {/* Passages on each side of a text hit, returned as its context. */}
-                <div className="space-y-1.5" title={t("contextHelp")}>
-                  <Label htmlFor="kb-neighbors">{t("context")}</Label>
-                  <Select value={String(neighbors)} onValueChange={(v) => setNeighbors(Number(v))}>
-                    <SelectTrigger id="kb-neighbors" className="w-20">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {NEIGHBOR_OPTIONS.map((n) => (
-                        <SelectItem key={n} value={String(n)}>
-                          {n}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <p className="text-xs text-muted-foreground">{t("budgetHelp")}</p>
               </div>
             </div>
           )}

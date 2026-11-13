@@ -40,7 +40,7 @@ import {
   KindIcon,
   PassageLocation,
   PassageMedia,
-  StatusChip,
+  StatusMark,
 } from "@/components/knowledge-passage";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -363,7 +363,7 @@ export function KnowledgeDocumentDialog({
             <DialogTitle className="flex items-center gap-2">
               {doc && <KindIcon kind={doc.media_type} />}
               <span className="truncate font-mono text-sm">{documentId}</span>
-              {doc && <StatusChip status={doc.status} />}
+              {doc && <StatusMark status={doc.status} error={doc.error} />}
             </DialogTitle>
           </DialogHeader>
 

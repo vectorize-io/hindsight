@@ -758,10 +758,6 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
                           >
                             {bank.bank_id}
                           </span>
-                          <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground/70">
-                            {formatCompact(bank.document_count)} ·{" "}
-                            {formatCompact(bank.passage_count)}
-                          </span>
                         </CommandItem>
                       );
                     })}

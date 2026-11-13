@@ -313,6 +313,8 @@ interface DistributionItem {
   name: string;
   value: number;
   color: string;
+  /** Makes the legend entry a link (e.g. to the list filtered on it). */
+  href?: string;
 }
 
 export function Distribution({
@@ -353,22 +355,40 @@ export function Distribution({
               ))}
           </div>
           <div className="grid grid-cols-3 gap-3 text-sm">
-            {items.map((d) => (
-              <div key={d.name} className="space-y-0.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-[2px]" style={{ backgroundColor: d.color }} />
-                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">
-                    {d.name}
-                  </span>
+            {items.map((d) => {
+              const body = (
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-[2px]" style={{ backgroundColor: d.color }} />
+                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-medium">
+                      {d.name}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-1.5">
+                    <CompactNumber
+                      value={d.value}
+                      className="text-base font-semibold tabular-nums"
+                    />
+                    <span className="text-[10px] text-muted-foreground tabular-nums">
+                      {total > 0 ? `${((d.value / total) * 100).toFixed(0)}%` : "0%"}
+                    </span>
+                  </div>
+                </>
+              );
+              return d.href ? (
+                <Link
+                  key={d.name}
+                  href={d.href}
+                  className="-m-1 block space-y-0.5 rounded p-1 hover:bg-muted"
+                >
+                  {body}
+                </Link>
+              ) : (
+                <div key={d.name} className="space-y-0.5">
+                  {body}
                 </div>
-                <div className="flex items-baseline gap-1.5">
-                  <CompactNumber value={d.value} className="text-base font-semibold tabular-nums" />
-                  <span className="text-[10px] text-muted-foreground tabular-nums">
-                    {total > 0 ? `${((d.value / total) * 100).toFixed(0)}%` : "0%"}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </>
       )}

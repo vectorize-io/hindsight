@@ -128,6 +128,7 @@ const OPERATION_TYPE_VALUES = [
   "export_bank",
   "import_bank",
   "clone_bank",
+  "knowledge_ingest",
 ] as const;
 
 const STATUS_FILTER_VALUES = [
@@ -139,9 +140,18 @@ const STATUS_FILTER_VALUES = [
   "cancelled",
 ] as const;
 
-export function BankOperationsView() {
+export function BankOperationsView({
+  bankId,
+  hideTypeFilter = false,
+}: {
+  /** A bank outside the bank context: a knowledge bank, whose page keeps the context empty. */
+  bankId?: string;
+  /** For a bank with one kind of operation (a knowledge bank only ingests), where the filter has nothing to pick. */
+  hideTypeFilter?: boolean;
+} = {}) {
   const t = useTranslations("bankOperations");
-  const { currentBank } = useBank();
+  const { currentBank: contextBank } = useBank();
+  const currentBank = bankId ?? contextBank;
   const [operations, setOperations] = useState<Operation[]>([]);
   const [totalOperations, setTotalOperations] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
@@ -187,6 +197,7 @@ export function BankOperationsView() {
     export_bank: t("operationType.exportBank"),
     import_bank: t("operationType.importBank"),
     clone_bank: t("operationType.cloneBank"),
+    knowledge_ingest: t("operationType.knowledgeIngest"),
   };
 
   const formatStatus = (status: string | null | undefined) =>
@@ -609,26 +620,28 @@ export function BankOperationsView() {
               {t("action.retryAll", { count: failedOnPage })}
             </Button>
           )}
-          <Select
-            value={taskTypeFilter ?? "all"}
-            onValueChange={(val) => handleTaskTypeFilterChange(val === "all" ? null : val)}
-          >
-            <SelectTrigger className="h-9 w-[180px] text-sm">
-              <SelectValue placeholder={t("allTypes")} />
-            </SelectTrigger>
-            <SelectContent>
-              {OPERATION_TYPE_VALUES.map((value) => (
-                <SelectItem key={value} value={value}>
-                  <div>
-                    <div>{operationTypeLabels[value]}</div>
-                    {value !== "all" && (
-                      <div className="text-xs text-muted-foreground font-mono">{value}</div>
-                    )}
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {!hideTypeFilter && (
+            <Select
+              value={taskTypeFilter ?? "all"}
+              onValueChange={(val) => handleTaskTypeFilterChange(val === "all" ? null : val)}
+            >
+              <SelectTrigger className="h-9 w-[180px] text-sm">
+                <SelectValue placeholder={t("allTypes")} />
+              </SelectTrigger>
+              <SelectContent>
+                {OPERATION_TYPE_VALUES.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    <div>
+                      <div>{operationTypeLabels[value]}</div>
+                      {value !== "all" && (
+                        <div className="text-xs text-muted-foreground font-mono">{value}</div>
+                      )}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <div className="flex max-w-full gap-1 overflow-x-auto bg-muted p-1 rounded-lg">
             {STATUS_FILTER_VALUES.map((filter) => (
               <button

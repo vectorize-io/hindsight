@@ -107,7 +107,7 @@ def _opening(plugin, question: str, preload: int) -> str:
     from snippets (a small model tends to answer from the first snippet it sees)."""
     if not preload:
         return question
-    found = plugin.knowledge_search({"query": question, "top_k": 10})
+    found = plugin.knowledge_search({"query": question})
     # Each hit is headed by its bare document id (``dsid_… | filename | tags=…``): the plugin stopped
     # numbering hits ("[1] dsid_…"), and this used to match only the numbered form, so preload read nothing.
     ids = list(dict.fromkeys(re.findall(r"^(dsid_[0-9a-f]{32}) \|", found, re.M)))[:preload]

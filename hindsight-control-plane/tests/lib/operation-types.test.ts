@@ -32,7 +32,8 @@ const VIEW = join(REPO_ROOT, "hindsight-control-plane", "src", "components", "ba
  * paths that build the operation record directly, so the UI must keep them —
  * the parity check only runs in the dataplane -> UI direction.
  */
-const UI_ONLY = new Set(["all", "retain", "webhook_delivery"]);
+// `knowledge_ingest` is written by knowledge/service.py, not memory_engine.py.
+const UI_ONLY = new Set(["all", "retain", "webhook_delivery", "knowledge_ingest"]);
 
 function engineOperationTypes(): Set<string> {
   const src = readFileSync(ENGINE, "utf-8");

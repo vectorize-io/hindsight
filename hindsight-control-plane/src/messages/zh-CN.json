@@ -729,7 +729,8 @@
       "importDocuments": "导入文档",
       "exportBank": "导出记忆库",
       "importBank": "导入记忆库",
-      "cloneBank": "克隆记忆库"
+      "cloneBank": "克隆记忆库",
+      "knowledgeIngest": "知识导入"
     },
     "table": {
       "id": "操作 ID",
@@ -2467,7 +2468,6 @@
       "upload": "上传文件",
       "dropToUpload": "拖放文件即可上传",
       "columnDocument": "文档",
-      "columnStatus": "状态",
       "columnPassages": "段落",
       "columnSize": "大小",
       "columnTags": "标签",
@@ -2483,7 +2483,8 @@
       "noMatchesBody": "换个名称、类型或状态试试。",
       "layout": "布局",
       "viewList": "列表",
-      "viewGrid": "网格"
+      "viewGrid": "网格",
+      "viewConstellation": "星座图"
     },
     "detail": {
       "download": "下载原文件",
@@ -2522,7 +2523,13 @@
       "removeMedia": "移除",
       "notMedia": "只能使用图片或 MP4 视频作为搜索查询",
       "pastedMedia": "粘贴的文件",
-      "topK": "结果数",
+      "maxTokens": "最大 token 数",
+      "maxTokensHelp": "返回文本的总量:最佳段落,以及能容纳的前后文。",
+      "budget": "预算",
+      "budgetHelp": "搜索排序的深度:低最快,高找得最远。",
+      "budgetLow": "低",
+      "budgetMid": "中",
+      "budgetHigh": "高",
       "submit": "搜索",
       "options": "选项",
       "tags": "标签",
@@ -2535,10 +2542,8 @@
       "failed": "搜索失败",
       "mediaTypes": "媒体类型",
       "mediaTypesHelp": "不勾选任何项时搜索所有媒体类型。",
-      "context": "上下文",
-      "contextHelp": "每个文本命中前后作为上下文返回的段落数",
-      "showContext": "显示上下文",
-      "hideContext": "隐藏上下文"
+      "showMore": "显示更多",
+      "showLess": "收起"
     },
     "linked": {
       "title": "文档库",
@@ -2560,7 +2565,6 @@
       "countsLegend": "文档 · 段落"
     },
     "home": {
-      "embedder": "使用 {model} 嵌入({dimension} 维)",
       "documents": "文档",
       "passages": "段落",
       "size": "大小",
@@ -2573,34 +2577,28 @@
       "noneInPeriod": "此期间未添加文档",
       "noDocuments": "暂无文档",
       "pending": "{count} 个处理中",
-      "failed": "{count} 个失败"
+      "failed": "{count} 个失败",
+      "constellationTitle": "星座图",
+      "viewAll": "查看全部",
+      "failedNotice": "{count} 个文档处理失败。查看原因"
     },
     "settings": {
       "title": "设置",
-      "description": "管理此文档库,并查看其文档的嵌入方式。",
-      "generalTitle": "常规",
-      "generalDescription": "库的名称和标识。",
+      "description": "此知识库的概览、导入操作，以及它如何把文件切分为段落。",
+      "tabGeneral": "常规",
+      "tabConfiguration": "配置",
+      "generalIntro": "知识库包含的内容，以及正在处理的上传。",
+      "aboutTitle": "关于",
+      "aboutDescription": "库的名称和标识。",
       "bankId": "库 ID",
       "created": "创建时间",
-      "embedderTitle": "嵌入模型与限制",
-      "embedderDescription": "在服务器上为所有文档库统一设置,此处仅供参考。",
-      "provider": "提供商",
-      "model": "模型",
-      "dimension": "维度",
-      "maxFile": "最大文件",
-      "maxMedia": "最长音频或视频",
-      "maxPdfPages": "PDF 最大页数",
-      "audioWindow": "音频窗口",
-      "videoWindow": "视频窗口",
-      "overlap": "窗口重叠",
-      "pdfPixels": "PDF 页面尺寸(长边)",
-      "textTokens": "文本段落大小(token)",
-      "seconds": "{count, plural, other {# 秒}}",
       "linkTitle": "记忆库",
       "linkDescription": "链接了此库的记忆库在 reflect 时也会搜索它,并以其文档为准。",
       "linkHowTo": "从记忆库中关联:打开记忆库,然后进入 库配置 → 配置 → 文档库。",
       "delete": "删除库",
-      "mediaTypes": "可写入的媒体类型"
+      "resetConfig": "重置配置",
+      "resetConfigTitle": "重置配置？",
+      "resetConfigPrompt": "{bankId} 的每项设置都将恢复为服务器默认值。已导入的文件在重新上传之前保留现有段落。"
     },
     "addDocument": {
       "dialogSubtitle": "向文档库添加新文档：",
@@ -2609,10 +2607,9 @@
       "tagsHelp": "用逗号分隔。搜索可按标签筛选。",
       "filenameLabel": "文件名",
       "filenamePlaceholder": "默认:文档 ID.md",
-      "uploadHint": "PDF 页面和图片按图像嵌入,音频按 {audio} 秒片段,视频按 {video} 秒片段嵌入。每个文件最大 {max}。",
+      "uploadHint": "PDF 页面和图片按图像嵌入,音频和视频按短片段嵌入。服务器无法接收的文件会在这里显示原因。",
       "allTagsLabel": "所有文件的标签",
       "applyToAll": "全部应用",
-      "tooLarge": "文件过大:上限为 {max}",
       "editFile": "编辑此文件的标签和 ID",
       "remove": "移除 {name}",
       "tagsFor": "{name} 的标签",
@@ -2621,6 +2618,83 @@
       "written": "文档已添加,可以搜索。",
       "unchanged": "{count, plural, other {# 个文件}}未变化:已按原样导入。",
       "writtenUnchanged": "未变化:此文档已按原样导入。"
+    },
+    "constellation": {
+      "empty": "暂无可显示的段落",
+      "hudStats": "{documents} 个文档 · {passages} 个段落 · {visible} 个可见 · {labels} 个标签 · {links} 条链接 · 缩放 {zoom}x"
+    },
+    "config": {
+      "intro": "此知识库如何把文件切分为段落。更改对此后导入的文件生效；重新上传文件即可按新设置重新切分。",
+      "loadFailed": "无法加载此知识库的设置。",
+      "saveFailed": "无法保存。",
+      "serverDefault": "服务器默认值",
+      "serverDefaultValue": "服务器默认值（{value}）",
+      "on": "开",
+      "off": "关",
+      "overridden": "已为此知识库设置",
+      "useServerDefault": "使用服务器默认值",
+      "serverOff": "服务器已为所有知识库关闭。",
+      "accept": "接受{kind}文件",
+      "sections": {
+        "text": {
+          "title": "文本",
+          "description": "文本（包括文档中的文本）如何切分为段落。"
+        },
+        "pdf": {
+          "title": "PDF",
+          "description": "如何读取 PDF 页面。"
+        },
+        "images": {
+          "title": "图片",
+          "description": "如何读取图片。"
+        },
+        "media": {
+          "title": "音频和视频",
+          "description": "音频和视频如何切分为按时间的段落。"
+        },
+        "types": {
+          "title": "媒体类型",
+          "description": "此知识库接受哪些文件类型。它可以比服务器关闭更多类型，但不能更少。"
+        }
+      },
+      "fields": {
+        "text_passage_tokens": {
+          "label": "段落大小（token）",
+          "description": "一个段落包含多少文本：越小定位越精确，越大保留的上下文越多。"
+        },
+        "pdf_page_pixels": {
+          "label": "页面尺寸（像素）",
+          "description": "读取前每个 PDF 页面按最长边绘制的像素数。"
+        },
+        "pdf_bands": {
+          "label": "页面条带",
+          "description": "同时把每个 PDF 页面读作三条横向条带，更容易找到小字，但导入速度约减半。"
+        },
+        "max_pdf_pages": {
+          "label": "最多页数",
+          "description": "页数超过此值的 PDF 会被拒绝；只能低于服务器的上限。"
+        },
+        "image_tokens": {
+          "label": "图片细节（token）",
+          "description": "每张图片按多少 token 读取，范围 70 到 1120：越多看到的细节越细，但越慢。"
+        },
+        "audio_window_seconds": {
+          "label": "音频段落时长（秒）",
+          "description": "一个段落包含多少秒音频。"
+        },
+        "video_window_seconds": {
+          "label": "视频段落时长（秒）",
+          "description": "一个段落包含多少秒视频。"
+        },
+        "media_overlap_seconds": {
+          "label": "重叠（秒）",
+          "description": "每个段落与下一段共享的秒数，避免在切分处丢失内容；必须短于两种时长。"
+        },
+        "max_media_seconds": {
+          "label": "最长文件（秒）",
+          "description": "超过此时长的音频或视频会被拒绝；只能低于服务器的上限。"
+        }
+      }
     }
   }
 }

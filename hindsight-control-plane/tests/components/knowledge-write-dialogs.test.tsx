@@ -49,7 +49,6 @@ describe("KnowledgeAddDocumentDialog", () => {
     render(
       <KnowledgeAddDocumentDialog
         bankId="docs"
-        config={null}
         open
         initialTab="text"
         initialFiles={[]}

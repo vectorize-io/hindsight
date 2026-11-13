@@ -129,4 +129,21 @@ describe("/api/knowledge-banks proxy", () => {
     expect(res.headers.get("content-type")).toBe("video/mp4");
     expect(res.headers.get("content-disposition")).toContain("inline");
   });
+
+  it("sandboxes an uploaded original, but not a PDF, which the browser would then not show", async () => {
+    for (const [type, sandboxed] of [
+      ["text/html", true],
+      ["application/pdf", false],
+    ] as const) {
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(new Uint8Array([1]), { headers: { "content-type": type } })
+      );
+      const res = await GET(
+        req("http://cp/api/knowledge-banks/docs/documents/d/file"),
+        ctx(["docs", "documents", "d", "file"])
+      );
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("content-security-policy")).toBe(sandboxed ? "sandbox" : null);
+    }
+  });
 });

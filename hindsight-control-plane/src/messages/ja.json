@@ -729,7 +729,8 @@
       "importDocuments": "ドキュメントのインポート",
       "exportBank": "バンクのエクスポート",
       "importBank": "バンクのインポート",
-      "cloneBank": "バンクの複製"
+      "cloneBank": "バンクの複製",
+      "knowledgeIngest": "ナレッジの取り込み"
     },
     "table": {
       "id": "操作 ID",
@@ -2467,7 +2468,6 @@
       "upload": "ファイルをアップロード",
       "dropToUpload": "ドロップしてアップロード",
       "columnDocument": "ドキュメント",
-      "columnStatus": "ステータス",
       "columnPassages": "パッセージ",
       "columnSize": "サイズ",
       "columnTags": "タグ",
@@ -2483,7 +2483,8 @@
       "noMatchesBody": "別の名前、種類、ステータスをお試しください。",
       "layout": "レイアウト",
       "viewList": "リスト",
-      "viewGrid": "グリッド"
+      "viewGrid": "グリッド",
+      "viewConstellation": "コンステレーション"
     },
     "detail": {
       "download": "元のファイルをダウンロード",
@@ -2522,7 +2523,13 @@
       "removeMedia": "削除",
       "notMedia": "検索クエリに使えるのは画像か MP4 動画だけです",
       "pastedMedia": "貼り付けたファイル",
-      "topK": "件数",
+      "maxTokens": "最大トークン数",
+      "maxTokensHelp": "返すテキストの総量:最良のパッセージと、収まる範囲でその前後の文章。",
+      "budget": "バジェット",
+      "budgetHelp": "検索がどこまで深くランク付けするか:低は最速、高は最も広く探します。",
+      "budgetLow": "低",
+      "budgetMid": "中",
+      "budgetHigh": "高",
       "submit": "検索",
       "options": "オプション",
       "tags": "タグ",
@@ -2535,10 +2542,8 @@
       "failed": "検索に失敗しました",
       "mediaTypes": "メディアの種類",
       "mediaTypesHelp": "何も選択しない場合、すべてのメディアの種類を検索します。",
-      "context": "コンテキスト",
-      "contextHelp": "テキストのヒットごとに前後に含めるパッセージ数",
-      "showContext": "コンテキストを表示",
-      "hideContext": "コンテキストを隠す"
+      "showMore": "さらに表示",
+      "showLess": "表示を減らす"
     },
     "linked": {
       "title": "ナレッジバンク",
@@ -2560,7 +2565,6 @@
       "countsLegend": "ドキュメント · パッセージ"
     },
     "home": {
-      "embedder": "{model} で埋め込み({dimension} 次元)",
       "documents": "ドキュメント",
       "passages": "パッセージ",
       "size": "サイズ",
@@ -2573,34 +2577,28 @@
       "noneInPeriod": "この期間に追加されたドキュメントはありません",
       "noDocuments": "ドキュメントはまだありません",
       "pending": "{count} 件処理中",
-      "failed": "{count} 件失敗"
+      "failed": "{count} 件失敗",
+      "constellationTitle": "コンステレーション",
+      "viewAll": "すべて表示",
+      "failedNotice": "{count} 件のドキュメントを取り込めませんでした。理由を見る"
     },
     "settings": {
       "title": "設定",
-      "description": "このナレッジバンクを管理し、ドキュメントの埋め込み方法を確認します。",
-      "generalTitle": "一般",
-      "generalDescription": "バンクの名前と識別子。",
+      "description": "このバンクの概要、取り込み操作、ファイルをパッセージに分割する方法です。",
+      "tabGeneral": "一般",
+      "tabConfiguration": "構成",
+      "generalIntro": "バンクの中身と、処理中のアップロードです。",
+      "aboutTitle": "情報",
+      "aboutDescription": "バンクの名前と識別子。",
       "bankId": "バンク ID",
       "created": "作成日時",
-      "embedderTitle": "埋め込みモデルと制限",
-      "embedderDescription": "すべてのナレッジバンクに対してサーバーで設定されます。参考として表示しています。",
-      "provider": "プロバイダー",
-      "model": "モデル",
-      "dimension": "次元数",
-      "maxFile": "最大ファイルサイズ",
-      "maxMedia": "最長の音声・動画",
-      "maxPdfPages": "PDF の最大ページ数",
-      "audioWindow": "音声ウィンドウ",
-      "videoWindow": "動画ウィンドウ",
-      "overlap": "ウィンドウの重なり",
-      "pdfPixels": "PDF ページサイズ(長辺)",
-      "textTokens": "テキストパッセージのサイズ(トークン)",
-      "seconds": "{count, plural, other {# 秒}}",
       "linkTitle": "メモリバンク",
       "linkDescription": "このバンクをリンクしたメモリーバンクの reflect はこのバンクも検索し、そのドキュメントを権威として扱います。",
       "linkHowTo": "メモリバンクからリンクします: メモリバンクを開き、バンク設定 → 設定 → ナレッジバンク へ進みます。",
       "delete": "バンクを削除",
-      "mediaTypes": "書き込めるメディアの種類"
+      "resetConfig": "設定をリセット",
+      "resetConfigTitle": "設定をリセットしますか?",
+      "resetConfigPrompt": "{bankId} のすべての設定がサーバーの既定値に戻ります。取り込み済みのファイルは、再アップロードするまで今のパッセージのままです。"
     },
     "addDocument": {
       "dialogSubtitle": "ナレッジバンクにドキュメントを追加：",
@@ -2609,10 +2607,9 @@
       "tagsHelp": "カンマ区切り。検索で絞り込みに使えます。",
       "filenameLabel": "ファイル名",
       "filenamePlaceholder": "既定値: ドキュメントID.md",
-      "uploadHint": "PDF のページと画像は画像として、音声は {audio} 秒ごと、動画は {video} 秒ごとに埋め込まれます。1 ファイルあたり最大 {max}。",
+      "uploadHint": "PDF のページと画像は画像として、音声と動画は短い区間ごとに埋め込まれます。サーバーが受け付けないファイルは、ここに理由が表示されます。",
       "allTagsLabel": "すべてのファイルのタグ",
       "applyToAll": "すべてに適用",
-      "tooLarge": "大きすぎます: 上限は {max} です",
       "editFile": "このファイルのタグと ID を編集",
       "remove": "{name} を削除",
       "tagsFor": "{name} のタグ",
@@ -2621,6 +2618,83 @@
       "written": "ドキュメントを追加しました。検索できます。",
       "unchanged": "{count, plural, other {# 件のファイル}}は変更なし:すでに同じ内容で取り込まれています。",
       "writtenUnchanged": "変更なし:このドキュメントはすでに同じ内容で取り込まれています。"
+    },
+    "constellation": {
+      "empty": "表示できるパッセージはまだありません",
+      "hudStats": "{documents} 件のドキュメント · {passages} 件のパッセージ · {visible} 件表示 · {labels} 件のラベル · {links} 件のリンク · ズーム {zoom}x"
+    },
+    "config": {
+      "intro": "このバンクがファイルをパッセージに分割する方法です。変更はこれから取り込むファイルに適用されます。新しい設定で分割し直すには、ファイルを再アップロードしてください。",
+      "loadFailed": "このバンクの設定を読み込めませんでした。",
+      "saveFailed": "保存できませんでした。",
+      "serverDefault": "サーバーの既定値",
+      "serverDefaultValue": "サーバーの既定値 ({value})",
+      "on": "オン",
+      "off": "オフ",
+      "overridden": "このバンクで設定",
+      "useServerDefault": "サーバーの既定値を使う",
+      "serverOff": "サーバーですべてのバンクに対してオフになっています。",
+      "accept": "{kind} ファイルを受け付ける",
+      "sections": {
+        "text": {
+          "title": "テキスト",
+          "description": "テキスト(ドキュメント内のテキストを含む)をパッセージに分割する方法です。"
+        },
+        "pdf": {
+          "title": "PDF",
+          "description": "PDF ページの読み取り方です。"
+        },
+        "images": {
+          "title": "画像",
+          "description": "画像の読み取り方です。"
+        },
+        "media": {
+          "title": "音声と動画",
+          "description": "音声と動画を時間ごとのパッセージに分割する方法です。"
+        },
+        "types": {
+          "title": "メディアの種類",
+          "description": "このバンクが受け付けるファイルの種類です。サーバーより多くの種類をオフにできますが、少なくはできません。"
+        }
+      },
+      "fields": {
+        "text_passage_tokens": {
+          "label": "パッセージのサイズ(トークン)",
+          "description": "1 つのパッセージに入るテキストの量です。小さいほど正確な箇所が見つかり、大きいほど文脈がまとまります。"
+        },
+        "pdf_page_pixels": {
+          "label": "ページサイズ(ピクセル)",
+          "description": "読み取る前に、各 PDF ページを長辺何ピクセルで描画するかです。"
+        },
+        "pdf_bands": {
+          "label": "ページの帯",
+          "description": "各 PDF ページを 3 本の横帯としても読み取ります。小さな文字を見つけやすくなりますが、取り込みが約 2 倍遅くなります。"
+        },
+        "max_pdf_pages": {
+          "label": "最大ページ数",
+          "description": "これより多いページの PDF は拒否されます。サーバーの上限より低い値のみ設定できます。"
+        },
+        "image_tokens": {
+          "label": "画像の詳細度(トークン)",
+          "description": "各画像を何トークンで読み取るかです(70〜1120)。多いほど細部まで見えますが遅くなります。"
+        },
+        "audio_window_seconds": {
+          "label": "音声パッセージの長さ(秒)",
+          "description": "1 つのパッセージに入る音声の秒数です。"
+        },
+        "video_window_seconds": {
+          "label": "動画パッセージの長さ(秒)",
+          "description": "1 つのパッセージに入る動画の秒数です。"
+        },
+        "media_overlap_seconds": {
+          "label": "重なり(秒)",
+          "description": "区切りで何も失われないよう、各パッセージが次と共有する秒数です。両方の長さより短くする必要があります。"
+        },
+        "max_media_seconds": {
+          "label": "最長のファイル(秒)",
+          "description": "これより長い音声や動画は拒否されます。サーバーの上限より低い値のみ設定できます。"
+        }
+      }
     }
   }
 }

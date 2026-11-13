@@ -7,7 +7,6 @@ import {
   fillTimeseries,
   firstPassageUrl,
   isPicturePassage,
-  splitContext,
   formatBytes,
   formatMs,
   formatWindow,
@@ -153,18 +152,3 @@ describe("isPicturePassage", () => {
   });
 });
 
-describe("splitContext", () => {
-  it("splits the context around the hit", () => {
-    expect(splitContext("A. B is the hit. C.", "B is the hit.")).toEqual({
-      before: "A. ",
-      hit: "B is the hit.",
-      after: " C.",
-    });
-  });
-
-  it("gives up when there is no context or the hit is not in it", () => {
-    expect(splitContext(null, "x")).toBeNull();
-    expect(splitContext("abc", null)).toBeNull();
-    expect(splitContext("abc", "zzz")).toBeNull();
-  });
-});

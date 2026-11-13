@@ -12,6 +12,7 @@ import {
   LayoutGrid,
   List,
   Plus,
+  ScatterChart,
   Search,
   Trash2,
   Upload,
@@ -30,12 +31,12 @@ import {
   proxiedMediaUrl,
   type MediaType,
   type DocumentStatus,
-  type KnowledgeConfig,
   type KnowledgeDocument,
 } from "@/lib/knowledge-banks";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
-import { KindIcon, StatusChip } from "@/components/knowledge-passage";
+import { KindIcon, StatusMark } from "@/components/knowledge-passage";
+import { KnowledgeConstellation } from "@/components/knowledge-constellation";
 import {
   KnowledgeAddDocumentDialog,
   type AddDocumentTab,
@@ -140,7 +141,7 @@ function DocumentCard({
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium" title={label}>
             {label}
           </span>
-          <StatusChip status={doc.status} title={doc.error ?? undefined} />
+          <StatusMark status={doc.status} error={doc.error} />
         </div>
         <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
           <span>{formatBytes(doc.size_bytes)}</span>
@@ -159,18 +160,28 @@ function DocumentCard({
 }
 const POLL_MS = 3000;
 const ALL = "all";
+const CONSTELLATION_HEIGHT = 600;
+
+/** List first (the default), as the memory bank's views sit side by side. */
+export const DOCUMENT_LAYOUTS = ["list", "grid", "constellation"] as const;
+export type DocumentsLayout = (typeof DOCUMENT_LAYOUTS)[number];
 
 export function KnowledgeDocumentsView({
   bankId,
-  config,
   onOpenDocument,
   onChanged,
+  requestedKind,
+  requestedStatus,
+  requestedLayout,
 }: {
   bankId: string;
-  config: KnowledgeConfig | null;
-  onOpenDocument: (documentId: string) => void;
+  onOpenDocument: (documentId: string, passage?: number) => void;
   /** Something was written, deleted, or finished ingesting: the bank's counts moved. */
   onChanged: () => void;
+  /** A link asked for these filters or this layout (e.g. a Home card); applied when they change. */
+  requestedKind?: MediaType;
+  requestedStatus?: DocumentStatus;
+  requestedLayout?: DocumentsLayout;
 }) {
   const t = useTranslations("knowledgeBanks.documents");
   const tKinds = useTranslations("knowledgeBanks.kinds");
@@ -196,8 +207,18 @@ export function KnowledgeDocumentsView({
   }, []);
   const [dragDepth, setDragDepth] = React.useState(0);
   const [toDelete, setToDelete] = React.useState<KnowledgeDocument | null>(null);
-  const [layout, setLayout] = React.useState<"list" | "grid">("list");
+  const [layout, setLayout] = React.useState<DocumentsLayout>("list");
   const [deleting, setDeleting] = React.useState(false);
+
+  // The view stays mounted while hidden, so a link's filters land on the live state.
+  React.useEffect(() => {
+    if (!requestedKind && !requestedStatus && !requestedLayout) return;
+    setKind(requestedKind ?? ALL);
+    setStatus(requestedStatus ?? ALL);
+    if (requestedLayout) setLayout(requestedLayout);
+    setQueryDraft("");
+    setPage(1);
+  }, [requestedKind, requestedStatus, requestedLayout]);
 
   React.useEffect(() => {
     // The header's "Add Document" opens on Text, as the memory bank one does.
@@ -369,30 +390,30 @@ export function KnowledgeDocumentsView({
           </SelectContent>
         </Select>
         <div className="flex gap-2 sm:ml-auto">
-          {/* List or cards; the same segmented control the Recall view uses. */}
+          {/* List, cards or constellation: the memory bank's view switch. */}
           <div className="flex gap-1 rounded-lg bg-muted p-1" role="group" aria-label={t("layout")}>
-            {(
-              [
-                ["list", List, t("viewList")],
-                ["grid", LayoutGrid, t("viewGrid")],
-              ] as const
-            ).map(([mode, Icon, label]) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setLayout(mode)}
-                aria-pressed={layout === mode}
-                title={label}
-                aria-label={label}
-                className={`rounded-md px-2 py-1 transition-colors ${
-                  layout === mode
-                    ? "bg-background shadow-sm"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-              </button>
-            ))}
+            {DOCUMENT_LAYOUTS.map((mode) => {
+              const Icon = LAYOUT_ICON[mode];
+              const label = t(LAYOUT_LABEL[mode]);
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setLayout(mode)}
+                  aria-pressed={layout === mode}
+                  title={label}
+                  aria-label={label}
+                  className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium transition-all sm:px-3 ${
+                    layout === mode
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span className="hidden sm:inline">{label}</span>
+                </button>
+              );
+            })}
           </div>
           <Button size="sm" className="h-9" onClick={() => openAdd("upload")}>
             <Plus className="mr-1.5 h-4 w-4" />
@@ -429,7 +450,16 @@ export function KnowledgeDocumentsView({
         </div>
       ) : (
         <>
-          {layout === "grid" ? (
+          {layout === "constellation" ? (
+            <div className="overflow-hidden rounded-[16px] border border-border bg-card">
+              <KnowledgeConstellation
+                bankId={bankId}
+                docs={docs}
+                height={CONSTELLATION_HEIGHT}
+                onOpenDocument={onOpenDocument}
+              />
+            </div>
+          ) : layout === "grid" ? (
             <div
               className={cn(
                 "grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 transition-opacity duration-150",
@@ -450,7 +480,6 @@ export function KnowledgeDocumentsView({
               <TableHeader>
                 <TableRow>
                   <TableHead>{t("columnDocument")}</TableHead>
-                  <TableHead className="w-32">{t("columnStatus")}</TableHead>
                   <TableHead className="w-24 text-right">{t("columnPassages")}</TableHead>
                   <TableHead className="w-24 text-right">{t("columnSize")}</TableHead>
                   <TableHead className="w-48">{t("columnTags")}</TableHead>
@@ -491,10 +520,8 @@ export function KnowledgeDocumentsView({
                               </div>
                             )}
                           </div>
+                          <StatusMark status={doc.status} error={doc.error} />
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <StatusChip status={doc.status} title={doc.error ?? undefined} />
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {isInFlight(doc.status) ? "—" : doc.passage_count}
@@ -558,7 +585,6 @@ export function KnowledgeDocumentsView({
 
       <KnowledgeAddDocumentDialog
         bankId={bankId}
-        config={config}
         open={addOpen}
         initialTab={addTab}
         initialFiles={droppedFiles}
@@ -594,6 +620,13 @@ export function KnowledgeDocumentsView({
     </div>
   );
 }
+
+const LAYOUT_ICON = { list: List, grid: LayoutGrid, constellation: ScatterChart } as const;
+const LAYOUT_LABEL = {
+  list: "viewList",
+  grid: "viewGrid",
+  constellation: "viewConstellation",
+} as const;
 
 function isPdf(doc: KnowledgeDocument): boolean {
   return (

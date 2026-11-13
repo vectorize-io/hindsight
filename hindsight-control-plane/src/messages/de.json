@@ -729,7 +729,8 @@
       "importDocuments": "Dokumente importieren",
       "exportBank": "Bank exportieren",
       "importBank": "Bank importieren",
-      "cloneBank": "Bank klonen"
+      "cloneBank": "Bank klonen",
+      "knowledgeIngest": "Wissens-Ingest"
     },
     "table": {
       "id": "Vorgangs-ID",
@@ -2467,7 +2468,6 @@
       "upload": "Dateien hochladen",
       "dropToUpload": "Dateien zum Hochladen ablegen",
       "columnDocument": "Dokument",
-      "columnStatus": "Status",
       "columnPassages": "Abschnitte",
       "columnSize": "Größe",
       "columnTags": "Tags",
@@ -2483,7 +2483,8 @@
       "noMatchesBody": "Versuche einen anderen Namen, eine andere Art oder einen anderen Status.",
       "layout": "Ansicht",
       "viewList": "Liste",
-      "viewGrid": "Raster"
+      "viewGrid": "Raster",
+      "viewConstellation": "Konstellation"
     },
     "detail": {
       "download": "Original herunterladen",
@@ -2522,7 +2523,13 @@
       "removeMedia": "Entfernen",
       "notMedia": "Nur ein Bild oder ein MP4-Video kann eine Suchanfrage sein",
       "pastedMedia": "Eingefügte Datei",
-      "topK": "Ergebnisse",
+      "maxTokens": "Max. Tokens",
+      "maxTokensHelp": "Wie viel Text insgesamt zurückkommt: die besten Passagen und so viel drumherum, wie hineinpasst.",
+      "budget": "Budget",
+      "budgetHelp": "Wie tief die Suche rankt: niedrig ist am schnellsten, hoch sucht am weitesten.",
+      "budgetLow": "Niedrig",
+      "budgetMid": "Mittel",
+      "budgetHigh": "Hoch",
       "submit": "Suchen",
       "options": "Optionen",
       "tags": "Tags",
@@ -2535,10 +2542,8 @@
       "failed": "Suche fehlgeschlagen",
       "mediaTypes": "Medientypen",
       "mediaTypesHelp": "Ist nichts ausgewählt, werden alle Medientypen durchsucht.",
-      "context": "Kontext",
-      "contextHelp": "Abschnitte rund um jeden Texttreffer, die als Kontext mitgeliefert werden",
-      "showContext": "Kontext anzeigen",
-      "hideContext": "Kontext ausblenden"
+      "showMore": "Mehr anzeigen",
+      "showLess": "Weniger anzeigen"
     },
     "linked": {
       "title": "Wissensbänke",
@@ -2560,7 +2565,6 @@
       "countsLegend": "Dokumente · Abschnitte"
     },
     "home": {
-      "embedder": "Eingebettet mit {model} ({dimension} Dimensionen)",
       "documents": "Dokumente",
       "passages": "Abschnitte",
       "size": "Größe",
@@ -2573,34 +2577,28 @@
       "noneInPeriod": "In diesem Zeitraum wurden keine Dokumente hinzugefügt",
       "noDocuments": "Noch keine Dokumente",
       "pending": "{count} in Bearbeitung",
-      "failed": "{count} fehlgeschlagen"
+      "failed": "{count} fehlgeschlagen",
+      "constellationTitle": "Konstellation",
+      "viewAll": "Alle anzeigen",
+      "failedNotice": "{count, plural, one {# Dokument konnte nicht verarbeitet werden} other {# Dokumente konnten nicht verarbeitet werden}}. Grund ansehen"
     },
     "settings": {
       "title": "Einstellungen",
-      "description": "Verwalte diese Wissensbank und sieh, wie ihre Dokumente eingebettet werden.",
-      "generalTitle": "Allgemein",
-      "generalDescription": "Name und Kennung der Bank.",
+      "description": "Überblick über diese Bank, ihre Ingest-Vorgänge und wie sie Dateien in Abschnitte teilt.",
+      "tabGeneral": "Allgemein",
+      "tabConfiguration": "Konfiguration",
+      "generalIntro": "Was die Bank enthält und welche Uploads sie gerade verarbeitet.",
+      "aboutTitle": "Info",
+      "aboutDescription": "Name und Kennung der Bank.",
       "bankId": "Bank-ID",
       "created": "Erstellt",
-      "embedderTitle": "Embedder und Limits",
-      "embedderDescription": "Serverseitig für alle Wissensbänke festgelegt. Hier nur zur Information angezeigt.",
-      "provider": "Anbieter",
-      "model": "Modell",
-      "dimension": "Dimensionen",
-      "maxFile": "Größte Datei",
-      "maxMedia": "Längstes Audio oder Video",
-      "maxPdfPages": "Max. PDF-Seiten",
-      "audioWindow": "Audiofenster",
-      "videoWindow": "Videofenster",
-      "overlap": "Fensterüberlappung",
-      "pdfPixels": "PDF-Seitengröße (längste Seite)",
-      "textTokens": "Größe der Textabschnitte (Tokens)",
-      "seconds": "{count, plural, one {# Sekunde} other {# Sekunden}}",
       "linkTitle": "Speicherbänke",
       "linkDescription": "Reflect auf einer Memory Bank, die diese Bank verknüpft, durchsucht sie ebenfalls und behandelt ihre Dokumente als maßgeblich.",
       "linkHowTo": "Verknüpfe sie von einer Speicherbank aus: Öffne die Speicherbank, dann Bank-Konfiguration → Konfiguration → Wissensbänke.",
       "delete": "Bank löschen",
-      "mediaTypes": "Medientypen, die sie schreiben kann"
+      "resetConfig": "Konfiguration zurücksetzen",
+      "resetConfigTitle": "Konfiguration zurücksetzen?",
+      "resetConfigPrompt": "Jede Einstellung von {bankId} kehrt zum Standard des Servers zurück. Bereits aufgenommene Dateien behalten ihre Abschnitte, bis sie erneut hochgeladen werden."
     },
     "addDocument": {
       "dialogSubtitle": "Neues Dokument zur Wissensbank hinzufügen: ",
@@ -2609,10 +2607,9 @@
       "tagsHelp": "Kommagetrennt. Die Suche kann danach filtern.",
       "filenameLabel": "Dateiname",
       "filenamePlaceholder": "Standard: Dokument-ID.md",
-      "uploadHint": "PDF-Seiten und Bilder werden als Bilder eingebettet, Audio in Ausschnitten von {audio} s, Video in Ausschnitten von {video} s. Bis zu {max} pro Datei.",
+      "uploadHint": "PDF-Seiten und Bilder werden als Bilder eingebettet, Audio und Video in kurzen Ausschnitten. Kann der Server eine Datei nicht annehmen, steht der Grund hier.",
       "allTagsLabel": "Tags für alle Dateien",
       "applyToAll": "Auf alle anwenden",
-      "tooLarge": "Zu groß: Das Limit ist {max}",
       "editFile": "Tags und ID dieser Datei bearbeiten",
       "remove": "{name} entfernen",
       "tagsFor": "Tags für {name}",
@@ -2621,6 +2618,83 @@
       "written": "Dokument hinzugefügt und durchsuchbar.",
       "unchanged": "{count, plural, one {# Datei} other {# Dateien}} unverändert: bereits genau so aufgenommen.",
       "writtenUnchanged": "Unverändert: dieses Dokument ist bereits genau so aufgenommen."
+    },
+    "constellation": {
+      "empty": "Noch keine Passagen zum Anzeigen",
+      "hudStats": "{documents} Dokumente · {passages} Abschnitte · {visible} sichtbar · {labels} Beschriftungen · {links} Verknüpfungen · Zoom {zoom}x"
+    },
+    "config": {
+      "intro": "Wie diese Bank ihre Dateien in Abschnitte teilt. Eine Änderung gilt für Dateien, die ab jetzt aufgenommen werden; lade eine Datei erneut hoch, um sie mit den neuen Einstellungen zu teilen.",
+      "loadFailed": "Die Einstellungen dieser Bank konnten nicht geladen werden.",
+      "saveFailed": "Speichern fehlgeschlagen.",
+      "serverDefault": "Server-Standard",
+      "serverDefaultValue": "Server-Standard ({value})",
+      "on": "An",
+      "off": "Aus",
+      "overridden": "Für diese Bank festgelegt",
+      "useServerDefault": "Server-Standard verwenden",
+      "serverOff": "Auf dem Server für alle Bänke ausgeschaltet.",
+      "accept": "{kind}-Dateien annehmen",
+      "sections": {
+        "text": {
+          "title": "Text",
+          "description": "Wie Text, auch der Text in Dokumenten, in Abschnitte geteilt wird."
+        },
+        "pdf": {
+          "title": "PDF",
+          "description": "Wie PDF-Seiten gelesen werden."
+        },
+        "images": {
+          "title": "Bilder",
+          "description": "Wie Bilder gelesen werden."
+        },
+        "media": {
+          "title": "Audio & Video",
+          "description": "Wie Audio und Video in zeitliche Abschnitte geteilt werden."
+        },
+        "types": {
+          "title": "Medientypen",
+          "description": "Welche Dateiarten diese Bank annimmt. Sie kann mehr Arten ausschalten als der Server, nie weniger."
+        }
+      },
+      "fields": {
+        "text_passage_tokens": {
+          "label": "Abschnittsgröße (Tokens)",
+          "description": "Wie viel Text in einen Abschnitt kommt: kleiner findet genauere Stellen, größer hält mehr Zusammenhang zusammen."
+        },
+        "pdf_page_pixels": {
+          "label": "Seitengröße (Pixel)",
+          "description": "Wie groß jede PDF-Seite an ihrer längsten Seite gezeichnet wird, bevor sie gelesen wird."
+        },
+        "pdf_bands": {
+          "label": "Seitenstreifen",
+          "description": "Liest jede PDF-Seite zusätzlich als drei waagerechte Streifen; findet Kleingedrucktes besser, macht den Ingest aber etwa doppelt so langsam."
+        },
+        "max_pdf_pages": {
+          "label": "Max. Seiten",
+          "description": "Ein PDF mit mehr Seiten wird abgelehnt; der Wert kann nur unter dem Limit des Servers liegen."
+        },
+        "image_tokens": {
+          "label": "Bilddetail (Tokens)",
+          "description": "Als wie viele Tokens jedes Bild gelesen wird, von 70 bis 1120: mehr erkennt feinere Details, ist aber langsamer."
+        },
+        "audio_window_seconds": {
+          "label": "Länge eines Audioabschnitts (Sekunden)",
+          "description": "Wie viele Sekunden Audio in einen Abschnitt kommen."
+        },
+        "video_window_seconds": {
+          "label": "Länge eines Videoabschnitts (Sekunden)",
+          "description": "Wie viele Sekunden Video in einen Abschnitt kommen."
+        },
+        "media_overlap_seconds": {
+          "label": "Überlappung (Sekunden)",
+          "description": "Wie viele Sekunden sich ein Abschnitt mit dem nächsten teilt, damit an einem Schnitt nichts verloren geht; muss kürzer als beide Längen sein."
+        },
+        "max_media_seconds": {
+          "label": "Längste Datei (Sekunden)",
+          "description": "Längeres Audio oder Video wird abgelehnt; der Wert kann nur unter dem Limit des Servers liegen."
+        }
+      }
     }
   }
 }

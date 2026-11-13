@@ -251,8 +251,11 @@ class KnowledgeStore(ABC):
     async def bank_stats(self, bank_ids: list[str]) -> dict[str, BankStats]: ...
 
     @abstractmethod
-    async def timeseries(self, bank_id: str, *, since: datetime, trunc: str) -> list[TimeBucket]:
-        """Documents created per ``trunc`` ('hour' or 'day') since ``since``, with their passage counts."""
+    async def timeseries(
+        self, bank_id: str, *, since: datetime, trunc: str, media_type: str | None = None
+    ) -> list[TimeBucket]:
+        """Documents created per ``trunc`` ('hour' or 'day') since ``since``, with their passage counts;
+        only documents of ``media_type`` when given."""
 
 
 def _document(row: Any) -> KnowledgeDocument:
@@ -961,7 +964,9 @@ class PostgresKnowledgeStore(KnowledgeStore):
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits[:top_k]
 
-    async def timeseries(self, bank_id: str, *, since: datetime, trunc: str) -> list[TimeBucket]:
+    async def timeseries(
+        self, bank_id: str, *, since: datetime, trunc: str, media_type: str | None = None
+    ) -> list[TimeBucket]:
         if trunc not in ("hour", "day"):
             raise ValueError("trunc must be 'hour' or 'day'")
         async with acquire_with_retry(await self._pool()) as conn:
@@ -970,10 +975,12 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 SELECT date_trunc('{trunc}', created_at) AS t, COUNT(*) AS documents,
                        COALESCE(SUM(passage_count), 0) AS passages
                 FROM {fq_table("kb_documents")} WHERE bank_id = $1 AND created_at >= $2
+                  AND ($3::text IS NULL OR media_type = $3)
                 GROUP BY t ORDER BY t
                 """,
                 bank_id,
                 since,
+                media_type,
             )
         return [TimeBucket(time=r["t"], documents=int(r["documents"]), passages=int(r["passages"])) for r in rows]
 

@@ -19,12 +19,7 @@ import {
 import { toast } from "sonner";
 
 import { client } from "@/lib/api";
-import {
-  formatBytes,
-  parseTags,
-  uploadKnowledgeFiles,
-  type KnowledgeConfig,
-} from "@/lib/knowledge-banks";
+import { formatBytes, parseTags, uploadKnowledgeFiles } from "@/lib/knowledge-banks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -84,7 +79,6 @@ export type AddDocumentTab = "text" | "upload";
 
 export function KnowledgeAddDocumentDialog({
   bankId,
-  config,
   open,
   initialTab,
   initialFiles,
@@ -92,7 +86,6 @@ export function KnowledgeAddDocumentDialog({
   onWritten,
 }: {
   bankId: string;
-  config: KnowledgeConfig | null;
   open: boolean;
   initialTab: AddDocumentTab;
   /** Files dropped on the documents view before the dialog opened. */
@@ -134,9 +127,7 @@ export function KnowledgeAddDocumentDialog({
   const update = (key: string, patch: Partial<StagedFile>) =>
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, ...patch } : f)));
 
-  const maxBytes = config?.max_file_bytes ?? Infinity;
   const pending = files.filter((f) => f.state === "staged" || f.state === "failed");
-  const tooLarge = (f: StagedFile) => f.file.size > maxBytes;
 
   /** Writes the shared tags onto every file not yet uploaded, merged with its own. */
   const applyTagsToAll = () => {
@@ -179,7 +170,7 @@ export function KnowledgeAddDocumentDialog({
 
   const uploadAll = async () => {
     setBusy(true);
-    const queue = pending.filter((f) => !tooLarge(f));
+    const queue = [...pending];
     let ok = 0;
     let unchanged = 0;
     let failed = 0;
@@ -228,8 +219,6 @@ export function KnowledgeAddDocumentDialog({
       setBusy(false);
     }
   };
-
-  const uploadable = pending.filter((f) => !tooLarge(f)).length;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
@@ -361,11 +350,7 @@ export function KnowledgeAddDocumentDialog({
                 <Upload className="h-8 w-8 text-muted-foreground mb-2" />
                 <span className="text-sm text-muted-foreground">{tAdd("clickToSelectFiles")}</span>
                 <span className="text-xs text-muted-foreground/70 mt-1 px-4 text-center">
-                  {t("uploadHint", {
-                    audio: config?.audio_window_seconds ?? 60,
-                    video: config?.video_window_seconds ?? 30,
-                    max: config ? formatBytes(config.max_file_bytes) : "—",
-                  })}
+                  {t("uploadHint")}
                 </span>
               </label>
 
@@ -406,9 +391,6 @@ export function KnowledgeAddDocumentDialog({
                   <div className="mt-3 space-y-1">
                     {files.map((f) => {
                       const tagCount = parseTags(f.tags).length;
-                      const problem = tooLarge(f)
-                        ? t("tooLarge", { max: formatBytes(maxBytes) })
-                        : f.error;
                       return (
                         <div key={f.key} className="bg-muted rounded-md overflow-hidden">
                           <div className="flex items-center gap-1 px-2 py-2">
@@ -472,9 +454,9 @@ export function KnowledgeAddDocumentDialog({
                               />
                             </div>
                           )}
-                          {problem && (
+                          {f.error && (
                             <p className="px-3 pb-2 text-xs text-red-600 dark:text-red-400">
-                              {problem}
+                              {f.error}
                             </p>
                           )}
 
@@ -544,8 +526,8 @@ export function KnowledgeAddDocumentDialog({
               {busy ? tAdd("addingDocument") : tAdd("addDocumentSubmit")}
             </Button>
           ) : (
-            <Button onClick={uploadAll} disabled={busy || uploadable === 0}>
-              {busy ? tAdd("uploading") : tAdd("uploadFiles", { count: uploadable })}
+            <Button onClick={uploadAll} disabled={busy || pending.length === 0}>
+              {busy ? tAdd("uploading") : tAdd("uploadFiles", { count: pending.length })}
             </Button>
           )}
         </DialogFooter>

@@ -729,7 +729,8 @@
       "importDocuments": "Importer les documents",
       "exportBank": "Exporter la banque",
       "importBank": "Importer la banque",
-      "cloneBank": "Cloner la banque"
+      "cloneBank": "Cloner la banque",
+      "knowledgeIngest": "Ingestion de connaissances"
     },
     "table": {
       "id": "ID d'opération",
@@ -2467,7 +2468,6 @@
       "upload": "Importer des fichiers",
       "dropToUpload": "Déposez les fichiers pour les importer",
       "columnDocument": "Document",
-      "columnStatus": "Statut",
       "columnPassages": "Passages",
       "columnSize": "Taille",
       "columnTags": "Tags",
@@ -2483,7 +2483,8 @@
       "noMatchesBody": "Essayez un autre nom, type ou statut.",
       "layout": "Disposition",
       "viewList": "Liste",
-      "viewGrid": "Grille"
+      "viewGrid": "Grille",
+      "viewConstellation": "Constellation"
     },
     "detail": {
       "download": "Télécharger l’original",
@@ -2522,7 +2523,13 @@
       "removeMedia": "Retirer",
       "notMedia": "Seule une image ou une vidéo MP4 peut servir de requête",
       "pastedMedia": "Fichier collé",
-      "topK": "Résultats",
+      "maxTokens": "Tokens max.",
+      "maxTokensHelp": "La quantité de texte renvoyée au total : les meilleurs passages, et autant de texte autour qu’il en tient.",
+      "budget": "Budget",
+      "budgetHelp": "Profondeur du classement : bas est le plus rapide, haut va le plus loin.",
+      "budgetLow": "Bas",
+      "budgetMid": "Moyen",
+      "budgetHigh": "Haut",
       "submit": "Rechercher",
       "options": "Options",
       "tags": "Tags",
@@ -2535,10 +2542,8 @@
       "failed": "La recherche a échoué",
       "mediaTypes": "Types de média",
       "mediaTypesHelp": "Si aucun n’est coché, tous les types de média sont recherchés.",
-      "context": "Contexte",
-      "contextHelp": "Passages autour de chaque résultat texte à inclure comme contexte",
-      "showContext": "Afficher le contexte",
-      "hideContext": "Masquer le contexte"
+      "showMore": "Afficher plus",
+      "showLess": "Afficher moins"
     },
     "linked": {
       "title": "Banques de connaissances",
@@ -2560,7 +2565,6 @@
       "countsLegend": "docs · passages"
     },
     "home": {
-      "embedder": "Embeddings avec {model} ({dimension} dimensions)",
       "documents": "Documents",
       "passages": "Passages",
       "size": "Taille",
@@ -2573,34 +2577,28 @@
       "noneInPeriod": "Aucun document ajouté sur cette période",
       "noDocuments": "Aucun document pour l’instant",
       "pending": "{count} en cours",
-      "failed": "{count} en échec"
+      "failed": "{count} en échec",
+      "constellationTitle": "Constellation",
+      "viewAll": "Tout afficher",
+      "failedNotice": "{count, plural, one {# document n’a pas pu être traité} other {# documents n’ont pas pu être traités}}. Voir pourquoi"
     },
     "settings": {
       "title": "Paramètres",
-      "description": "Gérez cette banque de connaissances et voyez comment ses documents sont vectorisés.",
-      "generalTitle": "Général",
-      "generalDescription": "Nom et identifiant de la banque.",
+      "description": "Vue d'ensemble de cette base, ses opérations d'ingestion et la façon dont elle découpe les fichiers en passages.",
+      "tabGeneral": "Général",
+      "tabConfiguration": "Configuration",
+      "generalIntro": "Ce que contient la base, et les envois qu'elle est en train de traiter.",
+      "aboutTitle": "À propos",
+      "aboutDescription": "Nom et identifiant de la banque.",
       "bankId": "ID de la banque",
       "created": "Créée",
-      "embedderTitle": "Modèle d’embeddings et limites",
-      "embedderDescription": "Défini sur le serveur pour toutes les banques de connaissances. Affiché ici à titre indicatif.",
-      "provider": "Fournisseur",
-      "model": "Modèle",
-      "dimension": "Dimensions",
-      "maxFile": "Fichier le plus volumineux",
-      "maxMedia": "Audio ou vidéo le plus long",
-      "maxPdfPages": "Nombre max. de pages PDF",
-      "audioWindow": "Fenêtre audio",
-      "videoWindow": "Fenêtre vidéo",
-      "overlap": "Chevauchement des fenêtres",
-      "pdfPixels": "Taille de page PDF (côté le plus long)",
-      "textTokens": "Taille des passages de texte (tokens)",
-      "seconds": "{count, plural, one {# seconde} other {# secondes}}",
       "linkTitle": "Banques de mémoire",
       "linkDescription": "Reflect sur une banque de mémoire qui lie cette banque la recherche aussi, et considère ses documents comme faisant autorité.",
       "linkHowTo": "Liez-la depuis une banque de mémoire : ouvrez la banque de mémoire, puis Configuration de la banque → Configuration → Banques de connaissances.",
       "delete": "Supprimer la banque",
-      "mediaTypes": "Types de média qu’elle peut écrire"
+      "resetConfig": "Réinitialiser la configuration",
+      "resetConfigTitle": "Réinitialiser la configuration ?",
+      "resetConfigPrompt": "Chaque paramètre de {bankId} revient à la valeur par défaut du serveur. Les fichiers déjà ingérés gardent leurs passages jusqu'à ce qu'ils soient envoyés à nouveau."
     },
     "addDocument": {
       "dialogSubtitle": "Ajouter un nouveau document à la banque de connaissances : ",
@@ -2609,10 +2607,9 @@
       "tagsHelp": "Séparés par des virgules. La recherche peut filtrer dessus.",
       "filenameLabel": "Nom du fichier",
       "filenamePlaceholder": "Par défaut : id-du-document.md",
-      "uploadHint": "Les pages PDF et les images sont intégrées comme des images, l’audio par segments de {audio} s, la vidéo par segments de {video} s. Jusqu’à {max} par fichier.",
+      "uploadHint": "Les pages PDF et les images sont intégrées comme des images, l’audio et la vidéo par courts segments. Si le serveur refuse un fichier, la raison s’affiche ici.",
       "allTagsLabel": "Tags pour tous les fichiers",
       "applyToAll": "Appliquer à tous",
-      "tooLarge": "Trop volumineux : la limite est de {max}",
       "editFile": "Modifier les tags et l’ID de ce fichier",
       "remove": "Retirer {name}",
       "tagsFor": "Tags pour {name}",
@@ -2621,6 +2618,83 @@
       "written": "Document ajouté et consultable.",
       "unchanged": "{count, plural, one {# fichier inchangé} other {# fichiers inchangés}} : déjà ingéré tel quel.",
       "writtenUnchanged": "Inchangé : ce document est déjà ingéré tel quel."
+    },
+    "constellation": {
+      "empty": "Aucun passage à afficher pour l’instant",
+      "hudStats": "{documents} documents · {passages} passages · {visible} visibles · {labels} étiquettes · {links} liens · zoom {zoom}x"
+    },
+    "config": {
+      "intro": "Comment cette base découpe ses fichiers en passages. Une modification s'applique aux fichiers ingérés à partir de maintenant ; envoyez un fichier à nouveau pour le découper avec les nouveaux paramètres.",
+      "loadFailed": "Impossible de charger les paramètres de cette base.",
+      "saveFailed": "Échec de l'enregistrement.",
+      "serverDefault": "Valeur du serveur",
+      "serverDefaultValue": "Valeur du serveur ({value})",
+      "on": "Activé",
+      "off": "Désactivé",
+      "overridden": "Défini pour cette base",
+      "useServerDefault": "Utiliser la valeur du serveur",
+      "serverOff": "Désactivé sur le serveur pour toutes les bases.",
+      "accept": "Accepter les fichiers {kind}",
+      "sections": {
+        "text": {
+          "title": "Texte",
+          "description": "Comment le texte, y compris celui des documents, est découpé en passages."
+        },
+        "pdf": {
+          "title": "PDF",
+          "description": "Comment les pages PDF sont lues."
+        },
+        "images": {
+          "title": "Images",
+          "description": "Comment les images sont lues."
+        },
+        "media": {
+          "title": "Audio et vidéo",
+          "description": "Comment l'audio et la vidéo sont découpés en passages minutés."
+        },
+        "types": {
+          "title": "Types de médias",
+          "description": "Les types de fichiers que cette base accepte. Elle peut en désactiver plus que le serveur, jamais moins."
+        }
+      },
+      "fields": {
+        "text_passage_tokens": {
+          "label": "Taille d'un passage (tokens)",
+          "description": "Quantité de texte dans un passage : plus petit trouve des endroits plus précis, plus grand garde plus de contexte ensemble."
+        },
+        "pdf_page_pixels": {
+          "label": "Taille de page (pixels)",
+          "description": "Taille à laquelle chaque page PDF est dessinée, sur son plus grand côté, avant d'être lue."
+        },
+        "pdf_bands": {
+          "label": "Bandes de page",
+          "description": "Lit aussi chaque page PDF en trois bandes horizontales, ce qui trouve mieux les petits caractères mais rend l'ingestion environ deux fois plus lente."
+        },
+        "max_pdf_pages": {
+          "label": "Nombre max. de pages",
+          "description": "Un PDF avec plus de pages est refusé ; la valeur ne peut être que plus basse que la limite du serveur."
+        },
+        "image_tokens": {
+          "label": "Détail d'image (tokens)",
+          "description": "Nombre de tokens pour lire chaque image, de 70 à 1120 : plus voit des détails plus fins mais est plus lent."
+        },
+        "audio_window_seconds": {
+          "label": "Durée d'un passage audio (secondes)",
+          "description": "Combien de secondes d'audio vont dans un passage."
+        },
+        "video_window_seconds": {
+          "label": "Durée d'un passage vidéo (secondes)",
+          "description": "Combien de secondes de vidéo vont dans un passage."
+        },
+        "media_overlap_seconds": {
+          "label": "Chevauchement (secondes)",
+          "description": "Combien de secondes un passage partage avec le suivant, pour ne rien perdre à une coupure ; doit être plus court que les deux durées."
+        },
+        "max_media_seconds": {
+          "label": "Fichier le plus long (secondes)",
+          "description": "Un audio ou une vidéo plus long est refusé ; la valeur ne peut être que plus basse que la limite du serveur."
+        }
+      }
     }
   }
 }

@@ -32,9 +32,9 @@ from urllib.parse import quote
 import httpx
 
 TOOLSET = "hindsight_knowledge"
-#: One search hit's text in a result. The hit plus its neighbours can run to several
-#: thousand characters; a model that wants more reads the document.
-HIT_CHARS = int(os.getenv("HINDSIGHT_KNOWLEDGE_HIT_CHARS", "1200"))
+#: A search's token budget (what its hits, and the text around them, may weigh), and its bounds.
+SEARCH_TOKENS = int(os.getenv("HINDSIGHT_KNOWLEDGE_SEARCH_TOKENS", "4096"))
+MIN_SEARCH_TOKENS, MAX_SEARCH_TOKENS = 500, 32_000
 READ_CHARS = int(os.getenv("HINDSIGHT_KNOWLEDGE_READ_CHARS", "12000"))
 
 
@@ -83,13 +83,12 @@ def _request(method: str, url: str, **kwargs: object) -> httpx.Response:
 
 def knowledge_search(args: dict, **_: object) -> str:
     """Hits grouped by document, best first: a document that matches in three places is one
-    candidate with snippets, not three of the ten slots."""
+    candidate with its passages, not three. The server fits them, and the text around each, in
+    ``max_tokens``; nothing is cut here."""
     cfg = _config()
-    top_k = max(1, min(int(args.get("top_k") or 10), 50))
     body: dict[str, object] = {
         "query": args["query"],
-        "top_k": min(200, top_k * 3),
-        "neighbors": max(0, min(int(args.get("neighbors", 1)), 5)),
+        "max_tokens": max(MIN_SEARCH_TOKENS, min(int(args.get("max_tokens") or SEARCH_TOKENS), MAX_SEARCH_TOKENS)),
     }
     if args.get("tags"):
         body["tags"] = args["tags"]
@@ -104,15 +103,11 @@ def knowledge_search(args: dict, **_: object) -> str:
     lines = []
     # Each hit is headed by its document id alone, never a list number: numbered hits ("[1] dsid_…")
     # got cited as "Sources: [1]" in 26 of 50 answers, which scores as citing nothing.
-    for document_id, hits in list(by_document.items())[:top_k]:
+    for document_id, hits in by_document.items():
         first = hits[0]
         tags = ",".join(first.get("tags") or [])
         lines.append(f"{document_id} | {first.get('filename') or ''} | tags={tags}")
-        budget = HIT_CHARS
-        for hit in hits[:2]:
-            text = (hit.get("context") or hit.get("text") or "").strip()
-            lines.append(text[:budget] + (" …" if len(text) > budget else ""))
-            budget = HIT_CHARS // 2
+        lines.extend((hit.get("text") or "").strip() for hit in hits)
         lines.append("")
     return "\n".join(lines)
 
@@ -148,16 +143,16 @@ SCHEMAS = {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "What to look for, in natural language."},
-                "top_k": {"type": "integer", "description": "How many documents (1-50, default 10)."},
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "How much text to get back in all, in tokens (500-32000, default 4096): the "
+                    "best passages and the text around them, as much as fits.",
+                },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Only documents with one of these tags (the source system: slack, gmail, "
                     "linear, google_drive, hubspot, fireflies, github, jira, confluence).",
-                },
-                "neighbors": {
-                    "type": "integer",
-                    "description": "Passages of context on each side of a hit (0-5, default 1).",
                 },
             },
             "required": ["query"],
