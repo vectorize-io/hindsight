@@ -398,7 +398,6 @@ async def tool_search_observations(
     tags: list[str] | None = None,
     tags_match: TagsMatch = "any",
     tag_groups: "list | None" = None,
-    last_consolidated_at: datetime | None = None,
     pending_consolidation: int = 0,
     source_facts_max_tokens: int = -1,
     include_entities: bool = True,
@@ -419,7 +418,6 @@ async def tool_search_observations(
         max_tokens: Maximum tokens for results (default 5000)
         tags: Optional tags to filter observations
         tags_match: How to match tags - "any", "all", "any_strict", "all_strict", or "exact"
-        last_consolidated_at: When consolidation last ran (for staleness check)
         pending_consolidation: Number of memories waiting to be consolidated
         source_facts_max_tokens: Token budget for source facts (-1 = disabled, 0+ = enabled with limit)
         include_entities: Attach resolved entity names to each observation (see below)

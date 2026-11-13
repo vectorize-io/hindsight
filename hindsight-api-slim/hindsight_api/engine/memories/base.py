@@ -763,6 +763,18 @@ def watermark_may_postdate(last_refreshed_at: datetime | None, watermark: dateti
 
 
 @dataclass(frozen=True)
+class ReflectFreshness:
+    """What reflect reads about a bank before it starts (see ``MemoriesExtension.reflect_freshness``).
+
+    ``pending`` may lag the bank's writes; ``last_memory_write_at`` may be later than the
+    bank's newest write but never earlier, and is None only for an empty bank.
+    """
+
+    pending: int
+    last_memory_write_at: datetime | None
+
+
+@dataclass(frozen=True)
 class MemoryScopeWatermark:
     """One "has this scope changed?" question, for the batched staleness check.
 
@@ -2337,6 +2349,27 @@ class MemoriesExtension(Extension, ABC):
         fresh = await self.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
         return fresh.get("last_memory_write_at")
 
+    async def reflect_freshness(self, *, conn, fq_table, bank_id: str) -> ReflectFreshness:
+        """What reflect reads about the bank before it starts.
+
+        Reflect waits on this, so it may be cheaper than :meth:`consolidation_freshness`, and
+        each value may be loose in one direction only:
+
+        - ``pending`` may lag the bank's writes. Reflect only turns it into a hint for the
+          model (up to date, slightly stale, stale), so a count a few seconds old is fine.
+        - ``last_memory_write_at`` may be LATER than the bank's newest write, never earlier.
+          Reflect rules a mental model fresh without a scoped check when the model read the
+          memories at or after it, so an earlier value would call a stale model fresh. A
+          later one only costs that model its scoped check. None means the bank is empty.
+
+        The gates that act on ``pending`` (the retraction deferral, the refresh scheduler)
+        stay on :meth:`consolidation_freshness`, which is exact.
+
+        The default is :meth:`consolidation_freshness`, which meets both rules exactly.
+        """
+        fresh = await self.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
+        return ReflectFreshness(pending=fresh["pending"], last_memory_write_at=fresh.get("last_memory_write_at"))
+
     async def live_memory_ids(self, *, conn, fq_table, bank_id: str, unit_ids: list[Any]) -> set[str]:
         """Which of ``unit_ids`` still exist among the bank's live memories.
 
@@ -2403,7 +2436,8 @@ class MemoriesExtension(Extension, ABC):
 
         ``pending`` / ``failed`` count the world/experience facts not yet folded
         into an observation, and those the LLM gave up on. Backs
-        ``get_bank_freshness``, which reflect() calls often, so keep it cheap.
+        ``get_bank_freshness`` and the gates that act on ``pending``, so it must be
+        exact; reflect reads the looser :meth:`reflect_freshness` instead.
 
         ``last_memory_write_at`` is the newest write time (``updated_at``) across
         the bank's memories, or None for an empty bank. It is the bank-wide
