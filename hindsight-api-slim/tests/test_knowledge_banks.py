@@ -830,12 +830,15 @@ def test_keyword_fusion():
     from hindsight_api.knowledge.store import fuse_keyword
 
     # No keyword hit: dense scores pass through untouched.
-    assert fuse_keyword([0.5, 0.4], [0.0, 0.0], 0.2) == [0.5, 0.4]
+    assert fuse_keyword([0.5, 0.4], [0.0, 0.0], 0.2, [True, True]) == [0.5, 0.4]
     # A keyword hit can lift a slightly weaker dense match over the best one.
-    fused = fuse_keyword([0.50, 0.49, 0.10], [0.0, 1.0, 0.0], 0.2)
+    fused = fuse_keyword([0.50, 0.49, 0.10], [0.0, 1.0, 0.0], 0.2, [True, True, True])
     assert fused[1] > fused[0] > fused[2]
     # One candidate, or a tie, is the best there is, not the worst.
-    assert fuse_keyword([0.6], [0.3], 0.2) == [1.0]
+    assert fuse_keyword([0.6], [0.3], 0.2, [True]) == [1.0]
+    # A passage with no text scores by meaning alone: the best image is not pushed under matching text.
+    image, text = fuse_keyword([0.9, 0.9, 0.1], [0.0, 1.0, 0.0], 0.2, [False, True, True])[:2]
+    assert image == 1.0 and text == 1.0
 
 
 async def test_keywords_match_rare_words_in_every_language(api_client, kb):
@@ -938,9 +941,9 @@ def test_a_reference_page_is_demoted_without_squashing_the_other_scores():
     # the keyword fusion stretched the dense range so far that keywords alone decided the real pages.
     dense = [0.80, 0.70, 0.79]
     keyword = [1.0, 3.0, 9.0]
-    scores = final_scores(dense, keyword, 0.2, reference=[False, False, True])
+    scores = final_scores(dense, keyword, 0.2, reference=[False, False, True], has_text=[True] * 3)
     assert scores[0] > scores[1] > scores[2]  # dense still ranks the real pages; the list goes last
-    same = final_scores(dense, keyword, 0.2, reference=[False] * 3)
+    same = final_scores(dense, keyword, 0.2, reference=[False] * 3, has_text=[True] * 3)
     assert scores[:2] == same[:2]  # the demotion does not move anyone else
 
 

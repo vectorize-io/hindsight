@@ -1008,7 +1008,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
         dense = with_document_prior([r["document_id"] for r in rows], first)
         keywords = [float(r["keyword"] or 0.0) for r in rows]
         reference = [r["page"] is not None and is_reference_page(r["text"]) for r in rows]
-        scores = final_scores(dense, keywords, keyword_weight, reference=reference)
+        has_text = [bool((r["text"] or "").strip()) for r in rows]
+        scores = final_scores(dense, keywords, keyword_weight, reference=reference, has_text=has_text)
         hits = [
             SearchHit(
                 passage=_passage(r),
@@ -1217,19 +1218,25 @@ KEYWORD_IDF_SHARE = 0.5
 _DF_CAP = 50_000
 
 
-def final_scores(dense: list[float], keyword: list[float], weight: float, *, reference: list[bool]) -> list[float]:
+def final_scores(
+    dense: list[float], keyword: list[float], weight: float, *, reference: list[bool], has_text: list[bool]
+) -> list[float]:
     """Dense fused with keywords, then the reference-list demotion. The demotion comes after the fusion:
     inside it, a page at -1 stretched the min-max range of the dense scores, so keywords alone ordered
     the rest (ViDoRe hr English: 58.8 nDCG@10 instead of 67.2). An exact-text bonus (`pattern`) and a
     grep-only search lived here too; no benchmark used them and they were dropped."""
     return [
         score - (REFERENCE_PENALTY if ref else 0.0)
-        for score, ref in zip(fuse_keyword(dense, keyword, weight), reference, strict=True)
+        for score, ref in zip(fuse_keyword(dense, keyword, weight, has_text), reference, strict=True)
     ]
 
 
-def fuse_keyword(dense: list[float], keyword: list[float], weight: float) -> list[float]:
-    """``(1 - w) * minmax(dense) + w * minmax(keyword)`` over the candidates; dense alone when no keyword hit."""
+def fuse_keyword(dense: list[float], keyword: list[float], weight: float, has_text: list[bool]) -> list[float]:
+    """``(1 - w) * minmax(dense) + w * minmax(keyword)`` over the candidates; dense alone when no keyword hit.
+
+    A passage with no text (an image, a clip with no transcript) cannot match a keyword: it scores
+    ``minmax(dense)`` alone, by meaning. With a keyword of 0 it topped out at ``1 - w``, so in a bank of
+    text and media every image ranked below text of the same meaning that matched a word."""
     if weight <= 0 or not any(k > 0 for k in keyword):
         return dense
 
@@ -1239,7 +1246,10 @@ def fuse_keyword(dense: list[float], keyword: list[float], weight: float) -> lis
         lo, hi = min(values), max(values)
         return [(v - lo) / (hi - lo) if hi > lo else 1.0 for v in values]
 
-    return [(1 - weight) * d + weight * k for d, k in zip(scaled(dense), scaled(keyword), strict=True)]
+    return [
+        (1 - weight) * d + weight * k if text else d
+        for d, k, text in zip(scaled(dense), scaled(keyword), has_text, strict=True)
+    ]
 
 
 def load_knowledge_store(backend_provider: Any, extension_path: str | None) -> KnowledgeStore:
