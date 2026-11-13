@@ -1855,7 +1855,7 @@ requires-dist = [
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.0.0" },
     { name = "tokenizers", marker = "extra == 'local-ml'", specifier = ">=0.23.1,<0.24.0" },
     { name = "tokenizers", marker = "extra == 'local-onnx'", specifier = ">=0.23.1,<0.24.0" },
-    { name = "toktok-rs", specifier = ">=0.3.0" },
+    { name = "toktok-rs", specifier = ">=0.4.0" },
     { name = "torch", marker = "extra == 'local-ml'", specifier = ">=2.11.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torchvision", marker = "extra == 'local-ml'", specifier = ">=0.26.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "transformers", marker = "extra == 'local-ml'", specifier = ">=5.22.1" },
@@ -5307,18 +5307,18 @@ wheels = [
 
 [[package]]
 name = "toktok-rs"
-version = "0.3.0"
+version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b9/17/e8c5745ebc307b2c2e65ccd9661cbdefab122a32cb0eed63a6aee6eba830/toktok_rs-0.3.0.tar.gz", hash = "sha256:a90106c50802f94b885416b667bde2db23f0778f7ea602a040bd6eb015a89b9c", size = 4177609, upload-time = "2026-10-21T09:07:52.995Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/08/d2ef19f22707ebc0bc41f09027dea569bec6390d3c23d4c39271d4b7327e/toktok_rs-0.4.0.tar.gz", hash = "sha256:06c8dad69910a3aa709ac79ca479bf62028b05c761403cfbcb138e4f23f326a3", size = 7592361, upload-time = "2026-11-13T12:18:15.248Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4b/c2/2d983ddb0b41471842f1c7ea060cd9febfbf7a368259395e15585d12f30a/toktok_rs-0.3.0-cp311-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:f351bd245076df724ea62c8e5c2454cfe6dbb1ec258a1a0800a22ef6a4b5e6da", size = 9005858, upload-time = "2026-10-21T09:07:36.391Z" },
-    { url = "https://files.pythonhosted.org/packages/81/d0/1cbd18bcd7f446a8e6d5bcf7745298074b485b4d6f73c0463a6077acf305/toktok_rs-0.3.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:5d9076a3d2169ae314dfef8d75661a0335f29d4f4fb2269ab28e52e9ba3c2c6f", size = 4506534, upload-time = "2026-10-21T09:07:39.002Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/93/19d9928e709d10f540c8182677eda18a972d7b247d7e5cc483dcd41649ed/toktok_rs-0.3.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:dc23f9129dfaf91ccfe3f7db3920a1ed0a1c9ce2259f233cf5bb473d1822de98", size = 4513797, upload-time = "2026-10-21T09:07:41.229Z" },
-    { url = "https://files.pythonhosted.org/packages/55/5f/3c458029467d8f2f6c2a89d05dac1d725989390f0c20ebf2e2a71eb8c239/toktok_rs-0.3.0-cp311-abi3-win_amd64.whl", hash = "sha256:edaf13a23cba0e7841fdc2eb8fa1b1b6870c19862c8f95f2370cd82c87aa4a15", size = 4404969, upload-time = "2026-10-21T09:07:43.173Z" },
-    { url = "https://files.pythonhosted.org/packages/52/4a/41ccacbf7d820482a3593c0d639c81187c0b63159f66246dd21a8c2793e0/toktok_rs-0.3.0-cp314-cp314t-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:b7cb192eb1004de75d4be8a5a12795eca76b77ab98b589b7815e7f2360bd94a4", size = 9001514, upload-time = "2026-10-21T09:07:44.914Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/16/6c61618847c8d72f52f345d7df3233d444c6b29b24b5612469c1764c1482/toktok_rs-0.3.0-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:c447e6088bba129dcaa1b05ad07b2038ead282ea0c73f9f61099ca76e33c661d", size = 4503920, upload-time = "2026-10-21T09:07:47.21Z" },
-    { url = "https://files.pythonhosted.org/packages/e5/ac/3960522030d5cc169d6e5760b5e7bd2cdb3494b775cba96d9268ebd2a3a6/toktok_rs-0.3.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:1692b47c42fe4bc9a75f233d29a4c910efad964330f0e3847f1b9d645e261005", size = 4511288, upload-time = "2026-10-21T09:07:49.288Z" },
-    { url = "https://files.pythonhosted.org/packages/69/1a/6cec393a26eab542259cd1440f0f4ae4d9ca5ba373260ee36df40ca0030c/toktok_rs-0.3.0-cp314-cp314t-win_amd64.whl", hash = "sha256:52b5d25968cfff9dddffcf3e83b9e82c6f18469dc594cb969cc622b14a18c71c", size = 4400747, upload-time = "2026-10-21T09:07:51.133Z" },
+    { url = "https://files.pythonhosted.org/packages/9b/9d/87ca3136bd81ae1162b061c8547ad29b8eeed96baacfdea1861cc778da49/toktok_rs-0.4.0-cp311-abi3-macosx_10_12_universal2.macosx_10_12_x86_64.macosx_11_0_arm64.whl", hash = "sha256:939319ef2c1b18b3621c45e7bb816fcd5e9adde2f0896d01c12f2183b458aef8", size = 15903773, upload-time = "2026-11-13T12:18:00.002Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/fd/9276bad6555fbc0eddfb75020b19050852d2af896e713df3e3884c191d41/toktok_rs-0.4.0-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:16074e85dca61ad8fd4234e792de4e6d0ae9f78889b042d2ccb12b8a1d85c7c2", size = 7933532, upload-time = "2026-11-13T12:18:02.163Z" },
+    { url = "https://files.pythonhosted.org/packages/50/e6/78d5efe3c43b8559c635b13a07eff4b3c19ce57d9cc3380ae83e4ad67958/toktok_rs-0.4.0-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:358b6696f3b09de6f9e9da5b42fe898b3a18eb4fc23383156f88bd22b55de641", size = 7942859, upload-time = "2026-11-13T12:18:03.909Z" },
+    { url = "https://files.pythonhosted.org/packages/39/51/f668325d591abb7ff410029abde43aeb753fed14d37e6a5349ea89b4d119/toktok_rs-0.4.0-cp311-abi3-win_amd64.whl", hash = "sha256:7c7311f898c3a88044baea6c30cec67446a708bce96702446a6fdf05cafadc40", size = 7831250, upload-time = "2026-11-13T12:18:05.678Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/12/e156695b527e9bf17fff677123479972e41320f06ff9e276ac872f50810c/toktok_rs-0.4.0-cp314-cp314t-macosx_10_12_universal2.macosx_10_12_x86_64.macosx_11_0_arm64.whl", hash = "sha256:672808a509f077161fb548d54ef3b06ca1208fdbc573a86f1746ceac41d82dfb", size = 15899043, upload-time = "2026-11-13T12:18:07.568Z" },
+    { url = "https://files.pythonhosted.org/packages/bb/2c/03e852d106c333eb75a22f18ba1d0eb82512fe548d81ccd627a509a5c681/toktok_rs-0.4.0-cp314-cp314t-manylinux_2_28_aarch64.whl", hash = "sha256:034d9a27d707533f21a47b1cab1af8062c43a91268306a1a8e9bbd60213db85a", size = 7929625, upload-time = "2026-11-13T12:18:09.685Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/50/b3e250a0d42859932bccc6324c0063857210ba7438218f706aee452e8d87/toktok_rs-0.4.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:ed59be15a7803e995b0736e463c028a3e36369310db52dd2ba8f85f52ef0b1c2", size = 7939972, upload-time = "2026-11-13T12:18:11.478Z" },
+    { url = "https://files.pythonhosted.org/packages/0e/8e/8a27cf2834c7e83e3819d328c1028520bec349225a911d268a0058e9aae5/toktok_rs-0.4.0-cp314-cp314t-win_amd64.whl", hash = "sha256:dbf9e8e39f33bd66de9af9765a9ec4f015ce8766b9ac1277eba21bd28ddb1316", size = 7825872, upload-time = "2026-11-13T12:18:13.289Z" },
 ]
 
 [[package]]
