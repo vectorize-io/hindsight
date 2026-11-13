@@ -2706,6 +2706,7 @@
     "findPlaceholder": "メモリを検索（テキストまたは正規表現）",
     "showRaw": "生の .md",
     "exportZip": ".zip でエクスポート",
+    "recencyLegend": "新しさ · 言及",
     "showRendered": "整形表示",
     "clearFind": "クリア",
     "noMatches": "一致なし。",

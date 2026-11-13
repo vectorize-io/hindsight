@@ -2706,6 +2706,7 @@
     "findPlaceholder": "In Erinnerungen suchen (Text oder Regex)",
     "showRaw": "Roh-.md",
     "exportZip": ".zip exportieren",
+    "recencyLegend": "Aktualität · erwähnt",
     "showRendered": "Formatiert",
     "clearFind": "Leeren",
     "noMatches": "Keine Treffer.",

@@ -399,6 +399,17 @@ export function MemoryTreeView() {
 
   const graph = useMemo(() => treeConstellation(files), [files]);
   const labels = useMemo(() => clusterLabels(files), [files]);
+  // Dots colored by when each observation was mentioned, like the memories view.
+  const recency = useMemo(() => {
+    const times = new Map<string, number>();
+    for (const f of files)
+      for (const o of f.observations) {
+        const t = Date.parse(o.mentioned_at ?? o.updated_at ?? "");
+        if (!Number.isNaN(t)) times.set(o.id, t);
+      }
+    const all = [...times.values()];
+    return all.length ? { times, min: Math.min(...all), max: Math.max(...all) } : null;
+  }, [files]);
   const re = useMemo(() => findPattern(query), [query]);
   const hits = useMemo(() => (re ? findMatches(files, re) : null), [files, re]);
   const totalHits = hits ? [...hits.values()].reduce((a, b) => a + b, 0) : 0;
@@ -501,6 +512,23 @@ export function MemoryTreeView() {
           clusterKeyFn={(node) => node.group ?? null}
           clusterColorFn={clusterColor}
           clusterLabelFn={(key) => labels.get(key) ?? key}
+          nodeHeatFn={
+            recency && recency.max > recency.min
+              ? (node) => {
+                  const t = recency.times.get(node.id);
+                  return t === undefined ? 0 : (t - recency.min) / (recency.max - recency.min);
+                }
+              : undefined
+          }
+          heatLegendLabel={t("recencyLegend")}
+          heatLegendEndpoints={
+            recency
+              ? [
+                  new Date(recency.min).toISOString().slice(0, 10),
+                  new Date(recency.max).toISOString().slice(0, 10),
+                ]
+              : undefined
+          }
           onNodeClick={(node) => setOpenMemory(node.id)}
         />
         <MemoryDetailModal memoryId={openMemory} onClose={() => setOpenMemory(null)} />

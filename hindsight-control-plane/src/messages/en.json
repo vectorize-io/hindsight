@@ -2706,6 +2706,7 @@
     "findPlaceholder": "Find in memories (text or regex)",
     "showRaw": "Raw .md",
     "exportZip": "Export .zip",
+    "recencyLegend": "recency · mentioned",
     "showRendered": "Rendered",
     "clearFind": "Clear",
     "noMatches": "No matches.",

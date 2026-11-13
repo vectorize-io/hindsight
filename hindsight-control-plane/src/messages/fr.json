@@ -2706,6 +2706,7 @@
     "findPlaceholder": "Chercher dans les mémoires (texte ou regex)",
     "showRaw": ".md brut",
     "exportZip": "Exporter en .zip",
+    "recencyLegend": "récence · mentionné",
     "showRendered": "Mis en forme",
     "clearFind": "Effacer",
     "noMatches": "Aucun résultat.",

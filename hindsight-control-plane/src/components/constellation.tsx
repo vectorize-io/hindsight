@@ -496,7 +496,9 @@ export function Constellation({
         color,
         // When clustering / venn, the dot is tinted by its group color so the
         // grouping reads at a glance; otherwise it keeps the heat gradient.
-        heatColor: centroid || vennActive ? color : heat,
+        // A caller-supplied heat (e.g. recency) colours the dots even inside clusters, whose
+        // blobs keep the cluster colour; otherwise a clustered dot takes its cluster's colour.
+        heatColor: (centroid || vennActive) && !nodeHeatFn ? color : heat,
         linkCount: lc,
         phase: ((Math.abs(seed) % 1000) / 1000) * Math.PI * 2,
       };
@@ -1042,9 +1044,9 @@ export function Constellation({
       legendX -= 14;
     }
 
-    // Heat gradient legend (top-left, below instructions). Suppressed while
-    // clustering, where node color encodes the cluster (scope), not the gradient.
-    if (clusters.length === 0) {
+    // Heat gradient legend (top-left, below instructions). Suppressed while clustering,
+    // where node color encodes the cluster (scope) — unless a heat function colors the dots.
+    if (clusters.length === 0 || nodeHeatFn) {
       ctx.textAlign = "left";
       ctx.font = FONT_BOLD;
       ctx.fillStyle = isDark ? "#a1a1aa" : "#52525b";

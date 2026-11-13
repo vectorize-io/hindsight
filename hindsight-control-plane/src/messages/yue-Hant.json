@@ -2706,6 +2706,7 @@
     "findPlaceholder": "喺記憶入面搵（文字或正則表達式）",
     "showRaw": "原始 .md",
     "exportZip": "匯出 .zip",
+    "recencyLegend": "新近度 · 提及",
     "showRendered": "排版顯示",
     "clearFind": "清除",
     "noMatches": "搵唔到。",

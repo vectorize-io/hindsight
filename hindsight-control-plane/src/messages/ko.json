@@ -2706,6 +2706,7 @@
     "findPlaceholder": "메모리에서 찾기 (텍스트 또는 정규식)",
     "showRaw": "원본 .md",
     "exportZip": ".zip 내보내기",
+    "recencyLegend": "최신성 · 언급",
     "showRendered": "렌더링",
     "clearFind": "지우기",
     "noMatches": "일치 항목 없음.",
