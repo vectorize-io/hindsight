@@ -28,6 +28,11 @@ LEARN_AT = 0.15
 RULE_ID_PREFIX = "rule-"
 # How many of the bank's learned rules the writer is shown to avoid writing one twice.
 MAX_EXISTING_RULES = 30
+# A learned page's size cap. At the default 4096 the broad pages grew to 10-16k characters, reached
+# checks about unrelated work, and over 100 replayed checks did no better than no pages (21 better,
+# 21 worse). Narrowed and capped at 1024 (~1.4k characters), checks that cited a page got the better
+# note 13 times to 5 (2026-11-13).
+PAGE_MAX_TOKENS = 1024
 # A rule whose notes agents called wrong this many times, and never used, stops reaching checks: it is
 # tagged, not deleted, so a person can see it and take the tag off. Live, the first rule learned from
 # one run's free port ("tests must use 5617") was rejected on each of its first notes, and kept

@@ -1382,6 +1382,7 @@ async def test_a_users_correction_becomes_a_rule(memory, request_context, monkey
     model = await memory.get_mental_model(bank, rule_id, request_context=request_context)
     assert (model["source_query"], model["content"]) == ("What does typesafe cost?", "")
     assert model["trigger"]["refresh_after_consolidation"] is True
+    assert model["max_tokens"] == 1024, "capped below the default page size (learn.PAGE_MAX_TOKENS)"
     assert memory.refreshed_rules == [rule_id]
 
 

@@ -1090,7 +1090,7 @@ class SessionService:
             await engine.delete_mental_model(bank_id, old_id, request_context=rc)
         mm_id = f"{L.RULE_ID_PREFIX}{uuid.uuid4().hex[:16]}"
         # Reflect writes the page from the bank's observations, cited, and refreshes it after each
-        # consolidation (see learn.PAGE_FORMAT).
+        # consolidation (see learn.PAGE_FORMAT). Capped at learn.PAGE_MAX_TOKENS, not the default size.
         page = await engine.create_knowledge_page(
             bank_id,
             draft.name.strip()[:120] or "Rule",
@@ -1098,6 +1098,7 @@ class SessionService:
             "",
             mental_model_id=mm_id,
             managed=True,
+            max_tokens=L.PAGE_MAX_TOKENS,
             request_context=rc,
         )
         if page is None:  # a page of that name already exists
