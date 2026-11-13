@@ -384,7 +384,9 @@ CASES: tuple[Case, ...] = (
             "A fact names Ravi and identifies him as the user's manager.",
         ),
         # The whole line counts: a trailing 'She got a job in Leeds.' after 'Tamsin, the user's roommate' is resolved.
-        traps=("A fact line mentions 'my roommate', 'she' or 'my manager' and nowhere on that whole line names the person.",),
+        traps=(
+            "A fact line mentions 'my roommate', 'she' or 'my manager' and nowhere on that whole line names the person.",
+        ),
     ),
     # ── Who did it: fact type and speaker attribution ────────────────────────────
     Case(
@@ -543,8 +545,9 @@ CASES: tuple[Case, ...] = (
         ),
         must=("A fact records that Wang Fang moved from Shanghai to Chengdu.",),
         traps=(
-            "At least one fact's main sentence is written in English, in pinyin, or in any script other than "
-            "Chinese characters.",
+            "At least one fact was translated out of Chinese: its statement reads like 'Wang Fang moved from "
+            "Shanghai to Chengdu', in English or pinyin, instead of in Chinese characters. The field labels "
+            "every fact carries ('[world]', 'When:', 'Where:', 'Involving:') are formatting, not the fact.",
         ),
     ),
     Case(
@@ -560,7 +563,11 @@ CASES: tuple[Case, ...] = (
             ),
         ),
         must=("A fact records the interview with Telefónica on 10 February 2026.",),
-        traps=("At least one fact's main sentence is written in a language other than Spanish.",),
+        traps=(
+            "At least one fact was translated out of Spanish: its statement reads like 'User has a job "
+            "interview with Telefónica', in English or another language, instead of in Spanish. The field "
+            "labels every fact carries ('[world]', 'When:', 'Involving:') are formatting, not the fact.",
+        ),
     ),
     # ── Faithfulness: what the input did not say ─────────────────────────────────
     Case(

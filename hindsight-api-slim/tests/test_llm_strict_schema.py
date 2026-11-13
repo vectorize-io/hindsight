@@ -36,11 +36,14 @@ from hindsight_api.config import (
     ENV_LLM_STRICT_SCHEMA_CONSOLIDATION,
     ENV_LLM_STRICT_SCHEMA_REFLECT,
     ENV_LLM_STRICT_SCHEMA_RETAIN,
+    ENV_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA,
     ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE,
+    ENV_RETAIN_LLM_OPENAI_COMPATIBLE_JSON_MODE,
     HindsightConfig,
 )
 from hindsight_api.engine.llm_wrapper import LLMProvider
 from hindsight_api.engine.providers.openai_compatible_llm import OpenAICompatibleLLM
+from hindsight_api.engine.structured_output import provider_json_schema
 
 
 # These tests assert the default json_object behaviour, not a job's JSON-mode override.
@@ -266,11 +269,73 @@ async def test_openai_compatible_json_mode_picks_soft_path(provider, override, e
     assert "valid JSON matching this schema" in kwargs["messages"][0]["content"]
 
 
+@pytest.mark.parametrize("enforce,expected_type", [(False, "json_object"), (True, "json_schema")])
+@pytest.mark.asyncio
+async def test_openai_compatible_soft_path_can_enforce_the_schema(enforce, expected_type):
+    """With enforcement on, the soft path sends the schema as-is (not strict) instead of json_object, and in the prompt."""
+    from hindsight_api.config import _get_raw_config
+
+    cfg = dataclasses.replace(_get_raw_config(), llm_openai_compatible_enforce_schema=enforce)
+    llm = OpenAICompatibleLLM(provider="openai", api_key="test-key", base_url="https://example.test/v1", model="m")
+    create = AsyncMock(return_value=_openai_response())
+    llm._client.chat.completions.create = create
+    with (
+        patch("hindsight_api.config.get_config", lambda: cfg),
+        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
+    ):
+        await llm.call(messages=[{"role": "user", "content": "Did it work?"}], response_format=_Resp, max_retries=0)
+    rf = create.call_args.kwargs["response_format"]
+    assert rf["type"] == expected_type
+    # The prompt carries the schema either way: a grammar forces only the required fields.
+    assert "valid JSON matching this schema" in create.call_args.kwargs["messages"][0]["content"]
+    if enforce:
+        assert rf["json_schema"]["strict"] is False
+        assert rf["json_schema"]["schema"] == provider_json_schema(_Resp)
+
+
+@pytest.mark.parametrize(
+    "scope,expected_type,schema_in_prompt",
+    [
+        ("retain_extract_facts", None, True),  # retain writes freely, schema in the prompt
+        ("consolidation", "json_schema", True),  # everything else stays enforced
+    ],
+)
+@pytest.mark.asyncio
+async def test_retain_json_mode_override_beats_enforcement(scope, expected_type, schema_in_prompt):
+    """Retain's json-mode off wins over the global enforcement, for retain only."""
+    from hindsight_api.config import _get_raw_config
+
+    cfg = dataclasses.replace(
+        _get_raw_config(), llm_openai_compatible_enforce_schema=True, retain_llm_openai_compatible_json_mode=False
+    )
+    llm = OpenAICompatibleLLM(provider="openai", api_key="test-key", base_url="https://example.test/v1", model="m")
+    create = AsyncMock(return_value=_openai_response())
+    llm._client.chat.completions.create = create
+    with (
+        patch("hindsight_api.config.get_config", lambda: cfg),
+        patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"),
+    ):
+        await llm.call(
+            messages=[{"role": "user", "content": "Did it work?"}], response_format=_Resp, scope=scope, max_retries=0
+        )
+    kwargs = create.call_args.kwargs
+    assert (kwargs.get("response_format") or {}).get("type") == expected_type
+    assert ("valid JSON matching this schema" in kwargs["messages"][0]["content"]) is schema_in_prompt
+
+
 def test_openai_compatible_json_mode_env(monkeypatch):
     monkeypatch.delenv(ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE, raising=False)
     assert HindsightConfig.from_env().llm_openai_compatible_json_mode is None
     monkeypatch.setenv(ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE, "false")
     assert HindsightConfig.from_env().llm_openai_compatible_json_mode is False
+    monkeypatch.delenv(ENV_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA, raising=False)
+    assert HindsightConfig.from_env().llm_openai_compatible_enforce_schema is False
+    monkeypatch.setenv(ENV_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA, "true")
+    assert HindsightConfig.from_env().llm_openai_compatible_enforce_schema is True
+    monkeypatch.delenv(ENV_RETAIN_LLM_OPENAI_COMPATIBLE_JSON_MODE, raising=False)
+    assert HindsightConfig.from_env().retain_llm_openai_compatible_json_mode is None
+    monkeypatch.setenv(ENV_RETAIN_LLM_OPENAI_COMPATIBLE_JSON_MODE, "false")
+    assert HindsightConfig.from_env().retain_llm_openai_compatible_json_mode is False
 
 
 # --------------------------------------------------------------------------- #

@@ -219,6 +219,31 @@ ENV_LLM_VISION = "HINDSIGHT_API_LLM_VISION"
 # for ``provider=openai`` pointed at a local server that can't constrain output and
 # instead rewrites the prompt in ways a thinking model can loop on (issue #4935).
 ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE = "HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE"
+# On that soft path, ask the backend to enforce the response schema itself
+# (``response_format={"type": "json_schema", ..., "strict": false}``) instead of
+# ``json_object``, which only promises some JSON object. For a backend that
+# grammar-constrains any schema (vLLM, llama.cpp). Gemma 4 on vLLM is why: under
+# json_object, long nested replies (mental-model delta ops, consolidation) closed
+# the list early and repeated keys until the token cap (6 of 663 delta-ops replays);
+# enforced, 1 of 663, and 0 of 190 consolidation replays. The schema stays in the prompt: a grammar
+# forces only the required fields, and without the text Gemma never wrote the
+# optional ones it was not told about (retain's event dates on 0 of 390 facts, 252
+# of 402 with it). An earlier version left the text out, after retain went empty
+# with it; that was the whitespace below, not the text. Not the strict path: that
+# sends a rewritten schema (every field required, no defaults), which did worse.
+ENV_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA = "HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA"
+# HINDSIGHT_API_LLM_OPENAI_COMPATIBLE_JSON_MODE for retain's fact extraction only,
+# falling back to the global value. Retain is the one answer that may legally be
+# empty, and under any decoding constraint -- json_object or the enforced schema --
+# Gemma 4 on vLLM took that exit on content full of facts: 17 to 39 of 120 hard
+# replays came back {"facts": []}. The cause is vLLM's
+# --structured-outputs-config.disable_any_whitespace: Gemma writes JSON across
+# lines, and the newline it wants right after '"facts": [' (probability ~1) is not
+# allowed, so ']' wins. Allowing whitespace fixed retain (0 of 120) but let a delta-ops
+# reply loop on newlines to the token cap (1 of 663), the loop that flag exists to stop,
+# so retain decodes unconstrained instead: 126/126 over three eval runs with
+# ENFORCE_SCHEMA on for everything else. Consolidation and refresh need no such switch.
+ENV_RETAIN_LLM_OPENAI_COMPATIBLE_JSON_MODE = "HINDSIGHT_API_RETAIN_LLM_OPENAI_COMPATIBLE_JSON_MODE"
 ENV_LLM_SEND_BANK_AS_USER = "HINDSIGHT_API_LLM_SEND_BANK_AS_USER"
 ENV_LLM_OLLAMA_NUM_CTX = "HINDSIGHT_API_LLM_OLLAMA_NUM_CTX"
 
@@ -3569,6 +3594,10 @@ class HindsightConfig:
     # Tri-state override for "does the backend honour json_object?". None defers to
     # the provider's default. See ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE.
     llm_openai_compatible_json_mode: bool | None = field(default=None, kw_only=True)
+    # Enforce the schema instead of json_object on the soft path. See ENV_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA.
+    llm_openai_compatible_enforce_schema: bool = field(default=False, kw_only=True)
+    # Retain's own override of llm_openai_compatible_json_mode. See ENV_RETAIN_LLM_OPENAI_COMPATIBLE_JSON_MODE.
+    retain_llm_openai_compatible_json_mode: bool | None = field(default=None, kw_only=True)
 
     # Per-operation sampling temperature. None means the temperature parameter is
     # omitted from the call (for models that reject explicit temperatures). See
@@ -4964,6 +4993,11 @@ class HindsightConfig:
             llm_vision=_parse_tristate_bool(ENV_LLM_VISION, os.getenv(ENV_LLM_VISION)),
             llm_openai_compatible_json_mode=_parse_tristate_bool(
                 ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE, os.getenv(ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE)
+            ),
+            llm_openai_compatible_enforce_schema=os.getenv(ENV_LLM_OPENAI_COMPATIBLE_ENFORCE_SCHEMA, "false").lower()
+            in ("true", "1"),
+            retain_llm_openai_compatible_json_mode=_parse_tristate_bool(
+                ENV_RETAIN_LLM_OPENAI_COMPATIBLE_JSON_MODE, os.getenv(ENV_RETAIN_LLM_OPENAI_COMPATIBLE_JSON_MODE)
             ),
             llm_ollama_num_ctx=_parse_optional_positive_int(
                 ENV_LLM_OLLAMA_NUM_CTX,

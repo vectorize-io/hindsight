@@ -38,6 +38,7 @@ from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
 
 if TYPE_CHECKING:
+    from ...config import HindsightConfig
     from .attachment_store import AttachmentLoader
 from .entity_labels import (
     EntityLabelsConfig,
@@ -1060,6 +1061,22 @@ def _iter_jsonl_chunks(text: str, max_chars: int, structured_limit: int) -> Iter
 # into English in 10/10 runs (the #181 priming effect). Shorter too: 31 tokens, from 67.
 _DEFAULT_LANGUAGE_RULE = """LANGUAGE: Write every fact in the same language and script as the input text. Never translate. Names, identifiers, code, and quoted text stay verbatim."""
 
+# The same rule restated after the content, in the per-request message. Gemma 4 read the
+# English around a short input (the prompt, "user:"/"assistant:" labels) as its language:
+# a 3-line Spanish chat came back as English facts in 4 of 12 samples, and in none with
+# this line, while English, Italian, Japanese, German and Chinese inputs held 12/12 either
+# way. Selected by default_language_section() like the rule above, so it disappears when
+# an output language is configured.
+_LANGUAGE_REMINDER = "Write each fact in the language the Content above is written in."
+
+# Custom mode's instructions sit in the system prompt, after a generic "extract significant
+# facts" opening, and Gemma 4 kept following the opening: told "extract ONLY action items",
+# it still stored "morale is high" in 15 of 16 samples, and in 0 of 16 with this line after
+# the content.
+_CUSTOM_INSTRUCTIONS_REMINDER = (
+    "Extract only what the extraction instructions above ask for. Anything they leave out must not become a fact."
+)
+
 
 # Base prompt template (shared by concise and custom modes)
 # Uses {extraction_guidelines} placeholder for mode-specific instructions
@@ -1610,7 +1627,7 @@ def _build_extraction_prompt_and_schema(config) -> ExtractionPrompt:
     # {custom_instructions}, and ``str.format`` ignores a keyword no template mentions, so
     # all four can be filled by one call.
     custom_instructions = ""
-    if extraction_mode == "custom" and config.retain_custom_instructions:
+    if _uses_custom_instructions(config):
         base_prompt = CUSTOM_FACT_EXTRACTION_PROMPT
         custom_instructions = escape_for_prompt(config.retain_custom_instructions)
     elif extraction_mode == "verbose":
@@ -1778,12 +1795,19 @@ def build_chunk_prompt_parts(
         metadata,
         agent_name,
         mission_preamble=_retain_mission_preamble(config),
+        output_language=config.llm_output_language,
+        custom_instructions=_uses_custom_instructions(config),
     )
     return ChunkPromptParts(
         system_prompt=extraction_prompt.system_prompt,
         user_message=user_message,
         response_schema=extraction_prompt.response_schema,
     )
+
+
+def _uses_custom_instructions(config: "HindsightConfig") -> bool:
+    """Whether the system prompt carries custom instructions: custom mode with some configured."""
+    return config.retain_extraction_mode == "custom" and bool(config.retain_custom_instructions)
 
 
 def _retain_mission_preamble(config) -> str:
@@ -1840,6 +1864,8 @@ def _build_user_message(
     metadata: dict[str, str] | None = None,
     agent_name: str | None = None,
     mission_preamble: str = "",
+    output_language: str | None = None,
+    custom_instructions: bool = False,
 ) -> str:
     """Build user message for fact extraction.
 
@@ -1914,6 +1940,12 @@ def _build_user_message(
             "when the fact could not be stated without looking at it."
         )
 
+    from hindsight_api.engine.prompt_utils import default_language_section
+
+    reminder = default_language_section(_LANGUAGE_REMINDER, output_language).rstrip()
+    reminders = [r for r in (reminder, _CUSTOM_INSTRUCTIONS_REMINDER if custom_instructions else "") if r]
+    reminders_section = "".join(f"\n\n{r}" for r in reminders)
+
     return f"""{mission_preamble}Extract facts from the following chunk.
 
 Chunk: {chunk_index + 1}/{total_chunks}
@@ -1921,7 +1953,7 @@ Event Date: {event_date_str}
 Context: {sanitized_context}{metadata_section}{narrator_section}{attachment_section}
 
 Content:
-{sanitized_chunk}"""
+{sanitized_chunk}{reminders_section}"""
 
 
 def _build_request_body(batch_impl, config, prompt: str, user_message: str, response_schema: type) -> dict:
@@ -3028,6 +3060,8 @@ async def extract_facts_from_contents_batch_api(
                 item.context,
                 item.metadata or None,
                 mission_preamble=_retain_mission_preamble(config),
+                output_language=config.llm_output_language,
+                custom_instructions=_uses_custom_instructions(config),
             )
 
             # Build request body using helper function
