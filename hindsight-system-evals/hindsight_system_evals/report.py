@@ -102,7 +102,7 @@ class KnowledgeResult(BaseModel):
 
     category: str
     case: str
-    #: ``<provider>:<model>`` from the server's knowledge config.
+    #: ``<provider>:<model>`` as the run names it (see ``knowledge.embedder_name``).
     embedder: str
     corpus: int
     queries: int

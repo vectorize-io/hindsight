@@ -96,6 +96,19 @@ export interface ConstellationProps {
   nodeGroupsFn?: (node: GraphNode) => string[];
   groupColorFn?: (key: string) => string;
   groupLabelFn?: (key: string) => string;
+  /**
+   * The footer's stats line, for a graph whose dots are not memories (a knowledge
+   * bank's passages). Default: "{n} memories · {visible} visible · …".
+   */
+  hudStatsFn?: (stats: HudStats) => string;
+}
+
+export interface HudStats {
+  nodes: number;
+  visible: number;
+  labels: number;
+  links: number;
+  zoom: string;
 }
 
 // ============================================================================
@@ -164,6 +177,14 @@ function heatColor(t: number): string {
   const g = Math.round(a[1] + (b[1] - a[1]) * frac);
   const bl = Math.round(a[2] + (b[2] - a[2]) * frac);
   return `rgb(${r},${g},${bl})`;
+}
+
+/** Tooltip text goes in as HTML: stored text (memories, document passages) must not run as markup. */
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!
+  );
 }
 
 function hashStr(s: string): number {
@@ -261,6 +282,7 @@ export function Constellation({
   nodeGroupsFn,
   groupColorFn,
   groupLabelFn,
+  hudStatsFn,
 }: ConstellationProps) {
   const t = useTranslations("constellation");
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -544,6 +566,8 @@ export function Constellation({
     groupColorFn,
     groupLabelFn,
   ]);
+  // The legend lists only the link kinds this graph has (a knowledge bank's has none of them).
+  const linkTypes = useMemo(() => new Set(linksWithIndices.map((l) => l.type)), [linksWithIndices]);
 
   // ----- Animation loop -----
   const animate = useCallback(() => {
@@ -924,14 +948,15 @@ export function Constellation({
     ctx.font = MONO;
     ctx.fillStyle = isDark ? "#71717a" : "#71717a";
     ctx.textAlign = "left";
+    const hud: HudStats = {
+      nodes: preparedNodes.length,
+      visible: visibleCount,
+      labels: labelsShown,
+      links: linksDrawn,
+      zoom: zoom.toFixed(2),
+    };
     ctx.fillText(
-      t("hudStats", {
-        memories: preparedNodes.length,
-        visible: visibleCount,
-        labels: labelsShown,
-        links: linksDrawn,
-        zoom: zoom.toFixed(2),
-      }),
+      hudStatsFn ? hudStatsFn(hud) : t("hudStats", { ...hud, memories: hud.nodes }),
       12,
       H - 12
     );
@@ -947,6 +972,7 @@ export function Constellation({
       causal: t("linkTypeCausal"),
     };
     for (const [type, color] of Object.entries(LINK_TYPE_COLORS).reverse()) {
+      if (!linkTypes.has(type)) continue;
       const label = linkTypeLabel[type] ?? type;
       const tw = ctx.measureText(label).width;
       ctx.fillStyle = isDark ? "#a1a1aa" : "#52525b";
@@ -1022,7 +1048,7 @@ export function Constellation({
     ctx.restore();
 
     animRef.current = requestAnimationFrame(animate);
-  }, [isDark, preparedNodes, linksWithIndices, linksByNode, clusters, t]);
+  }, [isDark, preparedNodes, linksWithIndices, linksByNode, clusters, linkTypes, t, hudStatsFn]);
 
   // ----- Label drawing helper -----
   function drawLabel(
@@ -1166,18 +1192,21 @@ export function Constellation({
       if (idx !== s.prevHoverIndex) {
         s.prevHoverIndex = idx;
         const meta = node.metadata as Record<string, any> | undefined;
-        const fullText = meta?.text || node.label || node.id;
+        const fullText = escapeHtml(String(meta?.text || node.label || node.id));
         const entities: string[] = meta?.entities
           ? String(meta.entities)
               .split(",")
-              .map((e: string) => e.trim())
+              .map((e: string) => escapeHtml(e.trim()))
               .filter(Boolean)
           : [];
         const nodeColor = preparedNodes[idx].heatColor;
         const linkCount = preparedNodes[idx].linkCount;
-        const factType = meta?.fact_type || node.group || "memory";
-        const context = meta?.context && meta.context !== "N/A" ? meta.context : null;
-        const tags: string[] = Array.isArray(meta?.tags) ? meta.tags : [];
+        const factType = escapeHtml(String(meta?.fact_type || node.group || "memory"));
+        const context =
+          meta?.context && meta.context !== "N/A" ? escapeHtml(String(meta.context)) : null;
+        const tags: string[] = Array.isArray(meta?.tags)
+          ? meta.tags.map(String).map(escapeHtml)
+          : [];
         const occurredStart = meta?.occurred_start || null;
         const occurredEnd = meta?.occurred_end || null;
         const mentionedAt = meta?.mentioned_at || null;
@@ -1226,7 +1255,7 @@ export function Constellation({
         }
 
         if (documentId) {
-          html += `<div style="${rowStyle}"><span style="${labelStyle}">Document</span><span style="font-size:11px;font-family:monospace;color:${muted}">${String(documentId).slice(0, 12)}...</span></div>`;
+          html += `<div style="${rowStyle}"><span style="${labelStyle}">Document</span><span style="font-size:11px;font-family:monospace;color:${muted}">${escapeHtml(String(documentId).slice(0, 12))}...</span></div>`;
         }
 
         html += `</div>`;

@@ -35,7 +35,7 @@ describe("KnowledgeSearchPanel", () => {
     fireEvent.change(screen.getByLabelText("placeholder"), { target: { value: " key rotation " } });
     fireEvent.click(screen.getByText("submit"));
     await waitFor(() => expect(searchKnowledgeBank).toHaveBeenCalledTimes(1));
-    expect(searchKnowledgeBank.mock.calls[0][1]).toEqual({ query: "key rotation", top_k: 10, neighbors: 1 });
+    expect(searchKnowledgeBank.mock.calls[0][1]).toEqual({ query: "key rotation", max_tokens: 4096 });
 
     const clip = new File([new Uint8Array([0, 0, 0, 24])], "clip.mp4", { type: "video/mp4" });
     fireEvent.change(screen.getByTestId("kb-search-media-input"), { target: { files: [clip] } });
@@ -43,7 +43,7 @@ describe("KnowledgeSearchPanel", () => {
     fireEvent.click(screen.getByText("submit"));
     await waitFor(() => expect(searchKnowledgeBank).toHaveBeenCalledTimes(2));
     const body = searchKnowledgeBank.mock.calls[1][1];
-    expect(body).toMatchObject({ query: "key rotation", top_k: 10 });
+    expect(body).toMatchObject({ query: "key rotation", max_tokens: 4096 });
     expect(typeof body.query_video).toBe("string");
   });
 

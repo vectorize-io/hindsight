@@ -800,6 +800,8 @@ class KnowledgeBankReadOperation(StrEnum):
     GET_KNOWLEDGE_BANK_DOCUMENT = "get_knowledge_bank_document"
     #: Also checked, as the caller, for each knowledge bank a memory bank links when reflect reads it.
     SEARCH_KNOWLEDGE_BANK = "search_knowledge_bank"
+    #: The bank's ingest settings (``GET /knowledge-banks/{bank_id}/config``).
+    GET_KNOWLEDGE_BANK_CONFIG = "get_knowledge_bank_config"
 
 
 class KnowledgeBankWriteOperation(StrEnum):
@@ -808,6 +810,8 @@ class KnowledgeBankWriteOperation(StrEnum):
     INGEST_KNOWLEDGE_BANK = "ingest_knowledge_bank"
     DELETE_KNOWLEDGE_BANK_DOCUMENT = "delete_knowledge_bank_document"
     DELETE_KNOWLEDGE_BANK = "delete_knowledge_bank"
+    UPDATE_KNOWLEDGE_BANK_CONFIG = "update_knowledge_bank_config"
+    RESET_KNOWLEDGE_BANK_CONFIG = "reset_knowledge_bank_config"
 
 
 @dataclass

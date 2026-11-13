@@ -51,13 +51,13 @@ def knowledge_banks(request: pytest.FixtureRequest, target: Target) -> Iterator[
 @pytest.mark.parametrize("case", case_params(CASES, MINIMUM))
 async def test_knowledge(case: Case, request: pytest.FixtureRequest, target: Target, knowledge_banks: dict[str, Bank]):
     client = KnowledgeApi(target.url, target.api_key)
-    media = await embedder_media_types(client)
+    media = embedder_media_types()
     if case.needs not in media:
         pytest.skip(f"the server's knowledge embedder does not write {case.needs} (it writes {media})")
     ctx = Context(
         client=client,
         full=request.config.getoption("--full"),
-        embedder=await embedder_name(client),
+        embedder=embedder_name(),
         banks=knowledge_banks,
     )
     try:

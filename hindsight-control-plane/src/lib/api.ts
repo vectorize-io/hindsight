@@ -15,12 +15,13 @@ import {
   type MediaType,
   type DocumentStatus,
   type KnowledgeBank,
-  type KnowledgeConfig,
   type KnowledgeDocument,
   type KnowledgeDocumentDetail,
   type KnowledgeSearchRequest,
   type KnowledgeSearchResponse,
   type KnowledgeIngestResponse,
+  type KnowledgeBankConfig,
+  type KnowledgeBankConfigUpdates,
 } from "./knowledge-banks";
 
 /**
@@ -2430,10 +2431,6 @@ export class ControlPlaneClient {
 
   // ── Knowledge banks (/api/knowledge-banks proxy) ──────────────────────────
 
-  async getKnowledgeConfig() {
-    return this.fetchApi<KnowledgeConfig>(knowledgeApi("config"));
-  }
-
   /** One page, newest first; `q` matches part of the bank id. */
   async listKnowledgeBanks(params: { limit?: number; offset?: number; q?: string } = {}) {
     const query = new URLSearchParams();
@@ -2473,6 +2470,27 @@ export class ControlPlaneClient {
 
   async deleteKnowledgeBank(bankId: string) {
     return this.fetchApi<{ deleted: boolean }>(knowledgeApi(bankId), { method: "DELETE" });
+  }
+
+  async getKnowledgeBankConfig(bankId: string) {
+    return this.fetchApi<KnowledgeBankConfig>(knowledgeApi(bankId, "config"), {
+      cache: "no-store" as RequestCache,
+    });
+  }
+
+  /** Throws with the server's reason (it names the bad field); the settings section shows it, so no toast. */
+  async updateKnowledgeBankConfig(bankId: string, updates: KnowledgeBankConfigUpdates) {
+    return this.fetchApi<KnowledgeBankConfig>(
+      knowledgeApi(bankId, "config"),
+      { method: "PATCH", body: JSON.stringify({ updates }) },
+      { suppressErrorToast: true }
+    );
+  }
+
+  async resetKnowledgeBankConfig(bankId: string) {
+    return this.fetchApi<KnowledgeBankConfig>(knowledgeApi(bankId, "config"), {
+      method: "DELETE",
+    });
   }
 
   async listKnowledgeDocuments(
@@ -2539,13 +2557,16 @@ export class ControlPlaneClient {
     );
   }
 
-  async getKnowledgeTimeseries(bankId: string, period: ActivityPeriod) {
+  /** `mediaType` counts only documents of that kind. */
+  async getKnowledgeTimeseries(bankId: string, period: ActivityPeriod, mediaType?: MediaType) {
+    const search = new URLSearchParams({ period });
+    if (mediaType) search.set("media_type", mediaType);
     return this.fetchApi<{
       bank_id: string;
       period: string;
       trunc: "hour" | "day";
       buckets: ActivityBucket[];
-    }>(`${knowledgeApi(bankId, "stats", "timeseries")}?period=${period}`, {
+    }>(`${knowledgeApi(bankId, "stats", "timeseries")}?${search}`, {
       cache: "no-store" as RequestCache,
     });
   }

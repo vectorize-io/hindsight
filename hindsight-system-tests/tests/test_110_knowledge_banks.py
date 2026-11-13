@@ -42,10 +42,11 @@ async def knowledge_bank(kb: KnowledgeBanks) -> AsyncIterator[str]:
     await kb.delete(bank_id)
 
 
-async def _hits(kb: KnowledgeBanks, bank_id: str, **body) -> list[str]:
-    r = await kb.search(bank_id, neighbors=0, **body)
+async def _hits(kb: KnowledgeBanks, bank_id: str, first: int | None = None, **body) -> list[str]:
+    """The documents of the hits, best first; ``first`` keeps that many."""
+    r = await kb.search(bank_id, **body)
     assert r.status == 200, r.body
-    return [h["document_id"] for h in r.body["results"]]
+    return [h["document_id"] for h in r.body["results"]][:first]
 
 
 async def test_a_sync_ingest_returns_once_every_document_is_searchable(kb, knowledge_bank):
@@ -55,23 +56,25 @@ async def test_a_sync_ingest_returns_once_every_document_is_searchable(kb, knowl
     assert r.status == 200, r.body
     assert r.body == {"document_ids": ["keys", "billing", "outage"], "operation_ids": [], "unchanged_document_ids": []}
     # Searchable on return: no waiting, no polling. The whole hit is deterministic with the stub embedder.
-    r = await kb.search(knowledge_bank, query="how do I rotate an api key", top_k=1, neighbors=0)
-    [hit] = r.body["results"]
-    assert {k: hit[k] for k in ("document_id", "index", "text", "media_type", "page", "context")} == {
+    r = await kb.search(knowledge_bank, query="how do I rotate an api key")
+    hit = r.body["results"][0]
+    # A one-passage document: its text is the passage itself, with nothing around it.
+    assert {k: hit[k] for k in ("document_id", "index", "text", "media_type", "page")} == {
         "document_id": "keys",
         "index": 0,
         "text": GUIDES["keys"],
         "media_type": "text",
         "page": None,
-        "context": None,
     }
     assert hit["filename"] == "keys.md" and "score" not in hit and set(r.body) == {"results"}
-    assert (await _hits(kb, knowledge_bank, query="when are invoices emailed", top_k=1)) == ["billing"]
+    assert (await _hits(kb, knowledge_bank, query="when are invoices emailed", first=1)) == ["billing"]
     bank = (await kb.get(knowledge_bank)).body
     assert (bank["document_count"], bank["ready_count"], bank["failed_count"]) == (3, 3, 0)
 
 
-async def test_an_async_ingest_is_one_operation_the_worker_finishes_even_split_into_children(client, kb, knowledge_bank):
+async def test_an_async_ingest_is_one_operation_the_worker_finishes_even_split_into_children(
+    client, kb, knowledge_bank
+):
     # Over a child's byte budget (1 MiB by default): the notes fill one child and the manual, bigger than
     # the budget on its own, is a second, so the worker runs the upload as two children. The one operation
     # the caller holds completes only once both have. (A request carries at most 100 items, under the
@@ -87,7 +90,7 @@ async def test_an_async_ingest_is_one_operation_the_worker_finishes_even_split_i
     await kb.wait_until_processed(knowledge_bank, 31, timeout=60.0)
     page = (await kb.documents(knowledge_bank, status="ready", limit=1)).body
     assert page["total"] == 31
-    assert (await _hits(kb, knowledge_bank, query="note 7", top_k=1)) == ["note-7"]
+    assert (await _hits(kb, knowledge_bank, query="note 7", first=1)) == ["note-7"]
     # The children are only visible as the bank's operations: the parent plus two of them.
     ops = (await client.operations.list_operations(knowledge_bank, limit=100)).operations
     ingests = [op for op in ops if op.task_type == "knowledge_ingest"]
@@ -98,16 +101,17 @@ async def test_an_async_ingest_is_one_operation_the_worker_finishes_even_split_i
         await asyncio.sleep(0.2)
 
 
-async def test_a_text_hit_comes_back_with_its_neighbouring_passages(kb, knowledge_bank):
+async def test_a_text_hit_comes_back_with_the_passages_around_it_as_the_budget_allows(kb, knowledge_bank):
     sections = [f"# Step {n}\n\n" + ("Unrelated filler words. " * 12) for n in range(6)]
     sections[3] = "# Step 3\n\nOpen the valve slowly until the gauge reads green."
     await kb.ingest(knowledge_bank, [{"document_id": "manual", "text": "\n\n".join(sections)}])
 
-    r = await kb.search(knowledge_bank, query="open the valve until the gauge reads green", top_k=1, neighbors=1)
+    r = await kb.search(knowledge_bank, query="open the valve until the gauge reads green")
     hit = r.body["results"][0]
     assert hit["document_id"] == "manual" and "Open the valve slowly" in hit["text"]
-    assert (hit["context_first_index"], hit["context_last_index"]) == (hit["index"] - 1, hit["index"] + 1)
-    assert "Step 2" in hit["context"] and "Step 4" in hit["context"]
+    # The whole manual fits in the default budget: the hit's text grows to take it all in, once.
+    assert "Step 0" in hit["text"] and "Step 5" in hit["text"] and "context" not in hit
+    assert [h["document_id"] for h in r.body["results"]].count("manual") == 1
 
 
 async def test_reingesting_skips_what_is_unchanged_and_replaces_what_is_not(kb, knowledge_bank):
@@ -123,14 +127,39 @@ async def test_reingesting_skips_what_is_unchanged_and_replaces_what_is_not(kb, 
     detail = (await kb.document(knowledge_bank, "keys")).body
     assert [p["text"] for p in detail["passages"]] == ["Api keys never expire; revoke a leaked one at once."]
     # Search sees the new text only: the old passages are gone, not shadowed.
-    assert "keys" not in await _hits(kb, knowledge_bank, query="rotate each month security settings page", top_k=1)
-    assert (await _hits(kb, knowledge_bank, query="revoke a leaked api key", top_k=1)) == ["keys"]
+    assert "keys" not in await _hits(kb, knowledge_bank, query="rotate each month security settings page", first=1)
+    assert (await _hits(kb, knowledge_bank, query="revoke a leaked api key", first=1)) == ["keys"]
+
+
+async def test_a_banks_own_passage_size_splits_what_it_ingests_and_a_reset_puts_the_servers_back(kb, knowledge_bank):
+    # The config, the ingest that reads it and the content hash that remembers it meet only here: a
+    # smaller passage size must re-split the same text on its next upload, not skip it as unchanged.
+    text = "\n\n".join(f"Section {n}. " + ("Unrelated filler words. " * 20) for n in range(8))
+    await kb.ingest(knowledge_bank, [{"document_id": "manual", "text": text}])
+    default = (await kb.document(knowledge_bank, "manual")).body["passage_count"]
+    before = (await kb.config(knowledge_bank)).body
+    assert before["overrides"] == {} and "provider" not in before["config"]
+
+    r = await kb.update_config(knowledge_bank, {"text_passage_tokens": 32})
+    assert r.status == 200, r.body
+    assert r.body["config"]["text_passage_tokens"] == 32 and r.body["overrides"] == {"text_passage_tokens": 32}
+    again = await kb.ingest(knowledge_bank, [{"document_id": "manual", "text": text}])
+    assert again.body["unchanged_document_ids"] == []
+    smaller = (await kb.document(knowledge_bank, "manual")).body["passage_count"]
+    assert smaller > default, (smaller, default)
+
+    reset = await kb.reset_config(knowledge_bank)
+    assert reset.status == 200 and reset.body == before
+    assert (await kb.update_config(knowledge_bank, {"embeddings_model": "x"})).status == 400
 
 
 async def test_one_bad_document_fails_alone(kb, knowledge_bank):
     r = await kb.ingest(
         knowledge_bank,
-        [{"document_id": "good", "text": "The red pipeline deploys at noon."}, {"document_id": "empty", "text": " \n "}],
+        [
+            {"document_id": "good", "text": "The red pipeline deploys at noon."},
+            {"document_id": "empty", "text": " \n "},
+        ],
     )
 
     assert r.status == 400 and "1 of 2 documents failed; 'empty'" in r.body["detail"]
@@ -160,7 +189,7 @@ async def test_files_are_ingested_and_served_back(kb, knowledge_bank):
     assert (exits["status"], exits["media_type"], exits["tags"]) == ("ready", "document", ["safety"])
     assert exits["passages"][0]["page"] == 1
     # The text-only embedder found the page by its text layer.
-    assert (await _hits(kb, knowledge_bank, query="where are the emergency exits", top_k=1)) == ["exits"]
+    assert (await _hits(kb, knowledge_bank, query="where are the emergency exits", first=1)) == ["exits"]
     assert (await _hits(kb, knowledge_bank, query="emergency exits", tags=["safety"])) == ["exits"]
     assert (await kb.file(knowledge_bank, "exits")).raw == pdf
 

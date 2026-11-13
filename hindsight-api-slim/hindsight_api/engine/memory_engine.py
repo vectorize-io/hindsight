@@ -15370,6 +15370,16 @@ class MemoryEngine(MemoryEngineInterface):
         # hypothetical bank on server defaults would send.
         await self._require_bank_exists(bank_id)
 
+    async def _refuse_knowledge_bank_config(self, bank_id: str) -> None:
+        """Same id space, different settings: a knowledge bank's are read and written through
+        /v1/default/knowledge-banks/{bank_id}/config. Through here a reset would wipe them, and a
+        read would answer with memory-bank settings that bank never uses."""
+        if await bank_utils.bank_kind(await self._get_backend(), bank_id) == "knowledge":
+            raise OperationValidationError(
+                f"'{bank_id}' is a knowledge bank; configure it through /v1/default/knowledge-banks/{bank_id}/config",
+                status_code=400,
+            )
+
     async def get_bank_config(
         self,
         bank_id: str,
@@ -15378,6 +15388,7 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> BankConfigState:
         """Return resolved bank configuration after read authorization."""
         await self._authorize_bank_config_read(bank_id, request_context)
+        await self._refuse_knowledge_bank_config(bank_id)
         return await self._get_bank_config_authenticated(bank_id, request_context)
 
     async def update_bank_config(
@@ -15392,6 +15403,7 @@ class MemoryEngine(MemoryEngineInterface):
         await self._refuse_bank_wide_if_scoped(bank_id, request_context, "change the bank's config")
         preauthorized_updates = self._consume_preauthorized_config_update(bank_id, updates, request_context)
         if preauthorized_updates is not None:
+            await self._refuse_knowledge_bank_config(bank_id)
             await self._config_resolver._persist_bank_config(bank_id, preauthorized_updates)
             return await self._get_bank_config_authenticated(bank_id, request_context)
 
@@ -15402,6 +15414,8 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
+        # After the validator: refused first, a caller it rejects would still learn the bank is a knowledge bank.
+        await self._refuse_knowledge_bank_config(bank_id)
         await self._update_bank_config_authenticated(
             bank_id,
             updates,
@@ -15425,6 +15439,8 @@ class MemoryEngine(MemoryEngineInterface):
                 request_context=request_context,
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(context))
+        # After the validator, as in update_bank_config: a rejected caller learns nothing about the bank.
+        await self._refuse_knowledge_bank_config(bank_id)
         await self._config_resolver.reset_bank_config(bank_id)
         return await self._get_bank_config_authenticated(bank_id, request_context)
 

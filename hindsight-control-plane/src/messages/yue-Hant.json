@@ -690,7 +690,9 @@
         "retain_mission": "會擺喺呢度，行先過一般擷取規則。",
         "retain_optional_fact_dimensions": "會畀模型將「幾時」、「喺邊」、「邊個」同「點解」留空，而唔係寫「N/A」。"
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "文件庫",
+    "linkedKnowledgeBanksDescription": "喺呢個庫反思嗰陣,都會搜尋連結咗嘅文件庫,文件優先過同佢有衝突嘅記憶。召回同心智模型唔會讀呢啲文件。"
   },
   "bankOperations": {
     "title": "背景作業",
@@ -729,7 +731,8 @@
       "importDocuments": "匯入文件",
       "exportBank": "匯出記憶庫",
       "importBank": "匯入記憶庫",
-      "cloneBank": "複製記憶庫"
+      "cloneBank": "複製記憶庫",
+      "knowledgeIngest": "知識匯入"
     },
     "table": {
       "id": "操作 ID",
@@ -2213,6 +2216,9 @@
         "updateNode": "更新頁面節點失敗",
         "deleteNode": "刪除頁面節點失敗",
         "search": "搜尋頁面失敗"
+      },
+      "request": {
+        "tooLarge": "請求太大。請上載較少或較細的檔案（上限：HINDSIGHT_CP_MAX_UPLOAD_SIZE）。"
       }
     }
   },
@@ -2467,7 +2473,6 @@
       "upload": "上載檔案",
       "dropToUpload": "拖放檔案就可以上載",
       "columnDocument": "文件",
-      "columnStatus": "狀態",
       "columnPassages": "段落",
       "columnSize": "大小",
       "columnTags": "標籤",
@@ -2483,7 +2488,8 @@
       "noMatchesBody": "試吓第個名稱、類型或者狀態。",
       "layout": "版面",
       "viewList": "清單",
-      "viewGrid": "格仔"
+      "viewGrid": "格仔",
+      "viewConstellation": "星座圖"
     },
     "detail": {
       "download": "下載原檔",
@@ -2522,7 +2528,13 @@
       "removeMedia": "移除",
       "notMedia": "淨係可以用圖片或者 MP4 影片做搜尋查詢",
       "pastedMedia": "貼上嘅檔案",
-      "topK": "結果數",
+      "maxTokens": "最大 token 數",
+      "maxTokensHelp": "傳返嘅文字總量:最好嘅段落,同埋裝得落嘅前後文。",
+      "budget": "預算",
+      "budgetHelp": "搜尋排序有幾深:低最快,高搵得最遠。",
+      "budgetLow": "低",
+      "budgetMid": "中",
+      "budgetHigh": "高",
       "submit": "搜尋",
       "options": "選項",
       "tags": "標籤",
@@ -2535,21 +2547,15 @@
       "failed": "搜尋失敗",
       "mediaTypes": "媒體類型",
       "mediaTypesHelp": "乜都唔揀就會搜尋所有媒體類型。",
-      "context": "上下文",
-      "contextHelp": "每個文字結果前後一齊攞返做上下文嘅段落數",
-      "showContext": "顯示上下文",
-      "hideContext": "收埋上下文"
+      "showMore": "顯示更多",
+      "showLess": "收埋"
     },
     "linked": {
       "title": "文件庫",
-      "description": "喺呢個庫反思嗰陣,都會搜尋連結咗嘅文件庫,文件優先過同佢有衝突嘅記憶。召回同心智模型唔會讀呢啲文件。",
       "none": "未有文件庫。",
-      "createOne": "新增文件庫",
-      "counts": "{documents, plural, other {# 份文件}} · {passages, plural, other {# 個段落}}",
-      "open": "打開",
-      "missing": "已經唔存在",
-      "save": "儲存連結",
-      "saved": "已儲存連咗嘅文件庫"
+      "noneLinked": "未連結",
+      "search": "搜尋知識庫…",
+      "missing": "已經唔存在"
     },
     "selector": {
       "select": "揀一個文件庫...",
@@ -2560,7 +2566,6 @@
       "countsLegend": "文件 · 段落"
     },
     "home": {
-      "embedder": "用 {model} 嵌入({dimension} 維)",
       "documents": "文件",
       "passages": "段落",
       "size": "大小",
@@ -2573,34 +2578,28 @@
       "noneInPeriod": "呢段期間冇加入文件",
       "noDocuments": "暫時未有文件",
       "pending": "{count} 個處理緊",
-      "failed": "{count} 個失敗"
+      "failed": "{count} 個失敗",
+      "constellationTitle": "星座圖",
+      "viewAll": "查看全部",
+      "failedNotice": "有 {count} 份文件處理失敗。睇下原因"
     },
     "settings": {
       "title": "設定",
-      "description": "管理呢個文件庫,同埋睇吓佢啲文件點樣嵌入。",
-      "generalTitle": "一般",
-      "generalDescription": "庫嘅名稱同識別資料。",
+      "description": "呢個知識庫嘅概覽、匯入作業，同埋佢點樣將檔案切成段落。",
+      "tabGeneral": "一般",
+      "tabConfiguration": "組態",
+      "generalIntro": "知識庫入面有乜，同埋佢處理緊嘅上傳。",
+      "aboutTitle": "關於",
+      "aboutDescription": "庫嘅名稱同識別資料。",
       "bankId": "庫 ID",
       "created": "建立時間",
-      "embedderTitle": "嵌入模型同限制",
-      "embedderDescription": "喺伺服器度為所有文件庫統一設定,呢度只供參考。",
-      "provider": "提供者",
-      "model": "模型",
-      "dimension": "維度",
-      "maxFile": "最大檔案",
-      "maxMedia": "最長音訊或影片",
-      "maxPdfPages": "PDF 最多頁數",
-      "audioWindow": "音訊視窗",
-      "videoWindow": "影片視窗",
-      "overlap": "視窗重疊",
-      "pdfPixels": "PDF 頁面尺寸(長邊)",
-      "textTokens": "文字段落大小(token)",
-      "seconds": "{count, plural, other {# 秒}}",
       "linkTitle": "記憶庫",
       "linkDescription": "連結咗呢個庫嘅記憶庫喺 reflect 嘅時候都會搜尋佢,並以佢嘅文件為準。",
       "linkHowTo": "喺記憶庫度關聯:打開記憶庫,然後去 庫設定 → 設定 → 文件庫。",
       "delete": "刪除庫",
-      "mediaTypes": "可以寫入嘅媒體類型"
+      "resetConfig": "重設組態",
+      "resetConfigTitle": "要重設組態嗎？",
+      "resetConfigPrompt": "{bankId} 嘅每項設定都會返回伺服器預設值。已經匯入咗嘅檔案會保留而家嘅段落，直到重新上傳為止。"
     },
     "addDocument": {
       "dialogSubtitle": "向文件庫新增新文件：",
@@ -2609,10 +2608,9 @@
       "tagsHelp": "用逗號分隔。搜尋可以按標籤篩選。",
       "filenameLabel": "檔案名稱",
       "filenamePlaceholder": "預設:文件 ID.md",
-      "uploadHint": "PDF 頁面同圖片會當影像嵌入,音訊每 {audio} 秒一段、影片每 {video} 秒一段。每個檔案最多 {max}。",
+      "uploadHint": "PDF 頁面同圖片會當影像嵌入,音訊同影片每段短片嵌入。伺服器收唔到嘅檔案會喺度顯示原因。",
       "allTagsLabel": "所有檔案嘅標籤",
       "applyToAll": "全部套用",
-      "tooLarge": "太大:上限係 {max}",
       "editFile": "編輯呢個檔案嘅標籤同 ID",
       "remove": "移除 {name}",
       "tagsFor": "{name} 嘅標籤",
@@ -2621,6 +2619,83 @@
       "written": "文件已加入,可以搜尋。",
       "unchanged": "{count, plural, other {# 個檔案}}冇變:已經原樣匯入咗。",
       "writtenUnchanged": "冇變:呢份文件已經原樣匯入咗。"
+    },
+    "constellation": {
+      "empty": "暫時未有段落可以顯示",
+      "hudStats": "{documents} 份文件 · {passages} 個段落 · {visible} 個可見 · {labels} 個標籤 · {links} 條連結 · 縮放 {zoom}x"
+    },
+    "config": {
+      "intro": "呢個知識庫點樣將檔案切成段落。改動會用喺之後匯入嘅檔案；重新上傳檔案就可以用新設定再切過。",
+      "loadFailed": "載入唔到呢個知識庫嘅設定。",
+      "saveFailed": "儲存唔到。",
+      "serverDefault": "伺服器預設值",
+      "serverDefaultValue": "伺服器預設值（{value}）",
+      "on": "開",
+      "off": "關",
+      "overridden": "已經為呢個知識庫設定",
+      "useServerDefault": "用伺服器預設值",
+      "serverOff": "伺服器已經為所有知識庫關咗。",
+      "accept": "接受{kind}檔案",
+      "sections": {
+        "text": {
+          "title": "文字",
+          "description": "文字（包括文件入面嘅文字）點樣切成段落。"
+        },
+        "pdf": {
+          "title": "PDF",
+          "description": "點樣讀 PDF 頁面。"
+        },
+        "images": {
+          "title": "圖片",
+          "description": "點樣讀圖片。"
+        },
+        "media": {
+          "title": "音訊同影片",
+          "description": "音訊同影片點樣切成按時間嘅段落。"
+        },
+        "types": {
+          "title": "媒體類型",
+          "description": "呢個知識庫接受邊啲檔案類型。佢可以比伺服器關多啲類型，但唔可以少過。"
+        }
+      },
+      "fields": {
+        "text_passage_tokens": {
+          "label": "段落大小（token）",
+          "description": "一個段落有幾多文字：細啲搵到更準確嘅位置，大啲保留更多上下文。"
+        },
+        "pdf_page_pixels": {
+          "label": "頁面尺寸（像素）",
+          "description": "讀之前每個 PDF 頁面按最長邊畫幾多像素。"
+        },
+        "pdf_bands": {
+          "label": "頁面條帶",
+          "description": "同時將每個 PDF 頁面當三條橫條帶嚟讀，較容易搵到細字，但匯入會慢大約一倍。"
+        },
+        "max_pdf_pages": {
+          "label": "最多頁數",
+          "description": "頁數多過呢個數嘅 PDF 會被拒絕；只可以低過伺服器嘅上限。"
+        },
+        "image_tokens": {
+          "label": "圖片細節（token）",
+          "description": "每張圖片用幾多 token 嚟讀，由 70 到 1120：越多睇到越細嘅細節，但越慢。"
+        },
+        "audio_window_seconds": {
+          "label": "音訊段落長度（秒）",
+          "description": "一個段落有幾多秒音訊。"
+        },
+        "video_window_seconds": {
+          "label": "影片段落長度（秒）",
+          "description": "一個段落有幾多秒影片。"
+        },
+        "media_overlap_seconds": {
+          "label": "重疊（秒）",
+          "description": "每個段落同下一段共用幾多秒，等切開嗰度唔會漏嘢；一定要短過兩個長度。"
+        },
+        "max_media_seconds": {
+          "label": "最長檔案（秒）",
+          "description": "長過呢個時間嘅音訊或者影片會被拒絕；只可以低過伺服器嘅上限。"
+        }
+      }
     }
   }
 }

@@ -40,3 +40,25 @@ describe("middleware session handling", () => {
     expect(res.headers.get("location")).toBeNull();
   });
 });
+
+describe("middleware body limit", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const post = (bytes: number) =>
+    middleware(
+      new NextRequest(new URL("/api/knowledge-banks/docs/files/ingest", "http://localhost:9999"), {
+        method: "POST",
+        headers: { "content-length": String(bytes) },
+      })
+    );
+
+  it("refuses a body over the limit with a 413 rather than letting Next.js truncate it", async () => {
+    vi.stubEnv("HINDSIGHT_CP_MAX_UPLOAD_SIZE", "1mb");
+    const res = await post(2 * 1024 * 1024);
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({
+      error: expect.stringMatching(/too large/),
+      limitBytes: 1024 * 1024,
+    });
+    expect((await post(1024 * 1024)).status).toBe(200);
+  });
+});

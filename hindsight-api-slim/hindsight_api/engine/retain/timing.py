@@ -153,8 +153,13 @@ def _emit(t: RetainTiming) -> None:
         from ...metrics import get_metrics_collector
 
         collector = get_metrics_collector()
-        record = collector.record_retain_phase if t.op == "retain" else collector.record_knowledge_ingest_phase
-        for name, s in t.seconds.items():
+        # ponytail: a knowledge search has its log line only; give it a phase histogram of its own
+        # when a dashboard needs one, rather than counting its phases as an ingest's.
+        record = {
+            "retain": collector.record_retain_phase,
+            "knowledge_ingest": collector.record_knowledge_ingest_phase,
+        }.get(t.op)
+        for name, s in t.seconds.items() if record else ():
             record(name, s, calls=t.calls.get(name, 0), store=t.store)
     except Exception:
         # Instrumentation must never be the reason a retain fails.

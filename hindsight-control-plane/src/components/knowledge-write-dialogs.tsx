@@ -19,12 +19,7 @@ import {
 import { toast } from "sonner";
 
 import { client } from "@/lib/api";
-import {
-  formatBytes,
-  parseTags,
-  uploadKnowledgeFiles,
-  type KnowledgeConfig,
-} from "@/lib/knowledge-banks";
+import { formatBytes, packUploads, parseTags, uploadKnowledgeFiles } from "@/lib/knowledge-banks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -76,15 +71,17 @@ function stage(file: File): StagedFile {
   };
 }
 
-// One request per file rather than one multipart with all of them: each file then
-// gets its own progress bar and its own error, and one bad file does not fail the rest.
-const UPLOAD_CONCURRENCY = 3;
+// The files go up together, as few requests as fit, so one upload is one parent operation
+// with a child per file. Requests stay under the proxy's 100 MB default body cap, which
+// truncates silently; a file bigger than that goes alone. This used to be one request per
+// file (3 at a time) so one bad file could not fail the rest; the server checks every file
+// before storing any, so now a bad file fails its batch, and the batch's rows show why.
+const UPLOAD_BATCH_BYTES = 90 * 1024 * 1024;
 
 export type AddDocumentTab = "text" | "upload";
 
 export function KnowledgeAddDocumentDialog({
   bankId,
-  config,
   open,
   initialTab,
   initialFiles,
@@ -92,7 +89,6 @@ export function KnowledgeAddDocumentDialog({
   onWritten,
 }: {
   bankId: string;
-  config: KnowledgeConfig | null;
   open: boolean;
   initialTab: AddDocumentTab;
   /** Files dropped on the documents view before the dialog opened. */
@@ -134,9 +130,7 @@ export function KnowledgeAddDocumentDialog({
   const update = (key: string, patch: Partial<StagedFile>) =>
     setFiles((prev) => prev.map((f) => (f.key === key ? { ...f, ...patch } : f)));
 
-  const maxBytes = config?.max_file_bytes ?? Infinity;
   const pending = files.filter((f) => f.state === "staged" || f.state === "failed");
-  const tooLarge = (f: StagedFile) => f.file.size > maxBytes;
 
   /** Writes the shared tags onto every file not yet uploaded, merged with its own. */
   const applyTagsToAll = () => {
@@ -151,51 +145,36 @@ export function KnowledgeAddDocumentDialog({
     );
   };
 
-  /** The failure's reason, or null; `unchanged` when the server already had this exact file. */
-  const uploadOne = async (
-    f: StagedFile
-  ): Promise<{ error: string | null; unchanged: boolean }> => {
-    update(f.key, { state: "uploading", progress: 0, error: null });
-    try {
-      const result = await uploadKnowledgeFiles(
-        bankId,
-        [f.file],
-        [
-          {
-            tags: parseTags(f.tags),
-            ...(f.documentId.trim() ? { document_id: f.documentId.trim() } : {}),
-          },
-        ],
-        (progress) => update(f.key, { progress })
-      );
-      update(f.key, { state: "done", progress: 1 });
-      return { error: null, unchanged: result.unchanged_document_ids.length > 0 };
-    } catch (e) {
-      const reason = (e as Error).message;
-      update(f.key, { state: "failed", error: reason });
-      return { error: reason, unchanged: false };
-    }
-  };
-
   const uploadAll = async () => {
     setBusy(true);
-    const queue = pending.filter((f) => !tooLarge(f));
     let ok = 0;
     let unchanged = 0;
     let failed = 0;
     let firstError: string | null = null;
-    const worker = async () => {
-      for (let next = queue.shift(); next; next = queue.shift()) {
-        const { error, unchanged: same } = await uploadOne(next);
-        if (error === null && same) unchanged += 1;
-        else if (error === null) ok += 1;
-        else {
-          failed += 1;
-          firstError ??= error;
-        }
+    for (const batch of packUploads(pending, (f) => f.file.size, UPLOAD_BATCH_BYTES)) {
+      for (const f of batch) update(f.key, { state: "uploading", progress: 0, error: null });
+      try {
+        const result = await uploadKnowledgeFiles(
+          bankId,
+          batch.map((f) => f.file),
+          batch.map((f) => ({
+            tags: parseTags(f.tags),
+            ...(f.documentId.trim() ? { document_id: f.documentId.trim() } : {}),
+          })),
+          (progress) => {
+            for (const f of batch) update(f.key, { progress });
+          }
+        );
+        for (const f of batch) update(f.key, { state: "done", progress: 1 });
+        unchanged += result.unchanged_document_ids.length;
+        ok += batch.length - result.unchanged_document_ids.length;
+      } catch (e) {
+        const reason = (e as Error).message;
+        for (const f of batch) update(f.key, { state: "failed", error: reason });
+        failed += batch.length;
+        firstError ??= reason;
       }
-    };
-    await Promise.all(Array.from({ length: UPLOAD_CONCURRENCY }, worker));
+    }
     setBusy(false);
     if (ok > 0) {
       toast.success(t("uploaded", { count: ok }));
@@ -228,8 +207,6 @@ export function KnowledgeAddDocumentDialog({
       setBusy(false);
     }
   };
-
-  const uploadable = pending.filter((f) => !tooLarge(f)).length;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
@@ -361,11 +338,7 @@ export function KnowledgeAddDocumentDialog({
                 <Upload className="h-8 w-8 text-muted-foreground mb-2" />
                 <span className="text-sm text-muted-foreground">{tAdd("clickToSelectFiles")}</span>
                 <span className="text-xs text-muted-foreground/70 mt-1 px-4 text-center">
-                  {t("uploadHint", {
-                    audio: config?.audio_window_seconds ?? 60,
-                    video: config?.video_window_seconds ?? 30,
-                    max: config ? formatBytes(config.max_file_bytes) : "—",
-                  })}
+                  {t("uploadHint")}
                 </span>
               </label>
 
@@ -406,9 +379,6 @@ export function KnowledgeAddDocumentDialog({
                   <div className="mt-3 space-y-1">
                     {files.map((f) => {
                       const tagCount = parseTags(f.tags).length;
-                      const problem = tooLarge(f)
-                        ? t("tooLarge", { max: formatBytes(maxBytes) })
-                        : f.error;
                       return (
                         <div key={f.key} className="bg-muted rounded-md overflow-hidden">
                           <div className="flex items-center gap-1 px-2 py-2">
@@ -472,9 +442,9 @@ export function KnowledgeAddDocumentDialog({
                               />
                             </div>
                           )}
-                          {problem && (
+                          {f.error && (
                             <p className="px-3 pb-2 text-xs text-red-600 dark:text-red-400">
-                              {problem}
+                              {f.error}
                             </p>
                           )}
 
@@ -544,8 +514,8 @@ export function KnowledgeAddDocumentDialog({
               {busy ? tAdd("addingDocument") : tAdd("addDocumentSubmit")}
             </Button>
           ) : (
-            <Button onClick={uploadAll} disabled={busy || uploadable === 0}>
-              {busy ? tAdd("uploading") : tAdd("uploadFiles", { count: uploadable })}
+            <Button onClick={uploadAll} disabled={busy || pending.length === 0}>
+              {busy ? tAdd("uploading") : tAdd("uploadFiles", { count: pending.length })}
             </Button>
           )}
         </DialogFooter>

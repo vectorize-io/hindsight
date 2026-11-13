@@ -131,7 +131,7 @@ describe("ControlPlaneClient error handling", () => {
     );
 
     await expect(
-      client.searchKnowledgeBank("docs", { query: "q", top_k: 5 })
+      client.searchKnowledgeBank("docs", { query: "q", max_tokens: 500 })
     ).rejects.toMatchObject({ message: "knowledge embedder unavailable", status: 503 });
     expect(toast.error).not.toHaveBeenCalled();
     expect(toast.warning).not.toHaveBeenCalled();
@@ -143,7 +143,7 @@ describe("ControlPlaneClient error handling", () => {
     );
 
     await expect(
-      client.searchKnowledgeBank("docs", { query: "q", top_k: 5 })
+      client.searchKnowledgeBank("docs", { query: "q", max_tokens: 500 })
     ).rejects.toMatchObject({ message: "HTTP 500", status: 500 });
   });
 });

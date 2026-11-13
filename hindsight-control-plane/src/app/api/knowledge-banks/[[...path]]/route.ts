@@ -126,9 +126,13 @@ async function forward(request: NextRequest, { params }: { params: Promise<{ pat
   const upstreamType = headers.get("content-type") || "";
   if (!upstreamType.startsWith("application/json")) {
     // Bytes from an upload are served on the control plane's origin: never let the
-    // browser sniff them into HTML, and never let an uploaded page run script.
+    // browser sniff them into HTML, and never let an uploaded page run script. Not for a
+    // PDF: Chrome will not start its PDF viewer in a sandboxed document, so the original
+    // showed blank, and the viewer keeps a PDF's own script out of this origin anyway.
     headers.set("X-Content-Type-Options", "nosniff");
-    headers.set("Content-Security-Policy", "sandbox");
+    if (!upstreamType.startsWith("application/pdf")) {
+      headers.set("Content-Security-Policy", "sandbox");
+    }
   }
 
   const isMedia = request.method === "GET" && MEDIA_PATH.test(path.join("/"));

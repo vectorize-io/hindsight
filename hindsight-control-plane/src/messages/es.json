@@ -690,7 +690,9 @@
         "retain_mission": "Se antepondría aquí, con prioridad sobre las reglas generales de extracción.",
         "retain_optional_fact_dimensions": "Permitiría al modelo dejar vacíos «cuándo», «dónde», «quién» y «por qué» en lugar de escribir «N/A»."
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "Bancos de conocimiento",
+    "linkedKnowledgeBanksDescription": "El reflect de este banco también busca en los bancos de conocimiento vinculados, y sus documentos prevalecen sobre los recuerdos que los contradicen. El recall y los modelos mentales no los leen."
   },
   "bankOperations": {
     "title": "Operaciones en segundo plano",
@@ -729,7 +731,8 @@
       "importDocuments": "Importar documentos",
       "exportBank": "Exportar banco",
       "importBank": "Importar banco",
-      "cloneBank": "Clonar banco"
+      "cloneBank": "Clonar banco",
+      "knowledgeIngest": "Ingesta de conocimiento"
     },
     "table": {
       "id": "ID de operación",
@@ -2213,6 +2216,9 @@
         "updateNode": "Error al actualizar el nodo",
         "deleteNode": "Error al eliminar el nodo",
         "search": "Error al buscar en las páginas"
+      },
+      "request": {
+        "tooLarge": "Solicitud demasiado grande. Sube menos archivos o más pequeños (límite: HINDSIGHT_CP_MAX_UPLOAD_SIZE)."
       }
     }
   },
@@ -2467,7 +2473,6 @@
       "upload": "Subir archivos",
       "dropToUpload": "Suelta los archivos para subirlos",
       "columnDocument": "Documento",
-      "columnStatus": "Estado",
       "columnPassages": "Pasajes",
       "columnSize": "Tamaño",
       "columnTags": "Etiquetas",
@@ -2483,7 +2488,8 @@
       "noMatchesBody": "Prueba con otro nombre, tipo o estado.",
       "layout": "Diseño",
       "viewList": "Lista",
-      "viewGrid": "Cuadrícula"
+      "viewGrid": "Cuadrícula",
+      "viewConstellation": "Constelación"
     },
     "detail": {
       "download": "Descargar original",
@@ -2522,7 +2528,13 @@
       "removeMedia": "Quitar",
       "notMedia": "Solo una imagen o un vídeo MP4 puede ser una consulta",
       "pastedMedia": "Archivo pegado",
-      "topK": "Resultados",
+      "maxTokens": "Tokens máx.",
+      "maxTokensHelp": "Cuánto texto se devuelve en total: los mejores pasajes y tanto contexto como quepa.",
+      "budget": "Presupuesto",
+      "budgetHelp": "Qué tan a fondo clasifica la búsqueda: bajo es lo más rápido, alto llega más lejos.",
+      "budgetLow": "Bajo",
+      "budgetMid": "Medio",
+      "budgetHigh": "Alto",
       "submit": "Buscar",
       "options": "Opciones",
       "tags": "Etiquetas",
@@ -2535,21 +2547,15 @@
       "failed": "La búsqueda falló",
       "mediaTypes": "Tipos de medio",
       "mediaTypesHelp": "Si no marcas ninguno, se buscan todos los tipos de medio.",
-      "context": "Contexto",
-      "contextHelp": "Pasajes alrededor de cada resultado de texto que se incluyen como su contexto",
-      "showContext": "Mostrar contexto",
-      "hideContext": "Ocultar contexto"
+      "showMore": "Mostrar más",
+      "showLess": "Mostrar menos"
     },
     "linked": {
       "title": "Bancos de conocimiento",
-      "description": "El reflect de este banco también busca en los bancos de conocimiento vinculados, y sus documentos prevalecen sobre los recuerdos que los contradicen. El recall y los modelos mentales no los leen.",
       "none": "Aún no hay bancos de conocimiento.",
-      "createOne": "Crear un banco de conocimiento",
-      "counts": "{documents, plural, one {# documento} other {# documentos}} · {passages, plural, one {# pasaje} other {# pasajes}}",
-      "open": "Abrir",
-      "missing": "Ya no existe",
-      "save": "Guardar vínculos",
-      "saved": "Bancos de conocimiento vinculados guardados"
+      "noneLinked": "Ninguna vinculada",
+      "search": "Buscar bancos de conocimiento…",
+      "missing": "Ya no existe"
     },
     "selector": {
       "select": "Selecciona un banco de conocimiento...",
@@ -2560,7 +2566,6 @@
       "countsLegend": "docs · fragmentos"
     },
     "home": {
-      "embedder": "Embeddings con {model} ({dimension} dimensiones)",
       "documents": "Documentos",
       "passages": "Pasajes",
       "size": "Tamaño",
@@ -2573,34 +2578,28 @@
       "noneInPeriod": "No se añadieron documentos en este periodo",
       "noDocuments": "Aún no hay documentos",
       "pending": "{count} en curso",
-      "failed": "{count} con error"
+      "failed": "{count} con error",
+      "constellationTitle": "Constelación",
+      "viewAll": "Ver todo",
+      "failedNotice": "{count, plural, one {# documento no se pudo procesar} other {# documentos no se pudieron procesar}}. Ver por qué"
     },
     "settings": {
-      "title": "Configuración",
-      "description": "Gestiona este banco de conocimiento y consulta cómo se generan los embeddings de sus documentos.",
-      "generalTitle": "General",
-      "generalDescription": "Cómo se nombra e identifica el banco.",
+      "title": "Ajustes",
+      "description": "Resumen de este banco, sus operaciones de ingesta y cómo divide los archivos en pasajes.",
+      "tabGeneral": "General",
+      "tabConfiguration": "Configuración",
+      "generalIntro": "Lo que contiene el banco y las subidas que está procesando.",
+      "aboutTitle": "Acerca de",
+      "aboutDescription": "Cómo se nombra e identifica el banco.",
       "bankId": "ID del banco",
       "created": "Creado",
-      "embedderTitle": "Modelo de embeddings y límites",
-      "embedderDescription": "Se configura en el servidor para todos los bancos de conocimiento. Se muestra solo como referencia.",
-      "provider": "Proveedor",
-      "model": "Modelo",
-      "dimension": "Dimensiones",
-      "maxFile": "Archivo más grande",
-      "maxMedia": "Audio o vídeo más largo",
-      "maxPdfPages": "Máximo de páginas PDF",
-      "audioWindow": "Ventana de audio",
-      "videoWindow": "Ventana de vídeo",
-      "overlap": "Solapamiento de ventanas",
-      "pdfPixels": "Tamaño de página PDF (lado más largo)",
-      "textTokens": "Tamaño de pasaje de texto (tokens)",
-      "seconds": "{count, plural, one {# segundo} other {# segundos}}",
       "linkTitle": "Bancos de memoria",
       "linkDescription": "Reflect en un banco de memoria que enlaza este banco también lo busca y trata sus documentos como la autoridad.",
       "linkHowTo": "Vincúlalo desde un banco de memoria: abre el banco de memoria y ve a Configuración del banco → Configuración → Bancos de conocimiento.",
       "delete": "Eliminar banco",
-      "mediaTypes": "Tipos de medio que puede escribir"
+      "resetConfig": "Restablecer configuración",
+      "resetConfigTitle": "¿Restablecer la configuración?",
+      "resetConfigPrompt": "Cada ajuste de {bankId} vuelve al valor predeterminado del servidor. Los archivos ya ingeridos conservan sus pasajes hasta que se vuelvan a subir."
     },
     "addDocument": {
       "dialogSubtitle": "Agregar un nuevo documento al banco de conocimiento: ",
@@ -2609,10 +2608,9 @@
       "tagsHelp": "Separadas por comas. La búsqueda puede filtrar por ellas.",
       "filenameLabel": "Nombre de archivo",
       "filenamePlaceholder": "Por defecto: id-del-documento.md",
-      "uploadHint": "Las páginas PDF y las imágenes se procesan como imágenes, el audio en fragmentos de {audio} s y el vídeo en fragmentos de {video} s. Hasta {max} por archivo.",
+      "uploadHint": "Las páginas PDF y las imágenes se procesan como imágenes, el audio y el vídeo en fragmentos cortos. Si el servidor no acepta un archivo, aquí verás el motivo.",
       "allTagsLabel": "Etiquetas para todos los archivos",
       "applyToAll": "Aplicar a todos",
-      "tooLarge": "Demasiado grande: el límite es {max}",
       "editFile": "Editar etiquetas e ID de este archivo",
       "remove": "Quitar {name}",
       "tagsFor": "Etiquetas de {name}",
@@ -2621,6 +2619,83 @@
       "written": "Documento añadido y buscable.",
       "unchanged": "{count, plural, one {# archivo sin cambios} other {# archivos sin cambios}}: ya ingerido tal cual.",
       "writtenUnchanged": "Sin cambios: este documento ya está ingerido tal cual."
+    },
+    "constellation": {
+      "empty": "Todavía no hay fragmentos que mostrar",
+      "hudStats": "{documents} documentos · {passages} pasajes · {visible} visibles · {labels} etiquetas · {links} enlaces · zoom {zoom}x"
+    },
+    "config": {
+      "intro": "Cómo este banco divide sus archivos en pasajes. Un cambio se aplica a los archivos ingeridos a partir de ahora; vuelve a subir un archivo para dividirlo con los nuevos ajustes.",
+      "loadFailed": "No se pudieron cargar los ajustes de este banco.",
+      "saveFailed": "No se pudo guardar.",
+      "serverDefault": "Valor del servidor",
+      "serverDefaultValue": "Valor del servidor ({value})",
+      "on": "Activado",
+      "off": "Desactivado",
+      "overridden": "Definido para este banco",
+      "useServerDefault": "Usar el valor del servidor",
+      "serverOff": "Desactivado en el servidor para todos los bancos.",
+      "accept": "Aceptar archivos de {kind}",
+      "sections": {
+        "text": {
+          "title": "Texto",
+          "description": "Cómo se divide en pasajes el texto, también el de los documentos."
+        },
+        "pdf": {
+          "title": "PDF",
+          "description": "Cómo se leen las páginas PDF."
+        },
+        "images": {
+          "title": "Imágenes",
+          "description": "Cómo se leen las imágenes."
+        },
+        "media": {
+          "title": "Audio y vídeo",
+          "description": "Cómo se dividen el audio y el vídeo en pasajes con tiempo."
+        },
+        "types": {
+          "title": "Tipos de medios",
+          "description": "Qué tipos de archivo acepta este banco. Puede desactivar más tipos que el servidor, nunca menos."
+        }
+      },
+      "fields": {
+        "text_passage_tokens": {
+          "label": "Tamaño del pasaje (tokens)",
+          "description": "Cuánto texto va en un pasaje: más pequeño encuentra puntos más exactos, más grande mantiene más contexto junto."
+        },
+        "pdf_page_pixels": {
+          "label": "Tamaño de página (píxeles)",
+          "description": "Qué tamaño tiene cada página PDF, en su lado más largo, antes de leerla."
+        },
+        "pdf_bands": {
+          "label": "Franjas de página",
+          "description": "También lee cada página PDF como tres franjas horizontales, lo que encuentra mejor la letra pequeña pero hace la ingesta unas dos veces más lenta."
+        },
+        "max_pdf_pages": {
+          "label": "Máximo de páginas",
+          "description": "Un PDF con más páginas se rechaza; solo puede ser menor que el límite del servidor."
+        },
+        "image_tokens": {
+          "label": "Detalle de imagen (tokens)",
+          "description": "Con cuántos tokens se lee cada imagen, de 70 a 1120: más ve detalles más finos pero es más lento."
+        },
+        "audio_window_seconds": {
+          "label": "Duración de un pasaje de audio (segundos)",
+          "description": "Cuántos segundos de audio van en un pasaje."
+        },
+        "video_window_seconds": {
+          "label": "Duración de un pasaje de vídeo (segundos)",
+          "description": "Cuántos segundos de vídeo van en un pasaje."
+        },
+        "media_overlap_seconds": {
+          "label": "Solapamiento (segundos)",
+          "description": "Cuántos segundos comparte cada pasaje con el siguiente, para no perder nada en un corte; debe ser menor que ambas duraciones."
+        },
+        "max_media_seconds": {
+          "label": "Archivo más largo (segundos)",
+          "description": "Un audio o vídeo más largo se rechaza; solo puede ser menor que el límite del servidor."
+        }
+      }
     }
   }
 }

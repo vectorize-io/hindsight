@@ -8,23 +8,24 @@ import * as React from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 import {
+  AudioLines,
   ChevronDown,
   ChevronUp,
-  FileAudio,
-  FileImage,
+  CircleAlert,
+  Clapperboard,
   FileText,
-  FileType,
-  FileVideo,
+  Image as ImageIcon,
+  Type,
   type LucideIcon,
 } from "lucide-react";
-import { ToneChip, TagChip, type ChipTone } from "@/components/ui/facet-chip";
+import { ToneChip, TagChip } from "@/components/ui/facet-chip";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import {
   documentLabel,
   isPicturePassage,
-  splitContext,
   formatWindow,
+  isInFlight,
   knowledgeBankRoute,
   proxiedMediaUrl,
   type MediaType,
@@ -33,20 +34,23 @@ import {
   type KnowledgeSearchResult,
 } from "@/lib/knowledge-banks";
 
+// Each kind gets its own shape AND colour, the same everywhere (lists, cards, filters,
+// the home chart and constellation), so people learn them.
 const KIND_ICON: Record<MediaType, LucideIcon> = {
   document: FileText,
-  image: FileImage,
-  audio: FileAudio,
-  video: FileVideo,
-  text: FileType,
+  image: ImageIcon,
+  audio: AudioLines,
+  video: Clapperboard,
+  text: Type,
 };
 
-const KIND_COLOR: Record<MediaType, string> = {
-  document: "text-red-500",
-  image: "text-violet-500",
-  audio: "text-amber-500",
-  video: "text-blue-500",
-  text: "text-emerald-500",
+/** Kind hues for charts and graphs; the icons use the same ones. */
+export const KIND_HEX: Record<MediaType, string> = {
+  document: "#ef4444",
+  image: "#8b5cf6",
+  audio: "#f59e0b",
+  video: "#3b82f6",
+  text: "#10b981",
 };
 
 export function KindIcon({ kind, className }: { kind: MediaType; className?: string }) {
@@ -54,29 +58,36 @@ export function KindIcon({ kind, className }: { kind: MediaType; className?: str
   const Icon = KIND_ICON[kind] ?? FileText;
   return (
     <Icon
-      className={cn("h-4 w-4 shrink-0", KIND_COLOR[kind], className)}
+      className={cn("h-4 w-4 shrink-0", className)}
+      style={{ color: KIND_HEX[kind] }}
       aria-label={t(kind)}
       role="img"
     />
   );
 }
 
-const STATUS_TONE: Record<DocumentStatus, ChipTone> = {
-  pending: "amber",
-  processing: "blue",
-  ready: "emerald",
-  failed: "red",
-};
-
-export function StatusChip({ status, title }: { status: DocumentStatus; title?: string }) {
+/**
+ * A document's state, shown only when it needs attention: a spinner while it ingests,
+ * a red "Failed" (its reason on hover) when it failed, and nothing once it is ready.
+ */
+export function StatusMark({ status, error }: { status: DocumentStatus; error?: string | null }) {
   const t = useTranslations("knowledgeBanks.statuses");
+  if (status === "failed") {
+    return (
+      <ToneChip
+        tone="red"
+        label={t("failed")}
+        title={error ?? undefined}
+        icon={<CircleAlert className="h-3 w-3" />}
+      />
+    );
+  }
+  if (!isInFlight(status)) return null;
   return (
-    <ToneChip
-      tone={STATUS_TONE[status]}
-      label={t(status)}
-      title={title}
-      icon={status === "processing" ? <Spinner size="xs" /> : undefined}
-    />
+    <span className="inline-flex shrink-0" title={t(status)} data-testid="status-spinner">
+      <Spinner size="xs" />
+      <span className="sr-only">{t(status)}</span>
+    </span>
   );
 }
 
@@ -151,51 +162,24 @@ export function PassageMedia({
 }
 
 /**
- * A text hit: the passage that matched, and on demand the context around it (its
- * neighbouring passages, merged by the server) with the hit highlighted inside it.
+ * A text hit: the matched passage with the text the search's token budget gave it around
+ * it, clamped to a few lines until opened.
  */
 function TextHit({ result }: { result: KnowledgeSearchResult }) {
   const t = useTranslations("knowledgeBanks.search");
   const [expanded, setExpanded] = React.useState(false);
-  const parts = splitContext(result.context, result.text);
-  const boxRef = React.useRef<HTMLParagraphElement>(null);
-  const markRef = React.useRef<HTMLElement>(null);
-
-  // Open the context on the hit, not on the passages before it. Only the box
-  // scrolls: scrollIntoView would move the page too.
-  React.useEffect(() => {
-    const box = boxRef.current;
-    const mark = markRef.current;
-    if (expanded && box && mark) box.scrollTop = mark.offsetTop - 8; // box is the mark's offsetParent
-  }, [expanded]);
-  const hasMore = !!result.context && result.context !== result.text;
+  const long = (result.text?.length ?? 0) > LONG_HIT_CHARS;
   return (
     <div className="border-b border-border bg-muted/20 p-2.5 text-xs">
       <p
-        ref={boxRef}
         className={cn(
-          "relative whitespace-pre-wrap break-words leading-relaxed text-foreground",
+          "whitespace-pre-wrap break-words leading-relaxed text-foreground",
           expanded ? "max-h-72 overflow-y-auto pr-1" : "line-clamp-5"
         )}
       >
-        {expanded && parts ? (
-          <>
-            <span className="text-muted-foreground">{parts.before}</span>
-            <mark
-              ref={markRef}
-              className="rounded-sm bg-amber-400/40 text-foreground dark:bg-amber-400/30"
-            >
-              {parts.hit}
-            </mark>
-            <span className="text-muted-foreground">{parts.after}</span>
-          </>
-        ) : expanded ? (
-          result.context
-        ) : (
-          result.text
-        )}
+        {result.text}
       </p>
-      {hasMore && (
+      {long && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -203,12 +187,15 @@ function TextHit({ result }: { result: KnowledgeSearchResult }) {
           aria-expanded={expanded}
         >
           {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          {expanded ? t("hideContext") : t("showContext")}
+          {expanded ? t("showLess") : t("showMore")}
         </button>
       )}
     </div>
   );
 }
+
+/** About five clamped lines of a card: a longer hit gets a "show more" toggle. */
+const LONG_HIT_CHARS = 280;
 
 export function SearchResultCard({
   result,

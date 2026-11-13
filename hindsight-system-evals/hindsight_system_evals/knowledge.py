@@ -32,6 +32,8 @@ from hindsight_system_evals.retrieval_metrics import alpha_ndcg_at_k, ndcg_at_k,
 #: round trip, so a few in parallel keep a run in minutes; latency is reported with it.
 SEARCH_CONCURRENCY = int(os.getenv("HINDSIGHT_EVAL_KNOWLEDGE_SEARCH_CONCURRENCY", "4"))
 SEARCH_RETRIES = 3
+#: The search budget the ranked scoring asks for: the API's largest, so every ranked candidate comes back.
+SCORING_BUDGET = 1_000_000
 INGEST_TIMEOUT = float(os.getenv("HINDSIGHT_EVAL_KNOWLEDGE_INGEST_TIMEOUT", str(6 * 3600)))
 FILES_PER_UPLOAD = 16
 #: The text ingest's ceiling per request.
@@ -56,12 +58,6 @@ class SearchHit:
 
 # The routes' responses, parsed at the boundary. Only the fields a suite reads: the server's
 # models carry more, and pydantic ignores the rest.
-
-
-class KnowledgeConfig(BaseModel):
-    provider: str
-    model: str
-    media_types: list[str]
 
 
 class BankStats(BaseModel):
@@ -106,9 +102,6 @@ class KnowledgeApi:
                 f"{method} {path}: {r.status_code} {r.text[:500]}", request=r.request, response=r
             )
         return r.content
-
-    async def config(self) -> KnowledgeConfig:
-        return KnowledgeConfig.model_validate_json(await self._call("GET", "/config"))
 
     async def create_bank(self, bank_id: str) -> None:
         await self._call("POST", "", json={"bank_id": bank_id})
@@ -157,17 +150,31 @@ class KnowledgeApi:
         return docs
 
     async def search(self, bank_id: str, query: str, top_k: int) -> list[SearchHit]:
-        raw = await self._call("POST", f"/{bank_id}/search", json={"query": query, "top_k": top_k, "neighbors": 0})
-        return [SearchHit(r.document_id, r.page) for r in _SearchResponse.model_validate_json(raw).results]
+        """The ``top_k`` best hits. The API takes a token budget, not a count: the scoring asks for its
+        deepest one (every candidate fits) and keeps the ranks it scores."""
+        raw = await self._call("POST", f"/{bank_id}/search", json={"query": query, "max_tokens": SCORING_BUDGET})
+        return [SearchHit(r.document_id, r.page) for r in _SearchResponse.model_validate_json(raw).results][:top_k]
 
 
-async def embedder_name(api: KnowledgeApi) -> str:
-    config = await api.config()
-    return f"{config.provider}:{config.model}"
+_MEDIA_TYPES = ("document", "image", "audio", "video", "text")
 
 
-async def embedder_media_types(api: KnowledgeApi) -> list[str]:
-    return (await api.config()).media_types
+def embedder_name() -> str:
+    """What a result is labelled with. The server does not tell (its embedder is its own business),
+    so the run says: ``HINDSIGHT_EVAL_KNOWLEDGE_EMBEDDER``, else the embedder a server this package
+    starts is given, else ``unknown``."""
+    if named := os.getenv("HINDSIGHT_EVAL_KNOWLEDGE_EMBEDDER"):
+        return named
+    provider = os.getenv("HINDSIGHT_EVAL_SET_KNOWLEDGE_EMBEDDINGS_PROVIDER")
+    model = os.getenv("HINDSIGHT_EVAL_SET_KNOWLEDGE_EMBEDDINGS_MODEL")
+    return f"{provider}:{model or 'default'}" if provider else "unknown"
+
+
+def embedder_media_types() -> list[str]:
+    """The media types the run's embedder writes, from ``HINDSIGHT_EVAL_KNOWLEDGE_MEDIA_TYPES`` (comma
+    separated); every type when unset. A case for any other type is skipped."""
+    raw = os.getenv("HINDSIGHT_EVAL_KNOWLEDGE_MEDIA_TYPES")
+    return [t.strip() for t in raw.split(",") if t.strip()] if raw else list(_MEDIA_TYPES)
 
 
 #: Loads the items for a batch of document ids. Ingest asks for one batch at a time, so a corpus

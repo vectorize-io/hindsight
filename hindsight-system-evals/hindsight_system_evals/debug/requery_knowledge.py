@@ -23,7 +23,7 @@ async def main() -> None:
     parser.add_argument("--bank", required=True)
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--label", default="")
-    parser.add_argument("--top-k", type=int, default=RANKED_TOP_K, help="10 is what an agent asks for")
+    parser.add_argument("--top-k", type=int, default=RANKED_TOP_K, help="ranks scored (cut client-side)")
     args = parser.parse_args()
     case = next(c for c in CASES if c.id == args.case)
     suite = case.suite(FULL if args.full else DEFAULT)

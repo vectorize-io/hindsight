@@ -81,6 +81,15 @@ class KnowledgeBanks:
     async def delete(self, bank_id: str) -> Response:
         return await self.call("DELETE", f"{KB}/{bank_id}")
 
+    async def config(self, bank_id: str) -> Response:
+        return await self.call("GET", f"{KB}/{bank_id}/config")
+
+    async def update_config(self, bank_id: str, updates: dict[str, Any]) -> Response:
+        return await self.call("PATCH", f"{KB}/{bank_id}/config", json_body={"updates": updates})
+
+    async def reset_config(self, bank_id: str) -> Response:
+        return await self.call("DELETE", f"{KB}/{bank_id}/config")
+
     async def ingest(self, bank_id: str, items: list[dict[str, Any]], *, wait: bool = True) -> Response:
         return await self.call("POST", f"{KB}/{bank_id}/ingest", json_body={"items": items, "async": not wait})
 

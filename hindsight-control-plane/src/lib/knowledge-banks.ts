@@ -25,21 +25,36 @@ export interface KnowledgeBank {
   documents_by_media_type: Partial<Record<MediaType, number>>;
 }
 
-export interface KnowledgeConfig {
-  provider: string;
-  model: string;
-  dimension: number;
-  /** The media types this server can write. */
-  media_types: MediaType[];
-  max_file_bytes: number;
-  max_media_seconds: number;
-  max_pdf_pages: number;
+/** The settings a knowledge bank splits its files with: its own value, else the server's. */
+export interface KnowledgeIngestSettings {
+  text_passage_tokens: number;
+  pdf_page_pixels: number;
+  pdf_bands: boolean;
+  image_tokens: number;
   audio_window_seconds: number;
   video_window_seconds: number;
   media_overlap_seconds: number;
-  pdf_page_pixels: number;
-  text_passage_tokens: number;
+  /** May only be lower than the server's. */
+  max_media_seconds: number;
+  /** May only be lower than the server's. */
+  max_pdf_pages: number;
+  /** May only add to the server's. */
+  disabled_media_types: MediaType[];
 }
+
+export type KnowledgeSettingName = keyof KnowledgeIngestSettings;
+
+/** `GET/PATCH/DELETE /{bank}/config`: every setting resolved, and only the ones the bank sets. */
+export interface KnowledgeBankConfig {
+  bank_id: string;
+  config: KnowledgeIngestSettings;
+  overrides: Partial<KnowledgeIngestSettings>;
+}
+
+/** A PATCH body's `updates`: a null clears that override. */
+export type KnowledgeBankConfigUpdates = {
+  [K in KnowledgeSettingName]?: KnowledgeIngestSettings[K] | null;
+};
 
 export interface KnowledgeDocument {
   document_id: string;
@@ -75,24 +90,24 @@ export interface KnowledgeSearchResult extends KnowledgePassage {
   filename: string | null;
   tags: string[];
   document_url: string;
-  /** Text hits: the hit merged with its neighbouring passages (see `neighbors`). */
-  context?: string | null;
-  context_first_index?: number | null;
-  context_last_index?: number | null;
 }
+
+export type SearchBudget = "low" | "mid" | "high";
+export const SEARCH_BUDGETS: SearchBudget[] = ["low", "mid", "high"];
 
 export interface KnowledgeSearchRequest {
   query?: string;
   query_image?: string;
   /** Base64 MP4 clip; combined with the text and the image into one query. */
   query_video?: string;
-  top_k: number;
+  /** What the hits, and the text around them, may weigh in all, in tokens (server default 4096). */
+  max_tokens?: number;
+  /** How deep the search ranks before `max_tokens` picks from it (server default "mid"). */
+  budget?: SearchBudget;
   tags?: string[];
   tags_match?: "any" | "all";
   document_ids?: string[];
   media_types?: MediaType[];
-  /** Passages on each side of a text hit to return as `context` (0..5, server default 1). */
-  neighbors?: number;
 }
 
 /** Results best first: the server sends ranks, not scores (they mean nothing across queries). */
@@ -209,6 +224,23 @@ export function fileToBase64(file: Blob): Promise<string> {
 }
 
 /** Builds the multipart body of `POST /{bank}/files/ingest`: `files` parts plus the aligned `request` JSON. */
+/** Groups items, in order, into batches of at most `maxBytes`; an item bigger than that goes alone. */
+export function packUploads<T>(items: T[], size: (item: T) => number, maxBytes: number): T[][] {
+  const batches: T[][] = [];
+  let bytes = 0;
+  for (const item of items) {
+    const last = batches[batches.length - 1];
+    if (last && bytes + size(item) <= maxBytes) {
+      last.push(item);
+      bytes += size(item);
+    } else {
+      batches.push([item]);
+      bytes = size(item);
+    }
+  }
+  return batches;
+}
+
 export function buildUploadForm(files: File[], options: FileUploadOptions[]): FormData {
   const form = new FormData();
   for (const file of files) form.append("files", file, file.name);
@@ -304,22 +336,4 @@ export function fillTimeseries(
     buckets[i].passages += b.passages;
   }
   return { trunc, buckets };
-}
-
-/**
- * A text hit's context split around the hit, so the hit can be highlighted inside
- * it. Null when there is no context, or the hit text is not found in it verbatim.
- */
-export function splitContext(
-  context: string | null | undefined,
-  hit: string | null | undefined
-): { before: string; hit: string; after: string } | null {
-  if (!context || !hit) return null;
-  const at = context.indexOf(hit);
-  if (at < 0) return null;
-  return {
-    before: context.slice(0, at),
-    hit,
-    after: context.slice(at + hit.length),
-  };
 }

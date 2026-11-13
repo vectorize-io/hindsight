@@ -6,6 +6,7 @@ import createIntlMiddleware from "next-intl/middleware";
 import { ACCESS_KEY_COOKIE, SESSION_REQUIRED_HEADER, verifySessionToken } from "@/lib/auth/session";
 import { sanitizeReturnTo, stripBasePath, withBasePath } from "@/lib/base-path";
 import { routing } from "@/i18n/routing";
+import { maxUploadBytes } from "@/lib/upload-limit";
 
 // Routes that don't require authentication
 const PUBLIC_PATTERNS = [
@@ -29,6 +30,22 @@ export async function middleware(request: NextRequest) {
 
   // API routes are not locale-prefixed — handle auth directly without i18n routing.
   if (appPathname.startsWith("/api/")) {
+    // Next.js would truncate a body over the limit and pass it on: refuse it instead.
+    const size = Number(request.headers.get("content-length") ?? 0);
+    const limit = maxUploadBytes();
+    if (size > limit) {
+      return NextResponse.json(
+        {
+          ...localizeApiErrorPayload(request, {
+            error: "Request too large",
+            errorKey: "api.errors.request.tooLarge",
+          }),
+          sizeBytes: size,
+          limitBytes: limit,
+        },
+        { status: 413 }
+      );
+    }
     if (!accessKey) {
       return NextResponse.next();
     }

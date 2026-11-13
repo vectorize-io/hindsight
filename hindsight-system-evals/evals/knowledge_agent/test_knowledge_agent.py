@@ -153,7 +153,7 @@ async def test_knowledge_agent_benchmark_enterprise_rag(
             if target.is_remote and not request.config.getoption("--keep-banks"):
                 with contextlib.suppress(Exception):
                     await client.delete_bank(bank)
-        embedder = await embedder_name(client)
+        embedder = embedder_name()
     finally:
         await client.aclose()
 

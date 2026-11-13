@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import path from "path";
 import createNextIntlPlugin from "next-intl/plugin";
+import { maxUploadBytes } from "./src/lib/upload-limit";
 
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
@@ -11,17 +12,9 @@ const distDir = process.env.PORT && process.env.PORT !== '9999'
   ? `.next-${process.env.PORT}`
   : '.next';
 
-// Maximum upload/request body size for file retain. Next.js buffers request
-// bodies that pass through middleware/proxy (the auth middleware does, for
-// /api/files/retain) and truncates anything over this limit (default 10MB),
-// which silently corrupts large document uploads. Default to 100MB to match the
-// dataplane's HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE_MB default; accepts a
-// human-readable size string ('100mb', '1gb') or a number of bytes.
-type SizeLimit = NonNullable<NonNullable<NextConfig['experimental']>['proxyClientMaxBodySize']>;
-const maxUploadEnv = process.env.HINDSIGHT_CP_MAX_UPLOAD_SIZE;
-const maxUploadBodySize: SizeLimit = maxUploadEnv
-  ? (/^\d+$/.test(maxUploadEnv) ? Number(maxUploadEnv) : (maxUploadEnv as SizeLimit))
-  : '100mb';
+// Maximum request body size (see src/lib/upload-limit.ts): Next.js truncates a longer body
+// that passes through middleware (default 10MB), so the middleware refuses one with a 413.
+const maxUploadBodySize = maxUploadBytes();
 
 const nextConfig: NextConfig = {
   output: 'standalone',

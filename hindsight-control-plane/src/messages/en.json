@@ -690,7 +690,9 @@
         "retain_mission": "Would be prepended here, taking priority over the general extraction rules.",
         "retain_optional_fact_dimensions": "Would let the model leave \"when\", \"where\", \"who\" and \"why\" empty instead of writing \"N/A\"."
       }
-    }
+    },
+    "linkedKnowledgeBanksLabel": "Knowledge banks",
+    "linkedKnowledgeBanksDescription": "Reflect on this bank also searches the linked knowledge banks, and treats their documents as the authority over conflicting memories. Recall and mental models don't read them."
   },
   "bankOperations": {
     "title": "Background Operations",
@@ -729,7 +731,8 @@
       "importDocuments": "Import Documents",
       "exportBank": "Export Bank",
       "importBank": "Import Bank",
-      "cloneBank": "Clone Bank"
+      "cloneBank": "Clone Bank",
+      "knowledgeIngest": "Knowledge ingest"
     },
     "table": {
       "id": "Operation ID",
@@ -2213,6 +2216,9 @@
         "updateNode": "Failed to update node",
         "deleteNode": "Failed to delete node",
         "search": "Failed to search pages"
+      },
+      "request": {
+        "tooLarge": "Request too large. Upload fewer or smaller files (limit: HINDSIGHT_CP_MAX_UPLOAD_SIZE)."
       }
     }
   },
@@ -2467,7 +2473,6 @@
       "upload": "Upload files",
       "dropToUpload": "Drop files to upload them",
       "columnDocument": "Document",
-      "columnStatus": "Status",
       "columnPassages": "Passages",
       "columnSize": "Size",
       "columnTags": "Tags",
@@ -2483,7 +2488,8 @@
       "noMatchesBody": "Try another name, kind or status.",
       "layout": "Layout",
       "viewList": "List",
-      "viewGrid": "Grid"
+      "viewGrid": "Grid",
+      "viewConstellation": "Constellation"
     },
     "detail": {
       "download": "Download original",
@@ -2522,7 +2528,13 @@
       "removeMedia": "Remove",
       "notMedia": "Only an image or an MP4 video can be a search query",
       "pastedMedia": "Pasted file",
-      "topK": "Results",
+      "maxTokens": "Max tokens",
+      "maxTokensHelp": "How much text comes back in all: the best passages, and as much around them as fits.",
+      "budget": "Budget",
+      "budgetHelp": "How deep the search ranks: low is fastest, high looks furthest.",
+      "budgetLow": "Low",
+      "budgetMid": "Mid",
+      "budgetHigh": "High",
       "submit": "Search",
       "options": "Options",
       "tags": "Tags",
@@ -2535,21 +2547,15 @@
       "failed": "Search failed",
       "mediaTypes": "Media types",
       "mediaTypesHelp": "None checked searches every media type.",
-      "context": "Context",
-      "contextHelp": "Passages around each text hit to include as its context",
-      "showContext": "Show context",
-      "hideContext": "Hide context"
+      "showMore": "Show more",
+      "showLess": "Show less"
     },
     "linked": {
       "title": "Knowledge banks",
-      "description": "Reflect on this bank also searches the linked knowledge banks, and treats their documents as the authority over conflicting memories. Recall and mental models don't read them.",
       "none": "There are no knowledge banks yet.",
-      "createOne": "Create a knowledge bank",
-      "counts": "{documents, plural, one {# doc} other {# docs}} · {passages, plural, one {# passage} other {# passages}}",
-      "open": "Open",
-      "missing": "No longer exists",
-      "save": "Save links",
-      "saved": "Linked knowledge banks saved"
+      "noneLinked": "None linked",
+      "search": "Search knowledge banks…",
+      "missing": "No longer exists"
     },
     "selector": {
       "select": "Select a knowledge bank...",
@@ -2560,7 +2566,6 @@
       "countsLegend": "docs · passages"
     },
     "home": {
-      "embedder": "Embedded with {model} ({dimension} dimensions)",
       "documents": "Documents",
       "passages": "Passages",
       "size": "Size",
@@ -2573,34 +2578,28 @@
       "noneInPeriod": "No documents added in this period",
       "noDocuments": "No documents yet",
       "pending": "{count} in progress",
-      "failed": "{count} failed"
+      "failed": "{count} failed",
+      "constellationTitle": "Constellation",
+      "viewAll": "View all",
+      "failedNotice": "{count, plural, one {# document failed to ingest} other {# documents failed to ingest}}. See why"
     },
     "settings": {
       "title": "Settings",
-      "description": "Manage this knowledge bank and see how its documents are embedded.",
-      "generalTitle": "General",
-      "generalDescription": "How the bank is named and identified.",
+      "description": "This bank's overview, ingest operations and how it splits files into passages.",
+      "tabGeneral": "General",
+      "tabConfiguration": "Configuration",
+      "generalIntro": "What the bank holds, and the uploads it is working through.",
+      "aboutTitle": "About",
+      "aboutDescription": "How the bank is named and identified.",
       "bankId": "Bank id",
       "created": "Created",
-      "embedderTitle": "Embedder and limits",
-      "embedderDescription": "Set on the server for every knowledge bank. Shown here for reference.",
-      "provider": "Provider",
-      "model": "Model",
-      "dimension": "Dimensions",
-      "maxFile": "Largest file",
-      "maxMedia": "Longest audio or video",
-      "maxPdfPages": "Most PDF pages",
-      "audioWindow": "Audio window",
-      "videoWindow": "Video window",
-      "overlap": "Window overlap",
-      "pdfPixels": "PDF page size (longest side)",
-      "textTokens": "Text passage size (tokens)",
-      "seconds": "{count, plural, one {# second} other {# seconds}}",
       "linkTitle": "Memory banks",
       "linkDescription": "Reflect on a memory bank that links this bank also searches it, and treats its documents as the authority.",
       "linkHowTo": "Link it from a memory bank: open the memory bank, then Bank Configuration → Configuration → Knowledge banks.",
       "delete": "Delete bank",
-      "mediaTypes": "Media types it can write"
+      "resetConfig": "Reset configuration",
+      "resetConfigTitle": "Reset configuration?",
+      "resetConfigPrompt": "Every setting of {bankId} goes back to the server's default. Files already ingested keep their passages until they are uploaded again."
     },
     "addDocument": {
       "dialogSubtitle": "Add a new document to knowledge bank: ",
@@ -2609,10 +2608,9 @@
       "tagsHelp": "Comma-separated. Search can filter on them.",
       "filenameLabel": "File name",
       "filenamePlaceholder": "Defaults to the document id + .md",
-      "uploadHint": "PDF pages and images are embedded as pictures, audio in {audio}s windows, video in {video}s windows. Up to {max} per file.",
+      "uploadHint": "PDF pages and images are embedded as pictures, audio and video in short windows. A file the server can't take shows its reason here.",
       "allTagsLabel": "Tags for all files",
       "applyToAll": "Apply to all",
-      "tooLarge": "Too large: the limit is {max}",
       "editFile": "Edit tags and id for this file",
       "remove": "Remove {name}",
       "tagsFor": "Tags for {name}",
@@ -2621,6 +2619,83 @@
       "written": "Document added and searchable.",
       "unchanged": "{count, plural, one {# file} other {# files}} unchanged: already ingested as is.",
       "writtenUnchanged": "Unchanged: this document is already ingested as is."
+    },
+    "constellation": {
+      "empty": "No passages to show yet",
+      "hudStats": "{documents} documents · {passages} passages · {visible} visible · {labels} labels · {links} links · zoom {zoom}x"
+    },
+    "config": {
+      "intro": "How this bank splits its files into passages. A change applies to files ingested from now on; upload a file again to split it with the new settings.",
+      "loadFailed": "Could not load this bank's settings.",
+      "saveFailed": "Could not save.",
+      "serverDefault": "Server default",
+      "serverDefaultValue": "Server default ({value})",
+      "on": "On",
+      "off": "Off",
+      "overridden": "Set for this bank",
+      "useServerDefault": "Use server default",
+      "serverOff": "Turned off on the server for every bank.",
+      "accept": "Accept {kind} files",
+      "sections": {
+        "text": {
+          "title": "Text",
+          "description": "How text, and the text in documents, is cut into passages."
+        },
+        "pdf": {
+          "title": "PDF",
+          "description": "How PDF pages are read."
+        },
+        "images": {
+          "title": "Images",
+          "description": "How images are read."
+        },
+        "media": {
+          "title": "Audio & video",
+          "description": "How audio and video are cut into timed passages."
+        },
+        "types": {
+          "title": "Media types",
+          "description": "Which kinds of file this bank takes. It can turn off more kinds than the server does, never fewer."
+        }
+      },
+      "fields": {
+        "text_passage_tokens": {
+          "label": "Passage size (tokens)",
+          "description": "How much text goes into one passage: smaller finds more exact spots, larger keeps more context together."
+        },
+        "pdf_page_pixels": {
+          "label": "Page size (pixels)",
+          "description": "How large each PDF page is drawn, on its longest side, before it is read."
+        },
+        "pdf_bands": {
+          "label": "Page strips",
+          "description": "Also reads each PDF page as three horizontal strips, which finds small print better but makes ingest about twice as slow."
+        },
+        "max_pdf_pages": {
+          "label": "Most pages",
+          "description": "A PDF with more pages than this is refused; it can only be lower than the server's limit."
+        },
+        "image_tokens": {
+          "label": "Image detail (tokens)",
+          "description": "How many tokens each image is read as, from 70 to 1120: more sees finer detail but is slower."
+        },
+        "audio_window_seconds": {
+          "label": "Audio passage length (seconds)",
+          "description": "How many seconds of audio go into one passage."
+        },
+        "video_window_seconds": {
+          "label": "Video passage length (seconds)",
+          "description": "How many seconds of video go into one passage."
+        },
+        "media_overlap_seconds": {
+          "label": "Overlap (seconds)",
+          "description": "How many seconds each passage shares with the next, so nothing on a cut is lost; it must be shorter than both lengths."
+        },
+        "max_media_seconds": {
+          "label": "Longest file (seconds)",
+          "description": "Audio or video longer than this is refused; it can only be lower than the server's limit."
+        }
+      }
     }
   }
 }
