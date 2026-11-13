@@ -133,3 +133,13 @@ def test_an_observation_that_fits_no_topic_goes_to_other():
     )
     where = _files_of(obs + [stray])
     assert where["stray"].endswith("other.md"), where["stray"]
+
+
+def test_other_is_a_file_never_a_folder():
+    """At most one other.md per folder, and no folder called other (no other/other/other.md)."""
+    tree = build_memory_tree(_realistic_bank())
+    paths = [f.path for f in iter_files(tree)]
+    assert not any("other/" in p for p in paths), [p for p in paths if "other/" in p]
+    folders = {p.rsplit("/", 1)[0] if "/" in p else "" for p in paths}
+    for d in folders:
+        assert sum(p == f"{d}/other.md".lstrip("/") for p in paths) <= 1

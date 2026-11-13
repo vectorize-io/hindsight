@@ -270,7 +270,13 @@ def _split(feats: _Features, members: np.ndarray, depth: int, ancestors: frozens
         child = _split(feats, members[labels == c], depth + 1, ancestors | own)
         child.seed = local.vocab[seeds[c]] if c < rest else ""
         child.rest = c == rest
-        node.children.append(child)
+        if child.rest and child.children:
+            # The rest split into real topics: they sit beside the folder's other topics, and
+            # only what still fits none stays in the folder's single other.md (a split rest
+            # used to become an other/ folder holding its own other.md, other/other/other.md).
+            node.children.extend(child.children)
+        else:
+            node.children.append(child)
     return node
 
 
