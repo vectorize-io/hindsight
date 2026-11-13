@@ -44,10 +44,16 @@ def is_store_backpressure(exc: BaseException) -> bool:
     Walks the `__cause__`/`__context__` chain: the provider wraps the store's error before the
     worker sees it, so the marker is usually not on the outermost exception.
     """
+    from ..engine.memories.base import StoreWriteUnavailable
+
     seen: set[int] = set()
     cur: BaseException | None = exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
+        # The typed refusal first: the routes answer it with 503 whatever its wording, so the worker
+        # must defer it too, not count a retry and fail its documents on the last one.
+        if isinstance(cur, StoreWriteUnavailable):
+            return True
         text = str(cur)
         if any(marker in text for marker in _BACKPRESSURE_MARKERS):
             return True

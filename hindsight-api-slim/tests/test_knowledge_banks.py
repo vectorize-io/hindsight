@@ -1465,13 +1465,36 @@ async def test_a_new_content_type_ingests_the_same_file_again(api_client, kb):
     assert (await api_client.get(f"{KB}/{kb}/documents/n")).json()["content_type"] == "text/markdown"
 
 
+async def _run_as_worker(memory, poller, child: dict, retry_count: int) -> dict:
+    """Run a queued child operation the way the worker would, on its ``retry_count``-th attempt, and read
+    back its operation row. Raw SQL on purpose: the row is marked claimed (as a worker's claim would mark
+    it) so the poller's terminal write applies, and no API exposes ``retry_count`` or the defer counts."""
+    from hindsight_api.worker.poller import ClaimedTask
+
+    pool = await memory._get_pool()
+    await pool.execute(
+        "UPDATE async_operations SET status = 'processing', worker_id = 'kb-worker', claimed_at = now() "
+        "WHERE operation_id = $1",
+        uuid.UUID(child["operation_id"]),
+    )
+    await poller.execute_task(
+        ClaimedTask(operation_id=child["operation_id"], task_dict={**child, "_retry_count": retry_count}, schema=None)
+    )
+    assert await poller.wait_for_active_tasks(timeout=30.0)
+    row = await pool.fetchrow(
+        "SELECT status, retry_count, result_metadata FROM async_operations WHERE operation_id = $1",
+        uuid.UUID(child["operation_id"]),
+    )
+    meta = row["result_metadata"]
+    return {**dict(row), "result_metadata": json.loads(meta) if isinstance(meta, str) else meta}
+
+
 @pytest.mark.xdist_group("worker_tests")
 async def test_a_rate_limited_embedder_defers_the_batch_instead_of_failing_it(
     api_client, memory, kb, fake_embedder, counted, monkeypatch
 ):
     from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
     from hindsight_api.worker import WorkerPoller
-    from hindsight_api.worker.poller import ClaimedTask
 
     _, payloads = counted
     items = [{"document_id": f"r{n}", "text": f"note {n} about red"} for n in range(3)]
@@ -1487,27 +1510,10 @@ async def test_a_rate_limited_embedder_defers_the_batch_instead_of_failing_it(
         raise UpstreamHTTPError(429, "Too Many Requests", {}, "http://gateway/v1/embeddings")
 
     monkeypatch.setattr(fake_embedder, "embed_documents", busy)
-    pool = await memory._get_pool()
     poller = WorkerPoller(backend=await memory._get_backend(), worker_id="kb-worker", executor=memory.execute_task)
 
     async def attempt(retry_count: int) -> dict:
-        await pool.execute(
-            "UPDATE async_operations SET status = 'processing', worker_id = 'kb-worker', claimed_at = now() "
-            "WHERE operation_id = $1",
-            uuid.UUID(child["operation_id"]),
-        )
-        await poller.execute_task(
-            ClaimedTask(
-                operation_id=child["operation_id"], task_dict={**child, "_retry_count": retry_count}, schema=None
-            )
-        )
-        assert await poller.wait_for_active_tasks(timeout=30.0)
-        row = await pool.fetchrow(
-            "SELECT status, retry_count, result_metadata FROM async_operations WHERE operation_id = $1",
-            uuid.UUID(child["operation_id"]),
-        )
-        meta = row["result_metadata"]
-        return {**dict(row), "result_metadata": json.loads(meta) if isinstance(meta, str) else meta}
+        return await _run_as_worker(memory, poller, child, retry_count)
 
     # On its last retry, too: a rate limit is "not now", not a failure, so nothing is used up or lost.
     row = await attempt(retry_count=3)
@@ -1546,7 +1552,6 @@ async def test_a_store_shedding_a_batch_defers_it_without_using_a_retry(
     api_client, memory, kb, fake_embedder, counted, monkeypatch
 ):
     from hindsight_api.worker import WorkerPoller
-    from hindsight_api.worker.poller import ClaimedTask
 
     _, payloads = counted
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "b", "text": "red"}], "async": True})
@@ -1559,21 +1564,18 @@ async def test_a_store_shedding_a_batch_defers_it_without_using_a_retry(
         raise RuntimeError("Write: fold behind: un-folded tail holds 15603736 bytes, over the write bound")
 
     monkeypatch.setattr(service.store, "replace_passages", shed)
-    pool = await memory._get_pool()
-    await pool.execute(
-        "UPDATE async_operations SET status = 'processing', worker_id = 'kb-worker', claimed_at = now() "
-        "WHERE operation_id = $1",
-        uuid.UUID(child["operation_id"]),
-    )
     poller = WorkerPoller(backend=await memory._get_backend(), worker_id="kb-worker", executor=memory.execute_task)
-    await poller.execute_task(
-        ClaimedTask(operation_id=child["operation_id"], task_dict={**child, "_retry_count": 0}, schema=None)
-    )
-    assert await poller.wait_for_active_tasks(timeout=30.0)
-    row = await pool.fetchrow(
-        "SELECT status, retry_count FROM async_operations WHERE operation_id = $1", uuid.UUID(child["operation_id"])
-    )
+    row = await _run_as_worker(memory, poller, child, retry_count=0)
     # Deferred, not retried: the backlog clears by itself, and a counted retry is how a long ingest's
     # batches ran out of attempts while it did.
-    assert row["status"] == "pending" and (row["retry_count"] or 0) == 0, dict(row)
+    assert row["status"] == "pending" and (row["retry_count"] or 0) == 0, row
+    # So is the typed refusal, whatever its wording: the routes answer it 503, the worker defers it.
+    from hindsight_api.engine.memories.base import StoreWriteUnavailable
+
+    async def closed(*_a, **_k):
+        raise StoreWriteUnavailable("the bank is closed to writes for a moment")
+
+    monkeypatch.setattr(service.store, "replace_passages", closed)
+    row = await _run_as_worker(memory, poller, child, retry_count=0)
+    assert row["status"] == "pending" and (row["retry_count"] or 0) == 0, row
     assert (await service.store.get_documents(kb, ["b"]))["b"].status == "pending"

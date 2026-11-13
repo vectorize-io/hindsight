@@ -1077,7 +1077,9 @@ def page_text_weight(text: str | None, text_weight: float) -> float:
 
 def page_text_weight_for_quality(quality: float, text_weight: float) -> float:
     """``page_text_weight`` from a page's ``text_quality``, for a store that works it out once, when the
-    page is written, rather than with a regex over every candidate's text at search time."""
+    page is written, rather than with a regex over every candidate's text at search time. An extension
+    point: this repo's Postgres store scores at search time and reaches it through ``page_text_weight``;
+    a store loaded as an extension (``load_knowledge_store``) can call it directly."""
     return _POOR_TEXT_WEIGHT if quality < _POOR_TEXT_QUALITY else text_weight
 
 
