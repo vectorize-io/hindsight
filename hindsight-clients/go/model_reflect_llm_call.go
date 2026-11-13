@@ -26,7 +26,7 @@ type ReflectLLMCall struct {
 	// Execution time in milliseconds
 	DurationMs int32 `json:"duration_ms"`
 	// When the call started, in Unix epoch milliseconds
-	StartedAtMs *int32 `json:"started_at_ms,omitempty"`
+	StartedAtMs *int64 `json:"started_at_ms,omitempty"`
 }
 
 type _ReflectLLMCall ReflectLLMCall
@@ -39,7 +39,7 @@ func NewReflectLLMCall(scope string, durationMs int32) *ReflectLLMCall {
 	this := ReflectLLMCall{}
 	this.Scope = scope
 	this.DurationMs = durationMs
-	var startedAtMs int32 = 0
+	var startedAtMs int64 = 0
 	this.StartedAtMs = &startedAtMs
 	return &this
 }
@@ -49,7 +49,7 @@ func NewReflectLLMCall(scope string, durationMs int32) *ReflectLLMCall {
 // but it doesn't guarantee that properties required by API are set
 func NewReflectLLMCallWithDefaults() *ReflectLLMCall {
 	this := ReflectLLMCall{}
-	var startedAtMs int32 = 0
+	var startedAtMs int64 = 0
 	this.StartedAtMs = &startedAtMs
 	return &this
 }
@@ -103,9 +103,9 @@ func (o *ReflectLLMCall) SetDurationMs(v int32) {
 }
 
 // GetStartedAtMs returns the StartedAtMs field value if set, zero value otherwise.
-func (o *ReflectLLMCall) GetStartedAtMs() int32 {
+func (o *ReflectLLMCall) GetStartedAtMs() int64 {
 	if o == nil || IsNil(o.StartedAtMs) {
-		var ret int32
+		var ret int64
 		return ret
 	}
 	return *o.StartedAtMs
@@ -113,7 +113,7 @@ func (o *ReflectLLMCall) GetStartedAtMs() int32 {
 
 // GetStartedAtMsOk returns a tuple with the StartedAtMs field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *ReflectLLMCall) GetStartedAtMsOk() (*int32, bool) {
+func (o *ReflectLLMCall) GetStartedAtMsOk() (*int64, bool) {
 	if o == nil || IsNil(o.StartedAtMs) {
 		return nil, false
 	}
@@ -129,8 +129,8 @@ func (o *ReflectLLMCall) HasStartedAtMs() bool {
 	return false
 }
 
-// SetStartedAtMs gets a reference to the given int32 and assigns it to the StartedAtMs field.
-func (o *ReflectLLMCall) SetStartedAtMs(v int32) {
+// SetStartedAtMs gets a reference to the given int64 and assigns it to the StartedAtMs field.
+func (o *ReflectLLMCall) SetStartedAtMs(v int64) {
 	o.StartedAtMs = &v
 }
 

@@ -31,7 +31,7 @@ type ReflectToolCall struct {
 	// Iteration number (1-based) when this tool was called
 	Iteration *int32 `json:"iteration,omitempty"`
 	// When the call started, in Unix epoch milliseconds
-	StartedAtMs *int32 `json:"started_at_ms,omitempty"`
+	StartedAtMs *int64 `json:"started_at_ms,omitempty"`
 }
 
 type _ReflectToolCall ReflectToolCall
@@ -47,7 +47,7 @@ func NewReflectToolCall(tool string, input map[string]interface{}, durationMs in
 	this.DurationMs = durationMs
 	var iteration int32 = 0
 	this.Iteration = &iteration
-	var startedAtMs int32 = 0
+	var startedAtMs int64 = 0
 	this.StartedAtMs = &startedAtMs
 	return &this
 }
@@ -59,7 +59,7 @@ func NewReflectToolCallWithDefaults() *ReflectToolCall {
 	this := ReflectToolCall{}
 	var iteration int32 = 0
 	this.Iteration = &iteration
-	var startedAtMs int32 = 0
+	var startedAtMs int64 = 0
 	this.StartedAtMs = &startedAtMs
 	return &this
 }
@@ -202,9 +202,9 @@ func (o *ReflectToolCall) SetIteration(v int32) {
 }
 
 // GetStartedAtMs returns the StartedAtMs field value if set, zero value otherwise.
-func (o *ReflectToolCall) GetStartedAtMs() int32 {
+func (o *ReflectToolCall) GetStartedAtMs() int64 {
 	if o == nil || IsNil(o.StartedAtMs) {
-		var ret int32
+		var ret int64
 		return ret
 	}
 	return *o.StartedAtMs
@@ -212,7 +212,7 @@ func (o *ReflectToolCall) GetStartedAtMs() int32 {
 
 // GetStartedAtMsOk returns a tuple with the StartedAtMs field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *ReflectToolCall) GetStartedAtMsOk() (*int32, bool) {
+func (o *ReflectToolCall) GetStartedAtMsOk() (*int64, bool) {
 	if o == nil || IsNil(o.StartedAtMs) {
 		return nil, false
 	}
@@ -228,8 +228,8 @@ func (o *ReflectToolCall) HasStartedAtMs() bool {
 	return false
 }
 
-// SetStartedAtMs gets a reference to the given int32 and assigns it to the StartedAtMs field.
-func (o *ReflectToolCall) SetStartedAtMs(v int32) {
+// SetStartedAtMs gets a reference to the given int64 and assigns it to the StartedAtMs field.
+func (o *ReflectToolCall) SetStartedAtMs(v int64) {
 	o.StartedAtMs = &v
 }
 

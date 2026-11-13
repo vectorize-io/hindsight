@@ -9687,6 +9687,7 @@ components:
         started_at_ms:
           default: 0
           description: "When the call started, in Unix epoch milliseconds"
+          format: int64
           title: Started At Ms
           type: integer
       required:
@@ -11492,6 +11493,7 @@ components:
         started_at_ms:
           default: 0
           description: "When the call started, in Unix epoch milliseconds."
+          format: int64
           title: Started At Ms
           type: integer
       required:
@@ -13142,6 +13144,7 @@ components:
         started_at_ms:
           default: 0
           description: "When the call started, in Unix epoch milliseconds"
+          format: int64
           title: Started At Ms
           type: integer
       required:
@@ -13363,6 +13366,7 @@ components:
         started_at_ms:
           default: 0
           description: "When the call started, in Unix epoch milliseconds"
+          format: int64
           title: Started At Ms
           type: integer
       required:

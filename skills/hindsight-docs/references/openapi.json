@@ -14174,6 +14174,7 @@
           },
           "started_at_ms": {
             "type": "integer",
+            "format": "int64",
             "title": "Started At Ms",
             "description": "When the call started, in Unix epoch milliseconds",
             "default": 0
@@ -16740,6 +16741,7 @@
           },
           "started_at_ms": {
             "type": "integer",
+            "format": "int64",
             "title": "Started At Ms",
             "description": "When the call started, in Unix epoch milliseconds.",
             "default": 0
@@ -19289,6 +19291,7 @@
           },
           "started_at_ms": {
             "type": "integer",
+            "format": "int64",
             "title": "Started At Ms",
             "description": "When the call started, in Unix epoch milliseconds",
             "default": 0
@@ -19726,6 +19729,7 @@
           },
           "started_at_ms": {
             "type": "integer",
+            "format": "int64",
             "title": "Started At Ms",
             "description": "When the call started, in Unix epoch milliseconds",
             "default": 0
