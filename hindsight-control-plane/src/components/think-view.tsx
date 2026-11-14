@@ -33,7 +33,32 @@ import remarkGfm from "remark-gfm";
 
 type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 type ViewMode = "answer" | "trace" | "json";
-type BasedOnTab = "directives" | "mental_models" | "observations" | "world" | "experience";
+type BasedOnTab =
+  | "directives"
+  | "mental_models"
+  | "observations"
+  | "world"
+  | "experience"
+  | "documents";
+
+type KnowledgeDocument = { source?: string; document_id: string; text?: string };
+
+/**
+ * The linked knowledge banks' passages reflect read. They reach the agent inside the recall
+ * tool's output (`documents`), not in `based_on`, so they are read from the trace.
+ */
+export function knowledgeDocuments(trace: any): KnowledgeDocument[] {
+  const seen = new Set<string>();
+  return (trace?.tool_calls ?? [])
+    .filter((tc: any) => tc.tool === "recall")
+    .flatMap((tc: any) => (tc.output?.documents ?? []) as KnowledgeDocument[])
+    .filter((d: KnowledgeDocument) => {
+      const key = `${d.document_id}|${d.text ?? ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
 
 // Stable component identity preserves the table's scroll position when controls change.
 function ReflectMarkdownTable({ children }: { children?: ReactNode }) {
@@ -683,7 +708,8 @@ export function ThinkView() {
                           (result.based_on?.observations?.filter(
                             (o: any) => o.subtype !== "directive"
                           )?.length || 0) +
-                          (result.based_on?.directives?.length || 0),
+                          (result.based_on?.directives?.length || 0) +
+                          knowledgeDocuments(result.trace).length,
                       })}
                     </CardDescription>
                   </CardHeader>
@@ -704,7 +730,8 @@ export function ThinkView() {
                       (result.based_on?.mental_models &&
                         result.based_on.mental_models.length > 0) ||
                       (result.based_on?.directives && result.based_on.directives.length > 0) ||
-                      (result.based_on?.observations && result.based_on.observations.length > 0) ? (
+                      (result.based_on?.observations && result.based_on.observations.length > 0) ||
+                      knowledgeDocuments(result.trace).length > 0 ? (
                       (() => {
                         const memories = result.based_on?.memories || [];
                         const worldFacts = memories.filter((f: any) => f.type === "world");
@@ -718,6 +745,7 @@ export function ThinkView() {
                         );
                         // Directives are in based_on.directives
                         const directives = result.based_on?.directives || [];
+                        const documents = knowledgeDocuments(result.trace);
 
                         // Build tabs array with all categories
                         const tabs: { id: BasedOnTab; label: string; count: number }[] = [
@@ -738,9 +766,18 @@ export function ThinkView() {
                             label: t("tabExperience"),
                             count: experienceFacts.length,
                           },
+                          {
+                            id: "documents",
+                            label: t("tabKnowledgeBanks"),
+                            count: documents.length,
+                          },
                         ];
 
-                        const currentTab = activeBasedOnTab;
+                        // The chosen tab, or the first with anything in it: a reflect answered from
+                        // documents alone would otherwise open on an empty "World".
+                        const currentTab = tabs.find((tab) => tab.id === activeBasedOnTab)?.count
+                          ? activeBasedOnTab
+                          : (tabs.find((tab) => tab.count > 0)?.id ?? activeBasedOnTab);
 
                         const getCurrentFacts = () => {
                           switch (currentTab) {
@@ -754,6 +791,8 @@ export function ThinkView() {
                               return worldFacts;
                             case "experience":
                               return experienceFacts;
+                            case "documents":
+                              return documents;
                             default:
                               return [];
                           }
@@ -764,12 +803,13 @@ export function ThinkView() {
                         return (
                           <div>
                             {/* Tabs */}
-                            <div className="flex items-center gap-1 bg-muted rounded-lg p-1 mb-4">
+                            {/* Wraps: six tabs do not fit side by side in a half-width card. */}
+                            <div className="flex flex-wrap items-center gap-1 bg-muted rounded-lg p-1 mb-4">
                               {tabs.map((tab) => (
                                 <button
                                   key={tab.id}
                                   onClick={() => setActiveBasedOnTab(tab.id)}
-                                  className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                  className={`flex-1 whitespace-nowrap px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
                                     currentTab === tab.id
                                       ? "bg-background text-foreground shadow-sm"
                                       : "text-muted-foreground hover:text-foreground"
@@ -787,12 +827,13 @@ export function ThinkView() {
                                   <div
                                     key={item.id || i}
                                     className={`p-4 bg-muted/50 rounded-lg border border-border/50 ${
-                                      currentTab !== "directives"
+                                      currentTab !== "directives" && currentTab !== "documents"
                                         ? "cursor-pointer hover:bg-muted/80 transition-colors"
                                         : ""
                                     }`}
                                     onClick={() => {
-                                      if (currentTab === "directives") return; // Not clickable
+                                      if (currentTab === "directives" || currentTab === "documents")
+                                        return; // Not clickable
                                       if (currentTab === "observations")
                                         handleSelectObservation(item);
                                       else if (currentTab === "mental_models")
@@ -806,6 +847,17 @@ export function ThinkView() {
                                         {item.content && (
                                           <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
                                             {item.content}
+                                          </p>
+                                        )}
+                                      </>
+                                    ) : currentTab === "documents" ? (
+                                      <>
+                                        <div className="font-medium text-sm">
+                                          {item.source || item.document_id}
+                                        </div>
+                                        {item.text && (
+                                          <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground line-clamp-4">
+                                            {item.text}
                                           </p>
                                         )}
                                       </>

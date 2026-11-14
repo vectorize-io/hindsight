@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import itertools
 import json
 import logging
 import re
@@ -43,7 +44,6 @@ from ..extensions.operation_validator import (
     KnowledgeBankReadOperation,
     KnowledgeBankWriteContext,
     KnowledgeBankWriteOperation,
-    OperationValidationError,
 )
 from ..tracing import inject_task_trace_context
 from . import bank_config, ingest_strategy, media
@@ -54,7 +54,6 @@ from .embedders import (
     UnsupportedModalityError,
     create_knowledge_embedder,
 )
-from .language import detect as detect_language
 from .store import (
     BankStats,
     DocumentPage,
@@ -68,6 +67,7 @@ from .store import (
     SearchFilters,
     SearchHit,
     StatusUpdate,
+    StoreSearchTrace,
     TimeBucket,
     load_knowledge_store,
 )
@@ -110,9 +110,12 @@ _FILE_PASSAGE_VECTORS_ESTIMATE = 24
 _CHILD_DOCUMENTS = 100
 
 
-#: Passages reflect's recall tool reads from a memory bank's linked knowledge banks. Fixed: a per-bank
-#: setting was dropped before launch (nothing tuned it).
-LINKED_RECALL_TOP_K = 5
+#: Documents a bank delete removes per transaction, with their passages and vectors (about 7 and 30
+#: each on a web corpus), so no single statement nears the command timeout.
+DELETE_BATCH_DOCUMENTS = 500
+#: How long a bank delete waits on documents a running ingest still holds before the banks row's
+#: cascade takes what is left.
+DELETE_WAIT_SECONDS = 60
 
 
 class KnowledgeBankError(Exception):
@@ -191,8 +194,10 @@ SEARCH_CANDIDATES: dict[SearchBudget, int] = {"low": 50, "mid": 200, "high": 500
 #: What a hit with no text of its own (an image, a page's picture, a clip) costs the budget, on top of
 #: any text it carries: its media is a URL and a few fields to whoever reads the results.
 MEDIA_HIT_TOKENS = 64
-#: How far context may grow around a text hit, in passages on each side, once every hit that fits has
-#: its first neighbour on each side.
+#: The most passages one text result holds: the hit and two on each side. Leftover budget widens results
+#: up to it, once every hit that fits has its own. Results used to also grow to take in a nearby lower
+#: hit, without limit: in a small document result #1 became the whole document, and later hits came
+#: back with no text around them.
 MAX_CONTEXT_PASSAGES = 5
 
 
@@ -218,6 +223,52 @@ class SearchResultItem:
     #: the budget's windows can be checked directly.
     context_first: int | None = None
     context_last: int | None = None
+
+
+@dataclass
+class TracedHit:
+    """A ranked candidate and what the token budget did with it."""
+
+    hit: SearchHit
+    #: "returned": a result of its own; "merged": inside a better hit's passages (``merged_into``);
+    #: "over_budget": nothing of it fit in what was left of ``max_tokens``.
+    outcome: Literal["returned", "merged", "over_budget"]
+    merged_into: SearchHit | None = None
+
+
+BudgetAction = Literal["window", "alone", "media", "merged", "widened", "skipped"]
+
+
+@dataclass
+class BudgetStep:
+    """One step of filling ``max_tokens``, in the order the budget took it."""
+
+    #: window: a text hit with its free neighbours (a passage each side no result holds yet); alone: a text hit with no room for neighbours;
+    #: media: an image, page or clip; merged: a hit already inside a better hit's result (nothing grows);
+    #: widened: leftover budget, one passage added to a result's side (up to MAX_CONTEXT_PASSAGES);
+    #: skipped: nothing of the hit fit.
+    action: BudgetAction
+    hit: SearchHit
+    document_id: str
+    first: int
+    last: int
+    tokens: int
+    total: int
+    #: For merged: the hit whose result holds it.
+    into: SearchHit | None = None
+
+
+@dataclass
+class SearchTrace:
+    """What one search did, for a caller that asks (the API's ``trace: true``)."""
+
+    store: StoreSearchTrace = field(default_factory=StoreSearchTrace)
+    #: Every ranked candidate, best first, with its outcome.
+    hits: list[TracedHit] = field(default_factory=list)
+    tokens_used: int = 0
+    budget_steps: list[BudgetStep] = field(default_factory=list)
+    #: Each phase's wall time (open_bank, embed, store.search, context), in seconds.
+    seconds: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -414,10 +465,9 @@ class _InFlight:
     #: passages it committed, kept for the batch's log line after its passages are dropped.
     reserved: int = 0
     committed_passages: int = 0
-    #: Passages already staged for its next version (a document too big to hold whole goes in pieces), the
-    #: language they were staged with, and whether the store skipped it as replaced meanwhile.
+    #: Passages already staged for its next version (a document too big to hold whole goes in pieces), and
+    #: whether the store skipped it as replaced meanwhile.
     staged: int = 0
-    language: str | None = None
     replaced: bool = False
 
 
@@ -434,12 +484,6 @@ class _Waiting:
 
 #: Writes one passage's file for a document in the background (see ``KnowledgeService._embed_round``).
 _SaveFile = Callable[[_InFlight, str, media.PassageDraft], Awaitable[None]]
-
-
-@dataclass
-class LinkedHit:
-    bank_id: str
-    hit: SearchHit
 
 
 # The splitter a media type's typical file goes through (a PDF for "document").
@@ -527,8 +571,16 @@ class KnowledgeService:
         bank_id: str,
         operation: KnowledgeBankReadOperation | KnowledgeBankWriteOperation,
         request_context: RequestContext,
+        *,
+        needs_vectors: bool = True,
     ) -> None:
-        await self._ready(request_context)
+        # ``needs_vectors=False`` for an operation that never reads or writes a vector (a delete): the
+        # store's first-use setup asks the embedder for its size, and an unreachable embedder must not
+        # be what stops a bank from being deleted.
+        if needs_vectors:
+            await self._ready(request_context)
+        else:
+            await self._engine._authenticate_tenant(request_context)
         await self._authorize(bank_id, operation, request_context)
         await self._require_bank(bank_id)
 
@@ -640,8 +692,29 @@ class KnowledgeService:
         return KnowledgeBankInfo(row["bank_id"], row["created_at"], stats[bank_id])
 
     async def delete_bank(self, bank_id: str, request_context: RequestContext) -> None:
-        await self._open_bank(bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK, request_context)
-        # The banks row cascades to kb_documents -> kb_passages, and to its async operations.
+        await self._open_bank(
+            bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK, request_context, needs_vectors=False
+        )
+        # Its queued ingests are cancelled first (the worker no longer claims them), then its documents
+        # go a batch per transaction: the banks row cascades to kb_documents -> kb_passages -> vectors,
+        # and on a 100k-document bank that one cascading statement ran past the command timeout
+        # (BrowseComp-Plus, ~680k passages) while ingests kept writing to the same rows. An ingest
+        # already running does not check for cancellation: it finishes its current write, and the
+        # documents it holds are skipped until their locks free, for up to DELETE_WAIT_SECONDS; what
+        # is left then goes with the banks row.
+        async with acquire_with_retry(await self._engine._get_backend()) as conn:
+            await conn.execute(
+                f"UPDATE {fq_table('async_operations')} SET status = 'cancelled', updated_at = now() "
+                "WHERE bank_id = $1 AND status IN ('pending', 'processing')",
+                bank_id,
+            )
+        deadline = time.monotonic() + DELETE_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            if await self.store.delete_some_documents(bank_id, DELETE_BATCH_DOCUMENTS):
+                continue
+            if not (await self.store.list_documents(bank_id, limit=1, offset=0)).documents:
+                break
+            await asyncio.sleep(1)
         await self._engine.delete_bank(bank_id, request_context=request_context, _knowledge_bank=True)
         await self._engine._file_storage.delete_prefix(f"{bank_storage_prefix(bank_id)}kb/")
 
@@ -1228,19 +1301,14 @@ class KnowledgeService:
                     d.reserved = 0
 
         async def write_passages(done: list[_InFlight]) -> None:
-            t0 = time.perf_counter()
-            languages = [
-                d.language if d.staged else detect_language("\n".join(p.text or "" for p in d.passages)) for d in done
-            ]
-            _timing.record("language", time.perf_counter() - t0, calls=len(done))
             async with _timing.timed("store.write"):
                 replaced = await self.store.replace_passages(
                     bank_id,
                     [
                         PassageReplacement(
-                            d.work.document_id, d.passages, language, storage_key=d.work.storage_key, staged=d.staged
+                            d.work.document_id, d.passages, storage_key=d.work.storage_key, staged=d.staged
                         )
-                        for d, language in zip(done, languages, strict=True)
+                        for d in done
                     ],
                 )
             skipped = set(replaced.skipped_document_ids)
@@ -1279,13 +1347,10 @@ class KnowledgeService:
             if doc.error is not None:
                 return
             piece = [doc.done[i] for i in sorted(doc.done)]
-            if doc.staged == 0:
-                # The version's language is the first piece's: later pieces are indexed by it as they go.
-                doc.language = detect_language("\n".join(p.text or "" for p in piece))
             async with _timing.timed("store.stage"):
                 skipped = await self.store.stage_passages(
                     bank_id,
-                    [PassageStage(doc.work.document_id, piece, doc.language, doc.work.storage_key, doc.staged)],
+                    [PassageStage(doc.work.document_id, piece, doc.work.storage_key, doc.staged)],
                 )
             if skipped:  # replaced or deleted meanwhile: what is left of it would belong to nobody
                 doc.replaced = True
@@ -1650,12 +1715,18 @@ class KnowledgeService:
     # --- search -----------------------------------------------------------------------------
 
     async def search(
-        self, bank_id: str, request: SearchRequest, request_context: RequestContext
+        self,
+        bank_id: str,
+        request: SearchRequest,
+        request_context: RequestContext,
+        trace: SearchTrace | None = None,
     ) -> list[SearchResultItem]:
         # One `[knowledge_search-timing]` line per search, phase by phase, as an ingest batch has: a
         # slow search is otherwise only attributable by guessing which of the bank checks, the
         # embedder, the store or the budget's context reads it was.
-        async with _timing.retain_timing(op="knowledge_search", bank_id=bank_id, store=type(self.store).__name__):
+        async with _timing.retain_timing(
+            op="knowledge_search", bank_id=bank_id, store=type(self.store).__name__
+        ) as timing:
             has_query = (
                 bool((request.query or "").strip())
                 or request.query_image is not None
@@ -1675,9 +1746,12 @@ class KnowledgeService:
                 raise
             vector = await embedding
             async with _timing.timed("store.search"):
-                hits = await self._search(bank_id, request, vector)
+                hits = await self._search(bank_id, request, vector, trace)
             async with _timing.timed("context"):
-                return await self._within_budget(bank_id, hits, request.max_tokens)
+                items = await self._within_budget(bank_id, hits, request.max_tokens, trace)
+            if trace is not None:
+                trace.seconds = dict(timing.seconds)
+            return items
 
     async def _embed_query(self, request: SearchRequest) -> list[float]:
         async with _timing.timed("embed"):
@@ -1686,7 +1760,9 @@ class KnowledgeService:
             except UnsupportedModalityError as exc:
                 raise KnowledgeBankError(str(exc), 415) from exc
 
-    async def _search(self, bank_id: str, request: SearchRequest, vector: list[float]) -> list[SearchHit]:
+    async def _search(
+        self, bank_id: str, request: SearchRequest, vector: list[float], trace: SearchTrace | None = None
+    ) -> list[SearchHit]:
         return await self.store.search(
             bank_id,
             vector,
@@ -1695,14 +1771,17 @@ class KnowledgeService:
             text_weight=get_config().knowledge_pdf_text_weight,
             query_text=request.query,
             keyword_weight=get_config().knowledge_keyword_weight,
+            trace=trace.store if trace is not None else None,
         )
 
-    async def _within_budget(self, bank_id: str, hits: list[SearchHit], max_tokens: int) -> list[SearchResultItem]:
+    async def _within_budget(
+        self, bank_id: str, hits: list[SearchHit], max_tokens: int, trace: SearchTrace | None = None
+    ) -> list[SearchResultItem]:
         """The ranked hits that fit in ``max_tokens``, each text hit with the passages around it as its
         ``context``. In rank order, a text hit comes with one passage on each side (the query-time step that
-        paid, CHUNKING.md), or alone if only that fits, and a hit another one's context already holds is not
-        repeated: that context grows to take it in. What is left then widens the best hits' context, one
-        passage a side at a time, up to ``MAX_CONTEXT_PASSAGES``. A hit with no text of its own costs
+        paid, CHUNKING.md), never repeating a passage another result holds, or alone if only that fits; a hit
+        another result already holds comes back there (merged), and that result does not grow. What is
+        left then widens the best results, one passage a side at a time, up to ``MAX_CONTEXT_PASSAGES``. A hit with no text of its own costs
         ``MEDIA_HIT_TOKENS`` plus its text. This replaced ``top_k`` and ``neighbors``: a caller holds a token
         budget, and a count of hits said nothing about how much text came back."""
         text_hits = [h for h in hits if h.passage.modality == "text"]
@@ -1730,6 +1809,15 @@ class KnowledgeService:
         windows: list[_Window] = []
         held: dict[str, set[int]] = {}  # per document, the passages some window already returns
         used = 0
+
+        def step(
+            action: BudgetAction, hit: SearchHit, first: int, last: int, tokens: int, into: SearchHit | None = None
+        ) -> None:
+            if trace is not None:
+                trace.budget_steps.append(
+                    BudgetStep(action, hit, hit.document.document_id, first, last, tokens, used, into)
+                )
+
         for hit in hits:
             document_id, index = hit.document.document_id, hit.passage.index
             if hit.passage.modality != "text":
@@ -1737,41 +1825,37 @@ class KnowledgeService:
                 if used + weight <= max_tokens:
                     items.append(SearchResultItem(hit))
                     used += weight
+                    step("media", hit, index, index, weight)
+                else:
+                    step("skipped", hit, index, index, 0)
                 continue
             mine = held.setdefault(document_id, set())
-            around = [i for i in (index - 1, index, index + 1) if (document_id, i) in passages]
-            owner = next(
-                (w for w in windows if w.document_id == document_id and w.first - 1 <= index <= w.last + 1), None
-            )
-            for span in (around, [index]):  # with a passage on each side, or alone
-                new = [i for i in span if i not in mine]
-                weight = sum(cost(document_id, i) for i in new)
+            if index in mine:
+                # Already inside a better hit's result: it comes back there, and that result does not grow.
+                owner = next(w for w in windows if w.document_id == document_id and w.first <= index <= w.last)
+                step("merged", hit, owner.first, owner.last, 0, into=owner.item.hit)
+                continue
+            # The hit with the neighbours no result holds yet (a run: only its edges can be held).
+            around = [i for i in (index - 1, index, index + 1) if (document_id, i) in passages and i not in mine]
+            placed = False
+            for span in (around, [index]):  # with its free neighbours, or alone
+                weight = sum(cost(document_id, i) for i in span)
                 if used + weight > max_tokens:
                     continue
                 used += weight
-                mine.update(new)
-                if owner is not None:  # a better hit's context reaches it: that context takes it in
-                    owner.first, owner.last = min(owner.first, *span), max(owner.last, *span)
-                    # Grown, it may now reach another window of the document: fold that one in, or the
-                    # passages they share would come back twice.
-                    # The better-ranked of two meeting windows is the one kept, and holds both: the hit
-                    # that reached them first decides the merged result's rank.
-                    for other in [w for w in windows if w is not owner and w.document_id == document_id]:
-                        if other.first <= owner.last + 1 and other.last >= owner.first - 1:
-                            keep, drop = (
-                                (other, owner) if windows.index(other) < windows.index(owner) else (owner, other)
-                            )
-                            keep.first, keep.last = min(keep.first, drop.first), max(keep.last, drop.last)
-                            windows.remove(drop)
-                            items.remove(drop.item)
-                            owner = keep
-                else:
-                    item = SearchResultItem(hit)
-                    items.append(item)
-                    windows.append(_Window(item, document_id, min(span), max(span)))
+                mine.update(span)
+                placed = True
+                item = SearchResultItem(hit)
+                items.append(item)
+                windows.append(_Window(item, document_id, min(span), max(span)))
+                step("window" if len(span) > 1 else "alone", hit, min(span), max(span), weight)
                 break
-        for _ in range(MAX_CONTEXT_PASSAGES - 1):
-            growing = [w for w in windows if w.grows_before or w.grows_after]
+            if not placed:
+                step("skipped", hit, index, index, 0)
+        for _ in range(MAX_CONTEXT_PASSAGES):
+            growing = [
+                w for w in windows if (w.grows_before or w.grows_after) and w.last - w.first + 1 < MAX_CONTEXT_PASSAGES
+            ]
             if not growing:
                 break
             await load(
@@ -1784,7 +1868,8 @@ class KnowledgeService:
                         continue
                     i = w.first - 1 if side == "before" else w.last + 1
                     mine = held[w.document_id]
-                    blocked = i < 0 or (w.document_id, i) not in passages or i in mine
+                    full = w.last - w.first + 1 >= MAX_CONTEXT_PASSAGES
+                    blocked = full or i < 0 or (w.document_id, i) not in passages or i in mine
                     if not blocked and used + cost(w.document_id, i) <= max_tokens:
                         used += cost(w.document_id, i)
                         mine.add(i)
@@ -1792,6 +1877,7 @@ class KnowledgeService:
                             w.first = i
                         else:
                             w.last = i
+                        step("widened", w.item.hit, w.first, w.last, cost(w.document_id, i))
                     elif side == "before":
                         w.grows_before = False
                     else:
@@ -1803,69 +1889,77 @@ class KnowledgeService:
                 for i in range(w.first, w.last + 1)
                 if (w.document_id, i) in passages
             )
+        if trace is not None:
+            trace.tokens_used = used
+            trace.hits = [_traced(hit, items, windows) for hit in hits]
         return items
 
-    async def search_linked(
-        self, bank_ids: list[str], query: str, top_k: int, request_context: RequestContext
-    ) -> list[LinkedHit]:
-        """Search the knowledge banks a memory bank links, best passages first across all of them."""
-        await self._ready(request_context)
-        hits: list[LinkedHit] = []
-        vector: list[float] | None = None
-        for bank_id in bank_ids:
-            try:
-                await self._authorize(bank_id, KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK, request_context)
-            except OperationValidationError as exc:
-                # The memory bank links it, but this caller may not read it: the reflect goes on without it.
-                logger.info(f"Linked knowledge bank '{bank_id}' refused for this caller ({exc.reason}); skipped")
-                continue
-            if await self._kind_of(bank_id) != KIND:
-                logger.warning(f"Linked knowledge bank '{bank_id}' does not exist; skipped")
-                continue
-            if vector is None:
-                vector = await self.embedder.embed_query(query)
-            for hit in await self.store.search(
-                bank_id,
-                vector,
-                top_k=top_k,
-                filters=SearchFilters(),
-                # no keyword arm: fused scores are rescaled per bank and could not be ranked across banks
-                text_weight=get_config().knowledge_pdf_text_weight,
-            ):
-                hits.append(LinkedHit(bank_id=bank_id, hit=hit))
-        hits.sort(key=lambda linked: linked.hit.score, reverse=True)
-        return hits[:top_k]
+
+def _traced(hit: SearchHit, items: list[SearchResultItem], windows: list[_Window]) -> TracedHit:
+    """What the budget did with one ranked hit, read off the results it built."""
+    if any(item.hit is hit for item in items):
+        return TracedHit(hit, "returned")
+    document_id, index = hit.document.document_id, hit.passage.index
+    for w in windows:
+        if w.document_id == document_id and w.first <= index <= w.last:
+            return TracedHit(hit, "merged", merged_into=w.item.hit)
+    return TracedHit(hit, "over_budget")
 
 
 async def documents_for_memory_bank(
-    engine: MemoryEngine, bank_id: str, query: str, request_context: RequestContext
+    engine: MemoryEngine, bank_id: str, linked: list[str], query: str, max_tokens: int, request_context: RequestContext
 ) -> list[KnowledgeDocumentHit] | None:
-    """The linked knowledge banks' best passages for reflect's recall tool, or None when none are linked.
+    """The linked knowledge banks' hits for reflect's recall tool, or None when none are linked.
+
+    The same search as ``POST /knowledge-banks/{id}/search``, keywords and meaning, each text hit with
+    the passages around it, within ``max_tokens``; the banks are searched at once and their hits taken in
+    turn, best of each first (fused scores are per bank, so they cannot be ranked against each other).
+    It used to be its own search: meaning only, the 5 best passages across banks, no text around them,
+    so reflect read less than the same question showed in the UI.
 
     A failure here never fails the reflect: the memories are still the answer, without the docs.
     """
     if not get_config().enable_knowledge_banks:
         return None
-    config = await engine._config_resolver.get_bank_config(bank_id, request_context)
-    linked = [b for b in (config.get("knowledge_banks") or []) if b != bank_id]
+    linked = [b for b in linked if b != bank_id]
     if not linked or not (query or "").strip():
         return None
     # Reflect's recall runs as an internal operation, but the linked banks are read on the caller's
     # behalf: the validator must see the caller, not a background job it would let through.
     caller = replace(request_context, internal=False)
     try:
-        hits = await get_knowledge_service(engine).search_linked(linked, query, LINKED_RECALL_TOP_K, caller)
+        return await _linked_documents(engine, bank_id, linked, query, max_tokens, caller)
     except Exception as exc:
         logger.warning(f"Knowledge search for memory bank '{bank_id}' failed: {exc!r}")
         return []
-    from .routes import search_result
 
-    out = []
-    for linked in hits:
-        r = search_result(linked.bank_id, linked.hit)
+
+async def _linked_documents(
+    engine: MemoryEngine, bank_id: str, linked: list[str], query: str, max_tokens: int, caller: RequestContext
+) -> list[KnowledgeDocumentHit]:
+    service = get_knowledge_service(engine)
+    request = SearchRequest(query=query, query_image=None, filters=SearchFilters(), max_tokens=max_tokens)
+    found = await asyncio.gather(*(service.search(b, request, caller) for b in linked), return_exceptions=True)
+    ranked: list[list[tuple[str, SearchResultItem]]] = []
+    for linked_bank, items in zip(linked, found, strict=True):
+        if isinstance(items, BaseException):
+            # A bank this caller may not read, or that no longer exists, is skipped; reflect goes on.
+            logger.warning(f"Linked knowledge bank '{linked_bank}' of '{bank_id}' skipped: {items!r}")
+            continue
+        ranked.append([(linked_bank, item) for item in items])
+    from .routes import item_result
+
+    out: list[KnowledgeDocumentHit] = []
+    spent = 0
+    for linked_bank, item in (pair for turn in itertools.zip_longest(*ranked) for pair in turn if pair):
+        r = item_result(linked_bank, item)
+        cost = count_tokens(r.text or "") + (0 if item.hit.passage.modality == "text" else MEDIA_HIT_TOKENS)
+        if spent + cost > max_tokens:
+            continue
+        spent += cost
         out.append(
             KnowledgeDocumentHit(
-                bank_id=linked.bank_id,
+                bank_id=linked_bank,
                 document_id=r.document_id,
                 passage_index=r.index,
                 filename=r.filename,
@@ -1874,7 +1968,7 @@ async def documents_for_memory_bank(
                 page=r.page,
                 start_ms=r.start_ms,
                 end_ms=r.end_ms,
-                score=linked.hit.score,
+                score=item.hit.score,
                 passage_url=r.passage_url,
                 document_url=r.document_url,
                 tags=r.tags,

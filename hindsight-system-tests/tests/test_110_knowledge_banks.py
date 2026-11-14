@@ -66,7 +66,7 @@ async def test_a_sync_ingest_returns_once_every_document_is_searchable(kb, knowl
         "media_type": "text",
         "page": None,
     }
-    assert hit["filename"] == "keys.md" and "score" not in hit and set(r.body) == {"results"}
+    assert hit["filename"] == "keys.md" and "score" not in hit and r.body.get("trace") is None
     assert (await _hits(kb, knowledge_bank, query="when are invoices emailed", first=1)) == ["billing"]
     bank = (await kb.get(knowledge_bank)).body
     assert (bank["document_count"], bank["ready_count"], bank["failed_count"]) == (3, 3, 0)
@@ -109,9 +109,31 @@ async def test_a_text_hit_comes_back_with_the_passages_around_it_as_the_budget_a
     r = await kb.search(knowledge_bank, query="open the valve until the gauge reads green")
     hit = r.body["results"][0]
     assert hit["document_id"] == "manual" and "Open the valve slowly" in hit["text"]
-    # The whole manual fits in the default budget: the hit's text grows to take it all in, once.
-    assert "Step 0" in hit["text"] and "Step 5" in hit["text"] and "context" not in hit
-    assert [h["document_id"] for h in r.body["results"]].count("manual") == 1
+    # The hit comes with a passage on each side; the rest of the manual comes back as results of their
+    # own, each step once (a result no longer grows to take the whole document in).
+    assert "Step 2" in hit["text"] and "Step 4" in hit["text"] and "context" not in hit
+    texts = [h["text"] for h in r.body["results"] if h["document_id"] == "manual"]
+    assert sorted(n for n in range(6) for t in texts if f"# Step {n}" in t) == list(range(6))
+
+
+async def test_a_traced_search_explains_its_words_its_candidates_and_how_the_budget_filled(kb, knowledge_bank):
+    sections = [f"# Step {n}\n\n" + ("The rest of the manual is about the other parts. " * 6) for n in range(6)]
+    sections[3] = "# Step 3\n\nOpen the valve slowly until the gauge reads green."
+    await kb.ingest(knowledge_bank, [{"document_id": "manual", "text": "\n\n".join(sections)}])
+
+    r = await kb.search(knowledge_bank, query="the valve gauge", trace=True)
+    trace = r.body["trace"]
+    # The query's rare words, not "the", take part in keyword search, which found the valve step.
+    assert {"valve", "gauge"} <= set(trace["keyword_terms"]) and "the" not in trace["keyword_terms"]
+    searches = {s["name"]: s["results"] for s in trace["candidate_searches"]}
+    assert searches["keyword"][0]["document_id"] == "manual"
+    # Every scored candidate, best first, and what the budget did with each, adding up to the results.
+    top = trace["hits"][0]
+    assert top["rank"] == 1 and top["outcome"] == "returned" and top["result_rank"] == 1 and top["keyword"] > 0
+    steps = trace["budget_steps"]
+    assert steps[0]["rank"] == 1 and steps[0]["action"] == "window"
+    assert steps[-1]["total"] == trace["tokens_used"] <= trace["max_tokens"]
+    assert sum(1 for h in trace["hits"] if h["outcome"] == "returned") == len(r.body["results"])
 
 
 async def test_reingesting_skips_what_is_unchanged_and_replaces_what_is_not(kb, knowledge_bank):

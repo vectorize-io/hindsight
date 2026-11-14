@@ -30,9 +30,10 @@ from .service import (
     KnowledgeService,
     SearchRequest,
     SearchResultItem,
+    SearchTrace,
     get_knowledge_service,
 )
-from .store import KnowledgeDocument, KnowledgePassage, SearchFilters, SearchHit
+from .store import ArmName, KnowledgeDocument, KnowledgePassage, SearchFilters, SearchHit
 
 PREFIX = "/v1/default/knowledge-banks"
 
@@ -70,6 +71,9 @@ class KnowledgeBankResponse(BaseModel):
     failed_count: int
     total_bytes: int
     documents_by_media_type: dict[str, int]
+    last_document_at: datetime | None = Field(
+        default=None, description="When a document was last added or changed; null for an empty bank"
+    )
 
 
 class KnowledgeBankListResponse(BaseModel):
@@ -212,6 +216,11 @@ class KnowledgeSearchRequest(BaseModel):
     media_types: list[Literal["document", "image", "audio", "video", "text"]] | None = Field(
         default=None, title="Knowledge Media Types"
     )
+    trace: bool = Field(
+        default=False,
+        description="Also return how the search ranked and what the token budget kept: every ranked "
+        "candidate with its score step by step, the keyword words and their weights, and each phase's time.",
+    )
 
 
 class KnowledgeSearchResult(KnowledgePassageResponse):
@@ -221,11 +230,89 @@ class KnowledgeSearchResult(KnowledgePassageResponse):
     document_url: str
 
 
+class KnowledgeSearchTraceHit(BaseModel):
+    """One ranked candidate: its score step by step, and what the token budget did with it."""
+
+    rank: int = Field(description="Its place among all scored candidates, from 1")
+    outcome: Literal["returned", "merged", "over_budget", "below_depth"] = Field(
+        description="returned: a result of its own; merged: inside a better hit's text (merged_into_rank); "
+        "over_budget: nothing of it fit in max_tokens; below_depth: ranked past what the budget level keeps"
+    )
+    result_rank: int | None = Field(default=None, description="Its place in `results`, from 1, when returned")
+    merged_into_rank: int | None = Field(default=None, description="The rank of the hit whose text holds it")
+    document_id: str
+    filename: str | None
+    index: int
+    media_type: str
+    page: int | None = None
+    start_ms: int | None = None
+    end_ms: int | None = None
+    snippet: str | None = Field(default=None, description="The start of the passage's own text")
+    score: float = Field(description="The final score it was ranked by; comparable within this search only")
+    found_by: list[str] = Field(description="The candidate searches that found it: vector, extra_vectors, keyword")
+    similarity: float = Field(description="Cosine similarity of the query and the passage's main vector")
+    roles: dict[str, float] = Field(
+        description="Best similarity of each extra vector (band, page_text, unit, sentence)"
+    )
+    passage_score: float = Field(description="The similarity with the extra vectors mixed in")
+    with_document: float = Field(description="Averaged with its document's best passage score")
+    keyword: float = Field(description="Keyword score: the summed IDF of the query words it contains")
+    reference_page: bool = Field(description="Read as a reference list, and pushed down")
+
+
+class KnowledgeTraceArmHit(BaseModel):
+    document_id: str
+    index: int
+    score: float = Field(description="Its score in this search: cosine similarity, or ts_rank_cd for keywords")
+
+
+class KnowledgeTraceArm(BaseModel):
+    """One candidate search, with its own list, best first."""
+
+    name: ArmName
+    results: list[KnowledgeTraceArmHit]
+
+
+class KnowledgeTraceBudgetStep(BaseModel):
+    """One step of filling max_tokens, in order."""
+
+    action: Literal["window", "alone", "media", "merged", "widened", "skipped"] = Field(
+        description="window: a text hit with its free neighbours; alone: no room for its neighbours; media: an "
+        "image, page or clip; merged: already inside a better hit's result; widened: leftover budget added a "
+        "passage to a result (5 at most); skipped: nothing of it fit"
+    )
+    rank: int = Field(description="The candidate's rank")
+    document_id: str
+    first: int = Field(description="The window's first passage after this step")
+    last: int = Field(description="The window's last passage after this step")
+    tokens: int = Field(description="Tokens this step added")
+    total: int = Field(description="Tokens used after this step")
+    into_rank: int | None = Field(default=None, description="For merged: the rank of the hit whose result holds it")
+
+
+class KnowledgeSearchTrace(BaseModel):
+    budget: Literal["low", "mid", "high"]
+    depth: int = Field(description="How many of the scored candidates the budget level keeps for max_tokens")
+    max_tokens: int
+    tokens_used: int = Field(description="What the results weigh, in tokens of their text")
+    candidates: int = Field(description="Passages the candidate searches found, before scoring")
+    keyword_weight: float = Field(description="The keyword score's share of the final score")
+    keyword_terms: dict[str, float] = Field(
+        description="Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) "
+        "as the query's rarest word is left out"
+    )
+    timings_ms: dict[str, float] = Field(description="Each phase's time: open_bank, embed, store.search, context")
+    candidate_searches: list[KnowledgeTraceArm] = Field(description="Step 1: each candidate search's own list")
+    hits: list[KnowledgeSearchTraceHit] = Field(description="Steps 2-3: every candidate scored, best first")
+    budget_steps: list[KnowledgeTraceBudgetStep] = Field(description="Step 4: how max_tokens was filled, in order")
+
+
 class KnowledgeSearchResponse(BaseModel):
     """Results best first. Ranks are what a caller compares: scores are fused per query and mean nothing
-    across responses, so the response does not carry them."""
+    across responses, so a result does not carry one; ``trace: true`` returns them, step by step."""
 
     results: list[KnowledgeSearchResult]
+    trace: KnowledgeSearchTrace | None = None
 
 
 # --- mapping --------------------------------------------------------------------------------
@@ -247,6 +334,7 @@ def bank_response(info: KnowledgeBankInfo) -> KnowledgeBankResponse:
         failed_count=s.failed_count,
         total_bytes=s.total_bytes,
         documents_by_media_type=s.by_media_type,
+        last_document_at=s.last_document_at,
     )
 
 
@@ -300,6 +388,75 @@ def item_result(bank_id: str, item: SearchResultItem) -> KnowledgeSearchResult:
     return result
 
 
+#: How much of a passage's own text a trace shows: enough to recognise it.
+TRACE_SNIPPET_CHARS = 200
+
+
+def trace_response(body: KnowledgeSearchRequest, trace: SearchTrace, returned: list[SearchHit]) -> KnowledgeSearchTrace:
+    scored = trace.store.scored or [t.hit for t in trace.hits]
+    rank_of = {id(h): n for n, h in enumerate(scored, 1)}
+    result_rank = {id(hit): n for n, hit in enumerate(returned, 1)}
+    outcome_of = {id(t.hit): t for t in trace.hits}
+    hits = []
+    for n, h in enumerate(scored, 1):
+        traced, explain, text = outcome_of.get(id(h)), h.explain, h.passage.text
+        hits.append(
+            KnowledgeSearchTraceHit(
+                rank=n,
+                outcome=traced.outcome if traced else "below_depth",
+                result_rank=result_rank.get(id(h)),
+                merged_into_rank=rank_of.get(id(traced.merged_into)) if traced and traced.merged_into else None,
+                document_id=h.document.document_id,
+                filename=h.document.filename,
+                index=h.passage.index,
+                media_type=h.document.media_type,
+                page=h.passage.page,
+                start_ms=h.passage.start_ms,
+                end_ms=h.passage.end_ms,
+                snippet=text[:TRACE_SNIPPET_CHARS] if text else None,
+                score=h.score,
+                found_by=explain.found_by if explain else [],
+                similarity=explain.similarity if explain else h.score,
+                roles=explain.roles if explain else {},
+                passage_score=explain.passage_score if explain else h.score,
+                with_document=explain.with_document if explain else h.score,
+                keyword=explain.keyword if explain else 0.0,
+                reference_page=explain.reference_page if explain else False,
+            )
+        )
+    return KnowledgeSearchTrace(
+        budget=body.budget,
+        depth=len(trace.hits),
+        max_tokens=body.max_tokens,
+        tokens_used=trace.tokens_used,
+        candidates=trace.store.candidates,
+        keyword_weight=trace.store.keyword_weight,
+        keyword_terms=trace.store.keyword_terms,
+        timings_ms={phase: round(seconds * 1000, 1) for phase, seconds in trace.seconds.items()},
+        candidate_searches=[
+            KnowledgeTraceArm(
+                name=name,
+                results=[KnowledgeTraceArmHit(document_id=a.document_id, index=a.index, score=a.score) for a in arm],
+            )
+            for name, arm in trace.store.arms.items()
+        ],
+        hits=hits,
+        budget_steps=[
+            KnowledgeTraceBudgetStep(
+                action=st.action,
+                rank=rank_of.get(id(st.hit), 0),
+                document_id=st.document_id,
+                first=st.first,
+                last=st.last,
+                tokens=st.tokens,
+                total=st.total,
+                into_rank=rank_of.get(id(st.into)) if st.into is not None else None,
+            )
+            for st in trace.budget_steps
+        ],
+    )
+
+
 def config_response(state: KnowledgeBankConfig) -> KnowledgeBankConfigResponse:
     return KnowledgeBankConfigResponse(bank_id=state.bank_id, config=state.settings, overrides=state.overrides)
 
@@ -335,9 +492,13 @@ def _http_error(exc: Exception) -> HTTPException:
         return HTTPException(status_code=exc.status_code, detail=exc.reason)
     if isinstance(exc, ValueError):
         return HTTPException(status_code=400, detail=str(exc))
-    if isinstance(exc, aiohttp.ClientError | UpstreamHTTPError | TimeoutError):
+    if isinstance(exc, aiohttp.ClientError | UpstreamHTTPError):
         # The embedder is a remote server here: its outage is ours to report, not a crash.
         return HTTPException(status_code=503, detail=f"knowledge embedder unavailable: {exc}")
+    if isinstance(exc, TimeoutError):
+        # The embedder's or the database's: a statement past the command timeout raises it too, and
+        # calling every timeout an embedder outage sent a failed bank delete looking at the wrong thing.
+        return HTTPException(status_code=503, detail="timed out waiting for the embedder or the database")
     raise exc
 
 
@@ -722,6 +883,7 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
             document_ids=body.document_ids,
             media_types=list(body.media_types) if body.media_types else None,
         )
+        trace = SearchTrace() if body.trace else None
         try:
             hits = await service(request).search(
                 bank_id,
@@ -734,9 +896,13 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
                     budget=body.budget,
                 ),
                 rc,
+                trace,
             )
         except Exception as exc:
             raise _http_error(exc) from exc
-        return KnowledgeSearchResponse(results=[item_result(bank_id, h) for h in hits])
+        return KnowledgeSearchResponse(
+            results=[item_result(bank_id, h) for h in hits],
+            trace=trace_response(body, trace, [h.hit for h in hits]) if trace is not None else None,
+        )
 
     return router

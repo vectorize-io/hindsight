@@ -195,30 +195,43 @@ def split_into_passages(text: str, *, passage_size: int) -> list[str]:
 
     A heading starts a new passage; paragraphs are merged up to ``passage_size``; a paragraph
     bigger than that is cut by sentences. No overlap: it did not help (CHUNKING.md).
+
+    A bare heading (a heading line with nothing under it yet) waits for its content: the next
+    heading or the first sentences of a cut paragraph join it. A heading used to become a passage
+    of its own there ("## Observations", "Core concepts"),
+    and a few words nearly equal to a short query outranked every real answer.
     """
     if passage_size <= 0:
         raise ValueError("passage_size must be positive")
     spans: list[_Span] = []
     run: _Span | None = None
     run_tokens = 0
+    bare = False  # the run holds only bare headings so far
 
     def flush() -> None:
-        nonlocal run, run_tokens
+        nonlocal run, run_tokens, bare
         if run is not None:
             spans.append(run)
-        run, run_tokens = None, 0
+        run, run_tokens, bare = None, 0, False
 
     for block in _blocks(text):
-        tokens = count_tokens(text[block.span.start : block.span.end])
-        if block.opens_section:
+        chunk = text[block.span.start : block.span.end]
+        tokens = count_tokens(chunk)
+        heading = block.opens_section and "\n" not in chunk
+        if block.opens_section and not bare:
             flush()
-        if tokens > passage_size:
-            flush()
-            piece: _Span | None = None
-            piece_tokens = 0
-            for sentence in _sentences(text, block.span.start, block.span.end, passage_size):
-                n = count_tokens(text[sentence.start : sentence.end])
-                if piece is not None and piece_tokens + n > passage_size:
+        if tokens > passage_size or (bare and not heading and run_tokens + tokens > passage_size):
+            # Cut by sentences. Waiting headings lead the first piece: the sentences come in groups
+            # small enough to fit beside them, so the piece stays within passage_size.
+            lead, lead_tokens = (run, run_tokens) if bare else (None, 0)
+            if not bare:
+                flush()
+            run, run_tokens, bare = None, 0, False
+            piece, piece_tokens = lead, lead_tokens
+            room = max(1, passage_size - lead_tokens - 1)  # -1: the blank line after the heading
+            for sentence in _sentences(text, block.span.start, block.span.end, room):
+                n = count_tokens(text[sentence.start : sentence.end]) + (1 if piece is lead and lead else 0)
+                if piece is not None and piece is not lead and piece_tokens + n > passage_size:
                     spans.append(piece)
                     piece, piece_tokens = None, 0
                 piece = _Span(piece.start if piece else sentence.start, sentence.end)
@@ -226,12 +239,14 @@ def split_into_passages(text: str, *, passage_size: int) -> list[str]:
             if piece is not None:
                 spans.append(piece)
             continue
-        if run is not None and run_tokens + tokens > passage_size:
+        if run is not None and not bare and run_tokens + tokens > passage_size:
             flush()
         if run is None:
             run = block.span
+            bare = heading
         else:
             run = _Span(run.start, block.span.end)
+            bare = bare and heading
         run_tokens += tokens
     flush()
     # Each passage is an exact slice of the input, in order.

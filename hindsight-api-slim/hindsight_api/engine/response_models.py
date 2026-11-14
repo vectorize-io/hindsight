@@ -615,7 +615,7 @@ class KnowledgeDocumentHit(BaseModel):
     page: int | None = None
     start_ms: int | None = None
     end_ms: int | None = None
-    score: float = Field(description="Cosine similarity between the query and the passage")
+    score: float = Field(description="The knowledge search's fused rank score, comparable within one bank only")
     passage_url: str | None = Field(default=None, description="Streams this passage's page image or clip")
     document_url: str = Field(description="Streams the original file")
     tags: list[str] = Field(default_factory=list)

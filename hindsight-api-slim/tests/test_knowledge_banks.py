@@ -633,12 +633,13 @@ async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, 
     # Text weight 0: the score is the page image (+ bands) alone, which says nothing about invoices to the fake.
     monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT", "0")
     clear_config_cache()
-    assert (await _scored(memory, kb, "invoice"))[0].score < 0.5
+    # The page's own score, before the keyword mix rescales the candidates (one page alone is 1.0 there).
+    assert (await _scored(memory, kb, "invoice"))[0].explain.passage_score < 0.5
     # The default weight brings in the page's text layer (whole page and 128-token units).
     monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT", "0.6")
     clear_config_cache()
     top = (await _scored(memory, kb, "invoice"))[0]
-    assert top.score > 0.5 and top.passage.text == text and top.passage.page == 1
+    assert top.explain.passage_score > 0.5 and top.passage.text == text and top.passage.page == 1
     assert "score" not in (await _search(api_client, kb, query="invoice"))[0]
 
 
@@ -728,19 +729,22 @@ async def test_text_hits_come_back_with_neighbours_and_overlapping_windows_merge
     passages = (await api_client.get(f"{KB}/{kb}/documents/long")).json()["passages"]
     weight = {p["index"]: count_tokens(p["text"]) for p in passages}
 
-    # Room for four passages: passage 4 with one on each side, then passage 5 joins that window
-    # instead of coming back on its own, and nothing else fits.
+    # Room for four passages: the best invoice passage with one on each side, which holds the other
+    # invoice passage too (it is not repeated), then one more hit alone with what is left.
     def paragraphs_in(text: str) -> list[int]:
         return [i for i in range(10) if f"Paragraph {i}:" in text]
 
     hits = await _search(api_client, kb, query="invoice", max_tokens=sum(weight[i] for i in (3, 4, 5, 6)))
-    assert len(hits) == 1 and hits[0]["index"] in (4, 5) and "context" not in hits[0]
-    assert paragraphs_in(hits[0]["text"]) == [3, 4, 5, 6]  # the hit's text is the run the budget gave it
-    # More room widens it, and no passage comes back twice.
+    assert hits[0]["index"] in (4, 5) and "context" not in hits[0]
+    first = paragraphs_in(hits[0]["text"])  # the hit's text is the run the budget gave it
+    assert {4, 5} <= set(first) and len(first) == 3
+    assert sum(len(paragraphs_in(h["text"])) for h in hits) == 4
+    # Room for everything: every passage comes back once, the other hits as results of their own, and no
+    # result holds more than five passages.
     wide = await _search(api_client, kb, query="invoice", max_tokens=sum(weight.values()))
-    assert paragraphs_in(wide[0]["text"])[0] < 3 and paragraphs_in(wide[0]["text"])[-1] > 6
     returned = [i for h in wide for i in paragraphs_in(h["text"])]
-    assert len(returned) == len(set(returned))
+    assert sorted(returned) == list(range(10))
+    assert {4, 5} <= set(paragraphs_in(wide[0]["text"])) and all(len(paragraphs_in(h["text"])) <= 5 for h in wide)
     # Less than one passage: nothing fits.
     assert await _search(api_client, kb, query="invoice", max_tokens=1) == []
 
@@ -822,38 +826,45 @@ async def test_remote_embedder_retries_a_dropped_connection():
     assert calls["n"] == 2
 
 
-def test_language_detection_and_keyword_fusion():
-    from hindsight_api.knowledge.language import detect, text_search_config
+def test_keyword_fusion():
     from hindsight_api.knowledge.store import fuse_keyword
 
-    assert detect("The rotation of the keys is done by the admin in the console") == "english"
-    assert detect("La rotation des clés est faite par l'administrateur dans la console") == "french"
-    assert detect("ERR-4417") is None
-    assert (text_search_config("german"), text_search_config(None)) == ("german", "simple")
     # No keyword hit: dense scores pass through untouched.
-    assert fuse_keyword([0.5, 0.4], [0.0, 0.0], 0.2) == [0.5, 0.4]
+    assert fuse_keyword([0.5, 0.4], [0.0, 0.0], 0.2, [True, True]) == [0.5, 0.4]
     # A keyword hit can lift a slightly weaker dense match over the best one.
-    fused = fuse_keyword([0.50, 0.49, 0.10], [0.0, 1.0, 0.0], 0.2)
+    fused = fuse_keyword([0.50, 0.49, 0.10], [0.0, 1.0, 0.0], 0.2, [True, True, True])
     assert fused[1] > fused[0] > fused[2]
+    # One candidate, or a tie, is the best there is, not the worst.
+    assert fuse_keyword([0.6], [0.3], 0.2, [True]) == [1.0]
+    # A passage with no text scores by meaning alone: the best image is not pushed under matching text.
+    image, text = fuse_keyword([0.9, 0.9, 0.1], [0.0, 1.0, 0.0], 0.2, [False, True, True])[:2]
+    assert image == 1.0 and text == 1.0
 
 
-async def test_keyword_matches_count_only_for_documents_in_the_query_language(api_client, kb):
-    # The fake embedder sees none of its axis words here, so every passage ties on meaning
-    # and only the keyword match can order them.
+async def test_keywords_match_rare_words_in_every_language(api_client, kb):
+    # The fake embedder sees none of its axis words here, so every passage ties on meaning and only
+    # the keyword match orders them. Keywords used to count only in documents of the query's detected
+    # language: the French and Japanese pages, which hold the code, got nothing.
     docs = [
         ("en-hit", "The gateway returns the code zx4417 when the token of the session has ended."),
         ("en-miss", "The gateway returns a timeout when the upstream of the session has ended."),
         ("fr-hit", "La passerelle renvoie le code zx4417 quand le jeton de la session est fini."),
+        ("ja-hit", "ゲートウェイ zx4417"),
+        *((f"filler-{n}", f"The state of the system is the same as the state of the log {n}.") for n in range(8)),
     ]
-    r = await api_client.post(
-        f"{KB}/{kb}/ingest",
-        json={"items": [{"document_id": d, "text": t} for d, t in docs]},
-    )
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": d, "text": t} for d, t in docs]})
     assert r.status_code == 200, r.text
-    hits = await _search(api_client, kb, query="what does the code zx4417 of the gateway mean")
-    # en-miss shares only "gateway"; the French page shares the code but not the query's
-    # language, so it gets no keyword credit at all.
-    assert [h["document_id"] for h in hits] == ["en-hit", "en-miss", "fr-hit"]
+    body = (
+        await api_client.post(
+            f"{KB}/{kb}/search", json={"query": "what does the code zx4417 of the gateway mean", "trace": True}
+        )
+    ).json()
+    trace = body["trace"]
+    # Common words ("the", "of") are left out next to the rare ones, in no language's stopword list.
+    assert "zx4417" in trace["keyword_terms"] and not {"the", "of"} & set(trace["keyword_terms"])
+    keyword = {h["document_id"]: h["keyword"] for h in trace["hits"]}
+    assert keyword["fr-hit"] > 0 and keyword["ja-hit"] > 0 and keyword["filler-0"] == 0
+    assert body["results"][0]["document_id"] == "en-hit"
 
 
 async def test_a_search_needs_a_query_and_a_bank(api_client, kb):
@@ -861,7 +872,7 @@ async def test_a_search_needs_a_query_and_a_bank(api_client, kb):
     assert r.status_code == 400 and "query" in r.text
     assert (await api_client.post(f"{KB}/kb-missing/search", json={"query": "x"})).status_code == 404
     body = (await api_client.post(f"{KB}/{kb}/search", json={"query": "x"})).json()
-    assert set(body) == {"results"}  # ranks, no timing and no scores
+    assert set(body) == {"results", "trace"} and body["trace"] is None  # ranks only, unless a trace is asked
 
 
 def test_running_headers_and_footers_are_not_embedded():
@@ -930,9 +941,9 @@ def test_a_reference_page_is_demoted_without_squashing_the_other_scores():
     # the keyword fusion stretched the dense range so far that keywords alone decided the real pages.
     dense = [0.80, 0.70, 0.79]
     keyword = [1.0, 3.0, 9.0]
-    scores = final_scores(dense, keyword, 0.2, reference=[False, False, True])
+    scores = final_scores(dense, keyword, 0.2, reference=[False, False, True], has_text=[True] * 3)
     assert scores[0] > scores[1] > scores[2]  # dense still ranks the real pages; the list goes last
-    same = final_scores(dense, keyword, 0.2, reference=[False] * 3)
+    same = final_scores(dense, keyword, 0.2, reference=[False] * 3, has_text=[True] * 3)
     assert scores[:2] == same[:2]  # the demotion does not move anyone else
 
 
@@ -1105,7 +1116,7 @@ async def test_an_ingest_batch_reports_where_its_time_went(api_client, kb, fake_
     assert len(lines) == 1 and "docs=20" in lines[0], lines
     # Every stage a batch passes through is attributed, with its round-trip count.
     phases = dict(p.split("=", 1) for p in lines[0].split(" | ", 1)[1].split())
-    for phase in ("store.read", "store.status", "file.read", "split", "embed", "store.write", "language"):
+    for phase in ("store.read", "store.status", "file.read", "split", "embed", "store.write"):
         assert phase in phases, (phase, lines[0])
     assert phases["file.read"].split("/")[1] == "20c"  # one stored file read per document
 
@@ -1384,16 +1395,12 @@ async def test_staged_pieces_stay_out_of_sight_until_their_commit(api_client, me
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
     assert r.status_code == 200, r.text
     key = (await store.get_documents(kb, ["d"]))["d"].storage_key
-    assert (
-        await store.stage_passages(kb, [PassageStage("d", _passages(0, "new red one", "new red two"), "en", key)]) == []
-    )
-    assert await store.stage_passages(kb, [PassageStage("d", _passages(2, "new red three"), "en", key, staged=2)]) == []
+    assert await store.stage_passages(kb, [PassageStage("d", _passages(0, "new red one", "new red two"), key)]) == []
+    assert await store.stage_passages(kb, [PassageStage("d", _passages(2, "new red three"), key, staged=2)]) == []
     # Until the commit, every read sees the version it replaces, whole.
     assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["old blue"]
     assert [h["text"] for h in await _search(api_client, kb, query="red")] in ([], ["old blue"])
-    done = await store.replace_passages(
-        kb, [PassageReplacement("d", _passages(3, "new red four"), "en", key, staged=3)]
-    )
+    done = await store.replace_passages(kb, [PassageReplacement("d", _passages(3, "new red four"), key, staged=3)])
     assert done.skipped_document_ids == []
     texts = [p.text for p in (await store.list_passages(kb, ["d"]))["d"]]
     assert texts == ["new red one", "new red two", "new red three", "new red four"]
@@ -1407,8 +1414,8 @@ async def test_a_piece_for_a_replaced_file_is_skipped(api_client, memory, kb):
     store = get_knowledge_service(memory).store
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
     assert r.status_code == 200, r.text
-    assert await store.stage_passages(kb, [PassageStage("d", _passages(0, "stale red"), "en", "gone")]) == ["d"]
-    assert await store.stage_passages(kb, [PassageStage("nope", _passages(0, "x"), "en")]) == ["nope"]
+    assert await store.stage_passages(kb, [PassageStage("d", _passages(0, "stale red"), "gone")]) == ["d"]
+    assert await store.stage_passages(kb, [PassageStage("nope", _passages(0, "x"))]) == ["nope"]
 
 
 async def test_what_an_ingest_that_never_committed_staged_is_dropped(api_client, memory, kb, fake_embedder):
@@ -1419,14 +1426,14 @@ async def test_what_an_ingest_that_never_committed_staged_is_dropped(api_client,
     assert r.status_code == 200, r.text
     key = (await store.get_documents(kb, ["d"]))["d"].storage_key
     # An ingest staged five passages and died before committing them.
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), "en", key)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), key)])
     # A version started over (a staged=0 piece) drops them...
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, "kept red"), "en", key)])
-    await store.replace_passages(kb, [PassageReplacement("d", [], "en", key, staged=1)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, "kept red"), key)])
+    await store.replace_passages(kb, [PassageReplacement("d", [], key, staged=1)])
     assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["kept red"]
     # ...and so does a version written in one go, which never names them.
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), "en", key)])
-    await store.replace_passages(kb, [PassageReplacement("d", _passages(0, "one blue", "two blue"), "en", key)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(5))), key)])
+    await store.replace_passages(kb, [PassageReplacement("d", _passages(0, "one blue", "two blue"), key)])
     assert [p.text for p in (await store.list_passages(kb, ["d"]))["d"]] == ["one blue", "two blue"]
     hits = await _search(api_client, kb, query="red")
     assert not any("lost" in h["text"] or "kept" in h["text"] for h in hits), hits
@@ -1439,17 +1446,17 @@ async def test_a_document_that_fails_drops_what_it_staged(api_client, memory, kb
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "old blue"}]})
     assert r.status_code == 200, r.text
     key = (await store.get_documents(kb, ["d"]))["d"].storage_key
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), "en", key)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), key)])
     # A failure for another version (an older file) leaves what this one staged.
     await store.set_statuses(kb, [StatusUpdate("d", "failed", "boom", "some-other-key")])
-    await store.replace_passages(kb, [PassageReplacement("d", [], "en", key, staged=3)])
+    await store.replace_passages(kb, [PassageReplacement("d", [], key, staged=3)])
     assert len((await store.list_passages(kb, ["d"]))["d"]) == 3
     # Failing for good drops it: a commit naming the staged pieces finds none. The store has no read of
     # staged rows, so a commit that would move them in is how the test sees they are gone.
-    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), "en", key)])
+    await store.stage_passages(kb, [PassageStage("d", _passages(0, *(f"lost red {n}" for n in range(3))), key)])
     await store.set_statuses(kb, [StatusUpdate("d", "failed", "boom", key)])
     assert (await store.get_documents(kb, ["d"]))["d"].status == "failed"
-    await store.replace_passages(kb, [PassageReplacement("d", [], "en", key, staged=3)])
+    await store.replace_passages(kb, [PassageReplacement("d", [], key, staged=3)])
     assert (await store.list_passages(kb, ["d"]))["d"] == []
 
 
@@ -1507,25 +1514,7 @@ async def test_renaming_a_file_ingests_it_again(api_client, kb):
     assert (await api_client.get(f"{KB}/{kb}/documents/d")).json()["filename"] == "b.md"
 
 
-async def test_neighbour_windows_that_grow_into_each_other_are_merged(api_client, memory, kb):
-    from hindsight_api.knowledge.store import SearchHit
-
-    text = "\n\n".join(f"# Part {n}\n\npassage {n} red" for n in range(8))
-    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "w", "text": text}]})
-    assert r.status_code == 200, r.text
-    service = get_knowledge_service(memory)
-    document = (await service.store.get_documents(kb, ["w"]))["w"]
-    passages = (await service.store.list_passages(kb, ["w"]))["w"]
-    assert len(passages) >= 6
-    # Hits at 0, then 4, then 2: windows 0-1 and 3-5, which passage 2's window 1-3 joins into one.
-    hits = [SearchHit(passages[i], document, 1.0 - i / 10) for i in (0, 4, 2)]
-    # A budget that holds those six passages and no more: the windows meet, nothing widens past them.
-    budget = sum(count_tokens(p.text or "") for p in passages[:6])
-    items = await service._within_budget(kb, hits, budget)
-    assert [(i.context_first, i.context_last) for i in items] == [(0, 5)]
-
-
-async def test_folded_windows_keep_the_rank_of_the_best_hit(api_client, memory, kb):
+async def test_each_hit_gets_its_own_result_and_none_holds_more_than_five_passages(api_client, memory, kb):
     from hindsight_api.knowledge.store import SearchHit
 
     text = "\n\n".join(f"# Part {n}\n\npassage {n} red" for n in range(10))
@@ -1534,12 +1523,18 @@ async def test_folded_windows_keep_the_rank_of_the_best_hit(api_client, memory, 
     service = get_knowledge_service(memory)
     document = (await service.store.get_documents(kb, ["f"]))["f"]
     passages = (await service.store.list_passages(kb, ["f"]))["f"]
-    # Hits at 2 (best), 7, then 5: 5 joins 7's window, which then meets 2's. The merged window is the
-    # best hit's: it keeps passage 2 as its hit, first in the results.
+    weight = [count_tokens(p.text or "") for p in passages]
+    # Hits at 2 (best), 7, then 5: each is a result of its own with its free neighbours (5 gets 4, as 6 is
+    # 7's). A window used to grow to take in a nearby hit and fold into the next: one whole-document result.
     hits = [SearchHit(passages[i], document, 1.0 - n / 10) for n, i in enumerate((2, 7, 5))]
-    budget = sum(count_tokens(p.text or "") for p in passages[1:9])
-    items = await service._within_budget(kb, hits, budget)
-    assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 8)]
+    items = await service._within_budget(kb, hits, sum(weight[1:9]))
+    assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 3), (7, 6, 8), (5, 4, 5)]
+    # A hit already inside a better result comes back there, and nothing grows.
+    items = await service._within_budget(kb, [hits[0], SearchHit(passages[3], document, 0.5)], sum(weight[1:4]))
+    assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 3)]
+    # Leftover budget widens a result to five passages at most, however much is left.
+    items = await service._within_budget(kb, [hits[0]], sum(weight))
+    assert [(i.context_first, i.context_last) for i in items] == [(0, 4)]
 
 
 async def test_a_document_replaced_during_its_batch_is_not_committed(memory, kb, monkeypatch):
@@ -1786,3 +1781,154 @@ async def test_a_text_with_a_nul_byte_is_stored_and_spares_its_batch(api_client,
         detail = (await api_client.get(f"{KB}/{kb}/documents/{doc}")).json()
         assert detail["status"] == "ready", detail
     assert (await api_client.get(f"{KB}/{kb}/documents/nul")).json()["passages"][0]["text"] == "debt ratio"
+
+
+async def test_a_bank_bigger_than_one_delete_batch_is_deleted_whole(api_client, memory, kb, monkeypatch):
+    # A big bank is deleted a batch of documents at a time: one cascading statement over all of them
+    # ran past the command timeout on a 100k-document bank.
+    from hindsight_api.knowledge import service as service_mod
+
+    monkeypatch.setattr(service_mod, "DELETE_BATCH_DOCUMENTS", 2)
+    store = get_knowledge_service(memory).store
+    batches: list[int] = []
+    delete_some = store.delete_some_documents
+
+    async def counted(bank_id, limit):
+        batches.append(await delete_some(bank_id, limit))
+        return batches[-1]
+
+    monkeypatch.setattr(store, "delete_some_documents", counted)
+    items = [{"document_id": f"d{i}", "text": f"text number {i}"} for i in range(5)]
+    assert (await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})).status_code == 200
+    assert (await api_client.delete(f"{KB}/{kb}")).status_code == 200
+    assert batches == [2, 2, 1, 0]
+    assert (await api_client.get(f"{KB}/{kb}")).status_code == 404
+
+
+async def test_a_bank_is_deleted_while_the_embedder_is_unreachable(api_client, memory, kb, monkeypatch):
+    # The store's first-use setup asks the embedder for its size; a delete touches no vector and must
+    # not need it (a gateway outage turned a delete into a 503).
+    embedder = get_knowledge_service(memory).embedder
+
+    async def unreachable(*_a, **_k):
+        import aiohttp
+
+        raise aiohttp.ClientConnectionError("gateway down")
+
+    monkeypatch.setattr(embedder, "dimension", 0)
+    monkeypatch.setattr(embedder, "embed_query", unreachable)
+    assert (await api_client.get(f"{KB}/{kb}/documents")).status_code == 503
+    assert (await api_client.delete(f"{KB}/{kb}")).status_code == 200
+
+
+async def test_reflect_reads_the_linked_banks_through_the_knowledge_search(api_client, memory, kb, request_context):
+    # Reflect's recall tool gets what POST /search gives for the same question: a keyword match, with
+    # the passages around it. It used to run its own meaning-only top-5 with no text around a hit.
+    from hindsight_api.engine.reflect.tools import tool_recall
+
+    paragraphs = [f"Paragraph {i}: " + ("invoice " if i == 4 else "filler ") * 180 for i in range(10)]
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest",
+        json={"items": [{"document_id": "long", "text": "\n\n".join(paragraphs), "filename": "long.md"}]},
+    )
+    assert r.status_code == 200, r.text
+    mem_bank = f"mem-{uuid.uuid4().hex[:8]}"
+    await api_client.post(f"/v1/default/banks/{mem_bank}/memories", json={"items": [{"content": "Invoices are due."}]})
+    # A linked bank that is gone is skipped, not a failed reflect.
+    links = {"updates": {"knowledge_banks": [kb, f"gone-{uuid.uuid4().hex[:6]}"]}}
+    assert (await api_client.patch(f"/v1/default/banks/{mem_bank}/config", json=links)).status_code == 200
+
+    out = await tool_recall(memory, mem_bank, "invoice", request_context, max_tokens=4096, include_documents=True)
+    searched = await _search(api_client, kb, query="invoice", max_tokens=4096)
+    assert [d["text"] for d in out["documents"]] == [h["text"] for h in searched]
+    first = out["documents"][0]["text"]
+    assert "Paragraph 4:" in first and "Paragraph 3:" in first and "Paragraph 5:" in first
+    await memory.delete_bank(mem_bank, request_context=request_context)
+
+
+async def test_a_bank_says_when_its_documents_last_changed(api_client, kb):
+    # The bank list shows it beside the size, as the memory bank list shows its last write.
+    assert (await api_client.get(f"{KB}/{kb}")).json()["last_document_at"] is None
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "a", "text": "hello"}]})
+    assert r.status_code == 200, r.text
+    changed = (await api_client.get(f"{KB}/{kb}")).json()["last_document_at"]
+    listed = {b["bank_id"]: b for b in (await api_client.get(KB, params={"q": kb})).json()["banks"]}
+    assert changed is not None and listed[kb]["last_document_at"] == changed
+
+
+def test_a_heading_waits_for_its_content_instead_of_standing_alone():
+    # "## Observations" alone outranked every real answer to "hindsight": a few words nearly equal a
+    # short query. A heading now joins what follows it, a cut paragraph's first sentences included.
+    from hindsight_api.knowledge.text_passages import split_into_passages
+
+    doc = "## Observations\n\n### Recent\n\n" + "The worker retried the batch. " * 40
+    chunks = split_into_passages(doc, passage_size=64)
+    assert chunks[0].startswith("## Observations\n\n### Recent\n\nThe worker")
+    assert all(count_tokens(c) <= 64 for c in chunks)
+    assert not any(c.strip().startswith("#") and "\n" not in c.strip() for c in chunks)
+
+
+async def test_a_traced_search_explains_every_rank_and_what_the_budget_kept(api_client, kb):
+    paragraphs = [
+        f"Paragraph {i}: " + ("the invoice is in the box " if i == 4 else "this is the filler of it ") * 30
+        for i in range(10)
+    ]
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest",
+        json={"items": [{"document_id": "long", "text": "\n\n".join(paragraphs), "filename": "long.md"}]},
+    )
+    assert r.status_code == 200, r.text
+    # One word: keywords run for any query, in any language.
+    body = (
+        await api_client.post(f"{KB}/{kb}/search", json={"query": "invoice", "max_tokens": 1200, "trace": True})
+    ).json()
+    trace = body["trace"]
+    assert "invoice" in trace["keyword_terms"]
+    assert trace["candidates"] >= len(trace["hits"]) > 0 and 0 < trace["tokens_used"] <= 1200
+    assert {"embed", "store.search", "context"} <= set(trace["timings_ms"])
+    hits = trace["hits"]
+    assert [h["rank"] for h in hits] == list(range(1, len(hits) + 1))
+    assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
+    top = hits[0]
+    assert top["index"] == 4 and top["keyword"] > 0 and "keyword" in top["found_by"] and top["result_rank"] == 1
+    # Its neighbours came back inside its text, so they are merged into it, not results of their own.
+    merged = [h for h in hits if h["outcome"] == "merged"]
+    returned_ranks = {h["rank"] for h in hits if h["outcome"] == "returned"}
+    assert merged and all(h["merged_into_rank"] in returned_ranks for h in merged)
+    returned = [h for h in hits if h["outcome"] == "returned"]
+    assert [h["result_rank"] for h in returned] == list(range(1, len(body["results"]) + 1))
+    assert any(h["outcome"] == "over_budget" for h in hits)
+    # Step 1: each candidate search's own list, best first; the keyword one found the invoice paragraph.
+    arms = {a["name"]: a["results"] for a in trace["candidate_searches"]}
+    assert {"vector", "keyword"} <= set(arms) and arms["keyword"][0]["index"] == 4
+    assert all([r["score"] for r in a] == sorted((r["score"] for r in a), reverse=True) for a in arms.values())
+    # Step 4: the budget's steps, in order, add up to what the results weigh.
+    steps = trace["budget_steps"]
+    assert steps[0]["rank"] == 1 and steps[0]["action"] == "window" and (steps[0]["first"], steps[0]["last"]) == (3, 5)
+    assert [s["total"] for s in steps] == sorted(s["total"] for s in steps)
+    assert steps[-1]["total"] == trace["tokens_used"] == sum(s["tokens"] for s in steps)
+    assert any(s["action"] == "widened" for s in steps) or any(s["action"] == "skipped" for s in steps)
+    # The depth cut: a low budget keeps the top 50 of what was scored.
+    low = (
+        await api_client.post(
+            f"{KB}/{kb}/search", json={"query": "invoice", "max_tokens": 1200, "budget": "low", "trace": True}
+        )
+    ).json()["trace"]
+    assert low["depth"] == min(50, len(low["hits"]))
+
+
+async def test_a_bank_delete_does_not_wait_forever_on_held_documents(api_client, memory, kb, monkeypatch):
+    # A document some transaction never lets go of is skipped by every batch; after the wait the banks
+    # row's cascade takes it, rather than the delete sleeping a second at a time forever.
+    from hindsight_api.knowledge import service as service_mod
+
+    store = get_knowledge_service(memory).store
+    assert (await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"text": "held"}]})).status_code == 200
+
+    async def always_held(bank_id, limit):
+        return 0
+
+    monkeypatch.setattr(store, "delete_some_documents", always_held)
+    monkeypatch.setattr(service_mod, "DELETE_WAIT_SECONDS", 0)
+    assert (await api_client.delete(f"{KB}/{kb}")).status_code == 200
+    assert (await api_client.get(f"{KB}/{kb}")).status_code == 404

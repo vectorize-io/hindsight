@@ -7,7 +7,7 @@ a public leaderboard, so a score sits next to the best published models.
 | ``pdf`` | ViDoRe V3, 8 public tasks | nDCG@10 (ViDoRe / MTEB) |
 | ``image`` | Flickr30k 1k and MS-COCO 5k test, text to image | recall@1/5/10 |
 | ``video`` | MSR-VTT 1k-A and MSVD test, text to video | nDCG@10, recall@1 |
-| ``research`` | BRIGHT-Pro (7 domains), BrowseComp-Plus | alpha-nDCG@25; nDCG@10, recall@100 |
+| ``research`` | BRIGHT-Pro (7 domains) | alpha-nDCG@25 |
 
 ``research`` ranks retrieval *systems* (rewriting, hybrid, reranking are fair), unlike the
 leaderboards above, which rank bare embedding models.
@@ -53,12 +53,11 @@ class Sizes:
     image_captions_per_image: int | None
     video_captions_per_video: int | None
     bright_pro_queries_per_domain: int | None
-    browsecomp_queries: int | None
 
 
 #: BRIGHT-Pro's 25 per domain is the sample its paper runs agents on.
-DEFAULT = Sizes(17, 100, 1, 1, 25, 100)
-FULL = Sizes(None, None, None, None, None, None)
+DEFAULT = Sizes(17, 100, 1, 1, 25)
+FULL = Sizes(None, None, None, None, None)
 
 
 @dataclass
@@ -147,15 +146,22 @@ def _bright_pro(domain: str) -> Callable[[Sizes], data.RankedSuite]:
     return lambda sizes: data.bright_pro(domain, queries=sizes.bright_pro_queries_per_domain)
 
 
+#: The ViDoRe V3 tasks run: three English ones from easy to hard (hr 57.7, finance_en 60.2, physics 41.6
+#: nDCG@10 on EmbeddingGemma 2), where all eight took most of a run.
+VIDORE_CORE = ("hr", "finance_en", "physics")
+
+#: The fixed benchmark set, grouped by what is searched: text (SciFact; BRIGHT-Pro biology, which needs
+#: reasoning), PDFs (ViDoRe), media (Flickr30k images, MSR-VTT video). EnterpriseRAG, the end-to-end agent
+#: one, is evals/knowledge_agent. It used to also hold FiQA, the other five ViDoRe
+#: tasks, MS-COCO, MSVD, six more BRIGHT-Pro domains and BrowseComp-Plus: a full run took days and its
+#: results were hard to read. The data loaders still know those sets.
 CASES: list[Case] = [
     Case("scifact", "text", _beir("scifact"), "text"),
-    Case("fiqa", "text", _beir("fiqa"), "text"),
-    *(Case(t, "pdf", _vidore(t), "document") for t in data.VIDORE_TASKS),
-    *(Case(name.split("_")[0], "image", _images(name), "image") for name in data.IMAGE_SETS),
-    *(Case(name.split("_")[0], "video", _videos(name), "video") for name in data.VIDEO_SETS),
-    *(Case(f"brightpro_{d}", "research", _bright_pro(d), "text") for d in data.BRIGHT_PRO_DOMAINS),
-    Case("browsecomp_plus", "research", lambda sizes: data.browsecomp_plus(queries=sizes.browsecomp_queries), "text"),
+    *(Case(t, "pdf", _vidore(t), "document") for t in VIDORE_CORE),
+    Case("brightpro_biology", "text", _bright_pro("biology"), "text"),
+    Case("flickr30k", "media", _images("flickr30k_1k"), "image"),
+    Case("msrvtt", "media", _videos("msrvtt_1k"), "video"),
 ]
 
-#: What a default run covers: one case per category.
-MINIMUM = {"scifact", "hr", "flickr30k", "msrvtt", "brightpro_biology"}
+#: What a default run covers: every case, on a sample of its queries (``--full`` asks them all).
+MINIMUM = {case.id for case in CASES}

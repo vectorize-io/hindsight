@@ -24,6 +24,7 @@ import { BankKindSwitch, type BankKind } from "@/components/bank-kind-switch";
 import { CreateKnowledgeBankDialog } from "@/components/knowledge-banks-list";
 import {
   KNOWLEDGE_UPLOAD_EVENT,
+  formatBytes,
   knowledgeBankRoute,
   type KnowledgeBank,
 } from "@/lib/knowledge-banks";
@@ -256,6 +257,10 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
     return () => window.removeEventListener("hindsight:create-bank", openCreate);
   }, []);
 
+  const maxKnowledgeBytes = React.useMemo(
+    () => Math.max(1, ...(knowledgeBanks ?? []).map((b) => b.total_bytes)),
+    [knowledgeBanks]
+  );
   const maxFactCount = React.useMemo(
     () => Math.max(1, ...bankInfos.map((b) => b.fact_count)),
     [bankInfos]
@@ -703,9 +708,6 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
                 {knowledgeBanksEnabled && (
                   <BankKindSwitch value={tab} onChange={setTab} size="sm" />
                 )}
-                {tab === "knowledge" && (
-                  <span className="text-[11px] text-muted-foreground">{tKb("countsLegend")}</span>
-                )}
               </div>
               <CommandInput
                 ref={searchInputRef}
@@ -730,6 +732,8 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
                   <CommandGroup>
                     {visibleKnowledgeBanks.map((bank) => {
                       const isSelected = bank.bank_id === knowledgeBankId;
+                      // Sized like a memory bank's row, by what it holds: bytes here, memories there.
+                      const barPct = (bank.total_bytes / maxKnowledgeBytes) * 100;
                       return (
                         <CommandItem
                           key={bank.bank_id}
@@ -739,25 +743,47 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
                             router.push(knowledgeBankRoute(value));
                           }}
                           className={cn(
-                            "py-2.5 mb-0.5",
+                            "relative overflow-hidden py-2.5 mb-0.5",
                             isSelected && "ring-1 ring-inset ring-primary/50"
                           )}
                         >
-                          <Check
-                            className={cn(
-                              "h-4 w-4 shrink-0",
-                              isSelected ? "opacity-100 text-primary" : "opacity-0"
-                            )}
+                          <div
+                            className="absolute inset-y-0 left-0 bg-primary/15 dark:bg-primary/20 rounded-[inherit] transition-all"
+                            style={{ width: `${barPct}%` }}
                           />
-                          <span
-                            className={cn(
-                              "flex-1 truncate",
-                              isSelected ? "font-semibold" : "font-medium"
-                            )}
-                            title={bank.bank_id}
-                          >
-                            {bank.bank_id}
-                          </span>
+                          <div className="relative flex w-full items-center gap-2">
+                            <Check
+                              className={cn(
+                                "h-4 w-4 shrink-0",
+                                isSelected ? "opacity-100 text-primary" : "opacity-0"
+                              )}
+                            />
+                            <span
+                              className={cn(
+                                "flex-1 truncate",
+                                isSelected ? "font-semibold" : "font-medium"
+                              )}
+                              title={bank.bank_id}
+                            >
+                              {bank.bank_id}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground/70">
+                              {bank.document_count > 0 ? (
+                                <>
+                                  {formatBytes(bank.total_bytes)}
+                                  <span className="ml-1.5 text-muted-foreground/40">
+                                    {bank.last_document_at
+                                      ? formatTimeAgo(bank.last_document_at)
+                                      : ""}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="italic text-muted-foreground/40">
+                                  {tKb("emptyBank")}
+                                </span>
+                              )}
+                            </span>
+                          </div>
                         </CommandItem>
                       );
                     })}

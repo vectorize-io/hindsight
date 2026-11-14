@@ -23,6 +23,8 @@ export interface KnowledgeBank {
   failed_count: number;
   total_bytes: number;
   documents_by_media_type: Partial<Record<MediaType, number>>;
+  /** When a document was last added or changed; null for an empty bank. */
+  last_document_at?: string | null;
 }
 
 /** The settings a knowledge bank splits its files with: its own value, else the server's. */
@@ -108,11 +110,72 @@ export interface KnowledgeSearchRequest {
   tags_match?: "any" | "all";
   document_ids?: string[];
   media_types?: MediaType[];
+  /** Also return how the search ranked and what the token budget kept. */
+  trace?: boolean;
 }
 
-/** Results best first: the server sends ranks, not scores (they mean nothing across queries). */
+/** One ranked candidate of a traced search: its score step by step, and what the budget did. */
+export interface KnowledgeSearchTraceHit {
+  rank: number;
+  outcome: "returned" | "merged" | "over_budget" | "below_depth";
+  result_rank: number | null;
+  merged_into_rank: number | null;
+  document_id: string;
+  filename: string | null;
+  index: number;
+  media_type: MediaType;
+  page: number | null;
+  start_ms: number | null;
+  end_ms: number | null;
+  snippet: string | null;
+  score: number;
+  found_by: string[];
+  similarity: number;
+  roles: Record<string, number>;
+  passage_score: number;
+  with_document: number;
+  keyword: number;
+  reference_page: boolean;
+}
+
+/** One step of filling max_tokens, in order. */
+export interface KnowledgeTraceBudgetStep {
+  action: "window" | "alone" | "media" | "merged" | "widened" | "skipped";
+  rank: number;
+  document_id: string;
+  first: number;
+  last: number;
+  tokens: number;
+  total: number;
+  into_rank: number | null;
+}
+
+export interface KnowledgeSearchTrace {
+  budget: SearchBudget;
+  /** How many scored candidates the budget level keeps for max_tokens. */
+  depth: number;
+  max_tokens: number;
+  tokens_used: number;
+  candidates: number;
+  keyword_weight: number;
+  keyword_terms: Record<string, number>;
+  timings_ms: Record<string, number>;
+  /** Step 1: each candidate search's own list, best first. */
+  candidate_searches: {
+    name: "vector" | "extra_vectors" | "keyword";
+    results: { document_id: string; index: number; score: number }[];
+  }[];
+  /** Every candidate scored, best first. */
+  hits: KnowledgeSearchTraceHit[];
+  /** How max_tokens was filled, in order. */
+  budget_steps: KnowledgeTraceBudgetStep[];
+}
+
+/** Results best first: a result carries its rank, not its score (scores mean nothing across queries);
+ * a traced search's `trace` carries the scores, step by step. */
 export interface KnowledgeSearchResponse {
   results: KnowledgeSearchResult[];
+  trace?: KnowledgeSearchTrace | null;
 }
 
 export interface KnowledgeIngestResponse {

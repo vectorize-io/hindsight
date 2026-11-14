@@ -780,6 +780,7 @@ from .response_models import (
     ConsolidationStrategiesPreview,
     DryRunExtractionResult,
     EntityState,
+    KnowledgeDocumentHit,
     LLMCallTrace,
     MemoryFact,
     MinScores,
@@ -9811,6 +9812,7 @@ class MemoryEngine(MemoryEngineInterface):
         if _d > 0.100:
             logger.info("[RECALL PHASE] bank_config=%.3fs bank=%s", _d, bank_id)
         thinking_budget = _resolve_thinking_budget(budget_config_dict, budget, max_tokens)
+        documents_task: asyncio.Task[list[KnowledgeDocumentHit] | None] | None = None
         # Reranker candidate cap, optionally scaled by the same budget level (env-configured,
         # 0/unset → flat reranker_max_candidates). Static config, so read from get_config().
         reranker_max_candidates = _resolve_reranker_max_candidates(get_config(), budget)
@@ -9861,6 +9863,22 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
         try:
+            # The linked knowledge banks are searched alongside the memories, not after them: the two
+            # read nothing of each other. Started inside the recall's trace and log id, and cancelled in
+            # the finally below when the recall fails before awaiting it.
+            if include_documents:
+                from ..knowledge.service import documents_for_memory_bank
+
+                documents_task = asyncio.create_task(
+                    documents_for_memory_bank(
+                        self,
+                        bank_id,
+                        list(budget_config_dict.get("knowledge_banks") or []),
+                        query,
+                        max_tokens,
+                        request_context,
+                    )
+                )
             # Backpressure: limit concurrent recalls to prevent overwhelming the database
             result = None
             error_msg = None
@@ -10016,10 +10034,8 @@ class MemoryEngine(MemoryEngineInterface):
                 if not get_memories().store_owned_for(bank_id):
                     await self._raise_if_bank_deleted(bank_id)
 
-            if include_documents and result is not None:
-                from ..knowledge.service import documents_for_memory_bank
-
-                result.documents = await documents_for_memory_bank(self, bank_id, query, request_context)
+            if documents_task is not None and result is not None:
+                result.documents = await documents_task
 
             # Call post-operation hook for success
             if self._operation_validator and result is not None:
@@ -10049,6 +10065,9 @@ class MemoryEngine(MemoryEngineInterface):
 
             return result
         finally:
+            # A recall that failed before awaiting the linked banks' search leaves it running for nobody.
+            if documents_task is not None and not documents_task.done():
+                documents_task.cancel()
             if recall_trace_token is not None:
                 reset_trace_context(recall_trace_token)
             recall_span_context.__exit__(None, None, None)

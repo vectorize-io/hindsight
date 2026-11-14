@@ -2071,7 +2071,7 @@ DEFAULT_KNOWLEDGE_PDF_PAGE_PIXELS = 1536  # Longest side of a rendered PDF page
 DEFAULT_KNOWLEDGE_PDF_TEXT_WEIGHT = 0.7
 # Three sharper horizontal band crops per PDF page as extra vectors: +0.4 nDCG@10 for half the ingest speed.
 DEFAULT_KNOWLEDGE_PDF_BANDS = False
-# Keyword match weight, fused only for documents in the query's language (PDF_GEMMA.md: 0.2 best).
+# Keyword match weight, fused for every query with a word rare enough in the bank (PDF_GEMMA.md: 0.2 best).
 DEFAULT_KNOWLEDGE_KEYWORD_WEIGHT = 0.2
 # Structure-aware passages. 128 was best on LegalBench-RAG at a fixed budget of returned text (CHUNKING.md);
 # 256 beat it on every benchmark launch uses (EmbeddingGemma 2): SciFact 83.7 -> 84.2 nDCG@10,
