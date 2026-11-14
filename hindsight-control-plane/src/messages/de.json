@@ -2585,7 +2585,8 @@
       "search": "Wissensbänke durchsuchen...",
       "empty": "Noch keine Wissensbänke.",
       "noSearchResults": "Keine Wissensbank passt zu deiner Suche.",
-      "create": "Neue Wissensbank"
+      "create": "Neue Wissensbank",
+      "emptyBank": "leer"
     },
     "home": {
       "documents": "Dokumente",
@@ -2738,7 +2739,7 @@
       "score": "final",
       "rankingTitle": "Schlüsselwort-Mix: das finale Ranking",
       "rankingHelp": "Bedeutung und Schlüsselwörter auf 0-1 skaliert und gemischt, Schlüsselwörter {weight}%. Verwendete Wörter mit ihrer Seltenheit:",
-      "noKeywords": "Keine Schlüsselwörter: Keines der Wörter der Anfrage steht in dieser Bank.",
+      "noKeywords": "Keine Schlüsselwortsuche für diese Anfrage.",
       "idfHelp": "Wie selten das Wort in dieser Bank ist (IDF): seltenere zählen mehr.",
       "referencePage": "Literaturliste, abgewertet",
       "depthTitle": "Tiefenschnitt (Budget {budget})",
@@ -2746,7 +2747,7 @@
       "budgetTitle": "max_tokens füllen",
       "budgetHelp": "{used} von {max} Tokens, bester Treffer zuerst",
       "action_window": "Fenster",
-      "action_window_help": "Ein Texttreffer mit je einer Passage davor und danach.",
+      "action_window_help": "Ein Texttreffer mit seinen freien Nachbarn (je eine Passage, die noch kein Ergebnis hat).",
       "action_alone": "allein",
       "action_alone_help": "Ein Texttreffer ohne Platz für Nachbarn.",
       "action_media": "Medien",

@@ -2585,7 +2585,8 @@
       "search": "지식 뱅크 검색...",
       "empty": "아직 지식 뱅크가 없습니다.",
       "noSearchResults": "검색과 일치하는 지식 뱅크가 없습니다.",
-      "create": "새 지식 뱅크"
+      "create": "새 지식 뱅크",
+      "emptyBank": "비어 있음"
     },
     "home": {
       "documents": "문서",
@@ -2738,7 +2739,7 @@
       "score": "최종",
       "rankingTitle": "키워드 혼합: 최종 순위",
       "rankingHelp": "의미와 키워드를 0-1로 맞춰 혼합, 키워드 {weight}%. 사용한 단어와 희소성:",
-      "noKeywords": "키워드 없음: 쿼리의 단어가 이 뱅크에 없습니다.",
+      "noKeywords": "이 쿼리에는 키워드 검색이 없습니다.",
       "idfHelp": "이 뱅크에서 단어의 희소성 (IDF): 드물수록 중요.",
       "referencePage": "참고문헌 목록, 순위 낮춤",
       "depthTitle": "깊이 자르기 (예산 {budget})",
@@ -2746,7 +2747,7 @@
       "budgetTitle": "max_tokens 채우기",
       "budgetHelp": "{max} 토큰 중 {used}, 상위부터",
       "action_window": "윈도우",
-      "action_window_help": "앞뒤로 패시지 하나씩 붙은 텍스트 히트.",
+      "action_window_help": "비어 있는 이웃이 붙은 텍스트 히트 (아직 어떤 결과에도 없는 앞뒤 패시지).",
       "action_alone": "단독",
       "action_alone_help": "이웃을 넣을 자리가 없는 텍스트 히트.",
       "action_media": "미디어",

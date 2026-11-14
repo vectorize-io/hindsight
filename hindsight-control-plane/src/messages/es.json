@@ -2585,7 +2585,8 @@
       "search": "Buscar bancos de conocimiento...",
       "empty": "Aún no hay bancos de conocimiento.",
       "noSearchResults": "Ningún banco de conocimiento coincide con tu búsqueda.",
-      "create": "Nuevo banco de conocimiento"
+      "create": "Nuevo banco de conocimiento",
+      "emptyBank": "vacío"
     },
     "home": {
       "documents": "Documentos",
@@ -2738,7 +2739,7 @@
       "score": "final",
       "rankingTitle": "Mezcla de palabras clave: la clasificación final",
       "rankingHelp": "Significado y palabras clave escalados 0-1 y mezclados, palabras clave {weight}%. Palabras usadas, con su rareza:",
-      "noKeywords": "Sin palabras clave: ninguna palabra de la consulta está en este banco.",
+      "noKeywords": "Sin búsqueda por palabras clave para esta consulta.",
       "idfHelp": "Qué tan rara es la palabra en este banco (IDF): las raras cuentan más.",
       "referencePage": "lista de referencias, rebajada",
       "depthTitle": "Corte de profundidad (presupuesto {budget})",
@@ -2746,7 +2747,7 @@
       "budgetTitle": "Llenando max_tokens",
       "budgetHelp": "{used} de {max} tokens, el mejor primero",
       "action_window": "ventana",
-      "action_window_help": "Un acierto de texto con un pasaje a cada lado.",
+      "action_window_help": "Un acierto de texto con sus vecinos libres (un pasaje a cada lado que ningún resultado tiene aún).",
       "action_alone": "solo",
       "action_alone_help": "Un acierto de texto sin espacio para vecinos.",
       "action_media": "medio",

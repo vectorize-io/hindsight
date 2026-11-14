@@ -343,7 +343,10 @@ export function KnowledgeSearchTraceView({ trace }: { trace: KnowledgeSearchTrac
               className={cn("rounded px-1.5 py-0.5 font-medium", ACTION_STYLE[s.action])}
               title={t(`action_${s.action}_help`)}
             >
-              {t(`action_${s.action}`, { rank: s.into_rank ?? 0 })}
+              {/* into_rank is a candidate rank: the label names the result that holds it. */}
+              {t(`action_${s.action}`, {
+                rank: (s.into_rank != null && byRank.get(s.into_rank)?.result_rank) || 0,
+              })}
             </span>
             <span>{t("candidateRank", { rank: s.rank })}</span>
             <span>{t("passages", { first: s.first, last: s.last })}</span>

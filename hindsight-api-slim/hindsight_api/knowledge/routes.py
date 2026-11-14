@@ -277,7 +277,7 @@ class KnowledgeTraceBudgetStep(BaseModel):
     """One step of filling max_tokens, in order."""
 
     action: Literal["window", "alone", "media", "merged", "widened", "skipped"] = Field(
-        description="window: a text hit with a passage each side; alone: no room for its neighbours; media: an "
+        description="window: a text hit with its free neighbours; alone: no room for its neighbours; media: an "
         "image, page or clip; merged: already inside a better hit's result; widened: leftover budget added a "
         "passage to a result (5 at most); skipped: nothing of it fit"
     )
@@ -298,8 +298,8 @@ class KnowledgeSearchTrace(BaseModel):
     candidates: int = Field(description="Passages the candidate searches found, before scoring")
     keyword_weight: float = Field(description="The keyword score's share of the final score")
     keyword_terms: dict[str, float] = Field(
-        description="Each query word the keyword search used, with its IDF; words in half the passages or more "
-        "are left out"
+        description="Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) "
+        "as the query's rarest word is left out"
     )
     timings_ms: dict[str, float] = Field(description="Each phase's time: open_bank, embed, store.search, context")
     candidate_searches: list[KnowledgeTraceArm] = Field(description="Step 1: each candidate search's own list")

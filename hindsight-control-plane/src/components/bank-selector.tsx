@@ -778,7 +778,9 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
                                   </span>
                                 </>
                               ) : (
-                                <span className="italic text-muted-foreground/40">empty</span>
+                                <span className="italic text-muted-foreground/40">
+                                  {tKb("emptyBank")}
+                                </span>
                               )}
                             </span>
                           </div>

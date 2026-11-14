@@ -32,6 +32,8 @@ def _pg_schema_prefix() -> str:
 
 
 def _pg_upgrade() -> None:
+    # One statement over every passage: knowledge banks are in no release yet, so only dev and
+    # benchmark databases hold passages; batching it would matter once a release ships them.
     schema = _pg_schema_prefix()
     op.execute(f"UPDATE {schema}kb_passages SET search_vector = to_tsvector('simple', coalesce(text, ''))")
     op.execute(f"ALTER TABLE {schema}kb_documents DROP COLUMN IF EXISTS language")

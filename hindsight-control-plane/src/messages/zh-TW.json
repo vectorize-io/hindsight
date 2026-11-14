@@ -2585,7 +2585,8 @@
       "search": "搜尋文件庫...",
       "empty": "尚無文件庫。",
       "noSearchResults": "沒有符合搜尋的文件庫。",
-      "create": "新增文件庫"
+      "create": "新增文件庫",
+      "emptyBank": "空"
     },
     "home": {
       "documents": "文件",
@@ -2738,7 +2739,7 @@
       "score": "最終",
       "rankingTitle": "關鍵字混合：最終排名",
       "rankingHelp": "語意與關鍵字縮放到 0-1 後混合，關鍵字占 {weight}%。使用的字詞及其稀有度：",
-      "noKeywords": "無關鍵字：查詢中的字詞不在此庫中。",
+      "noKeywords": "此查詢無關鍵字搜尋。",
       "idfHelp": "該字詞在此庫中的稀有程度（IDF）：越稀有越重要。",
       "referencePage": "參考文獻列表，已降權",
       "depthTitle": "深度截斷（預算 {budget}）",
@@ -2746,7 +2747,7 @@
       "budgetTitle": "填滿 max_tokens",
       "budgetHelp": "已用 {used} / {max} token，最佳優先",
       "action_window": "視窗",
-      "action_window_help": "前後各帶一個段落的文字命中。",
+      "action_window_help": "帶有空閒相鄰段落的文字命中（前後各一個尚未被任何結果占用的段落）。",
       "action_alone": "單獨",
       "action_alone_help": "沒有空間放相鄰段落的文字命中。",
       "action_media": "媒體",

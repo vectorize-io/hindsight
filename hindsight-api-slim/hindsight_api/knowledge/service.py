@@ -113,6 +113,9 @@ _CHILD_DOCUMENTS = 100
 #: Documents a bank delete removes per transaction, with their passages and vectors (about 7 and 30
 #: each on a web corpus), so no single statement nears the command timeout.
 DELETE_BATCH_DOCUMENTS = 500
+#: How long a bank delete waits on documents a running ingest still holds before the banks row's
+#: cascade takes what is left.
+DELETE_WAIT_SECONDS = 60
 
 
 class KnowledgeBankError(Exception):
@@ -240,7 +243,7 @@ BudgetAction = Literal["window", "alone", "media", "merged", "widened", "skipped
 class BudgetStep:
     """One step of filling ``max_tokens``, in the order the budget took it."""
 
-    #: window: a text hit with a passage each side; alone: a text hit with no room for neighbours;
+    #: window: a text hit with its free neighbours (a passage each side no result holds yet); alone: a text hit with no room for neighbours;
     #: media: an image, page or clip; merged: a hit already inside a better hit's result (nothing grows);
     #: widened: leftover budget, one passage added to a result's side (up to MAX_CONTEXT_PASSAGES);
     #: skipped: nothing of the hit fit.
@@ -692,22 +695,25 @@ class KnowledgeService:
         await self._open_bank(
             bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK, request_context, needs_vectors=False
         )
-        # The bank's queued and running ingests are cancelled first, so no new writes start, then its
-        # documents go a batch per transaction: the banks row cascades to kb_documents -> kb_passages
-        # -> vectors, and on a 100k-document bank that one cascading statement ran past the command
-        # timeout (BrowseComp-Plus, ~680k passages), while ingests kept writing to the same rows.
+        # Its queued ingests are cancelled first (the worker no longer claims them), then its documents
+        # go a batch per transaction: the banks row cascades to kb_documents -> kb_passages -> vectors,
+        # and on a 100k-document bank that one cascading statement ran past the command timeout
+        # (BrowseComp-Plus, ~680k passages) while ingests kept writing to the same rows. An ingest
+        # already running does not check for cancellation: it finishes its current write, and the
+        # documents it holds are skipped until their locks free, for up to DELETE_WAIT_SECONDS; what
+        # is left then goes with the banks row.
         async with acquire_with_retry(await self._engine._get_backend()) as conn:
             await conn.execute(
                 f"UPDATE {fq_table('async_operations')} SET status = 'cancelled', updated_at = now() "
                 "WHERE bank_id = $1 AND status IN ('pending', 'processing')",
                 bank_id,
             )
-        while True:
+        deadline = time.monotonic() + DELETE_WAIT_SECONDS
+        while time.monotonic() < deadline:
             if await self.store.delete_some_documents(bank_id, DELETE_BATCH_DOCUMENTS):
                 continue
             if not (await self.store.list_documents(bank_id, limit=1, offset=0)).documents:
                 break
-            # Only documents an ingest is still writing are left; it stops after its current batch.
             await asyncio.sleep(1)
         await self._engine.delete_bank(bank_id, request_context=request_context, _knowledge_bank=True)
         await self._engine._file_storage.delete_prefix(f"{bank_storage_prefix(bank_id)}kb/")
@@ -1832,7 +1838,7 @@ class KnowledgeService:
             # The hit with the neighbours no result holds yet (a run: only its edges can be held).
             around = [i for i in (index - 1, index, index + 1) if (document_id, i) in passages and i not in mine]
             placed = False
-            for span in (around, [index]):  # with a passage on each side, or alone
+            for span in (around, [index]):  # with its free neighbours, or alone
                 weight = sum(cost(document_id, i) for i in span)
                 if used + weight > max_tokens:
                     continue
@@ -1921,6 +1927,16 @@ async def documents_for_memory_bank(
     # Reflect's recall runs as an internal operation, but the linked banks are read on the caller's
     # behalf: the validator must see the caller, not a background job it would let through.
     caller = replace(request_context, internal=False)
+    try:
+        return await _linked_documents(engine, bank_id, linked, query, max_tokens, caller)
+    except Exception as exc:
+        logger.warning(f"Knowledge search for memory bank '{bank_id}' failed: {exc!r}")
+        return []
+
+
+async def _linked_documents(
+    engine: MemoryEngine, bank_id: str, linked: list[str], query: str, max_tokens: int, caller: RequestContext
+) -> list[KnowledgeDocumentHit]:
     service = get_knowledge_service(engine)
     request = SearchRequest(query=query, query_image=None, filters=SearchFilters(), max_tokens=max_tokens)
     found = await asyncio.gather(*(service.search(b, request, caller) for b in linked), return_exceptions=True)

@@ -99,3 +99,31 @@ async def test_a_deleted_linked_bank_is_skipped_not_an_error(client, llm, memory
     response = await client.areflect(bank_id=memory_bank, query=QUERY)
 
     assert response.text == "30 days."
+
+
+async def test_reflect_reads_each_hit_with_its_neighbours_from_every_linked_bank(client, llm, memory_bank):
+    # The search reflect runs is the knowledge-bank search itself: a hit comes with the passages around
+    # it, and every linked bank is searched. It used to be a meaning-only top 5, bare passages.
+    kb = KnowledgeBanks(client)
+    manual, credit = f"systest-kb-{uuid.uuid4().hex[:12]}", f"systest-kb-{uuid.uuid4().hex[:12]}"
+    sections = [f"# Step {n}\n\n" + ("Unrelated filler words. " * 12) for n in range(6)]
+    sections[3] = f"# Step 3\n\n{POLICY}"
+    try:
+        for bank, items in (
+            (manual, [{"document_id": "manual", "text": "\n\n".join(sections)}]),
+            (credit, [{"document_id": "credit", "text": "A refund without the receipt is paid as store credit."}]),
+        ):
+            assert (await kb.create(bank)).status == 200
+            assert (await kb.ingest(bank, items)).status == 200
+        await client.aupdate_bank_config(memory_bank, knowledge_banks=[manual, credit])
+        reflect_loop(llm, answer="60 days, with the original receipt.", query=QUERY)
+
+        await client.areflect(bank_id=memory_bank, query=QUERY)
+
+        turns = _reflect_turns_with(llm, POLICY)
+        assert turns, "no reflect turn saw the linked manual"
+        assert any("# Step 2" in t and "# Step 4" in t for t in turns), "the hit came without its neighbours"
+        assert any("paid as store credit" in t for t in turns), "the second linked bank was not searched"
+    finally:
+        for bank in (manual, credit):
+            await kb.delete(bank)

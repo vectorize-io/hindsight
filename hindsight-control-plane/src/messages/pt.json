@@ -2585,7 +2585,8 @@
       "search": "Pesquisar bancos de conhecimento...",
       "empty": "Ainda não há bancos de conhecimento.",
       "noSearchResults": "Nenhum banco de conhecimento corresponde à sua pesquisa.",
-      "create": "Novo banco de conhecimento"
+      "create": "Novo banco de conhecimento",
+      "emptyBank": "vazio"
     },
     "home": {
       "documents": "Documentos",
@@ -2738,7 +2739,7 @@
       "score": "final",
       "rankingTitle": "Mistura de palavras-chave: o ranking final",
       "rankingHelp": "Significado e palavras-chave escalados 0-1 e misturados, palavras-chave {weight}%. Palavras usadas, com sua raridade:",
-      "noKeywords": "Sem palavras-chave: nenhuma palavra da consulta está neste banco.",
+      "noKeywords": "Sem busca por palavras-chave para esta consulta.",
       "idfHelp": "Quão rara a palavra é neste banco (IDF): raras contam mais.",
       "referencePage": "lista de referências, rebaixada",
       "depthTitle": "Corte de profundidade (orçamento {budget})",
@@ -2746,7 +2747,7 @@
       "budgetTitle": "Preenchendo max_tokens",
       "budgetHelp": "{used} de {max} tokens, melhor primeiro",
       "action_window": "janela",
-      "action_window_help": "Um acerto de texto com um trecho de cada lado.",
+      "action_window_help": "Um acerto de texto com seus vizinhos livres (um trecho de cada lado que nenhum resultado tem ainda).",
       "action_alone": "sozinho",
       "action_alone_help": "Um acerto de texto sem espaço para vizinhos.",
       "action_media": "mídia",

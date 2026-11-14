@@ -2585,7 +2585,8 @@
       "search": "Search knowledge banks...",
       "empty": "No knowledge banks yet.",
       "noSearchResults": "No knowledge banks match your search.",
-      "create": "New knowledge bank"
+      "create": "New knowledge bank",
+      "emptyBank": "empty"
     },
     "home": {
       "documents": "Documents",
@@ -2738,7 +2739,7 @@
       "score": "final",
       "rankingTitle": "Keyword mix: the final ranking",
       "rankingHelp": "Meaning and keywords scaled 0-1 and mixed, keywords {weight}%. Words used, with their rarity:",
-      "noKeywords": "No keywords: none of the query's words is in this bank.",
+      "noKeywords": "No keyword search for this query.",
       "idfHelp": "How rare the word is in this bank (IDF): rarer words count more.",
       "referencePage": "reference list, pushed down",
       "depthTitle": "Depth cut (budget {budget})",
@@ -2746,7 +2747,7 @@
       "budgetTitle": "Filling max_tokens",
       "budgetHelp": "{used} of {max} tokens, best hit first",
       "action_window": "window",
-      "action_window_help": "A text hit with one passage each side.",
+      "action_window_help": "A text hit with its free neighbours (a passage each side no result holds yet).",
       "action_alone": "alone",
       "action_alone_help": "A text hit with no room for its neighbours.",
       "action_media": "media",

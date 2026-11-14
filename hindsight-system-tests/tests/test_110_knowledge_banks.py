@@ -116,6 +116,26 @@ async def test_a_text_hit_comes_back_with_the_passages_around_it_as_the_budget_a
     assert sorted(n for n in range(6) for t in texts if f"# Step {n}" in t) == list(range(6))
 
 
+async def test_a_traced_search_explains_its_words_its_candidates_and_how_the_budget_filled(kb, knowledge_bank):
+    sections = [f"# Step {n}\n\n" + ("The rest of the manual is about the other parts. " * 6) for n in range(6)]
+    sections[3] = "# Step 3\n\nOpen the valve slowly until the gauge reads green."
+    await kb.ingest(knowledge_bank, [{"document_id": "manual", "text": "\n\n".join(sections)}])
+
+    r = await kb.search(knowledge_bank, query="the valve gauge", trace=True)
+    trace = r.body["trace"]
+    # The query's rare words, not "the", take part in keyword search, which found the valve step.
+    assert {"valve", "gauge"} <= set(trace["keyword_terms"]) and "the" not in trace["keyword_terms"]
+    searches = {s["name"]: s["results"] for s in trace["candidate_searches"]}
+    assert searches["keyword"][0]["document_id"] == "manual"
+    # Every scored candidate, best first, and what the budget did with each, adding up to the results.
+    top = trace["hits"][0]
+    assert top["rank"] == 1 and top["outcome"] == "returned" and top["result_rank"] == 1 and top["keyword"] > 0
+    steps = trace["budget_steps"]
+    assert steps[0]["rank"] == 1 and steps[0]["action"] == "window"
+    assert steps[-1]["total"] == trace["tokens_used"] <= trace["max_tokens"]
+    assert sum(1 for h in trace["hits"] if h["outcome"] == "returned") == len(r.body["results"])
+
+
 async def test_reingesting_skips_what_is_unchanged_and_replaces_what_is_not(kb, knowledge_bank):
     await kb.ingest(knowledge_bank, [{"document_id": d, "text": t} for d, t in GUIDES.items()])
 

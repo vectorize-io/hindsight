@@ -114,7 +114,6 @@ export interface KnowledgeSearchRequest {
   trace?: boolean;
 }
 
-/** Results best first: the server sends ranks, not scores (they mean nothing across queries). */
 /** One ranked candidate of a traced search: its score step by step, and what the budget did. */
 export interface KnowledgeSearchTraceHit {
   rank: number;
@@ -172,6 +171,8 @@ export interface KnowledgeSearchTrace {
   budget_steps: KnowledgeTraceBudgetStep[];
 }
 
+/** Results best first: a result carries its rank, not its score (scores mean nothing across queries);
+ * a traced search's `trace` carries the scores, step by step. */
 export interface KnowledgeSearchResponse {
   results: KnowledgeSearchResult[];
   trace?: KnowledgeSearchTrace | null;

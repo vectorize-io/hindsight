@@ -198,8 +198,8 @@ def split_into_passages(text: str, *, passage_size: int) -> list[str]:
 
     A bare heading (a heading line with nothing under it yet) waits for its content: the next
     heading or the first sentences of a cut paragraph join it. A heading used to become a passage
-    of its own there ("## Observations", "Core
-    concepts"), and a few words nearly equal to a short query outranked every real answer.
+    of its own there ("## Observations", "Core concepts"),
+    and a few words nearly equal to a short query outranked every real answer.
     """
     if passage_size <= 0:
         raise ValueError("passage_size must be positive")

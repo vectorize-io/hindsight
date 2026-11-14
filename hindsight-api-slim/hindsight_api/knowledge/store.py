@@ -869,9 +869,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
         trace: StoreSearchTrace | None = None,
     ) -> list[SearchHit]:
         """Two stages. (1) Candidate passages: the nearest primary vectors, the nearest extra vectors
-        (a page's bands, text, text units), and the best keyword matches of the query's rarer words. (2) Every candidate is scored from all its vectors
-        with ``page_score``; keyword matches, when any, are fused in as ``(1 - w) * dense + w * keyword``
-        after min-max scaling over the candidates (PDF_GEMMA.md)."""
+        (a page's bands, text, text units), and the best keyword matches of the query's rarer words.
+        (2) Every candidate is scored from all its vectors with ``page_score``; keyword matches, when
+        any, are fused in as ``(1 - w) * dense + w * keyword`` after min-max scaling over the
+        candidates (PDF_GEMMA.md), a passage with no text by its dense score alone."""
         params: list[Any] = [str(vector), bank_id]
         where = ""
         if filters.document_ids:
@@ -1202,14 +1203,6 @@ def with_document_prior(document_ids: list[str], scores: list[float]) -> list[fl
     return [
         (score + DOCUMENT_PRIOR * best[d]) / (1 + DOCUMENT_PRIOR) for d, score in zip(document_ids, scores, strict=True)
     ]
-
-
-def _or_tsquery(config: str, text: str) -> str:
-    """An OR over the query's stemmed words, like BM25: the AND of a long question matches nothing."""
-    return (
-        f"(SELECT to_tsquery('simple', string_agg(quote_literal(w), ' | ')) "
-        f"FROM unnest(tsvector_to_array(to_tsvector({config}, {text}))) w)"
-    )
 
 
 #: A query word takes part in keyword search when its IDF is at least this share of its rarest word's.

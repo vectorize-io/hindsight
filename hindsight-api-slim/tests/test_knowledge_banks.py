@@ -1915,3 +1915,20 @@ async def test_a_traced_search_explains_every_rank_and_what_the_budget_kept(api_
         )
     ).json()["trace"]
     assert low["depth"] == min(50, len(low["hits"]))
+
+
+async def test_a_bank_delete_does_not_wait_forever_on_held_documents(api_client, memory, kb, monkeypatch):
+    # A document some transaction never lets go of is skipped by every batch; after the wait the banks
+    # row's cascade takes it, rather than the delete sleeping a second at a time forever.
+    from hindsight_api.knowledge import service as service_mod
+
+    store = get_knowledge_service(memory).store
+    assert (await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"text": "held"}]})).status_code == 200
+
+    async def always_held(bank_id, limit):
+        return 0
+
+    monkeypatch.setattr(store, "delete_some_documents", always_held)
+    monkeypatch.setattr(service_mod, "DELETE_WAIT_SECONDS", 0)
+    assert (await api_client.delete(f"{KB}/{kb}")).status_code == 200
+    assert (await api_client.get(f"{KB}/{kb}")).status_code == 404

@@ -2585,7 +2585,8 @@
       "search": "Rechercher des banques de connaissances...",
       "empty": "Aucune banque de connaissances pour l’instant.",
       "noSearchResults": "Aucune banque de connaissances ne correspond à votre recherche.",
-      "create": "Nouvelle banque de connaissances"
+      "create": "Nouvelle banque de connaissances",
+      "emptyBank": "vide"
     },
     "home": {
       "documents": "Documents",
@@ -2738,7 +2739,7 @@
       "score": "final",
       "rankingTitle": "Mélange des mots-clés : le classement final",
       "rankingHelp": "Sens et mots-clés ramenés à 0-1 et mélangés, mots-clés {weight} %. Mots utilisés, avec leur rareté :",
-      "noKeywords": "Pas de mots-clés : aucun mot de la requête n'est dans cette banque.",
+      "noKeywords": "Pas de recherche par mots-clés pour cette requête.",
       "idfHelp": "La rareté du mot dans cette banque (IDF) : les rares comptent plus.",
       "referencePage": "liste de références, rétrogradée",
       "depthTitle": "Coupe de profondeur (budget {budget})",
@@ -2746,7 +2747,7 @@
       "budgetTitle": "Remplissage de max_tokens",
       "budgetHelp": "{used} sur {max} tokens, le meilleur d'abord",
       "action_window": "fenêtre",
-      "action_window_help": "Un résultat texte avec un passage de chaque côté.",
+      "action_window_help": "Un résultat texte avec ses voisins libres (un passage de chaque côté qu'aucun résultat ne contient).",
       "action_alone": "seul",
       "action_alone_help": "Un résultat texte sans place pour ses voisins.",
       "action_media": "média",
