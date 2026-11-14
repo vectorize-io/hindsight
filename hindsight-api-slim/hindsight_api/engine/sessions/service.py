@@ -740,6 +740,10 @@ class SessionService:
             logger.warning(f"could not queue {task} for {bank_id}/{session_id}: {e}")
 
     async def _submit(self, task: str, key: str, bank_id: str, session_id: str, payload: dict[str, Any]) -> None:
+        # Learning runs one at a time per bank, not per session: the writer is shown the bank's pages
+        # to avoid writing one twice, and two sessions of a bank learning at once each missed the
+        # other's new page (a backfill over 227 sessions wrote 7 duplicates, 2026-11-14).
+        serial = bank_id if task == L.LEARN_TASK else session_id
         await self._engine._submit_async_operation(
             bank_id=bank_id,
             operation_type=task,
@@ -747,7 +751,7 @@ class SessionService:
             task_payload=payload,
             dedupe_in_flight_payload_key="session_id",
             dedupe_in_flight_includes_processing=False,
-            serialization_key=f"{key}:{session_id}",
+            serialization_key=f"{key}:{serial}",
         )
 
     async def _queue_check(self, bank_id: str, session_id: str, request_context: RequestContext) -> None:

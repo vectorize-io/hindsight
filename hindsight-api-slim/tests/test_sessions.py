@@ -1437,3 +1437,26 @@ async def test_a_correction_is_not_weighed_when_learning_is_off(memory, request_
     draft = CorrectionDraft(corrects=True, create=True, name="n", query="q")
     log, prompts = await _session_with_a_reply(memory, request_context, monkeypatch, bank, "it's 4 cent, not 40", draft)
     assert log == [] and prompts == []
+
+
+async def test_two_sessions_of_a_bank_learn_one_at_a_time(memory, monkeypatch):
+    """The writer avoids a duplicate page by reading the bank's pages: two sessions learning at once
+    each missed the other's, and a backfill wrote 7 duplicates (2026-11-14)."""
+    from hindsight_api.engine.sessions.learn import LEARN_TASK
+
+    queued: list[dict] = []
+
+    async def submit(**kw):
+        queued.append(kw)
+
+    monkeypatch.setattr(memory, "_submit_async_operation", submit)
+    for session in ("s1", "s2"):
+        await memory.sessions._submit(LEARN_TASK, "session-learn", "b", session, {"session_id": session})
+        await memory.sessions._submit("session_check", "session", "b", session, {"session_id": session})
+    keys = [(q["task_type"], q["serialization_key"]) for q in queued]
+    assert keys == [
+        (LEARN_TASK, "session-learn:b"),
+        ("session_check", "session:s1"),
+        (LEARN_TASK, "session-learn:b"),
+        ("session_check", "session:s2"),
+    ]
