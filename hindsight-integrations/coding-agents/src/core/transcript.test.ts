@@ -146,6 +146,32 @@ describe("readClaudeTranscript", () => {
     ]);
   });
 
+  it("keeps the text of a shell command that writes a memory note, and not of one that only reads it", () => {
+    const lesson =
+      'echo "- Q5 INCORRECT: answered 20.92 (median g2 prc_usd>0); correct was 21.99. Lesson: use prc/100, not prc_usd" >> /workspace/memory/other.md';
+    const heredoc =
+      "cd /workspace/memory && cat >> other.md <<'EOF'\n- Q4: avg_rtg is stale, recompute from fdbk_g1\nEOF";
+    const use = (command: string) =>
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [{ type: "tool_use", name: "Bash", input: { command } }],
+        },
+      });
+    const read = "ls /workspace/memory/ 2>/dev/null && cat /workspace/memory/*.md";
+    writeFileSync(
+      file,
+      [use(lesson), use(heredoc), use(read), use("echo x > /tmp/out.txt")].join("\n")
+    );
+
+    const [first, second, third, fourth] = readClaudeTranscript(file).map((t) => t.content);
+    expect(first).toContain("Lesson: use prc/100, not prc_usd");
+    expect(second).toContain("avg_rtg is stale, recompute from fdbk_g1");
+    expect(third).toBe(`Bash ${read}`);
+    expect(fourth).toBe("Bash echo x > /tmp/out.txt");
+  });
+
   it("caps a very long action target at 100 chars, and falls back to the bare tool name when the input has no target key", () => {
     const longCmd = "echo " + "y".repeat(200);
     const lines = [

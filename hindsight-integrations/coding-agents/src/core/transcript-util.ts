@@ -78,6 +78,10 @@ const MEMORY_NOTE_CAP = 8000;
 /** A file under a `memory/` or `memories/` folder, or a `MEMORY.md`: where an agent keeps the
  *  notes it writes for its future self (Claude Code's auto memory, Anthropic's memory protocol). */
 const MEMORY_NOTE_PATH_RE = /(^|[\\/])(memory|memories)[\\/]|(^|[\\/])MEMORY\.md$/i;
+/** The notes folder named anywhere in a shell command, as a path segment or a `cd` target. */
+const MEMORY_SHELL_WRITE_RE = /[\\/](memory|memories)([\\/\s"']|$)|MEMORY\.md/i;
+/** Output redirected to a file (`>`, `>>`, not `2>` or `&>`) or `tee`: the command writes. */
+const SHELL_WRITE_RE = /(^|[^0-9&>])>>?(?!&)|\btee\b/;
 
 /**
  * The text an agent wrote into one of its memory notes, so the write-back keeps the lesson in the
@@ -89,6 +93,12 @@ const MEMORY_NOTE_PATH_RE = /(^|[\\/])(memory|memories)[\\/]|(^|[\\/])MEMORY\.md
 function memoryNoteText(input: unknown): string {
   if (!input || typeof input !== "object") return "";
   const rec = input as Record<string, unknown>;
+  // A shell write into the notes folder (`echo "lesson" >> memory/notes.md`, a heredoc after
+  // `cd memory`) IS a note too: on CL-Bench 8 of the agent's 30 note writes went through Bash,
+  // and the 100-char action cap cut the Q5 lesson off before its point.
+  const cmd = rec.command;
+  if (typeof cmd === "string")
+    return MEMORY_SHELL_WRITE_RE.test(cmd) && SHELL_WRITE_RE.test(cmd) ? cmd.trim() : "";
   const path = rec.file_path ?? rec.path;
   if (typeof path !== "string" || !MEMORY_NOTE_PATH_RE.test(path)) return "";
   const text = rec.content ?? rec.new_string;
