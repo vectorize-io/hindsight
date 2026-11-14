@@ -12,6 +12,7 @@ import copy
 import json
 import logging
 import time
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
@@ -1132,7 +1133,7 @@ async def _run_reflect_agent_inner(
         finally:
             _record_llm({"scope": trace_scope, "duration_ms": int((time.perf_counter() - decision_start) * 1000)})
 
-    async def _timed_prune(tool_results: list[Any]) -> list[Any]:
+    async def _timed_prune(tool_results: list[Any], search_query: str | None = None) -> list[Any]:
         """A parallel round's retrieval, pruned by the decision model when there is one."""
         if prune_evidence_fn is None:
             return tool_results
@@ -1141,7 +1142,13 @@ async def _run_reflect_agent_inner(
         # prefer ("decisions, never the current implementation"), and pruning on the short query
         # kept the later commit that undid a decision as readily as the decision (sde-bench
         # dedupe-history), so the answer reported the decision as superseded.
-        pruned = await _prune_round(query, tool_results, prune_evidence_fn, reflect_id)
+        #
+        # And against the round's search query too, keeping what either keeps: a request that
+        # wraps the goal in a long task prompt ("Question 14: CORRECT! ... queries used: 2")
+        # ranked the bookkeeping that repeats its words above the one fact the goal needed
+        # (CL-Bench database_exploration Q15: the lesson at #97 against the request, #1-5
+        # against the search query).
+        pruned = await _prune_round(query, tool_results, prune_evidence_fn, reflect_id, also_query=search_query)
         _record_llm({"scope": "decision_prune", "duration_ms": int((time.perf_counter() - prune_start) * 1000)})
         return pruned
 
@@ -1333,7 +1340,10 @@ async def _run_reflect_agent_inner(
                 distilled = (
                     (
                         await _tracked_llm_call(
-                            request,
+                            # The request goes in a block with the task after it: a request that
+                            # ends with its own instruction ("if nothing bears on the goal, say so")
+                            # was obeyed as the last word, and its one-line answer searched.
+                            f"<request>\n{request}\n</request>\n\nWrite the search query for this request.",
                             "round_query",
                             ROUND_SEARCH_QUERY_SYSTEM_PROMPT,
                             None,
@@ -1709,7 +1719,7 @@ async def _run_reflect_agent_inner(
                 # less than waiting for one before starting the other.
                 pages_answer, pruned = await asyncio.gather(
                     _decision_says_sufficient(json.dumps(pages, default=str), "decision_pages_sufficiency"),
-                    _timed_prune(tool_results),
+                    _timed_prune(tool_results, _round_search_query(other_tools)),
                 )
                 if pages_answer:
                     logger.info(
@@ -1720,7 +1730,7 @@ async def _run_reflect_agent_inner(
                 else:
                     tool_results = pruned
             elif parallel_round:
-                tool_results = await _timed_prune(tool_results)
+                tool_results = await _timed_prune(tool_results, _round_search_query(other_tools))
             round_landed = parallel_round
 
             # Process results and add to messages
@@ -1924,11 +1934,16 @@ def _evidence_line(item: dict[str, Any]) -> str:
     return f"[{'; '.join(dates)}] {text}" if dates else text
 
 
+#: How many of each search's top results the decision-model cut always keeps (see _prune_round).
+_PRUNE_KEEP_TOP_PER_SEARCH = 5
+
+
 async def _prune_round(
     query: str,
     tool_results: list[Any],
     prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]],
     reflect_id: str,
+    also_query: str | None = None,
 ) -> list[Any]:
     """Drop the observations, facts and chunks the decision model judges irrelevant.
 
@@ -1961,7 +1976,13 @@ async def _prune_round(
     if len(texts) < 2:
         return tool_results
     try:
-        keep_flags = await prune_evidence_fn(query, texts)
+        if also_query and also_query.strip() and also_query.strip() != query.strip():
+            by_request, by_query = await asyncio.gather(
+                prune_evidence_fn(query, texts), prune_evidence_fn(also_query, texts)
+            )
+            keep_flags = [a or b for a, b in zip(by_request, by_query)]
+        else:
+            keep_flags = await prune_evidence_fn(query, texts)
     except OperationCancelledError:
         raise
     except Exception as e:
@@ -1969,6 +1990,22 @@ async def _prune_round(
         return tool_results
 
     kept = {slot for slot, keep in zip(slots, keep_flags) if keep}
+    # Each search's own best stay too. A search already ranked its results against its own
+    # query, and the cut above ranks one merged pool against the whole request: on a bank
+    # small enough that every round returns nearly all of it (~300 items), the fact a search
+    # ranked first was cut while the request's bookkeeping words kept their echoes.
+    # Only a search that returned more than that many is protected; a short list is the cut's to judge.
+    sizes = Counter(slot[:2] for slot in slots)
+    seen: Counter[tuple[int, str]] = Counter()
+    for slot in slots:
+        position = seen[slot[:2]]
+        seen[slot[:2]] += 1
+        if (
+            slot[1] != "chunks"
+            and sizes[slot[:2]] > _PRUNE_KEEP_TOP_PER_SEARCH
+            and position < _PRUNE_KEEP_TOP_PER_SEARCH
+        ):
+            kept.add(slot)
     logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: kept {len(kept)}/{len(slots)} evidence items.")
     pruned: list[Any] = []
     for i, output in enumerate(tool_results):
@@ -1986,6 +2023,15 @@ async def _prune_round(
             data["source_facts"] = {fid: f for fid, f in data["source_facts"].items() if str(fid) in cited}
         pruned.append((data, output[1]))
     return pruned
+
+
+def _round_search_query(tool_calls: list["LLMToolCall"]) -> str | None:
+    """The one search query a parallel round's tool calls share."""
+    for tc in tool_calls:
+        query = tc.arguments.get("query") if isinstance(tc.arguments, dict) else None
+        if isinstance(query, str) and query.strip():
+            return query
+    return None
 
 
 def _unique_tool_call_ids(tool_calls: list["LLMToolCall"], already_emitted: set[str]) -> list[str]:

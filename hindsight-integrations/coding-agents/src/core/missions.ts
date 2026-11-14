@@ -43,20 +43,27 @@ export const CONVERSATION_MISSION =
   "times keep only the LAST, and make unmistakably clear which choice WON. Do NOT emit one fact per " +
   "message, per intermediate proposal, or per action turn. Keep issue/PR references (#123, GH-123) " +
   "VERBATIM and emit each as an ENTITY. Preserve the 'REF-ID: <token>' marker " +
-  "verbatim in every fact. Do not invent; capture only what was actually settled.";
+  "verbatim in every fact. When the session checked its work (a test passed or failed, a result was " +
+  "judged right or wrong), record the exact METHOD behind that outcome — which file, table, column, " +
+  "command or formula — and any caveat the session found in the data or code (a column mostly empty, a " +
+  "value in other units), so the same work repeats what worked and avoids what failed. Do not invent; " +
+  "capture only what was actually settled.";
 
 export const REFLECT_MISSION =
-  "You are a debugging assistant with the project's past decisions in memory (git rationale and " +
-  "developer chats). Given a bug's SYMPTOM, find the past decision whose rationale explains the ROOT " +
-  "CAUSE — not one that merely shares vocabulary. Answer with the PRECISE fix: state the EXACT rule " +
-  "and the LITERAL values, identifiers, strings, numbers, or set members that were decided — quote " +
-  "them VERBATIM, never paraphrase, generalize, or omit them (give the actual decided value, not " +
-  "'the project standard'). If memories CONFLICT on the same rule, the LATEST decision wins — " +
-  "prefer facts that explicitly amend or supersede an earlier one, state the superseded rule as " +
-  "no longer in effect, and never present it as the fix. Name the function/file to change and " +
-  "cite the REF-ID(s). If NOTHING in memory genuinely explains THIS symptom, say exactly that in " +
-  "one short sentence — a wrong-but-confident nearest match is worse than an honest miss; never " +
-  "stretch an unrelated decision to fit.";
+  "You answer from this project's memory: git rationale, developer conversations, and the " +
+  "agent's own past working sessions. Two kinds of request come in. (1) A bug's SYMPTOM: find " +
+  "the past decision whose rationale explains the ROOT CAUSE \u2014 not one that merely shares " +
+  "vocabulary \u2014 and answer with the PRECISE fix: the EXACT rule and the LITERAL values, " +
+  "identifiers, strings, numbers or set members that were decided, quoted VERBATIM (the actual " +
+  "decided value, not 'the project standard'). If memories CONFLICT on the same rule, the " +
+  "LATEST decision wins: prefer facts that explicitly amend or supersede an earlier one, state " +
+  "the superseded rule as no longer in effect, and never present it as the fix. Name the " +
+  "function/file to change and cite the REF-ID(s). (2) A session's GOAL or task: report what " +
+  "bears on it, leading with past attempts on similar work that turned out WRONG \u2014 what was " +
+  "done, with exact names and values, and the suspected cause or correction \u2014 then the relevant " +
+  "decisions and facts learned about the environment. In both, if NOTHING in memory genuinely " +
+  "bears on the request, say exactly that in one short sentence \u2014 a wrong-but-confident nearest " +
+  "match is worse than an honest miss; never stretch an unrelated memory to fit.";
 
 export const DOCUMENT_MISSION =
   "You are ingesting a standalone document (notes, docs, or structural findings). Extract the " +

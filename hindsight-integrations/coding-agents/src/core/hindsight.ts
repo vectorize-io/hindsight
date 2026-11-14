@@ -46,12 +46,7 @@ export interface PageNode {
  * retain API). The scalar modes are the server's; a `string[][]` declares the scopes explicitly.
  */
 export type ObservationScopes =
-  | "shared"
-  | "combined"
-  | "per_tag"
-  | "all_combinations"
-  | "per_source"
-  | string[][];
+  "shared" | "combined" | "per_tag" | "all_combinations" | "per_source" | string[][];
 
 /**
  * `per_source` is resolved HERE, per document, and never reaches the server: it expands to the
@@ -362,8 +357,7 @@ function signalOnlyDispatcher(): unknown {
   // global loads it; touching `fetch` does not (it is a wrapper until first called).
   void globalThis.Headers;
   const d = (globalThis as Record<symbol, unknown>)[GLOBAL_DISPATCHER] as
-    | { compose?: (interceptor: unknown) => unknown }
-    | undefined;
+    { compose?: (interceptor: unknown) => unknown } | undefined;
   if (typeof d?.compose !== "function") return undefined; // Node 18's undici predates compose()
   type Dispatch = (opts: Record<string, unknown>, handler: unknown) => boolean;
   return d.compose(
@@ -685,6 +679,23 @@ export class HindsightClient {
       await this.req("DELETE", this.bankUrl());
       this.log(`[bank] reset ${this.bank}`);
     }
+    await this.configureBankSettings(opts);
+    await this.seedPages(opts.pageTrigger, opts.pages, opts.customPages);
+  }
+
+  /** The config half of `configureBank` (missions, retain strategies, entity labels), without
+   *  seeding pages. Session start calls it directly when the deepen engine — the usual caller of
+   *  `configureBank` — will not run (`autoSeed: false`, or a directory with no git history):
+   *  without it such a bank never got the `conversation` strategy, and every session write-back
+   *  was extracted with the server's generic rules instead of the plugin's mission. */
+  async configureBankSettings(
+    opts: {
+      reset?: boolean;
+      manage?: boolean;
+      extractionMode?: RetainExtractionMode;
+      defaults?: Record<string, unknown>;
+    } = {}
+  ): Promise<void> {
     if (opts.manage === false) {
       this.log(`[bank] manageBankConfig: false — leaving ${this.bank}'s configuration alone`);
     } else {
@@ -704,7 +715,6 @@ export class HindsightClient {
         this.log(`[bank] applied to ${this.bank}: ${Object.keys(manifest.bank).sort().join(", ")}`);
       }
     }
-    await this.seedPages(opts.pageTrigger, opts.pages, opts.customPages);
   }
 
   /**
@@ -1260,8 +1270,7 @@ export class HindsightClient {
     try {
       const r = await this.pagesReq("GET", "/tree");
       const tree = (await r?.json()) as
-        | { roots?: { id?: string; kind?: string; name?: string }[] }
-        | undefined;
+        { roots?: { id?: string; kind?: string; name?: string }[] } | undefined;
       const hit = (tree?.roots || []).find(
         (n) => n.kind === "folder" && (n.name || "").toLowerCase() === name.toLowerCase()
       );

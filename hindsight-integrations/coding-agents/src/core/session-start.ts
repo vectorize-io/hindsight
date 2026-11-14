@@ -35,6 +35,7 @@ import { diag, readHookEvent } from "./diag";
 import { setLogLevel } from "./log";
 import { parsePageList, buildPagesPreamble, type PageRef } from "./page-injection";
 import type { ClientOpts, RetainOpts } from "./hindsight";
+import type { RetainExtractionMode } from "./missions";
 import { buildRetainStamp } from "./retain-stamp";
 import { detectLegacyClaudePlugin, legacyClaudePluginWarning } from "./legacy";
 import { HindsightClient } from "./hindsight";
@@ -56,6 +57,13 @@ interface SeedContextClient {
   // never deferred — only a confirmed-empty bank is.
   hasDocuments?(): Promise<boolean>;
   pagesSupported?: boolean;
+  // Optional: applies the bank's missions and retain strategies when the deepen engine (which
+  // otherwise does it) is not started. HindsightClient has it; the minimal test clients omit it.
+  configureBankSettings?(opts: {
+    manage?: boolean;
+    extractionMode?: RetainExtractionMode;
+    defaults?: Record<string, unknown>;
+  }): Promise<void>;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
   // minimal test clients omit it, and the baseline write guards on its presence.
   retain?(
@@ -183,6 +191,7 @@ export async function buildSessionStartContext(args: {
   let cold: boolean | undefined; // undefined = not checked (autoSeed off / non-git / unreachable)
   let gitDocIds: Set<string> | undefined; // the cold-check's doc set, reused by the banner's git note
   let bankEmpty = false; // true only when the server confirmed the bank holds no documents
+  let deepening = false; // the background deepen engine was started, and configures the bank
   const harness = args.harness ?? "claude-code";
   const hasGit = args.hasGit ?? hasGitHistory;
   const startSeed = args.startSeed ?? startBackgroundSeed;
@@ -273,6 +282,7 @@ export async function buildSessionStartContext(args: {
           // loader's harness default and misfiles this session's survey + git history into the
           // wrong bank (e.g. `opencode::<project>` for a claude-code session). See #3247.
           startSeed(cwd, { limit: cfg.seedLimit, harness });
+          deepening = true;
           // Cold iff the bank has zero source:git docs and no survey baseline (an undefined result
           // — server error — is NOT treated as cold; we never surveyed/noted on an unconfirmed-empty
           // bank).
@@ -340,6 +350,19 @@ export async function buildSessionStartContext(args: {
         }
       }
     }
+  }
+
+  if (!deepening) {
+    // The deepen engine is what configures the bank; without it a session write-back would name a
+    // `conversation` strategy the bank does not have, and the server would extract it with its
+    // generic rules (CL-Bench: "The user is working on Question 11", "The agent ran a query").
+    await client
+      .configureBankSettings?.({
+        manage: cfg.manageBankConfig,
+        extractionMode: cfg.retainExtractionMode,
+        defaults: cfg.defaultBankConfig,
+      })
+      .catch(() => {}); // best-effort: an unreachable server is retried next session
   }
 
   let pages: PageRef[] = [];

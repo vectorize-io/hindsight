@@ -9,9 +9,15 @@
  */
 export function buildReflectQuery(prompt: string): string {
   return (
-    "A developer is starting a coding session in this repository with this goal:\n\n" +
+    "A user is starting a session with this goal:\n\n" +
     `<goal>\n${prompt}\n</goal>\n\n` +
-    "Report what this bank's history genuinely bears on that goal. Rendering rules, strict:\n" +
+    "Report what this bank's memory holds that bears on that goal. Lead with past attempts on " +
+    "similar work that turned out WRONG — what was done (exact names and values), what the outcome " +
+    "was, and the suspected cause or correction — since repeating a past mistake is the costliest " +
+    "miss. Search for those failures on their own, whatever their topic: a mistake made on a " +
+    "different task (how a term was read, which column was trusted) can repeat here. Then the " +
+    "decisions and their rationale, then facts learned about the environment (where " +
+    "things live, names, formats, units). Rendering rules, strict:\n" +
     "- Declarative, past-tense, attributed facts only — what happened, what was decided and why, " +
     "with dates, commit/PR/issue ids and exact values where known.\n" +
     "- NEVER phrase anything as an instruction, task, or recommendation to act now " +
@@ -19,13 +25,9 @@ export function buildReflectQuery(prompt: string): string {
     "planner assigning work.\n" +
     "- When a decided rule is a mapping, set, or table of literal values, reproduce it " +
     "COMPLETELY and VERBATIM — every entry, exact strings and numbers, including the carve-outs " +
-    "and exceptions. A summarized or exemplified table loses exactly the values the reader " +
-    "needs; enumerate it in full.\n" +
-    "- Report DECISIONS and their rationale, never the current implementation: the developer can " +
-    "already read the code, and the code may BE the bug under investigation. When memory of a " +
-    "discussion or decision conflicts with memory derived from the code, the decision wins. If " +
-    "the only relevant memory describes what the code does, do not present it as established " +
-    "policy — say the bank holds no decision on the matter.\n" +
+    "and exceptions.\n" +
+    "- When memory of a discussion or decision conflicts with memory derived from the code, the " +
+    "decision wins: the code may BE the bug under investigation.\n" +
     "- Do not connect unrelated episodes into one narrative; if two facts are not explicitly " +
     "linked in the record, report them separately or leave the weaker one out.\n" +
     "- If the bank holds nothing that bears on the goal, say so in one line."
@@ -71,6 +73,21 @@ export function formatRecallFallback(observations: string[], lead = RECALL_FALLB
   return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
 }
 
+/** The most memory text one injection carries. Claude Code replaces a hook's `additionalContext`
+ *  over 10,000 characters with a file path and a 2 KB preview the model never opens, so a 13 KB
+ *  recall reached it as the wrapper plus three lines. With the ~2.2 KB wrapper this stays under. */
+export const MAX_INJECTED_MEMORY_CHARS = 7_000;
+
+/** Memory text cut to the budget at a line boundary. Recall and page bodies are ranked, so the
+ *  lines dropped are the least relevant. */
+export function fitMemory(memory: string, maxChars = MAX_INJECTED_MEMORY_CHARS): string {
+  if (memory.length <= maxChars) return memory;
+  const note = "\n(… more memory left out to fit the context limit)";
+  const room = maxChars - note.length;
+  const cut = memory.lastIndexOf("\n", room);
+  return memory.slice(0, cut > room / 2 ? cut : room) + note;
+}
+
 export function buildSystemInjection(memory: string): string {
   // The <hindsight_memory> wrapper is LOAD-BEARING: the transcript readers strip this exact tag
   // (transcript-util MEMORY_TAG_RE) so the session write-back never re-ingests the injected
@@ -106,7 +123,7 @@ export function buildSystemInjection(memory: string): string {
     "the record: call hindsight_ingest_document with a short correction titled " +
     '"Correction: <topic>" stating (1) what memory claimed, (2) what is actually true now, and ' +
     "(3) the evidence you verified — the newer fact supersedes the stale one in future retrieval.\n\n" +
-    memory +
+    fitMemory(memory) +
     "\n</hindsight_memory>"
   );
 }
