@@ -62,58 +62,6 @@ class ModelConfig(BaseModel):
     judge: ModelRef
 
 
-class KnowledgeIngest(BaseModel):
-    """Writing the corpus into a knowledge bank, upload to every document ready or failed."""
-
-    documents: int
-    passages: int
-    failed: int
-    upload_s: float
-    wall_s: float
-    documents_per_s: float
-    passages_per_s: float
-
-
-class KnowledgeLatency(BaseModel):
-    searches: int
-    #: Searches in flight at once. Above 1 the client numbers include queueing.
-    concurrency: int
-    client_p50_ms: float
-    client_p95_ms: float
-
-
-class AgentLatency(BaseModel):
-    """An agent suite's time per question: the whole answer (every LLM and tool call), not one
-    search, so it is kept apart from ``KnowledgeLatency``."""
-
-    questions: int
-    #: Questions in flight at once. Above 1 the numbers include queueing.
-    concurrency: int
-    answer_p50_ms: float
-    answer_p95_ms: float
-
-
-class KnowledgeResult(BaseModel):
-    """One knowledge-bank retrieval suite: scores, not a pass/fail.
-
-    Kept apart from ``EvalRecord`` on purpose: an nDCG is a number to compare across
-    embedders, and folding it into a correct/total count would throw that away.
-    """
-
-    category: str
-    case: str
-    #: ``<provider>:<model>`` as the run names it (see ``knowledge.embedder_name``).
-    embedder: str
-    corpus: int
-    queries: int
-    #: Percentages (x100), as the write-ups report them.
-    metrics: dict[str, float]
-    ingest: KnowledgeIngest | None = None
-    #: Retrieval suites: one search's time. Agent suites report ``agent_latency`` instead.
-    latency: KnowledgeLatency | None = None
-    agent_latency: AgentLatency | None = None
-
-
 class RunReport(BaseModel):
     timestamp: str
     suite: str
@@ -133,7 +81,6 @@ class RunReport(BaseModel):
     #: Operation -> category -> counts: the table a model comparison reads (``eval-table``).
     by_category: dict[str, dict[str, KindSummary]] = Field(default_factory=dict)
     items: list[EvalRecord]
-    knowledge: list[KnowledgeResult] = Field(default_factory=list)
 
     def to_json(self) -> str:
         return self.model_dump_json(by_alias=True, indent=2)
@@ -176,5 +123,3 @@ def case_params(cases: Iterable[Categorised], minimum: Collection[str]) -> list[
 #: Filled by the evals as they finish; written once at session end. A failed
 #: assertion still records its outcome first, so a red run publishes what it saw.
 RECORDED: list[EvalRecord] = []
-#: The knowledge-bank suites' scores, written beside ``items`` at session end.
-KNOWLEDGE: list[KnowledgeResult] = []

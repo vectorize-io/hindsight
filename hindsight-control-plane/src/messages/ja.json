@@ -2444,7 +2444,6 @@
       "columnBank": "バンク",
       "columnDocuments": "ドキュメント",
       "columnPassages": "パッセージ",
-      "columnSize": "サイズ",
       "columnKinds": "種類",
       "columnStatus": "取り込み",
       "columnCreated": "作成日",
@@ -2591,7 +2590,6 @@
     "home": {
       "documents": "ドキュメント",
       "passages": "パッセージ",
-      "size": "サイズ",
       "kindsTitle": "種類別ドキュメント",
       "recentTitle": "最近の更新",
       "title": "ホーム",

@@ -69,7 +69,6 @@ class KnowledgeBankResponse(BaseModel):
     ready_count: int
     pending_count: int
     failed_count: int
-    total_bytes: int
     documents_by_media_type: dict[str, int]
     last_document_at: datetime | None = Field(
         default=None, description="When a document was last added or changed; null for an empty bank"
@@ -332,7 +331,6 @@ def bank_response(info: KnowledgeBankInfo) -> KnowledgeBankResponse:
         ready_count=s.ready_count,
         pending_count=s.pending_count,
         failed_count=s.failed_count,
-        total_bytes=s.total_bytes,
         documents_by_media_type=s.by_media_type,
         last_document_at=s.last_document_at,
     )

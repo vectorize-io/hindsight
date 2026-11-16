@@ -2444,7 +2444,6 @@
       "columnBank": "庫",
       "columnDocuments": "文件",
       "columnPassages": "段落",
-      "columnSize": "大小",
       "columnKinds": "類型",
       "columnStatus": "匯入",
       "columnCreated": "建立時間",
@@ -2591,7 +2590,6 @@
     "home": {
       "documents": "文件",
       "passages": "段落",
-      "size": "大小",
       "kindsTitle": "依類型統計文件",
       "recentTitle": "最近更新",
       "title": "首頁",

@@ -2444,7 +2444,6 @@
       "columnBank": "Banco",
       "columnDocuments": "Documentos",
       "columnPassages": "Trechos",
-      "columnSize": "Tamanho",
       "columnKinds": "Tipos",
       "columnStatus": "Ingestão",
       "columnCreated": "Criado",
@@ -2591,7 +2590,6 @@
     "home": {
       "documents": "Documentos",
       "passages": "Trechos",
-      "size": "Tamanho",
       "kindsTitle": "Documentos por tipo",
       "recentTitle": "Atualizados recentemente",
       "title": "Início",

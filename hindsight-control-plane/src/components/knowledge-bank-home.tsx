@@ -7,7 +7,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
-import { ArrowRight, CircleAlert, FolderOpen, HardDrive, Layers, Network } from "lucide-react";
+import { ArrowRight, CircleAlert, FolderOpen, Layers, Network } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -24,7 +24,6 @@ import {
   fillTimeseries,
   MEDIA_TYPES,
   documentLabel,
-  formatBytes,
   knowledgeBankRoute,
   type ActivityBucket,
   type ActivityPeriod,
@@ -296,14 +295,6 @@ export function KnowledgeBankStats({ bank }: { bank: KnowledgeBank }) {
           </StatLink>
           <StatLink href={documentsHref}>
             <InlineStat icon={Layers} label={t("passages")} value={bank.passage_count} />
-          </StatLink>
-          <StatLink href={documentsHref}>
-            <InlineStat
-              icon={HardDrive}
-              label={t("size")}
-              value={bank.total_bytes}
-              display={formatBytes(bank.total_bytes)}
-            />
           </StatLink>
         </div>
         {bank.failed_count > 0 && (
