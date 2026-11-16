@@ -2444,7 +2444,6 @@
       "columnBank": "Bank",
       "columnDocuments": "Documents",
       "columnPassages": "Passages",
-      "columnSize": "Size",
       "columnKinds": "Kinds",
       "columnStatus": "Ingestion",
       "columnCreated": "Created",
@@ -2591,7 +2590,6 @@
     "home": {
       "documents": "Documents",
       "passages": "Passages",
-      "size": "Size",
       "kindsTitle": "Documents by kind",
       "recentTitle": "Recently updated",
       "title": "Home",

@@ -2444,7 +2444,6 @@
       "columnBank": "뱅크",
       "columnDocuments": "문서",
       "columnPassages": "구절",
-      "columnSize": "크기",
       "columnKinds": "종류",
       "columnStatus": "수집",
       "columnCreated": "생성일",
@@ -2591,7 +2590,6 @@
     "home": {
       "documents": "문서",
       "passages": "구절",
-      "size": "크기",
       "kindsTitle": "종류별 문서",
       "recentTitle": "최근 업데이트",
       "title": "홈",

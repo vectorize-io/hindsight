@@ -11,12 +11,7 @@ import { AlertTriangle, Library, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { client } from "@/lib/api";
-import {
-  MEDIA_TYPES,
-  formatBytes,
-  knowledgeBankRoute,
-  type KnowledgeBank,
-} from "@/lib/knowledge-banks";
+import { MEDIA_TYPES, knowledgeBankRoute, type KnowledgeBank } from "@/lib/knowledge-banks";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { KindIcon } from "@/components/knowledge-passage";
 import { BankKindSwitch } from "@/components/bank-kind-switch";
@@ -344,7 +339,6 @@ export function KnowledgeBanksList() {
               <TableHead>{t("columnBank")}</TableHead>
               <TableHead className="w-28 text-right">{t("columnDocuments")}</TableHead>
               <TableHead className="w-28 text-right">{t("columnPassages")}</TableHead>
-              <TableHead className="w-24 text-right">{t("columnSize")}</TableHead>
               <TableHead className="w-56">{t("columnKinds")}</TableHead>
               <TableHead className="w-36">{t("columnStatus")}</TableHead>
               <TableHead className="w-32">{t("columnCreated")}</TableHead>
@@ -370,9 +364,6 @@ export function KnowledgeBanksList() {
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{bank.document_count}</TableCell>
                 <TableCell className="text-right tabular-nums">{bank.passage_count}</TableCell>
-                <TableCell className="text-right tabular-nums text-muted-foreground">
-                  {formatBytes(bank.total_bytes)}
-                </TableCell>
                 <TableCell>
                   <KindCounts counts={bank.documents_by_media_type} />
                 </TableCell>

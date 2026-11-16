@@ -57,7 +57,6 @@ const bank = {
   ready_count: 3,
   pending_count: 0,
   failed_count: 0,
-  total_bytes: 10,
   documents_by_media_type: { text: 3 },
 };
 

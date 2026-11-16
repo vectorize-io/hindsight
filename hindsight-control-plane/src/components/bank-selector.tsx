@@ -24,7 +24,6 @@ import { BankKindSwitch, type BankKind } from "@/components/bank-kind-switch";
 import { CreateKnowledgeBankDialog } from "@/components/knowledge-banks-list";
 import {
   KNOWLEDGE_UPLOAD_EVENT,
-  formatBytes,
   knowledgeBankRoute,
   type KnowledgeBank,
 } from "@/lib/knowledge-banks";
@@ -257,8 +256,8 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
     return () => window.removeEventListener("hindsight:create-bank", openCreate);
   }, []);
 
-  const maxKnowledgeBytes = React.useMemo(
-    () => Math.max(1, ...(knowledgeBanks ?? []).map((b) => b.total_bytes)),
+  const maxKnowledgeDocs = React.useMemo(
+    () => Math.max(1, ...(knowledgeBanks ?? []).map((b) => b.document_count)),
     [knowledgeBanks]
   );
   const maxFactCount = React.useMemo(
@@ -732,8 +731,8 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
                   <CommandGroup>
                     {visibleKnowledgeBanks.map((bank) => {
                       const isSelected = bank.bank_id === knowledgeBankId;
-                      // Sized like a memory bank's row, by what it holds: bytes here, memories there.
-                      const barPct = (bank.total_bytes / maxKnowledgeBytes) * 100;
+                      // Sized like a memory bank's row, by what it holds: documents here, memories there.
+                      const barPct = (bank.document_count / maxKnowledgeDocs) * 100;
                       return (
                         <CommandItem
                           key={bank.bank_id}
@@ -770,7 +769,7 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
                             <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground/70">
                               {bank.document_count > 0 ? (
                                 <>
-                                  {formatBytes(bank.total_bytes)}
+                                  {formatCompact(bank.document_count)}
                                   <span className="ml-1.5 text-muted-foreground/40">
                                     {bank.last_document_at
                                       ? formatTimeAgo(bank.last_document_at)

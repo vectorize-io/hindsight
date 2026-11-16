@@ -51,7 +51,7 @@ async def test_a_new_bank_starts_empty_and_creating_it_again_returns_it_unchange
             "pending_count": 0,
             "failed_count": 0,
         }
-        assert body["total_bytes"] == 0 and body["documents_by_media_type"] == {}
+        assert body["documents_by_media_type"] == {}
     finally:
         await api_client.delete(f"{KB}/{fresh}")
 

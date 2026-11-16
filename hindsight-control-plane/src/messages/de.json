@@ -2444,7 +2444,6 @@
       "columnBank": "Bank",
       "columnDocuments": "Dokumente",
       "columnPassages": "Abschnitte",
-      "columnSize": "Größe",
       "columnKinds": "Arten",
       "columnStatus": "Aufnahme",
       "columnCreated": "Erstellt",
@@ -2591,7 +2590,6 @@
     "home": {
       "documents": "Dokumente",
       "passages": "Abschnitte",
-      "size": "Größe",
       "kindsTitle": "Dokumente nach Art",
       "recentTitle": "Zuletzt aktualisiert",
       "title": "Start",

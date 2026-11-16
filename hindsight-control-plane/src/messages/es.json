@@ -2444,7 +2444,6 @@
       "columnBank": "Banco",
       "columnDocuments": "Documentos",
       "columnPassages": "Pasajes",
-      "columnSize": "Tamaño",
       "columnKinds": "Tipos",
       "columnStatus": "Ingesta",
       "columnCreated": "Creado",
@@ -2591,7 +2590,6 @@
     "home": {
       "documents": "Documentos",
       "passages": "Pasajes",
-      "size": "Tamaño",
       "kindsTitle": "Documentos por tipo",
       "recentTitle": "Actualizados recientemente",
       "title": "Inicio",

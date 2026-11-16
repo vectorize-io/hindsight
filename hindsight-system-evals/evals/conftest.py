@@ -27,7 +27,6 @@ from hindsight_system_evals import (
 )
 from hindsight_system_evals.pages import SettleFn
 from hindsight_system_evals.report import (
-    KNOWLEDGE,
     RECORDED,
     ModelConfig,
     ModelRef,
@@ -198,6 +197,5 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         },
         by_category=by_category(RECORDED),
         items=RECORDED,
-        knowledge=KNOWLEDGE,
     )
     Path(output).write_text(report.to_json(), encoding="utf-8")

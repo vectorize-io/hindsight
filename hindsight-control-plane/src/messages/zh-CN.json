@@ -2444,7 +2444,6 @@
       "columnBank": "库",
       "columnDocuments": "文档",
       "columnPassages": "段落",
-      "columnSize": "大小",
       "columnKinds": "类型",
       "columnStatus": "导入",
       "columnCreated": "创建时间",
@@ -2591,7 +2590,6 @@
     "home": {
       "documents": "文档",
       "passages": "段落",
-      "size": "大小",
       "kindsTitle": "按类型统计文档",
       "recentTitle": "最近更新",
       "title": "首页",
