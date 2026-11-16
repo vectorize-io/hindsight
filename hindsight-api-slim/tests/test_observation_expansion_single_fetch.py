@@ -513,3 +513,10 @@ async def test_oracle_fused_query_is_one_statement():
     # Bind order: seeds, budget, then the window bounds.
     assert params == (seeds, 100, after, before)
     assert sql.count("$1::uuid[]") >= 4, "the seed bind reaches every arm"
+
+    # Set-wise scoring + ROW_NUMBER() ranking avoid Oracle's LATERAL / correlated-subquery
+    # nested loop over observation_sources.
+    assert "CROSS JOIN LATERAL" not in normalized_sql
+    assert "ROW_NUMBER() OVER (" in normalized_sql
+    assert "obs_scores AS (" in normalized_sql
+    assert "GROUP BY os.observation_id" in normalized_sql
