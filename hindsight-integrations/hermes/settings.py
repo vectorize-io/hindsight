@@ -44,12 +44,12 @@ _HINDSIGHT_GLYPH = "👁️"
 _MIN_VERSION_FOR_UPDATE_MODE_APPEND = "0.5.0"
 _VALID_BUDGETS = {"low", "mid", "high"}
 _PROVIDER_DEFAULT_MODELS = {
-    "openai": "gpt-4o-mini",
-    "anthropic": "claude-haiku-4-5",
+    "openai": "gpt-5-nano",
+    "anthropic": "claude-haiku-5-5",
     "gemini": "gemini-3.8-flash",
     "groq": "openai/gpt-oss-120b",
     "openrouter": "qwen/qwen3.5-9b",
-    "minimax": "MiniMax-M2.7",
+    "minimax": "MiniMax-M3",
     "ollama": "gemma3:12b",
     "lmstudio": "local-model",
     "openai_compatible": "your-model-name",

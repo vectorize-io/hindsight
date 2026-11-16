@@ -5,7 +5,7 @@ Hindsight uses four kinds of model. Only the LLM needs setting up: the embedding
 
 | Model | What it does | Default |
 |---|---|---|
-| [**LLM**](#llm) | Extracts facts on retain, consolidates observations, writes reflect answers and pages | `openai` provider, `gpt-4o-mini` |
+| [**LLM**](#llm) | Extracts facts on retain, consolidates observations, writes reflect answers and pages | `openai` provider, `gpt-5-nano` |
 | [**Embedding model**](#embedding-model) | Turns text into vectors for semantic search | `BAAI/bge-small-en-v1.5`, local |
 | [**Reranker**](#cross-encoder-reranker) | Orders recall candidates by relevance | `hindsight-ai/hs-rerank-1`, local |
 | [**Decision model**](#decision-model) | Answers quick typed judgments so recall, consolidation, reflect and pages skip LLM calls | Off. See [Decision Models](./decision-models.md) |
@@ -99,7 +99,7 @@ OpenAI's Chat Completions API, and any API that speaks it: Together AI, vLLM, a 
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=openai
 export HINDSIGHT_API_LLM_API_KEY=sk-xxxxxxxxxxxx
-export HINDSIGHT_API_LLM_MODEL=gpt-5.6-luna   # default: gpt-4o-mini
+export HINDSIGHT_API_LLM_MODEL=gpt-5.6-luna   # default: gpt-5-nano
 ```
 
 The `openai` provider calls the Chat Completions API (`/v1/chat/completions`), so it works with **any OpenAI-compatible API** (Together AI, vLLM, a gateway, ...): set `HINDSIGHT_API_LLM_BASE_URL` to the URL that serves `/chat/completions`. For most providers that is the URL ending in `/v1`, **not** the account or resource root. Azure OpenAI doesn't serve the API at the resource root, so `https://<resource>.openai.azure.com` alone returns `404 Resource not found`; see [Azure OpenAI Setup](#azure-openai-setup) for the URL shapes that work.
@@ -131,7 +131,7 @@ Claude models through the Anthropic API.
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=anthropic
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
-# export HINDSIGHT_API_LLM_MODEL=claude-haiku-4-5   # the default
+# export HINDSIGHT_API_LLM_MODEL=claude-haiku-5-5   # the default
 ```
 
 </ProviderSetup>
@@ -145,7 +145,7 @@ Gemini models through the Gemini API, with Batch API and prompt caching. On Goog
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=gemini
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
-# export HINDSIGHT_API_LLM_MODEL=gemini-3.5-flash   # the default
+# export HINDSIGHT_API_LLM_MODEL=gemini-3.8-flash   # the default
 ```
 
 </ProviderSetup>
@@ -194,14 +194,14 @@ export HINDSIGHT_API_LLM_API_KEY=your-api-key
 
 ### z.ai (GLM) {#llm-zai}
 
-GLM models on z.ai. `glm-4.5-flash` is free; `glm-4.5-air` is the paid tier.
+GLM models on z.ai. The default is `glm-5.3-flash`; `glm-4.5-flash` is the free tier.
 
 <ProviderSetup>
 
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=zai
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
-# export HINDSIGHT_API_LLM_MODEL=glm-4.5-flash   # the default
+# export HINDSIGHT_API_LLM_MODEL=glm-5.3-flash   # the default
 ```
 
 </ProviderSetup>
@@ -274,14 +274,14 @@ If a model fails with "No endpoints found that can handle the requested paramete
 
 ### Requesty {#llm-requesty}
 
-Requesty's router, with provider-prefixed model names such as `openai/gpt-4o-mini`.
+Requesty's router, with provider-prefixed model names such as `openai/gpt-5-nano`.
 
 <ProviderSetup>
 
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=requesty
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
-# export HINDSIGHT_API_LLM_MODEL=openai/gpt-4o-mini   # the default
+# export HINDSIGHT_API_LLM_MODEL=openai/gpt-5-nano   # the default
 ```
 
 </ProviderSetup>
@@ -295,7 +295,7 @@ Models on Fireworks AI, named by their full path, for example `accounts/firework
 ```bash
 export HINDSIGHT_API_LLM_PROVIDER=fireworks
 export HINDSIGHT_API_LLM_API_KEY=your-api-key
-# export HINDSIGHT_API_LLM_MODEL=accounts/fireworks/models/llama-v3p1-8b-instruct   # the default
+# export HINDSIGHT_API_LLM_MODEL=accounts/fireworks/models/deepseek-v4-flash   # the default
 ```
 
 </ProviderSetup>

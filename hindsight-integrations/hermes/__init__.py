@@ -717,7 +717,7 @@ class HindsightMemoryProvider(MemoryProvider):
             {
                 "key": "llm_model",
                 "description": "LLM model",
-                "default": "gpt-4o-mini",
+                "default": "gpt-5-nano",
                 "default_from": {"field": "llm_provider", "map": _PROVIDER_DEFAULT_MODELS},
                 "when": {"mode": "local_embedded"},
             },

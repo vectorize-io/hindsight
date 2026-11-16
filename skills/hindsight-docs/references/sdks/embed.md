@@ -117,7 +117,7 @@ The control center runs as a separate process from the memory daemon. Stopping o
 |----------|-------------|---------|
 | `HINDSIGHT_API_LLM_API_KEY` | **Required**. API key for LLM provider | - |
 | `HINDSIGHT_API_LLM_PROVIDER` | LLM provider: `openai`, `anthropic`, `gemini`, `groq`, `minimax`, `ollama` | `openai` |
-| `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-4o-mini` |
+| `HINDSIGHT_API_LLM_MODEL` | Model name | `gpt-5-nano` |
 | `HINDSIGHT_EMBED_DAEMON_LOG_MAX_BYTES` | Rotate the daemon log at startup when it reaches this size; `0` disables rotation | `10485760` (10 MiB) |
 | `HINDSIGHT_EMBED_DAEMON_LOG_BACKUP_COUNT` | Retained backups; `0` truncates a full log at startup | `3` |
 | `HINDSIGHT_EMBED_CONTROL_PORT` | Default port for `hindsight-embed control start` | `7878` |

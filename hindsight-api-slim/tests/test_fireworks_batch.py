@@ -95,7 +95,7 @@ def test_fireworks_requires_api_key():
 def test_fireworks_has_default_model():
     from hindsight_api.config import PROVIDER_DEFAULT_MODELS
 
-    assert PROVIDER_DEFAULT_MODELS["fireworks"] == "accounts/fireworks/models/llama-v3p1-8b-instruct"
+    assert PROVIDER_DEFAULT_MODELS["fireworks"] == "accounts/fireworks/models/deepseek-v4-flash"
 
 
 # --------------------------------------------------------------------------
