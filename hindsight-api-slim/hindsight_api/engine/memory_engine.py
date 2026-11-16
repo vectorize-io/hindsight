@@ -7226,6 +7226,9 @@ class MemoryEngine(MemoryEngineInterface):
         # race each other — unlike the queued path, which still rejects
         # duplicates (see submit_async_retain).
 
+        if document_tags is None:
+            await self._carry_document_tags_onto_appends(bank_id, contents)
+
         await self._validate_retain_update_modes(bank_id, contents, request_context)
 
         # Fold items that share an explicit document_id into one document. On the
@@ -23664,6 +23667,39 @@ class MemoryEngine(MemoryEngineInterface):
             metadata = json.loads(metadata)
         items_count = int(metadata.get("items_count", 0)) if metadata else 0
         return {"operation_id": str(operation_id), "items_count": items_count}
+
+    async def _carry_document_tags_onto_appends(self, bank_id: str, contents: list[RetainContentDict]) -> None:
+        """Give an append that omits ``tags`` the document's current tags (#6551).
+
+        An append adds a turn; it does not restate the document's labels. The document row and every
+        existing memory are relabelled from the item's tags, so an omitted field cleared them all.
+        Setting them on the ITEM covers the row, the survivors and the new units at once, and every
+        sub-batch of an oversized append, since each one replays this item.
+
+        ponytail: read outside the append's write, so a tags PATCH landing in between is reverted.
+        Appends to one document run one at a time, so the window is short; read inside the write if
+        that ever matters.
+        """
+        append_items = [
+            item
+            for item in contents
+            if item.get("update_mode") == "append" and "tags" not in item and item.get("document_id")
+        ]
+        if not append_items:
+            return
+        from .memories import get_memories
+
+        async with acquire_with_retry(await self._get_backend()) as conn:
+            current = await get_memories().existing_documents_tags(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                document_ids=sorted({str(item["document_id"]) for item in append_items}),
+            )
+        for item in append_items:
+            tags = current.get(str(item["document_id"]))
+            if tags:
+                item["tags"] = list(tags)
 
     async def _validate_retain_update_modes(
         self, bank_id: str, contents: "Sequence[Mapping[str, Any]]", request_context: "RequestContext"
