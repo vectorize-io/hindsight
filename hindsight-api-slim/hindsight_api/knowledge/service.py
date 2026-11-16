@@ -1768,6 +1768,19 @@ class KnowledgeService:
             await self._on_search_complete(bank_id, request, budget_trace.tokens_used, len(items), request_context)
             return items
 
+    async def _fire_completion_hook(self, make_coro: Callable[[Any], Awaitable[None]]) -> None:
+        """Fire a post-operation metering hook in isolation. Metering is best-effort: an extension
+        hook that raises must not fail the knowledge-bank operation whose success the caller already
+        saw — a search returns its results, an ingest has already committed its passages (and is
+        fired from inside the batch's retry try), a delete is already done. Logs and swallows."""
+        validator = self._engine._operation_validator
+        if validator is None:
+            return
+        try:
+            await make_coro(validator)
+        except Exception:
+            logger.warning("A knowledge-bank metering hook raised; ignoring", exc_info=True)
+
     async def _on_search_complete(
         self,
         bank_id: str,
@@ -1777,49 +1790,46 @@ class KnowledgeService:
         request_context: RequestContext,
     ) -> None:
         """Fire the validator's post-search hook with what the results weigh (see
-        on_knowledge_bank_search_complete). A no-op when no validator is registered."""
-        validator = self._engine._operation_validator
-        if validator is None:
-            return
-        await validator.on_knowledge_bank_search_complete(
-            KnowledgeBankSearchResult(
-                bank_id=bank_id,
-                query=request.query or "",
-                request_context=request_context,
-                results_tokens=results_tokens,
-                result_count=result_count,
+        on_knowledge_bank_search_complete). Always fires: a search is a search even with no results."""
+        await self._fire_completion_hook(
+            lambda v: v.on_knowledge_bank_search_complete(
+                KnowledgeBankSearchResult(
+                    bank_id=bank_id,
+                    query=request.query or "",
+                    request_context=request_context,
+                    results_tokens=results_tokens,
+                    result_count=result_count,
+                )
             )
         )
 
     async def _on_ingest_complete(self, bank_id: str, caller: dict[str, Any] | None, passages: int) -> None:
         """Fire the validator's post-ingest hook with how many passages committed (see
         on_knowledge_bank_ingest_complete). The worker has no RequestContext, so the tenant comes
-        from the caller recorded when the ingest was queued. A no-op with no validator or no passages."""
+        from the caller recorded when the ingest was queued. A no-op when nothing committed."""
         if passages <= 0:
             return
-        validator = self._engine._operation_validator
-        if validator is None:
-            return
         caller = caller or {}
-        await validator.on_knowledge_bank_ingest_complete(
-            KnowledgeBankIngestResult(
-                bank_id=bank_id,
-                tenant_id=caller.get("_tenant_id"),
-                api_key_id=caller.get("_api_key_id"),
-                passages=passages,
+        await self._fire_completion_hook(
+            lambda v: v.on_knowledge_bank_ingest_complete(
+                KnowledgeBankIngestResult(
+                    bank_id=bank_id,
+                    tenant_id=caller.get("_tenant_id"),
+                    api_key_id=caller.get("_api_key_id"),
+                    passages=passages,
+                )
             )
         )
 
     async def _on_delete_complete(self, bank_id: str, request_context: RequestContext, passages: int) -> None:
         """Fire the validator's post-delete hook with how many passages went with the deletion (see
-        on_knowledge_bank_delete_complete). A no-op with no validator or nothing removed."""
+        on_knowledge_bank_delete_complete). A no-op when nothing was removed."""
         if passages <= 0:
             return
-        validator = self._engine._operation_validator
-        if validator is None:
-            return
-        await validator.on_knowledge_bank_delete_complete(
-            KnowledgeBankDeleteResult(bank_id=bank_id, request_context=request_context, passages=passages)
+        await self._fire_completion_hook(
+            lambda v: v.on_knowledge_bank_delete_complete(
+                KnowledgeBankDeleteResult(bank_id=bank_id, request_context=request_context, passages=passages)
+            )
         )
 
     async def _embed_query(self, request: SearchRequest) -> list[float]:
