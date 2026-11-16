@@ -470,7 +470,11 @@ def split_media(
             out = str(Path(tmp) / f"w.{'mp4' if kind == 'video' else 'm4a'}")
             args = [ffmpeg, "-loglevel", "error", "-y", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", source]
             if kind == "video":
-                args += ["-vf", "scale=-2:'min(480,ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28"]
+                # libx264 with yuv420p needs even sides: -2 keeps the width even, and the height is rounded down
+                # to even too. A plain min(480,ih) kept an odd source height (DiDeMo's 500x375) and every window
+                # of that video failed to encode.
+                args += ["-vf", "scale=-2:'2*trunc(min(480,ih)/2)'", "-c:v", "libx264", "-preset", "veryfast"]
+                args += ["-crf", "28"]
                 args += ["-pix_fmt", "yuv420p"]
                 args += ["-c:a", "aac", "-b:a", "64k", "-ac", "1"] if has_audio else ["-an"]
             else:

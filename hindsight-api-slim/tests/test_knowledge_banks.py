@@ -114,15 +114,16 @@ def _text_pdf(text: str) -> bytes:
     return out.getvalue()
 
 
-def _tone(seconds: int, *, video: bool) -> bytes:
+def _tone(seconds: int, *, video: bool, size: str = "160x120") -> bytes:
     with __import__("tempfile").TemporaryDirectory() as tmp:
         out = f"{tmp}/clip.{'mp4' if video else 'm4a'}"
         args = ["ffmpeg", "-loglevel", "error", "-y"]
         if video:
-            args += ["-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=160x120:rate=5"]
+            args += ["-f", "lavfi", "-i", f"testsrc=duration={seconds}:size={size}:rate=5"]
         args += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}"]
         if video:
-            args += ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
+            # mpeg4 takes odd sides, which libx264 with yuv420p refuses
+            args += ["-c:v", "mpeg4"] if int(size.split("x")[1]) % 2 else ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
         subprocess.run([*args, "-c:a", "aac", "-shortest", out], check=True)
         return open(out, "rb").read()
 
@@ -232,6 +233,9 @@ def test_audio_and_video_are_cut_into_timed_windows():
     assert len(video) == 1 and video[0].mime == "video/mp4"
     assert media.decode_video_frames(video[0].data or b"").shape[1:] == (448, 448, 3)
     assert media.decode_audio_pcm(video[0].data or b"").size > 16000 * 7
+    # an odd source height (DiDeMo has 500x375 videos) is rounded to an even one the encoder accepts
+    odd = list(media.split_media(_tone(4, video=True, size="161x119"), "video", filename="v.mp4", window_seconds=30, overlap_seconds=5, max_seconds=3600))  # fmt: skip
+    assert len(odd) == 1 and media.decode_video_frames(odd[0].data or b"").shape[1:] == (448, 448, 3)
     with pytest.raises(media.MediaError, match="limit is 5s"):
         list(media.split_media(_tone(8, video=False), "audio", filename="a.m4a", window_seconds=30, overlap_seconds=5, max_seconds=5))  # fmt: skip
 
