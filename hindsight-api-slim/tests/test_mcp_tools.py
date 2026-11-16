@@ -87,6 +87,13 @@ class TestBuildContentDict:
         assert error is None
         assert "event_date" not in result
 
+    @pytest.mark.parametrize("content", ["", "   ", "\n\t"])
+    def test_rejects_empty_content(self, content):
+        """Empty content must not reach extraction, where it retried forever (issue #6567)."""
+        result, error = build_content_dict(content, "test_context")
+        assert error == "content cannot be empty"
+        assert result == {}
+
 
 # =========================================================================
 # Mental Model MCP Tool Tests

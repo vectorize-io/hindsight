@@ -249,7 +249,7 @@ async def test_http_retain_works(none_api_client):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("content", ["", "   \n\t"])
+@pytest.mark.parametrize("content", ["", "   \n\t", [], [{"type": "text", "text": " "}]])
 async def test_http_retain_rejects_blank_content(none_api_client, content):
     """Retain endpoint should reject empty or whitespace-only content."""
     bank_id = f"test_none_http_retain_blank_{datetime.now(timezone.utc).timestamp()}"
