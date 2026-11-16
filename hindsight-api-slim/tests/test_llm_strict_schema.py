@@ -266,7 +266,7 @@ async def test_openai_compatible_json_mode_picks_soft_path(provider, override, e
         )
     kwargs = create.call_args.kwargs
     assert ("response_format" in kwargs) is expected
-    assert "valid JSON matching this schema" in kwargs["messages"][0]["content"]
+    assert "shaped as this JSON Schema describes" in kwargs["messages"][0]["content"]
 
 
 @pytest.mark.parametrize("enforce,expected_type", [(False, "json_object"), (True, "json_schema")])
@@ -287,7 +287,7 @@ async def test_openai_compatible_soft_path_can_enforce_the_schema(enforce, expec
     rf = create.call_args.kwargs["response_format"]
     assert rf["type"] == expected_type
     # The prompt carries the schema either way: a grammar forces only the required fields.
-    assert "valid JSON matching this schema" in create.call_args.kwargs["messages"][0]["content"]
+    assert "shaped as this JSON Schema describes" in create.call_args.kwargs["messages"][0]["content"]
     if enforce:
         assert rf["json_schema"]["strict"] is False
         assert rf["json_schema"]["schema"] == provider_json_schema(_Resp)
@@ -320,7 +320,7 @@ async def test_retain_json_mode_override_beats_enforcement(scope, expected_type,
         )
     kwargs = create.call_args.kwargs
     assert (kwargs.get("response_format") or {}).get("type") == expected_type
-    assert ("valid JSON matching this schema" in kwargs["messages"][0]["content"]) is schema_in_prompt
+    assert ("shaped as this JSON Schema describes" in kwargs["messages"][0]["content"]) is schema_in_prompt
 
 
 def test_openai_compatible_json_mode_env(monkeypatch):

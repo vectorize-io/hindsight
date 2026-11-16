@@ -37,6 +37,7 @@ paths.
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ..config import LLM_STRATEGY_FAILOVER, LLM_STRATEGY_METADATA, LLMStrategyConfig
@@ -192,13 +193,34 @@ class MultiLLMProvider:
                 return self._members[route.member]
         return None
 
-    async def _dispatch(self, method_name: str, **kwargs: Any) -> Any:
+    async def _dispatch(
+        self, method_name: str, accept_reply: Callable[[Any], bool] | None = None, **kwargs: Any
+    ) -> Any:
         last_exc: BaseException | None = None
+        rejected: Any = None
         order = self._member_order()
         for position, idx in enumerate(order):
             member = self._members[idx]
             try:
                 result = await getattr(member, method_name)(**kwargs)
+                if accept_reply is not None and not accept_reply(result):
+                    # A reply the caller cannot use is this member failing this input,
+                    # not the member being down: try the next member, but don't cool this
+                    # one down. Gemma 4 on vLLM, decoding retain unconstrained, sometimes
+                    # answers with the JSON schema from its prompt instead of the facts;
+                    # that is a normal reply to the transport, so without this the chain
+                    # never reaches its fallback and the whole document fails to retain.
+                    remaining = len(order) - position - 1
+                    logger.warning(
+                        "LLM member %d (%s/%s) gave an unusable reply on %s%s",
+                        idx,
+                        member.provider,
+                        member.model,
+                        method_name,
+                        f"; trying next member ({remaining} left)" if remaining else "; no members left",
+                    )
+                    rejected = result
+                    continue
             except BaseException as e:  # noqa: BLE001 - re-raised unless it should fail over
                 if not _should_failover(e):
                     raise
@@ -220,12 +242,19 @@ class MultiLLMProvider:
                 self._cooldown_until.pop(idx, None)
                 logger.info("LLM member %d (%s/%s) recovered", idx, member.provider, member.model)
             return result
-        # All members failed; surface the last error (loop ran at least once).
-        assert last_exc is not None
+        # Every member rejected or failed. A rejected reply goes back to the caller, whose
+        # own handling of an unusable reply applies, as it would without a chain.
+        if rejected is not None:
+            return rejected
+        assert last_exc is not None  # the loop ran at least once
         raise last_exc
 
-    async def call(self, messages: list[dict[str, Any]], **kwargs: Any) -> Any:
-        return await self._dispatch("call", messages=messages, **kwargs)
+    async def call(
+        self, messages: list[dict[str, Any]], accept_reply: Callable[[Any], bool] | None = None, **kwargs: Any
+    ) -> Any:
+        """Call the members in order. ``accept_reply`` lets the caller reject a reply that
+        parsed but is unusable, which then counts as that member failing the input."""
+        return await self._dispatch("call", accept_reply=accept_reply, messages=messages, **kwargs)
 
     async def call_with_tools(
         self,
