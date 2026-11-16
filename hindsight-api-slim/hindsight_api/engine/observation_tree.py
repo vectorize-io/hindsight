@@ -392,9 +392,11 @@ def _ranked(node: _Node, observations: list[TreeObservation]) -> list[TreeObserv
     ]
 
 
-def _link(node: _Node) -> str:
-    """A bundle-relative link, as OKF recommends."""
-    return "/" + _file_path(node)
+def _link(source: _Node, target: _Node) -> str:
+    """A link relative to the file it sits in (./x.md, ../y/z.md), so the bundle works wherever it is
+    mounted or unpacked: an absolute /x.md resolves against the host's root, not the bundle's."""
+    rel = posixpath.relpath(_file_path(target), posixpath.dirname(_file_path(source)) or ".")
+    return rel if rel.startswith("../") else "./" + rel
 
 
 def _latest(node: _Node, observations: list[TreeObservation]) -> datetime | None:
@@ -428,7 +430,7 @@ def _render_topic(node: _Node, observations: list[TreeObservation], related: lis
     if node.top_entities:
         lines += ["", "**About:** " + ", ".join(node.top_entities)]
     if related:
-        lines += ["", "**Related:** " + ", ".join(f"[{r.path}]({_link(r)})" for r in related)]
+        lines += ["", "**Related:** " + ", ".join(f"[{r.path}]({_link(node, r)})" for r in related)]
     lines += ["", "## Observations", ""] + [_line(o) for o in ranked]
     return TreeFile(
         path=_file_path(node),
@@ -460,7 +462,7 @@ def _render(
     lines += ["", "## Topics", ""]
     for c in children:
         about = f"; about {', '.join(c.top_entities[:3])}" if c.top_entities else ""
-        lines.append(f"* [{_title(c)}]({_link(c)}) - {len(c.members)} observations{about}")
+        lines.append(f"* [{_title(c)}]({_link(node, c)}) - {len(c.members)} observations{about}")
     lines += ["", "## Best supported", ""] + [_line(o) for o in ranked[:SUMMARY_TOP]]
     folder.files.append(
         TreeFile(
