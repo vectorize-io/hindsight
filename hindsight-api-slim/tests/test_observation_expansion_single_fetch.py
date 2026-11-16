@@ -517,6 +517,9 @@ async def test_oracle_fused_query_is_one_statement():
     # Set-wise scoring + ROW_NUMBER() ranking avoid Oracle's LATERAL / correlated-subquery
     # nested loop over observation_sources.
     assert "CROSS JOIN LATERAL" not in normalized_sql
-    assert "ROW_NUMBER() OVER (" in normalized_sql
+    assert "entity_units_ranked AS (" in normalized_sql
+    assert "PARTITION BY ue_target.entity_id" in normalized_sql
+    assert "connected_sources AS (" in normalized_sql
+    assert "eur.rn <=" in normalized_sql
     assert "obs_scores AS (" in normalized_sql
     assert "GROUP BY os.observation_id" in normalized_sql
