@@ -211,6 +211,16 @@ def test_a_named_encoding_counts_and_truncates(name):
     assert many == truncated
 
 
+@pytest.mark.parametrize("name", [None, *BUNDLED_ENCODINGS, *ESTIMATED_ENCODINGS])
+def test_half_an_emoji_is_counted_not_raised(name):
+    """A string cut mid-emoji holds a lone UTF-16 surrogate (legal in JSON and in Python, not
+    in UTF-8). Counting or truncating it must not raise: it reaches us as user content."""
+    text = "cut here \ud83e " * 20
+    assert count_tokens(text, name) > 0
+    assert count_tokens(truncate_to_tokens(text, 5, name).text, name) <= 5
+    assert len(truncate_many_to_tokens([text, "fine"], 5, name)) == 2
+
+
 def test_an_unknown_named_encoding_lists_what_would_work():
     with pytest.raises(ValueError, match="jev"):
         check_encoding("nope")

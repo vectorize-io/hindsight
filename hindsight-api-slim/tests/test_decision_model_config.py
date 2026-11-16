@@ -325,10 +325,11 @@ def test_typesafe_counts_in_jevs_own_vocabulary_by_default(monkeypatch):
     assert _config(monkeypatch, _GLOBAL).decision_model_config("recall").tokenizer == "jev"
 
 
-def test_the_tokenizer_follows_the_model_not_the_provider(monkeypatch):
+@pytest.mark.parametrize("tokenizer", ["qwen3.5", "hs-decide-1-flash"])
+def test_the_tokenizer_follows_the_model_not_the_provider(monkeypatch, tokenizer):
     """A System One endpoint serving another model names that model's vocabulary."""
-    config = _config(monkeypatch, {**_GLOBAL, "HINDSIGHT_API_DECISION_MODEL_TOKENIZER": "qwen3.5"})
-    assert config.decision_model_config("recall").tokenizer == "qwen3.5"
+    config = _config(monkeypatch, {**_GLOBAL, "HINDSIGHT_API_DECISION_MODEL_TOKENIZER": tokenizer})
+    assert config.decision_model_config("recall").tokenizer == tokenizer
 
 
 def test_an_unknown_tokenizer_fails_at_setup(monkeypatch):
