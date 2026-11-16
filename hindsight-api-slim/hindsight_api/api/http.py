@@ -45,6 +45,7 @@ from hindsight_api.engine.audit import (
 )
 from hindsight_api.engine.document_history import DocumentHistoryResponse
 from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse, LLMStatsSplit
+from hindsight_api.engine.observation_tree import TreeFolder
 from hindsight_api.extensions import AuthenticationError, PrecheckContext, PrecheckOperation
 
 
@@ -858,7 +859,7 @@ class ObservationTreeFolder(BaseModel):
     files: list[ObservationTreeFile]
 
 
-def _observation_tree_json(tree: Any) -> str:
+def _observation_tree_json(tree: TreeFolder) -> str:
     """The observation tree as the response body. Read straight off the engine's dataclasses: a
     large bank's tree is megabytes of text, and ``dataclasses.asdict`` would deep-copy all of it
     first."""

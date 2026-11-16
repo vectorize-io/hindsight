@@ -1,10 +1,12 @@
 """The observation tree groups observations by subject, keeps every one, and is deterministic."""
 
+import dataclasses
 import json
 import random
 import re
 from datetime import datetime, timezone
 
+from hindsight_api.api.http import ObservationTreeFolder, _observation_tree_json
 from hindsight_api.engine.observation_tree import (
     LEAF_MAX,
     OKF_VERSION,
@@ -295,10 +297,6 @@ def test_a_bank_small_enough_for_one_file_titles_its_topic_and_keeps_its_path():
 def test_the_response_body_matches_the_tree():
     """The endpoint serialises the tree straight from its dataclasses; the body is what the
     response model makes of a plain copy of the tree."""
-    import dataclasses
-
-    from hindsight_api.api.http import ObservationTreeFolder, _observation_tree_json
-
     tree = build_observation_tree(_bank())
     expected = ObservationTreeFolder.model_validate(dataclasses.asdict(tree)).model_dump(mode="json")
     assert json.loads(_observation_tree_json(tree)) == expected
