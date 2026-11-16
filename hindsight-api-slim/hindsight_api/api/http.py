@@ -6,7 +6,6 @@ the FastAPI application with all API endpoints.
 """
 
 import asyncio
-import dataclasses
 import gc
 import json
 import logging
@@ -46,6 +45,7 @@ from hindsight_api.engine.audit import (
 )
 from hindsight_api.engine.document_history import DocumentHistoryResponse
 from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse, LLMStatsSplit
+from hindsight_api.engine.observation_tree import TreeFolder
 from hindsight_api.extensions import AuthenticationError, PrecheckContext, PrecheckOperation
 
 
@@ -857,6 +857,13 @@ class ObservationTreeFolder(BaseModel):
     observation_count: int
     folders: list["ObservationTreeFolder"]
     files: list[ObservationTreeFile]
+
+
+def _observation_tree_json(tree: TreeFolder) -> str:
+    """The observation tree as the response body. Read straight off the engine's dataclasses: a
+    large bank's tree is megabytes of text, and ``dataclasses.asdict`` would deep-copy all of it
+    first."""
+    return ObservationTreeFolder.model_validate(tree, from_attributes=True).model_dump_json()
 
 
 class EntityListResponse(BaseModel):
@@ -6233,7 +6240,12 @@ def _register_routes(app: FastAPI):
                 tag_groups=_parse_tag_groups_query(tag_groups, tags),
                 request_context=request_context,
             )
-            return ObservationTreeFolder.model_validate(dataclasses.asdict(tree))
+            # Validated and encoded off the event loop, like the build: for a large bank this is
+            # seconds of CPU that would otherwise hold every other request on this worker. Returned
+            # as a ready body so FastAPI does not validate and encode it a second time on the loop.
+            return Response(
+                content=await asyncio.to_thread(_observation_tree_json, tree), media_type="application/json"
+            )
         except OperationValidationError as e:
             raise HTTPException(status_code=e.status_code, detail=e.reason)
         except (AuthenticationError, HTTPException):

@@ -1,6 +1,7 @@
 """GET /observation-tree: a bank's observations come back as topic files, every one exactly once."""
 
 import json
+import threading
 import uuid
 
 import httpx
@@ -143,3 +144,33 @@ async def test_observation_tree_for_one_scope(api_client: httpx.AsyncClient, mem
 
     rejected = await api_client.get(url, params={"tags": "team:a", "tag_groups": groups})
     assert rejected.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_observation_tree_is_serialised_off_the_event_loop(
+    api_client: httpx.AsyncClient, memory: MemoryEngine, request_context: RequestContext, monkeypatch
+):
+    """A large bank's tree is seconds of CPU to validate and encode: on the event loop that
+    would hold every other request on the worker."""
+    from hindsight_api.api import http
+
+    bank_id = f"test-observation-tree-loop-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        await _seed(conn, bank_id, "redis", ["Redis"], 3)
+
+    loop_thread = threading.get_ident()
+    threads = []
+    serialise = http._observation_tree_json
+
+    def recording(tree):
+        threads.append(threading.get_ident())
+        return serialise(tree)
+
+    monkeypatch.setattr(http, "_observation_tree_json", recording)
+    response = await api_client.get(f"/v1/default/banks/{bank_id}/observations/tree")
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "application/json"
+    assert response.json()["observation_count"] == 3
+    assert threads and loop_thread not in threads
