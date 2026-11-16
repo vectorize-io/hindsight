@@ -514,6 +514,7 @@ def try_resolve(url_path, refs_dir):
             return candidate
     return None
 
+fence_pattern = re.compile(r'(^```.*?^```)', re.MULTILINE | re.DOTALL)
 image_pattern = re.compile(r'!\[[^\]]*\]\([^)]*\)')
 html_img_pattern = re.compile(r'<img\b[^>]*/?>',  re.IGNORECASE)
 
@@ -552,8 +553,12 @@ for md_file in refs_dir.rglob("*.md"):
                 return f'[{text}]({candidate}{sep}{frag})'
         return match.group(0)
 
-    new_content = link_pattern.sub(rewrite, content)
-    new_content = relative_link_pattern.sub(rewrite_relative, new_content)
+    # Fenced code blocks are sample text (e.g. a generated markdown file shown as-is): leave their
+    # links alone. The split keeps each fence at an odd index.
+    parts = fence_pattern.split(content)
+    for i in range(0, len(parts), 2):
+        parts[i] = relative_link_pattern.sub(rewrite_relative, link_pattern.sub(rewrite, parts[i]))
+    new_content = ''.join(parts)
     if new_content != original_content:
         md_file.write_text(new_content)
         changed += 1
@@ -574,8 +579,11 @@ errors = []
 # Find all markdown links: [text](url) — exclude images too
 link_pattern = re.compile(r'\[([^\]]*)\]\(([^)]+)\)')
 
+# Links inside fenced code blocks are sample text, not links the skill must resolve.
+fence_pattern = re.compile(r'^```.*?^```', re.MULTILINE | re.DOTALL)
+
 for md_file in skill_dir.rglob("*.md"):
-    content = md_file.read_text()
+    content = fence_pattern.sub('', md_file.read_text())
     for match in link_pattern.finditer(content):
         url = match.group(2).split("#")[0].strip()  # strip anchors
         if not url:

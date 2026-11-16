@@ -45,7 +45,7 @@ generated:
 
 **About:** Gemma, vLLM, NVFP4
 
-**Related:** postgres
+**Related:** [postgres](../postgres.md)
 
 ## Observations
 
@@ -76,7 +76,7 @@ The tree is an [Open Knowledge Format](https://okf.md/spec/) (OKF v0.2) bundle, 
 
 - every topic file has YAML frontmatter with a `type` (`Memory Topic`), plus `title`, `description`, `tags`, `timestamp` and `generated`;
 - folder overviews use the reserved `index.md`, with no frontmatter except the root's `okf_version`;
-- links are bundle-relative (`/gemma/vllm.md`);
+- links are relative to the file they sit in (`./vllm.md`, `../postgres.md`), so the bundle works wherever it is unpacked or mounted;
 - timestamps carry a UTC offset, and are the newest observation's time, so the same bank always gives the same bundle.
 
 ## In the Control Plane

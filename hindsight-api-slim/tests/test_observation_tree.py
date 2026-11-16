@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import posixpath
 import random
 import re
 from datetime import datetime, timezone
@@ -216,8 +217,11 @@ def test_the_tree_is_an_open_knowledge_format_bundle():
             assert json.loads(meta["title"]) == f.title
             assert json.loads(meta["description"])
             assert json.loads(meta["tags"]) == f.about
-        for link in re.findall(r"\]\((/[^)]+)\)", f.content):
-            assert link.lstrip("/") in paths, f"{f.path} links to missing {link}"
+        for link in re.findall(r"\]\(([^)]+\.md)\)", f.content):
+            # Relative to the file, so the bundle works wherever it is unpacked or mounted.
+            assert link.startswith(("./", "../")), f"{f.path} has a non-relative link {link}"
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(f.path), link))
+            assert target in paths, f"{f.path} links to missing {link}"
 
 
 def test_frontmatter_timestamps_carry_an_offset():
