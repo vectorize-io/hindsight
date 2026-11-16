@@ -43,7 +43,11 @@ export const CONVERSATION_MISSION =
   "times keep only the LAST, and make unmistakably clear which choice WON. Do NOT emit one fact per " +
   "message, per intermediate proposal, or per action turn. Keep issue/PR references (#123, GH-123) " +
   "VERBATIM and emit each as an ENTITY. Preserve the 'REF-ID: <token>' marker " +
-  "verbatim in every fact. Do not invent; capture only what was actually settled.";
+  "verbatim in every fact. When the session checked its work (a test passed or failed, a result was " +
+  "judged right or wrong), record the exact METHOD behind that outcome — which file, table, column, " +
+  "command or formula — and any caveat the session found in the data or code (a column mostly empty, a " +
+  "value in other units), so the same work repeats what worked and avoids what failed. Do not invent; " +
+  "capture only what was actually settled.";
 
 export const REFLECT_MISSION =
   "You are a debugging assistant with the project's past decisions in memory (git rationale and " +
