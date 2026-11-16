@@ -66,6 +66,42 @@ describe("buildSessionStartContext", () => {
     expect(out.systemMessage).not.toContain("plugin uninstall");
   });
 
+  it("configures the bank itself only when the deepen engine is not started", async () => {
+    const configure = vi.fn(async () => {});
+    const client = {
+      listDocumentIds: async () => new Set(["git:a"]),
+      listPages: listPagesOk,
+      configureBankSettings: configure,
+    };
+    const base = {
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      client,
+      detectLegacyPlugin: () => undefined,
+    };
+    await buildSessionStartContext({ ...base, cfg: resolveConfig({ autoSeed: false }) });
+    expect(configure).toHaveBeenCalledTimes(1);
+    expect(configure).toHaveBeenCalledWith(expect.objectContaining({ extractionMode: "concise" }));
+
+    configure.mockClear();
+    await buildSessionStartContext({
+      ...base,
+      cfg: resolveConfig({ codebaseSurvey: false }),
+      hasGit: () => false,
+    });
+    expect(configure).toHaveBeenCalledTimes(1);
+
+    configure.mockClear();
+    await buildSessionStartContext({
+      ...base,
+      cfg: resolveConfig({ codebaseSurvey: false }),
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      headSha: () => null,
+    });
+    expect(configure).not.toHaveBeenCalled();
+  });
+
   it("cold git repo + autoSeed on -> seeds + surveys, note in systemMessage (user-visible) + roster in additionalContext (model)", async () => {
     const client = {
       listDocumentIds: async () => new Set<string>(),
