@@ -152,6 +152,85 @@ async def test_every_knowledge_bank_operation_goes_through_its_own_hook(api_clie
         await api_client.delete(f"{KB}/{secret}")
 
 
+class RecordsCompletions(_Accepting):
+    """Records the post-operation hooks, so a test can check each fires with its work's size."""
+
+    def __init__(self) -> None:
+        super().__init__({})
+        self.searches: list = []
+        self.ingests: list = []
+        self.deletes: list = []
+
+    async def on_knowledge_bank_search_complete(self, result) -> None:
+        self.searches.append(result)
+
+    async def on_knowledge_bank_ingest_complete(self, result) -> None:
+        self.ingests.append(result)
+
+    async def on_knowledge_bank_delete_complete(self, result) -> None:
+        self.deletes.append(result)
+
+
+async def test_completion_hooks_fire_with_their_work_size(api_client, kb, install_validator):  # noqa: F811
+    """Search, ingest and delete each fire their completion hook with what the operation did:
+    the passages committed, the passages removed, and what a search's results weigh."""
+    validator = install_validator(RecordsCompletions())
+    assert isinstance(validator, RecordsCompletions)
+    try:
+        r = await _upload(api_client, kb, [("red.png", _png((255, 0, 0)), "image/png")], [{"document_id": "red"}])
+        assert r.is_success, r.text
+        # An ingest fired, carrying the bank and at least one committed passage.
+        assert validator.ingests, "ingest hook did not fire"
+        assert all(i.bank_id == kb for i in validator.ingests)
+        assert sum(i.passages for i in validator.ingests) >= 1
+
+        # Traced or not, a search reports what its results weigh: the figure the trace calls tokens_used.
+        r = await api_client.post(f"{KB}/{kb}/search", json={"query": "red", "trace": True})
+        assert r.status_code == 200, r.text
+        await _search(api_client, kb, query="red")
+        traced, untraced = validator.searches[-2:]
+        assert traced.bank_id == untraced.bank_id == kb
+        assert traced.result_count == untraced.result_count == len(r.json()["results"]) >= 1
+        assert traced.results_tokens == untraced.results_tokens == r.json()["trace"]["tokens_used"] > 0
+
+        assert (await api_client.delete(f"{KB}/{kb}/documents/red")).status_code == 200
+        assert validator.deletes, "delete hook did not fire"
+        assert sum(d.passages for d in validator.deletes) >= 1
+    finally:
+        install_validator(None)
+
+
+class RaisesInCompletions(_Accepting):
+    """Every completion hook raises — metering must stay best-effort: the operation still succeeds."""
+
+    async def on_knowledge_bank_search_complete(self, result) -> None:
+        raise RuntimeError("metering down")
+
+    async def on_knowledge_bank_ingest_complete(self, result) -> None:
+        raise RuntimeError("metering down")
+
+    async def on_knowledge_bank_delete_complete(self, result) -> None:
+        raise RuntimeError("metering down")
+
+
+async def test_a_raising_completion_hook_does_not_fail_the_operation(api_client, kb, install_validator):  # noqa: F811
+    """A metering extension that raises in a completion hook must not fail the ingest (whose
+    passages are already committed, and whose hook fires inside the batch's retry try), the search,
+    or the delete."""
+    install_validator(RaisesInCompletions({}))
+    try:
+        r = await _upload(api_client, kb, [("red.png", _png((255, 0, 0)), "image/png")], [{"document_id": "red"}])
+        assert r.is_success, r.text
+        # The document is ready despite the ingest hook raising.
+        doc = await api_client.get(f"{KB}/{kb}/documents/red")
+        assert doc.status_code == 200 and doc.json()["status"] == "ready", doc.text
+        # Search still returns (its helper asserts 200), delete still succeeds.
+        await _search(api_client, kb, query="red")
+        assert (await api_client.delete(f"{KB}/{kb}/documents/red")).status_code == 200
+    finally:
+        install_validator(None)
+
+
 async def test_memory_bank_hooks_never_apply_to_a_knowledge_bank(api_client, install_validator, fake_embedder):  # noqa: F811
     install_validator(RejectsEveryMemoryBankHook({}))
     bank_id = f"kb-{uuid.uuid4().hex[:8]}"

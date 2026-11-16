@@ -63,9 +63,12 @@ from hindsight_api.extensions.operation_validator import (
     # Transfer imports
     ImportArchiveDocument,
     ImportContext,
+    KnowledgeBankDeleteResult,
+    KnowledgeBankIngestResult,
     KnowledgeBankListContext,
     KnowledgeBankReadContext,
     KnowledgeBankReadOperation,
+    KnowledgeBankSearchResult,
     KnowledgeBankWriteContext,
     KnowledgeBankWriteOperation,
     # Memory curation
@@ -157,9 +160,12 @@ __all__ = [
     "TagScopeContext",
     "CreateBankContext",
     "CreateKnowledgeBankContext",
+    "KnowledgeBankDeleteResult",
+    "KnowledgeBankIngestResult",
     "KnowledgeBankListContext",
     "KnowledgeBankReadContext",
     "KnowledgeBankReadOperation",
+    "KnowledgeBankSearchResult",
     "KnowledgeBankWriteContext",
     "KnowledgeBankWriteOperation",
     # Operation Validator - Consolidation

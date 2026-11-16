@@ -39,11 +39,15 @@ from ..engine.token_encoding import count_tokens
 from ..extensions.operation_validator import (
     BankListScope,
     CreateKnowledgeBankContext,
+    KnowledgeBankDeleteResult,
+    KnowledgeBankIngestResult,
     KnowledgeBankListContext,
     KnowledgeBankReadContext,
     KnowledgeBankReadOperation,
+    KnowledgeBankSearchResult,
     KnowledgeBankWriteContext,
     KnowledgeBankWriteOperation,
+    OperationValidatorExtension,
 )
 from ..tracing import inject_task_trace_context
 from . import bank_config, ingest_strategy, media
@@ -256,6 +260,16 @@ class BudgetStep:
     total: int
     #: For merged: the hit whose result holds it.
     into: SearchHit | None = None
+
+
+@dataclass
+class _Budgeted:
+    """What ``_within_budget`` returns: the results, and what they weigh (a search meters by it).
+    The weight used to come back only on a trace, so an untraced search built a throwaway one, paying
+    for per-hit trace records nobody read just to get one integer."""
+
+    items: list[SearchResultItem]
+    tokens_used: int
 
 
 @dataclass
@@ -695,6 +709,9 @@ class KnowledgeService:
         await self._open_bank(
             bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK, request_context, needs_vectors=False
         )
+        # What the bank holds now, read before the delete, so storage metering can decrement it.
+        bank_passages = (await self.store.bank_stats([bank_id])).get(bank_id)
+        passages_removed = bank_passages.passage_count if bank_passages else 0
         # Its queued ingests are cancelled first (the worker no longer claims them), then its documents
         # go a batch per transaction: the banks row cascades to kb_documents -> kb_passages -> vectors,
         # and on a 100k-document bank that one cascading statement ran past the command timeout
@@ -717,6 +734,7 @@ class KnowledgeService:
             await asyncio.sleep(1)
         await self._engine.delete_bank(bank_id, request_context=request_context, _knowledge_bank=True)
         await self._engine._file_storage.delete_prefix(f"{bank_storage_prefix(bank_id)}kb/")
+        await self._on_delete_complete(bank_id, request_context, passages_removed)
 
     # --- per-bank settings ------------------------------------------------------------------
 
@@ -1452,12 +1470,25 @@ class KnowledgeService:
                         for d in failed
                     ],
                 )
+            committed_passages = sum(d.committed_passages for d in kept)
             logger.info(
                 f"Knowledge ingest {bank_id}: {len(kept)} documents, "
-                f"{sum(d.committed_passages for d in kept)} passages, "
+                f"{committed_passages} passages, "
                 f"{len(failed)} failed, in {time.perf_counter() - started:.1f}s, holding at most "
                 f"{budget.peak / 2**20:.0f} MB of passages"
             )
+            if committed_passages:
+                # The worker has no RequestContext: the tenant is the caller recorded when the ingest was queued.
+                await self._fire_completion_hook(
+                    lambda v: v.on_knowledge_bank_ingest_complete(
+                        KnowledgeBankIngestResult(
+                            bank_id=bank_id,
+                            tenant_id=(caller or {}).get("_tenant_id"),
+                            api_key_id=(caller or {}).get("_api_key_id"),
+                            passages=committed_passages,
+                        )
+                    )
+                )
         except Exception as exc:
             # No round, file write or early commit may still be running when the cleanup deletes files.
             await asyncio.gather(*rounds, *early, return_exceptions=True)
@@ -1670,8 +1701,10 @@ class KnowledgeService:
 
     async def delete_document(self, bank_id: str, document_id: str, request_context: RequestContext) -> None:
         await self._open_bank(bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK_DOCUMENT, request_context)
-        if not any(d.document_id == document_id for d in await self._delete_trees(bank_id, [document_id])):
+        deleted = await self._delete_trees(bank_id, [document_id])
+        if not any(d.document_id == document_id for d in deleted):
             raise KnowledgeBankError(f"document '{document_id}' not found", 404)
+        await self._on_delete_complete(bank_id, request_context, sum(d.passage_count for d in deleted))
 
     async def open_file(self, bank_id: str, document_id: str, request_context: RequestContext) -> OpenedFile:
         """The original upload: its byte stream, content type and filename."""
@@ -1748,10 +1781,46 @@ class KnowledgeService:
             async with _timing.timed("store.search"):
                 hits = await self._search(bank_id, request, vector, trace)
             async with _timing.timed("context"):
-                items = await self._within_budget(bank_id, hits, request.max_tokens, trace)
+                budgeted = await self._within_budget(bank_id, hits, request.max_tokens, trace)
             if trace is not None:
                 trace.seconds = dict(timing.seconds)
-            return items
+            # Fires even with no results: a search is a search.
+            await self._fire_completion_hook(
+                lambda v: v.on_knowledge_bank_search_complete(
+                    KnowledgeBankSearchResult(
+                        bank_id=bank_id,
+                        query=request.query or "",
+                        request_context=request_context,
+                        results_tokens=budgeted.tokens_used,
+                        result_count=len(budgeted.items),
+                    )
+                )
+            )
+            return budgeted.items
+
+    async def _fire_completion_hook(self, make_coro: Callable[[OperationValidatorExtension], Awaitable[None]]) -> None:
+        """Fire a post-operation metering hook in isolation. Metering is best-effort: an extension
+        hook that raises must not fail the knowledge-bank operation whose success the caller already
+        saw — a search returns its results, an ingest has already committed its passages (and is
+        fired from inside the batch's retry try), a delete is already done. Logs and swallows."""
+        validator = self._engine._operation_validator
+        if validator is None:
+            return
+        try:
+            await make_coro(validator)
+        except Exception:
+            logger.warning("A knowledge-bank metering hook raised; ignoring", exc_info=True)
+
+    async def _on_delete_complete(self, bank_id: str, request_context: RequestContext, passages: int) -> None:
+        """Fire the validator's post-delete hook with how many passages went with the deletion (see
+        on_knowledge_bank_delete_complete). A no-op when nothing was removed."""
+        if passages <= 0:
+            return
+        await self._fire_completion_hook(
+            lambda v: v.on_knowledge_bank_delete_complete(
+                KnowledgeBankDeleteResult(bank_id=bank_id, request_context=request_context, passages=passages)
+            )
+        )
 
     async def _embed_query(self, request: SearchRequest) -> list[float]:
         async with _timing.timed("embed"):
@@ -1776,7 +1845,7 @@ class KnowledgeService:
 
     async def _within_budget(
         self, bank_id: str, hits: list[SearchHit], max_tokens: int, trace: SearchTrace | None = None
-    ) -> list[SearchResultItem]:
+    ) -> _Budgeted:
         """The ranked hits that fit in ``max_tokens``, each text hit with the passages around it as its
         ``context``. In rank order, a text hit comes with one passage on each side (the query-time step that
         paid, CHUNKING.md), never repeating a passage another result holds, or alone if only that fits; a hit
@@ -1892,7 +1961,7 @@ class KnowledgeService:
         if trace is not None:
             trace.tokens_used = used
             trace.hits = [_traced(hit, items, windows) for hit in hits]
-        return items
+        return _Budgeted(items, used)
 
 
 def _traced(hit: SearchHit, items: list[SearchResultItem], windows: list[_Window]) -> TracedHit:
