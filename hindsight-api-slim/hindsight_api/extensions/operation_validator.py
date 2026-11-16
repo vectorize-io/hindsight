@@ -844,6 +844,54 @@ class KnowledgeBankListContext:
 
 
 @dataclass
+class KnowledgeBankSearchResult:
+    """Result context for the post-search hook.
+
+    Fired after a knowledge-bank search returns, so an extension can meter it by
+    what the results weigh. ``results_tokens`` is the same figure a trace reports as
+    ``tokens_used`` (the tokens of the returned passages' text), computed whether or
+    not the caller asked for a trace.
+    """
+
+    bank_id: str
+    query: str
+    request_context: "RequestContext"
+    results_tokens: int
+    result_count: int
+    success: bool = True
+    error: str | None = None
+
+
+@dataclass
+class KnowledgeBankIngestResult:
+    """Result context for the post-ingest hook.
+
+    Fired after a batch of knowledge-bank documents commits, with how many passages became
+    searchable (``passages``), so an extension can meter ingestion by passage. Ingestion runs
+    in the worker, which has no RequestContext, so the tenant is carried directly (from the
+    caller recorded when the ingest was queued).
+    """
+
+    bank_id: str
+    tenant_id: str | None
+    api_key_id: str | None
+    passages: int
+
+
+@dataclass
+class KnowledgeBankDeleteResult:
+    """Result context for the post-delete hook.
+
+    Fired after a knowledge-bank document (or a whole bank) is deleted, with how many passages
+    went with it (``passages``), so an extension that tracks stored passages can decrement.
+    """
+
+    bank_id: str
+    request_context: "RequestContext"
+    passages: int
+
+
+@dataclass
 class FileConvertResult:
     """Result context for post-file-conversion hook.
 
@@ -1543,6 +1591,25 @@ class OperationValidatorExtension(Extension, ABC):
     async def filter_knowledge_bank_list(self, ctx: KnowledgeBankListContext) -> BankListResult:
         """Filter the knowledge bank list; runs only when knowledge_bank_list_scope returns None."""
         return BankListResult(banks=ctx.banks)
+
+    async def on_knowledge_bank_search_complete(self, result: KnowledgeBankSearchResult) -> None:
+        """Called after a knowledge-bank search returns, with what its results weigh.
+
+        The read gate (validate_knowledge_bank_read) runs before the search and sees only the
+        bank and operation; this fires after, so an extension that meters search by its output
+        tokens (``result.results_tokens``) has the figure it needs. Default: do nothing.
+        """
+        return None
+
+    async def on_knowledge_bank_ingest_complete(self, result: KnowledgeBankIngestResult) -> None:
+        """Called after a batch of knowledge-bank documents commits, with how many passages
+        became searchable, so an extension can meter ingestion by passage. Default: do nothing."""
+        return None
+
+    async def on_knowledge_bank_delete_complete(self, result: KnowledgeBankDeleteResult) -> None:
+        """Called after a knowledge-bank document or bank is deleted, with how many passages went
+        with it, so an extension tracking stored passages can decrement. Default: do nothing."""
+        return None
 
     async def filter_mcp_tools(
         self,

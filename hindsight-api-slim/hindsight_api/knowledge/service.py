@@ -39,9 +39,12 @@ from ..engine.token_encoding import count_tokens
 from ..extensions.operation_validator import (
     BankListScope,
     CreateKnowledgeBankContext,
+    KnowledgeBankDeleteResult,
+    KnowledgeBankIngestResult,
     KnowledgeBankListContext,
     KnowledgeBankReadContext,
     KnowledgeBankReadOperation,
+    KnowledgeBankSearchResult,
     KnowledgeBankWriteContext,
     KnowledgeBankWriteOperation,
 )
@@ -695,6 +698,9 @@ class KnowledgeService:
         await self._open_bank(
             bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK, request_context, needs_vectors=False
         )
+        # What the bank holds now, read before the delete, so storage metering can decrement it.
+        bank_passages = (await self.store.bank_stats([bank_id])).get(bank_id)
+        passages_removed = bank_passages.passage_count if bank_passages else 0
         # Its queued ingests are cancelled first (the worker no longer claims them), then its documents
         # go a batch per transaction: the banks row cascades to kb_documents -> kb_passages -> vectors,
         # and on a 100k-document bank that one cascading statement ran past the command timeout
@@ -717,6 +723,7 @@ class KnowledgeService:
             await asyncio.sleep(1)
         await self._engine.delete_bank(bank_id, request_context=request_context, _knowledge_bank=True)
         await self._engine._file_storage.delete_prefix(f"{bank_storage_prefix(bank_id)}kb/")
+        await self._on_delete_complete(bank_id, request_context, passages_removed)
 
     # --- per-bank settings ------------------------------------------------------------------
 
@@ -1452,12 +1459,14 @@ class KnowledgeService:
                         for d in failed
                     ],
                 )
+            committed_passages = sum(d.committed_passages for d in kept)
             logger.info(
                 f"Knowledge ingest {bank_id}: {len(kept)} documents, "
-                f"{sum(d.committed_passages for d in kept)} passages, "
+                f"{committed_passages} passages, "
                 f"{len(failed)} failed, in {time.perf_counter() - started:.1f}s, holding at most "
                 f"{budget.peak / 2**20:.0f} MB of passages"
             )
+            await self._on_ingest_complete(bank_id, caller, committed_passages)
         except Exception as exc:
             # No round, file write or early commit may still be running when the cleanup deletes files.
             await asyncio.gather(*rounds, *early, return_exceptions=True)
@@ -1670,8 +1679,10 @@ class KnowledgeService:
 
     async def delete_document(self, bank_id: str, document_id: str, request_context: RequestContext) -> None:
         await self._open_bank(bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK_DOCUMENT, request_context)
-        if not any(d.document_id == document_id for d in await self._delete_trees(bank_id, [document_id])):
+        deleted = await self._delete_trees(bank_id, [document_id])
+        if not any(d.document_id == document_id for d in deleted):
             raise KnowledgeBankError(f"document '{document_id}' not found", 404)
+        await self._on_delete_complete(bank_id, request_context, sum(d.passage_count for d in deleted))
 
     async def open_file(self, bank_id: str, document_id: str, request_context: RequestContext) -> OpenedFile:
         """The original upload: its byte stream, content type and filename."""
@@ -1747,11 +1758,69 @@ class KnowledgeService:
             vector = await embedding
             async with _timing.timed("store.search"):
                 hits = await self._search(bank_id, request, vector, trace)
+            # A throwaway trace when the caller wanted none, so tokens_used is always counted
+            # for the search-complete hook (an extension meters by it) without returning a trace.
+            budget_trace = trace if trace is not None else SearchTrace()
             async with _timing.timed("context"):
-                items = await self._within_budget(bank_id, hits, request.max_tokens, trace)
+                items = await self._within_budget(bank_id, hits, request.max_tokens, budget_trace)
             if trace is not None:
                 trace.seconds = dict(timing.seconds)
+            await self._on_search_complete(bank_id, request, budget_trace.tokens_used, len(items), request_context)
             return items
+
+    async def _on_search_complete(
+        self,
+        bank_id: str,
+        request: SearchRequest,
+        results_tokens: int,
+        result_count: int,
+        request_context: RequestContext,
+    ) -> None:
+        """Fire the validator's post-search hook with what the results weigh (see
+        on_knowledge_bank_search_complete). A no-op when no validator is registered."""
+        validator = self._engine._operation_validator
+        if validator is None:
+            return
+        await validator.on_knowledge_bank_search_complete(
+            KnowledgeBankSearchResult(
+                bank_id=bank_id,
+                query=request.query or "",
+                request_context=request_context,
+                results_tokens=results_tokens,
+                result_count=result_count,
+            )
+        )
+
+    async def _on_ingest_complete(self, bank_id: str, caller: dict[str, Any] | None, passages: int) -> None:
+        """Fire the validator's post-ingest hook with how many passages committed (see
+        on_knowledge_bank_ingest_complete). The worker has no RequestContext, so the tenant comes
+        from the caller recorded when the ingest was queued. A no-op with no validator or no passages."""
+        if passages <= 0:
+            return
+        validator = self._engine._operation_validator
+        if validator is None:
+            return
+        caller = caller or {}
+        await validator.on_knowledge_bank_ingest_complete(
+            KnowledgeBankIngestResult(
+                bank_id=bank_id,
+                tenant_id=caller.get("_tenant_id"),
+                api_key_id=caller.get("_api_key_id"),
+                passages=passages,
+            )
+        )
+
+    async def _on_delete_complete(self, bank_id: str, request_context: RequestContext, passages: int) -> None:
+        """Fire the validator's post-delete hook with how many passages went with the deletion (see
+        on_knowledge_bank_delete_complete). A no-op with no validator or nothing removed."""
+        if passages <= 0:
+            return
+        validator = self._engine._operation_validator
+        if validator is None:
+            return
+        await validator.on_knowledge_bank_delete_complete(
+            KnowledgeBankDeleteResult(bank_id=bank_id, request_context=request_context, passages=passages)
+        )
 
     async def _embed_query(self, request: SearchRequest) -> list[float]:
         async with _timing.timed("embed"):
