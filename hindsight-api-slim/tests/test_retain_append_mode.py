@@ -4,6 +4,7 @@ Tests for retain update_mode='append' — appends new content to existing docume
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import httpx
@@ -132,6 +133,70 @@ async def test_append_mode_metadata_consistent_for_unchanged_and_new_units(memor
         for row in rows:
             # list_memory_units already parses the JSON metadata into a dict.
             assert row["metadata"] == {"source": "crm"}
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@dataclass
+class _TagsAfterAppend:
+    document: list[str]
+    units: list[list[str]]
+
+
+async def _append_tags(memory, request_context, bank_id: str, append_item_extra: dict) -> _TagsAfterAppend:
+    """Retain a tagged document, then append a turn carrying `append_item_extra`; return the tags left."""
+    document_id = "append-tags"
+    await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[
+            {
+                "content": "Alice works at Google as a software engineer.",
+                "document_id": document_id,
+                "tags": ["pin:x", "topic:one"],
+            }
+        ],
+        request_context=request_context,
+    )
+    await memory.retain_batch_async(
+        bank_id=bank_id,
+        contents=[
+            {
+                "content": "Bob works at Microsoft as a data scientist.",
+                "document_id": document_id,
+                "update_mode": "append",
+                **append_item_extra,
+            }
+        ],
+        request_context=request_context,
+    )
+    doc = await memory.get_document(document_id, bank_id, request_context=request_context)
+    listing = await memory.list_memory_units(bank_id, document_id=document_id, request_context=request_context)
+    assert listing["items"]
+    return _TagsAfterAppend(
+        document=sorted(doc["tags"] or []), units=[sorted(row["tags"] or []) for row in listing["items"]]
+    )
+
+
+@pytest.mark.asyncio
+async def test_append_without_tags_keeps_the_document_tags(memory, request_context):
+    """An append that omits `tags` adds a turn; it must not clear the document's tags or its memories' (#6551)."""
+    bank_id = f"test_append_keep_tags_{_ts()}"
+    try:
+        after = await _append_tags(memory, request_context, bank_id, {})
+        assert after.document == ["pin:x", "topic:one"]
+        assert all(tags == ["pin:x", "topic:one"] for tags in after.units), after.units
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_append_with_tags_replaces_the_document_tags(memory, request_context):
+    """Tags the append does state still win: carrying applies only when the field is absent."""
+    bank_id = f"test_append_new_tags_{_ts()}"
+    try:
+        after = await _append_tags(memory, request_context, bank_id, {"tags": ["topic:two"]})
+        assert after.document == ["topic:two"]
+        assert all(tags == ["topic:two"] for tags in after.units), after.units
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
 
