@@ -153,13 +153,13 @@ async def test_forced_synthesis_uses_config_cap_when_set(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_call_loop_uses_config_cap(monkeypatch):
-    """The closing ``done`` gets the synthesis cap; a loop turn, which only names a search, 1024.
+    """Every turn, closing ``done`` and loop turns alike, gets the configured cap.
 
     Left unset the closing call fell through to the provider's own default, which on
     Anthropic is a fixed number (the Messages API requires ``max_tokens``) — truncating a
-    long ``done`` payload before the answer field was written (#4437). A loop turn's reply
-    is held to a schema and only names a search, so it is capped well below that: a
-    schema-held reply that falls into a repetition loop otherwise runs to the cap.
+    long ``done`` payload before the answer field was written (#4437). Clamping loop turns
+    to 1024 under a configured cap starved reasoning models, whose thinking spends the
+    budget before the reply starts (#6560).
     """
     monkeypatch.setenv("HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS", "12345")
     clear_config_cache()
@@ -179,8 +179,8 @@ async def test_tool_call_loop_uses_config_cap(monkeypatch):
         calls = llm.call_with_tools.await_args_list
         closing = [c for c in calls if c.kwargs["tool_choice"] == LLMToolChoice.named("done")]
         assert closing and all(c.kwargs["max_completion_tokens"] == 12345 for c in closing)
-        assert all(c.kwargs["max_completion_tokens"] == 1024 for c in calls if c not in closing)
-        # A capped turn cannot pick done, whose page the cap would cut off; it is still declared,
+        assert all(c.kwargs["max_completion_tokens"] == 12345 for c in calls)
+        # A loop turn cannot pick done (the closing step writes the answer); it is still declared,
         # so every turn's prompt prefix is the same.
         for c in calls:
             if c not in closing:
