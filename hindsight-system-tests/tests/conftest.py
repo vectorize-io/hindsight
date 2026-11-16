@@ -268,6 +268,34 @@ def logged_out_primary_server(stub_server, tmp_path_factory: pytest.TempPathFact
 
 
 @pytest.fixture(scope="session")
+def echo_primary_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A failover chain of two stub models, with no retry budget.
+
+    The story answers member 0 (``stub-echo``) with the JSON schema instead of the facts,
+    as Gemma 4 on vLLM sometimes does, and member 1 (``stub-model``) with the facts. With
+    retries at 0 there is no re-ask, so only the chain can save the document. The chain
+    is server-level, hence a process; HTTP only, for the same reason as ``wif_server``.
+    """
+    run_dir = tmp_path_factory.mktemp("echo-primary-server")
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=run_dir / "server.log",
+        extra_env={
+            "HINDSIGHT_API_LLM_MODEL": "stub-echo",
+            "HINDSIGHT_API_LLM_MAX_RETRIES": "0",
+            "HINDSIGHT_API_LLM_STRATEGY": '{"mode": "failover"}',
+            "HINDSIGHT_API_LLM_1_PROVIDER": "openai",
+            "HINDSIGHT_API_LLM_1_MODEL": "stub-model",
+            "HINDSIGHT_API_LLM_1_API_KEY": "stub-key",
+            "HINDSIGHT_API_LLM_1_BASE_URL": f"{stub_server.url}/v1",
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture(scope="session")
 def scoped_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """A server whose operation validator confines each API key to ``user:<key>`` + ``kind:rule``.
 
@@ -498,6 +526,13 @@ async def custom_llm_client(custom_llm_server) -> AsyncIterator[Hindsight]:
 @pytest.fixture
 async def logged_out_primary_client(logged_out_primary_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=logged_out_primary_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def echo_primary_client(echo_primary_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=echo_primary_server.url)
     yield client
     await client.aclose()
 

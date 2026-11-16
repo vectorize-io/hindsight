@@ -32,7 +32,7 @@ from ..llm_wrapper import (
 )
 from ..operation_metadata import RetainExtractionErrors
 from ..remote_retry import status_code_of
-from ..response_models import BATCH_TERMINAL_FAILURE_STATUSES, BatchRequest, BatchResult, TokenUsage
+from ..response_models import BATCH_TERMINAL_FAILURE_STATUSES, BatchRequest, BatchResult, LLMCallResult, TokenUsage
 from ..stored_dates import is_placeholder_date
 from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
@@ -2059,6 +2059,11 @@ _ENVELOPE_CORRECTION = (
 )
 
 
+def _has_fact_envelope(reply: LLMCallResult) -> bool:
+    """Whether a raw extraction reply carries a facts list (an empty one counts)."""
+    return _coerce_fact_response(reply.content) is not None
+
+
 def _coerce_fact_response(response: Any) -> dict[str, Any] | None:
     """Accept the schema wrapper, or a recoverable top-level facts array.
 
@@ -2197,6 +2202,10 @@ async def _extract_facts_from_chunk(
                 max_backoff=max_backoff,
                 skip_validation=True,  # Get raw JSON, we'll validate leniently
                 prompt_cache=prompt_cache,
+                # On a fallback chain, a reply with no facts envelope moves the chunk to
+                # the next member instead of failing it. Gemma 4 on vLLM, decoding retain
+                # unconstrained, sometimes answered with the JSON schema it was shown.
+                accept_reply=_has_fact_envelope,
             )
 
             extraction_call = await llm_config.call(**call_kwargs)

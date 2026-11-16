@@ -74,6 +74,15 @@ from hindsight_api.worker.stage import set_stage
 
 from ..response_models import LLMCallResult
 
+# The line that introduces the schema pasted into the prompt on the soft path. It was "You
+# must respond with valid JSON matching this schema:", and Gemma 4 on vLLM, writing retain
+# unconstrained, sometimes answered with the schema itself instead of the facts: 6 of 2,278
+# retain chunks. Worded as a description the answer must not repeat, 0 of 1,615.
+_SCHEMA_INSTRUCTION = (
+    "Respond with one JSON object holding your answer, shaped as this JSON Schema describes. "
+    "The schema is a description, not the answer: never repeat it."
+)
+
 logger = logging.getLogger(__name__)
 
 # Seed applied to every Groq request for deterministic behavior
@@ -1344,7 +1353,7 @@ class OpenAICompatibleLLM(LLMInterface):
                 # told about (event dates on 0 of 390 facts, 252 of 402 with the text).
                 enforce = schema is not None and self._supports_json_mode(scope) and self._enforces_schema()
                 if schema is not None:
-                    schema_msg = f"\n\nYou must respond with valid JSON matching this schema:\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
+                    schema_msg = f"\n\n{_SCHEMA_INSTRUCTION}\n{json.dumps(schema, indent=2, ensure_ascii=False)}"
 
                     if call_params["messages"] and call_params["messages"][0].get("role") == "system":
                         first_msg = call_params["messages"][0]

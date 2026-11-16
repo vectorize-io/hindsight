@@ -188,6 +188,57 @@ async def test_cooldown_zero_keeps_trying_every_member():
     assert (a.calls, b.calls) == (3, 3)
 
 
+# ── unusable replies ──────────────────────────────────────────────────────────
+
+
+def _has_facts(reply: LLMCallResult) -> bool:
+    return isinstance(reply.content, dict) and "facts" in reply.content
+
+
+async def test_rejected_reply_moves_to_the_next_member():
+    """A reply the caller can't use (Gemma echoing the schema) is served by the next member."""
+    a = FakeMember("a", {"$defs": {"ExtractedFact": {}}})
+    b = FakeMember("b", {"facts": []})
+    result = await _failover(a, b).call(messages=[], accept_reply=_has_facts)
+    assert result.content == {"facts": []}
+    assert (a.calls, b.calls) == (1, 1)
+
+
+async def test_rejected_reply_does_not_cool_the_member_down(monkeypatch):
+    """Unusable for one input is not down: the next request still starts on the primary."""
+    monkeypatch.setattr("hindsight_api.engine.multi_llm.time.monotonic", lambda: 1000.0)
+    a = FakeMember("a", {"$defs": {}})
+    b = FakeMember("b", {"facts": []})
+    chain = _failover(a, b)
+    await chain.call(messages=[], accept_reply=_has_facts)
+    a.behavior = {"facts": [{"what": "x"}]}
+    assert (await chain.call(messages=[], accept_reply=_has_facts)).content == {"facts": [{"what": "x"}]}
+    assert (a.calls, b.calls) == (2, 1)
+
+
+async def test_every_member_rejected_returns_the_last_reply():
+    """With nothing usable, the caller gets a reply back and applies its own handling."""
+    a = FakeMember("a", {"$defs": {}})
+    b = FakeMember("b", {"properties": {}})
+    result = await _failover(a, b).call(messages=[], accept_reply=_has_facts)
+    assert result.content == {"properties": {}}
+    assert (a.calls, b.calls) == (1, 1)
+
+
+async def test_rejected_then_failing_member_returns_the_rejected_reply():
+    a = FakeMember("a", {"$defs": {}})
+    b = FakeMember("b", RuntimeError("b down"))
+    result = await _failover(a, b).call(messages=[], accept_reply=_has_facts)
+    assert result.content == {"$defs": {}}
+
+
+async def test_without_a_check_every_reply_is_accepted():
+    a = FakeMember("a", {"$defs": {}})
+    b = FakeMember("b", {"facts": []})
+    assert (await _failover(a, b).call(messages=[])).content == {"$defs": {}}
+    assert b.calls == 0
+
+
 # ── error classification ──────────────────────────────────────────────────────
 
 

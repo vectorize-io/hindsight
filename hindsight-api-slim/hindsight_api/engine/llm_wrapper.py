@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import TYPE_CHECKING, Any, Union
 
@@ -1344,8 +1345,13 @@ class LLMProvider:
         skip_validation: bool = False,
         strict_schema: bool | None = None,
         prompt_cache: PromptCachePrefix | None = None,
+        accept_reply: Callable[[LLMCallResult], bool] | None = None,
     ) -> LLMCallResult:
         """Make an LLM API call with retry logic — see ``_call`` for the arguments.
+
+        ``accept_reply`` is for a fallback chain (``MultiLLMProvider``), which asks its
+        next member when it returns False. A single provider has no other member to ask,
+        so it ignores the check and the caller handles the reply itself.
 
         An installed LLM request extension decides first how the call is sent: its
         credentials, or a different LLM altogether, which then runs the call in this

@@ -627,6 +627,41 @@ async def test_zero_retry_budget_performs_single_chunk_extraction_call():
 
 
 @pytest.mark.asyncio
+async def test_schema_echo_on_a_chain_is_answered_by_the_fallback_member():
+    """No retry budget and a two-member chain: a reply that copies the JSON schema instead
+    of the facts must reach the fallback member, not fail the document."""
+    from hindsight_api.config import LLMStrategyConfig
+    from hindsight_api.engine.multi_llm import MultiLLMProvider
+    from hindsight_api.engine.retain.fact_extraction import _extract_facts_from_chunk
+
+    config = _make_config(llm_max_retries=3, retain_llm_max_retries=0)
+    echo = {"$defs": {"ExtractedFact": {"properties": {"what": {"type": "string"}}}}, "properties": {}}
+    primary = _make_llm_config(mock_response=echo)
+    fallback = _make_llm_config(
+        mock_response={"facts": [{"what": "Alice visited Paris", "when": "2023", "who": "Alice", "why": "vacation"}]}
+    )
+    chain = MultiLLMProvider([primary, fallback], LLMStrategyConfig(mode="failover"))
+
+    with patch(
+        "hindsight_api.engine.retain.fact_extraction._build_extraction_prompt_and_schema",
+        return_value=ExtractionPrompt(system_prompt="system prompt", response_schema=MagicMock()),
+    ):
+        facts, _usage = await _extract_facts_from_chunk(
+            chunk="Alice visited Paris in 2023.",
+            chunk_index=0,
+            total_chunks=1,
+            event_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            context="",
+            llm_config=chain,
+            config=config,
+            agent_name="test-agent",
+        )
+
+    assert [f.fact.split(" | ")[0] for f in facts] == ["Alice visited Paris"]
+    assert (primary.call.call_count, fallback.call.call_count) == (1, 1)
+
+
+@pytest.mark.asyncio
 async def test_none_event_date_with_empty_facts_no_crash():
     """
     When event_date is None and the LLM returns an empty facts list,
