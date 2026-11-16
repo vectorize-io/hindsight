@@ -1527,13 +1527,13 @@ async def test_each_hit_gets_its_own_result_and_none_holds_more_than_five_passag
     # Hits at 2 (best), 7, then 5: each is a result of its own with its free neighbours (5 gets 4, as 6 is
     # 7's). A window used to grow to take in a nearby hit and fold into the next: one whole-document result.
     hits = [SearchHit(passages[i], document, 1.0 - n / 10) for n, i in enumerate((2, 7, 5))]
-    items = await service._within_budget(kb, hits, sum(weight[1:9]))
+    items = (await service._within_budget(kb, hits, sum(weight[1:9]))).items
     assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 3), (7, 6, 8), (5, 4, 5)]
     # A hit already inside a better result comes back there, and nothing grows.
-    items = await service._within_budget(kb, [hits[0], SearchHit(passages[3], document, 0.5)], sum(weight[1:4]))
+    items = (await service._within_budget(kb, [hits[0], SearchHit(passages[3], document, 0.5)], sum(weight[1:4]))).items
     assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 3)]
     # Leftover budget widens a result to five passages at most, however much is left.
-    items = await service._within_budget(kb, [hits[0]], sum(weight))
+    items = (await service._within_budget(kb, [hits[0]], sum(weight))).items
     assert [(i.context_first, i.context_last) for i in items] == [(0, 4)]
 
 

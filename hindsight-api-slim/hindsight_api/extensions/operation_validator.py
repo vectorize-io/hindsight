@@ -849,8 +849,8 @@ class KnowledgeBankSearchResult:
 
     Fired after a knowledge-bank search returns, so an extension can meter it by
     what the results weigh. ``results_tokens`` is the same figure a trace reports as
-    ``tokens_used`` (the tokens of the returned passages' text), computed whether or
-    not the caller asked for a trace.
+    ``tokens_used`` (the tokens of the returned passages' text), whether or not the
+    caller asked for a trace. Fired only for a search that returned.
     """
 
     bank_id: str
@@ -858,8 +858,6 @@ class KnowledgeBankSearchResult:
     request_context: "RequestContext"
     results_tokens: int
     result_count: int
-    success: bool = True
-    error: str | None = None
 
 
 @dataclass

@@ -47,6 +47,7 @@ from ..extensions.operation_validator import (
     KnowledgeBankSearchResult,
     KnowledgeBankWriteContext,
     KnowledgeBankWriteOperation,
+    OperationValidatorExtension,
 )
 from ..tracing import inject_task_trace_context
 from . import bank_config, ingest_strategy, media
@@ -259,6 +260,16 @@ class BudgetStep:
     total: int
     #: For merged: the hit whose result holds it.
     into: SearchHit | None = None
+
+
+@dataclass
+class _Budgeted:
+    """What ``_within_budget`` returns: the results, and what they weigh (a search meters by it).
+    The weight used to come back only on a trace, so an untraced search built a throwaway one, paying
+    for per-hit trace records nobody read just to get one integer."""
+
+    items: list[SearchResultItem]
+    tokens_used: int
 
 
 @dataclass
@@ -1466,7 +1477,18 @@ class KnowledgeService:
                 f"{len(failed)} failed, in {time.perf_counter() - started:.1f}s, holding at most "
                 f"{budget.peak / 2**20:.0f} MB of passages"
             )
-            await self._on_ingest_complete(bank_id, caller, committed_passages)
+            if committed_passages:
+                # The worker has no RequestContext: the tenant is the caller recorded when the ingest was queued.
+                await self._fire_completion_hook(
+                    lambda v: v.on_knowledge_bank_ingest_complete(
+                        KnowledgeBankIngestResult(
+                            bank_id=bank_id,
+                            tenant_id=(caller or {}).get("_tenant_id"),
+                            api_key_id=(caller or {}).get("_api_key_id"),
+                            passages=committed_passages,
+                        )
+                    )
+                )
         except Exception as exc:
             # No round, file write or early commit may still be running when the cleanup deletes files.
             await asyncio.gather(*rounds, *early, return_exceptions=True)
@@ -1758,17 +1780,25 @@ class KnowledgeService:
             vector = await embedding
             async with _timing.timed("store.search"):
                 hits = await self._search(bank_id, request, vector, trace)
-            # A throwaway trace when the caller wanted none, so tokens_used is always counted
-            # for the search-complete hook (an extension meters by it) without returning a trace.
-            budget_trace = trace if trace is not None else SearchTrace()
             async with _timing.timed("context"):
-                items = await self._within_budget(bank_id, hits, request.max_tokens, budget_trace)
+                budgeted = await self._within_budget(bank_id, hits, request.max_tokens, trace)
             if trace is not None:
                 trace.seconds = dict(timing.seconds)
-            await self._on_search_complete(bank_id, request, budget_trace.tokens_used, len(items), request_context)
-            return items
+            # Fires even with no results: a search is a search.
+            await self._fire_completion_hook(
+                lambda v: v.on_knowledge_bank_search_complete(
+                    KnowledgeBankSearchResult(
+                        bank_id=bank_id,
+                        query=request.query or "",
+                        request_context=request_context,
+                        results_tokens=budgeted.tokens_used,
+                        result_count=len(budgeted.items),
+                    )
+                )
+            )
+            return budgeted.items
 
-    async def _fire_completion_hook(self, make_coro: Callable[[Any], Awaitable[None]]) -> None:
+    async def _fire_completion_hook(self, make_coro: Callable[[OperationValidatorExtension], Awaitable[None]]) -> None:
         """Fire a post-operation metering hook in isolation. Metering is best-effort: an extension
         hook that raises must not fail the knowledge-bank operation whose success the caller already
         saw — a search returns its results, an ingest has already committed its passages (and is
@@ -1780,46 +1810,6 @@ class KnowledgeService:
             await make_coro(validator)
         except Exception:
             logger.warning("A knowledge-bank metering hook raised; ignoring", exc_info=True)
-
-    async def _on_search_complete(
-        self,
-        bank_id: str,
-        request: SearchRequest,
-        results_tokens: int,
-        result_count: int,
-        request_context: RequestContext,
-    ) -> None:
-        """Fire the validator's post-search hook with what the results weigh (see
-        on_knowledge_bank_search_complete). Always fires: a search is a search even with no results."""
-        await self._fire_completion_hook(
-            lambda v: v.on_knowledge_bank_search_complete(
-                KnowledgeBankSearchResult(
-                    bank_id=bank_id,
-                    query=request.query or "",
-                    request_context=request_context,
-                    results_tokens=results_tokens,
-                    result_count=result_count,
-                )
-            )
-        )
-
-    async def _on_ingest_complete(self, bank_id: str, caller: dict[str, Any] | None, passages: int) -> None:
-        """Fire the validator's post-ingest hook with how many passages committed (see
-        on_knowledge_bank_ingest_complete). The worker has no RequestContext, so the tenant comes
-        from the caller recorded when the ingest was queued. A no-op when nothing committed."""
-        if passages <= 0:
-            return
-        caller = caller or {}
-        await self._fire_completion_hook(
-            lambda v: v.on_knowledge_bank_ingest_complete(
-                KnowledgeBankIngestResult(
-                    bank_id=bank_id,
-                    tenant_id=caller.get("_tenant_id"),
-                    api_key_id=caller.get("_api_key_id"),
-                    passages=passages,
-                )
-            )
-        )
 
     async def _on_delete_complete(self, bank_id: str, request_context: RequestContext, passages: int) -> None:
         """Fire the validator's post-delete hook with how many passages went with the deletion (see
@@ -1855,7 +1845,7 @@ class KnowledgeService:
 
     async def _within_budget(
         self, bank_id: str, hits: list[SearchHit], max_tokens: int, trace: SearchTrace | None = None
-    ) -> list[SearchResultItem]:
+    ) -> _Budgeted:
         """The ranked hits that fit in ``max_tokens``, each text hit with the passages around it as its
         ``context``. In rank order, a text hit comes with one passage on each side (the query-time step that
         paid, CHUNKING.md), never repeating a passage another result holds, or alone if only that fits; a hit
@@ -1971,7 +1961,7 @@ class KnowledgeService:
         if trace is not None:
             trace.tokens_used = used
             trace.hits = [_traced(hit, items, windows) for hit in hits]
-        return items
+        return _Budgeted(items, used)
 
 
 def _traced(hit: SearchHit, items: list[SearchResultItem], windows: list[_Window]) -> TracedHit:

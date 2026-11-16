@@ -184,11 +184,14 @@ async def test_completion_hooks_fire_with_their_work_size(api_client, kb, instal
         assert all(i.bank_id == kb for i in validator.ingests)
         assert sum(i.passages for i in validator.ingests) >= 1
 
+        # Traced or not, a search reports what its results weigh: the figure the trace calls tokens_used.
+        r = await api_client.post(f"{KB}/{kb}/search", json={"query": "red", "trace": True})
+        assert r.status_code == 200, r.text
         await _search(api_client, kb, query="red")
-        assert validator.searches, "search hook did not fire"
-        assert validator.searches[-1].bank_id == kb
-        assert validator.searches[-1].result_count >= 1
-        assert validator.searches[-1].results_tokens >= 0
+        traced, untraced = validator.searches[-2:]
+        assert traced.bank_id == untraced.bank_id == kb
+        assert traced.result_count == untraced.result_count == len(r.json()["results"]) >= 1
+        assert traced.results_tokens == untraced.results_tokens == r.json()["trace"]["tokens_used"] > 0
 
         assert (await api_client.delete(f"{KB}/{kb}/documents/red")).status_code == 200
         assert validator.deletes, "delete hook did not fire"
@@ -214,7 +217,7 @@ async def test_a_raising_completion_hook_does_not_fail_the_operation(api_client,
     """A metering extension that raises in a completion hook must not fail the ingest (whose
     passages are already committed, and whose hook fires inside the batch's retry try), the search,
     or the delete."""
-    install_validator(RaisesInCompletions())
+    install_validator(RaisesInCompletions({}))
     try:
         r = await _upload(api_client, kb, [("red.png", _png((255, 0, 0)), "image/png")], [{"document_id": "red"}])
         assert r.is_success, r.text

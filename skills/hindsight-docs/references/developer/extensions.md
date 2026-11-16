@@ -419,6 +419,26 @@ edit, invalidate, or revert) has its own pair of hooks, in addition to the
   re-embeds the memory and re-consolidates the bank, so this is the figure to
   meter if curation should cost the same as ingesting that text.
 
+#### Knowledge bank metering hooks
+
+Knowledge banks have their own post-operation hooks, so an extension can meter
+them the way `on_recall_complete` meters a recall. Each defaults to doing
+nothing, and each is best-effort: if the hook raises, the error is logged and
+the operation still succeeds.
+
+- `on_knowledge_bank_search_complete(result: KnowledgeBankSearchResult)` runs
+  after a search returns. `result.results_tokens` is what the returned passages
+  weigh (the trace's `tokens_used`, counted whether or not a trace was asked
+  for), and `result.result_count` is how many results came back.
+- `on_knowledge_bank_ingest_complete(result: KnowledgeBankIngestResult)` runs in
+  the worker each time a batch of documents commits, with `result.passages`
+  committed. The worker has no request context, so the caller's
+  `tenant_id` / `api_key_id` (recorded when the ingest was queued) are on the
+  result instead.
+- `on_knowledge_bank_delete_complete(result: KnowledgeBankDeleteResult)` runs
+  after a document (with the documents split out of it) or a whole bank is
+  deleted, with `result.passages` removed.
+
 #### Checking a mental model's new document
 
 `validate_mental_model_candidate(ctx: MentalModelCandidateContext)` runs when a
