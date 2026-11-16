@@ -1301,14 +1301,14 @@ DEFAULT_LLM_PROVIDER = "openai"
 
 # Provider-specific default models
 PROVIDER_DEFAULT_MODELS = {
-    "openai": "gpt-4o-mini",
+    "openai": "gpt-5-nano",
     "openai-responses": "gpt-5.6",
-    "anthropic": "claude-haiku-4-5",
-    "gemini": "gemini-3.5-flash",
+    "anthropic": "claude-haiku-5-5",
+    "gemini": "gemini-3.8-flash",
     "groq": "openai/gpt-oss-120b",
     "minimax": "MiniMax-M3",
     "deepseek": "deepseek-v4-flash",
-    "zai": "glm-4.5-flash",
+    "zai": "glm-5.3-flash",
     "opencode-go": "deepseek-v4-flash",
     "atlas": "deepseek-ai/deepseek-v4-pro",
     "meta": "muse-spark-1.3",
@@ -1319,21 +1319,21 @@ PROVIDER_DEFAULT_MODELS = {
     "vertexai": "google/gemini-3.1-flash-lite",
     "openai-codex": "gpt-5.6-luna",
     "chatgpt": "gpt-6-luna",
-    "claude-code": "claude-sonnet-4-5-20250929",
+    "claude-code": "claude-sonnet-5-5",
     "cursor": "auto",
     "github-copilot": "gpt-5.6-terra",
     "mock": "mock-model",
     "none": "none",
-    "litellm": "gpt-4o-mini",
+    "litellm": "gpt-5-nano",
     "bedrock": "us.amazon.nova-2-lite-v1:0",
     "volcano": "doubao-pro-32k",
     "openrouter": "qwen/qwen3.5-9b",
-    "requesty": "openai/gpt-4o-mini",
-    "fireworks": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+    "requesty": "openai/gpt-5-nano",
+    "fireworks": "accounts/fireworks/models/deepseek-v4-flash",
     "nous": "deepseek/deepseek-v4-flash",
     "xai-oauth": "grok-4.5",
 }
-DEFAULT_LLM_MODEL = "gpt-4o-mini"  # Fallback if provider not in table
+DEFAULT_LLM_MODEL = "gpt-5-nano"  # Fallback if provider not in table
 # Built-in llama.cpp defaults
 DEFAULT_LLAMACPP_GPU_LAYERS = -1  # -1 = offload all layers to GPU (Metal/CUDA)
 DEFAULT_LLAMACPP_CONTEXT_SIZE = 8192

@@ -150,7 +150,7 @@ All standard [Hindsight configuration variables](../../developer/configuration.m
 |----------|----------|---------|-------------|
 | `HINDSIGHT_API_LLM_API_KEY` | Yes* | — | API key for your LLM provider |
 | `HINDSIGHT_API_LLM_PROVIDER` | No | `openai` | LLM provider (`openai`, `anthropic`, `ollama`, etc.) |
-| `HINDSIGHT_API_LLM_MODEL` | No | `gpt-4o-mini` | Model name |
+| `HINDSIGHT_API_LLM_MODEL` | No | `gpt-5-nano` | Model name |
 | `HINDSIGHT_API_DATABASE_URL` | No | `pg0://hindsight-mcp` | Override the database URL |
 | `HINDSIGHT_API_PORT` | No | `8888` | Port to listen on |
 | `HINDSIGHT_API_LOG_LEVEL` | No | `info` | Log level |

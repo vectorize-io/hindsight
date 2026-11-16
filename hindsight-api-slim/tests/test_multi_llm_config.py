@@ -54,7 +54,7 @@ def test_parse_members_indexed(clean_llm_env):
     members = _parse_llm_members("")
     assert [(m.provider, m.model) for m in members] == [
         ("groq", "llama-x"),
-        ("anthropic", "claude-haiku-4-5"),  # model defaulted from provider
+        ("anthropic", "claude-haiku-5-5"),  # model defaulted from provider
     ]
     assert members[0].api_key == "gsk-1"
 

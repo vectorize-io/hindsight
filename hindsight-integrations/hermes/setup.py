@@ -77,7 +77,7 @@ def _prompt_embedded_llm(llm_provider: str, provider_config: dict, env_writes: d
             provider_config["llm_base_url"] = val
     elif llm_provider == "openrouter":
         provider_config["llm_base_url"] = "https://openrouter.ai/api/v1"
-    current_model = provider_config.get("llm_model") or _PROVIDER_DEFAULT_MODELS.get(llm_provider, "gpt-4o-mini")
+    current_model = provider_config.get("llm_model") or _PROVIDER_DEFAULT_MODELS.get(llm_provider, "gpt-5-nano")
     val = input(f"  LLM model [{current_model}]: ").strip()
     provider_config["llm_model"] = val or current_model
     llm_key = _secret_prompt("  LLM API key: ")
