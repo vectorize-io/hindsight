@@ -24,6 +24,7 @@ import {
 import { version as PKG_VERSION } from "../../package.json";
 import { pool, semverGte, sleep } from "./util";
 import type { RetainStamp } from "./retain-stamp";
+import type { ObservationTreeFolder } from "./memory-tree";
 
 /** Sent on every request so the server can tell which integration is calling. */
 export const USER_AGENT = `hindsight-coding-agents/${PKG_VERSION}`;
@@ -957,6 +958,13 @@ export class HindsightClient {
    * page read/update in this client goes through the same page ids, so a page id from
    * here, from `searchPages`, or from a `[[page:<id>]]` link all resolve identically.
    */
+  /** The bank's observations as a tree of markdown files (`autoInject: "tree"`); undefined when
+   *  the server has no such endpoint (404). */
+  async observationTree(): Promise<ObservationTreeFolder | undefined> {
+    const r = await this.req("GET", this.bankUrl("/observations/tree"));
+    return r.status === 404 ? undefined : ((await r.json()) as ObservationTreeFolder);
+  }
+
   async listPages(): Promise<unknown> {
     const items: { id: string; name: string; description?: string; folder?: string }[] = [];
     const walk = (nodes: PageNode[], folder?: string): void => {

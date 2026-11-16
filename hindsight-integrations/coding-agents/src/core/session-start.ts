@@ -36,6 +36,12 @@ import { setLogLevel } from "./log";
 import { parsePageList, buildPagesPreamble, type PageRef } from "./page-injection";
 import type { ClientOpts, RetainOpts } from "./hindsight";
 import type { RetainExtractionMode } from "./missions";
+import {
+  buildMemoryTreeContext,
+  memoryTreeDir,
+  writeMemoryTree,
+  type ObservationTreeFolder,
+} from "./memory-tree";
 import { buildRetainStamp } from "./retain-stamp";
 import { detectLegacyClaudePlugin, legacyClaudePluginWarning } from "./legacy";
 import { HindsightClient } from "./hindsight";
@@ -64,6 +70,8 @@ interface SeedContextClient {
     extractionMode?: RetainExtractionMode;
     defaults?: Record<string, unknown>;
   }): Promise<void>;
+  // Optional: `autoInject: "tree"` writes it to the memory folder. HindsightClient has it.
+  observationTree?(): Promise<ObservationTreeFolder | undefined>;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
   // minimal test clients omit it, and the baseline write guards on its presence.
   retain?(
@@ -374,10 +382,23 @@ export async function buildSessionStartContext(args: {
     }
     /* fail-open preamble */
   }
-  const additionalContext = buildPagesPreamble(pages, {
+  let additionalContext = buildPagesPreamble(pages, {
     reflectOnNewGoals: cfg.autoInject !== "reflect",
     extra: cfg.toolGuideExtra,
   });
+  if (cfg.autoInject === "tree" && client.observationTree) {
+    // After the bank settings above, so a brand-new bank is configured before it is read. A failure
+    // leaves the agent without the folder, never without a session.
+    try {
+      const tree = await client.observationTree();
+      if (tree) {
+        const dir = memoryTreeDir(bankId);
+        additionalContext += `\n${buildMemoryTreeContext(dir, writeMemoryTree(dir, tree))}`;
+      } else diag(harness, "memory_tree_unavailable", { bank: bankId });
+    } catch (e) {
+      diag(harness, "memory_tree_failed", { bank: bankId, error: String(e).slice(0, 200) });
+    }
+  }
   // An empty page roster is NOT an empty bank: a bank with memories and no pages still answers a
   // reflect (#5209), so only the confirmed-empty probe above defers it.
   const deferInitialReflect = bankEmpty;
