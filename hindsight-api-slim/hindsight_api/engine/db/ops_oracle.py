@@ -232,14 +232,16 @@ class OracleOps(DataAccessOps):
         # temporal neighbor) that a concurrent writer — consolidation pruning, a
         # document re-retain — has deleted since. Like PostgreSQL, such links are
         # dropped instead of failing the whole batch with ORA-02291 (#6440). Oracle's
-        # FK is immediate, so the insert itself is the existence check: one row per
-        # statement (the ON CONFLICT rewrite inserts row by row anyway), and a
-        # "parent key not found" on either unit FK drops just that link — Oracle
-        # rolls back the failed statement only. A link that does land holds back a
-        # concurrent DELETE of its endpoint until commit, so no window remains and
-        # no parent lock is needed. (A FOR UPDATE parent lock was tried first and
-        # dropped: Oracle's only row lock is exclusive, so concurrent retains
-        # linking to the same neighbors queued behind each other.)
+        # FK is immediate, so the insert itself is the existence check: array DML with
+        # batcherrors=True sends one round-trip per chunk inside a savepoint, dropping
+        # only ORA-00001 duplicates and ORA-02291 on the unit FKs while rolling back
+        # and raising on any unexpected batch error. A link that does land holds back
+        # a concurrent DELETE of its endpoint until commit, so no window remains and
+        # no parent lock is needed.
+        if not sorted_links:
+            return
+        from .oracle import OracleConnection
+
         query = f"""
             INSERT INTO {table}
                 (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)
@@ -248,6 +250,21 @@ class OracleOps(DataAccessOps):
                          COALESCE(entity_id, '{nil_entity_uuid}'::uuid))
             DO NOTHING
             """
+        if isinstance(conn, OracleConnection):
+            step = max(1, chunk_size)
+            for start in range(0, len(sorted_links), step):
+                chunk = sorted_links[start : start + step]
+                rows = [
+                    (from_id, to_id, link_type, weight, entity_id, bank_id)
+                    for from_id, to_id, link_type, weight, entity_id in chunk
+                ]
+                await conn.executemany_filtered(
+                    query,
+                    rows,
+                    is_ignored_error=lambda err: bool(_VANISHED_UNIT_FK.search(str(getattr(err, "message", err)))),
+                )
+            return
+
         for from_id, to_id, link_type, weight, entity_id in sorted_links:
             try:
                 await conn.execute(query, from_id, to_id, link_type, weight, entity_id, bank_id)

@@ -51,6 +51,83 @@ async def test_vanished_endpoint_drops_only_that_link() -> None:
             await OracleOps().bulk_insert_links(conn, "memory_links", links, "bank-1", str(uuid.UUID(int=0)))
 
 
+@pytest.mark.asyncio
+async def test_oracle_connection_batch_links_drops_dups_and_vanished_fks_and_rolls_back_unexpected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Array DML path: drops ORA-00001 and FK_ML_{FROM,TO} while rolling back savepoint on unexpected errors."""
+    import sys
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.db.oracle import OracleConnection
+
+    class _FakeDatabaseError(Exception):
+        pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "oracledb",
+        SimpleNamespace(
+            DatabaseError=_FakeDatabaseError,
+            DB_TYPE_CLOB="CLOB",
+            defaults=SimpleNamespace(fetch_lobs=False),
+        ),
+    )
+
+    executed_sql: list[str] = []
+    batch_calls: list[tuple[str, list[dict], bool]] = []
+    next_batch_errors: list[object] = []
+
+    class _FakeCursor:
+        def execute(self, sql: str, *args: object):
+            executed_sql.append(sql)
+            return asyncio.sleep(0)
+
+        def executemany(self, sql: str, rows: list[dict], *, batcherrors: bool = False):
+            batch_calls.append((sql, rows, batcherrors))
+            return asyncio.sleep(0)
+
+        def getbatcherrors(self) -> list[object]:
+            return list(next_batch_errors)
+
+        def setinputsizes(self, **kwargs: object) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    conn = OracleConnection(SimpleNamespace(cursor=lambda: _FakeCursor()))
+    links = [
+        (_FROM, _GONE, "semantic", 0.9, None),
+        (_FROM, _LIVE, "semantic", 0.8, None),
+        (_FROM, _LIVE, "semantic", 0.8, None),
+    ]
+
+    # 1. Tolerate ORA-00001 and ORA-02291 on FK_ML_FROM / FK_ML_TO across chunks.
+    next_batch_errors[:] = [
+        SimpleNamespace(code=1, offset=2, message="ORA-00001: unique constraint violated"),
+        SimpleNamespace(code=2291, offset=0, message="ORA-02291: integrity constraint (HS.FK_ML_TO) violated"),
+        SimpleNamespace(code=2291, offset=0, message="ORA-02291: integrity constraint (HS.FK_ML_FROM) violated"),
+    ]
+    await OracleOps().bulk_insert_links(conn, "memory_links", links, "bank-1", str(uuid.UUID(int=0)), chunk_size=2)
+    assert len(batch_calls) == 2
+    assert all(be for _, _, be in batch_calls)
+    assert [len(rows) for _, rows, _ in batch_calls] == [2, 1]
+    assert not any(sql.startswith("ROLLBACK TO SAVEPOINT") for sql in executed_sql)
+
+    # 2. Unexpected error (e.g. FK_ML_ENTITY or ORA-00060) rolls back savepoint and raises.
+    for code, msg in (
+        (2291, "ORA-02291: integrity constraint (HS.FK_ML_ENTITY) violated - parent key not found"),
+        (60, "ORA-00060: deadlock detected while waiting for resource"),
+    ):
+        executed_sql.clear()
+        next_batch_errors[:] = [SimpleNamespace(code=code, offset=0, message=msg)]
+        with pytest.raises(_FakeDatabaseError):
+            await OracleOps().bulk_insert_links(conn, "memory_links", links[:1], "bank-1", str(uuid.UUID(int=0)))
+        assert any(sql.startswith("SAVEPOINT ") for sql in executed_sql)
+        assert any(sql.startswith("ROLLBACK TO SAVEPOINT ") for sql in executed_sql)
+
+
 @pytest.fixture
 def _oracle_backend(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Table names resolve per backend from config; point it at Oracle for these tests."""

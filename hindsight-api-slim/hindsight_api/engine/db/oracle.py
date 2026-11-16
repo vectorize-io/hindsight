@@ -19,7 +19,7 @@ import json
 import logging
 import re
 import uuid as _uuid_mod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, NamedTuple, cast
 
@@ -1240,6 +1240,46 @@ class OracleConnection(DatabaseConnection):
                     raise
         finally:
             cursor.close()
+
+    async def executemany_filtered(
+        self,
+        query: str,
+        args: list[tuple[Any, ...]],
+        *,
+        is_ignored_error: Callable[[Any], bool],
+    ) -> None:
+        """Run ``executemany(..., batcherrors=True)`` inside a savepoint.
+
+        Tolerated per-row errors (duplicates when ``ON CONFLICT DO NOTHING`` is
+        rewritten, or errors matched by *is_ignored_error*) are dropped per row;
+        any unexpected error rolls back the savepoint and raises
+        ``oracledb.DatabaseError``.
+        """
+        if not args:
+            return
+        query, ignore_dup, _ = _rewrite_pg_to_oracle(query)
+        converted = _convert_args_list(args)
+        converted_dicts = [{str(i + 1): v for i, v in enumerate(row)} for row in converted]
+        oracledb = _import_oracledb()
+        async with self.transaction():
+            cursor = self._conn.cursor()
+            try:
+                clob_keys = {k for row in converted_dicts for k, v in row.items() if _needs_clob_bind(v)}
+                if clob_keys:
+                    cursor.setinputsizes(**dict.fromkeys(clob_keys, oracledb.DB_TYPE_CLOB))
+                await cursor.executemany(query, converted_dicts, batcherrors=True)
+                for err in cursor.getbatcherrors():
+                    if (ignore_dup and getattr(err, "code", None) == 1) or is_ignored_error(err):
+                        continue
+                    logger.error(
+                        "Oracle batch error at offset %s. Query: %s\nError: %s",
+                        getattr(err, "offset", "?"),
+                        query[:500],
+                        getattr(err, "message", err),
+                    )
+                    raise oracledb.DatabaseError(err)
+            finally:
+                cursor.close()
 
     async def bulk_insert_from_arrays(
         self,
