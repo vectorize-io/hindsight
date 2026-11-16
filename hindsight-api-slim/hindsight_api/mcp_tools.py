@@ -561,6 +561,11 @@ def build_content_dict(
     Returns:
         Tuple of (content_dict, error_message). error_message is None if successful.
     """
+    # Empty content never reaches the extraction model (issue #6567); the HTTP
+    # route refuses it the same way in validate_and_canonicalize_content.
+    if not content.strip():
+        return {}, "content is empty or whitespace-only"
+
     # Coerce tags from JSON string to list if needed.
     # MCP tool bridges sometimes serialize JSON arrays as strings during
     # transport, e.g. '["a", "b"]' instead of ["a", "b"].
