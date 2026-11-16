@@ -91,7 +91,7 @@ class TestBuildContentDict:
     def test_rejects_empty_content(self, content):
         """Empty content must not reach extraction, where it retried forever (issue #6567)."""
         result, error = build_content_dict(content, "test_context")
-        assert error == "content is empty or whitespace-only"
+        assert error == "content cannot be empty"
         assert result == {}
 
 
