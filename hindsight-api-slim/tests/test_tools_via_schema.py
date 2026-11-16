@@ -390,7 +390,7 @@ class TestTheRefresh:
         )
 
         assert [s.heading for s in result.document.sections] == ["Tools", "Editors"]
-        # A loop turn only names a search here, so it is capped; the closing done is not.
+        # With no cap configured a loop turn, which only names a search, gets 1024; the closing done does not.
         assert max_tokens[:-1] and all(cap == 1024 for cap in max_tokens[:-1]), max_tokens
         assert max_tokens[-1] != 1024
         assert result.used_memory_ids == ["mem-1"], "f1 resolves to the memory recall returned"

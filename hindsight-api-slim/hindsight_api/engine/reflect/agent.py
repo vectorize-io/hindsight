@@ -169,8 +169,9 @@ _COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget
 #: rest of the iteration budget on it costs a reflect either way.
 _MAX_DOCUMENT_REJECTIONS = 1
 
-#: A loop turn's output cap when the closing step writes the answer, so the turn only names
-#: a search (its reply is held to a response schema, see providers/tools_via_schema). The longest valid one measured was 130 tokens.
+#: A loop turn's default output cap when the closing step writes the answer, so the turn only
+#: names a search (its reply is held to a response schema, see providers/tools_via_schema). The
+#: longest valid one measured was 130 tokens. A configured reflect cap replaces it (#6560).
 _SCHEMA_LOOP_TURN_MAX_TOKENS = 1024
 
 #: Temperature for reflect's mechanical passes: split synthesis's map calls, which copy
@@ -646,14 +647,14 @@ async def _run_reflect_agent_inner(
     # the cheap way to say it is answer_ready (one bool), not an answer that is discarded.
     closing_step_answers = evidence_is_sufficient_fn is None or answer_as_document
     # A loop turn through a response schema only names its next search when the closing
-    # step writes the answer, so it is capped: under load a schema-held reply can fall into
-    # a repetition loop ("ranking service squad owner ranking service squad owner ..."),
-    # which uncapped ran to 12,288 tokens and the request timeout.
+    # step writes the answer, so with no cap configured it gets 1024: under load a
+    # schema-held reply can fall into a repetition loop ("ranking service squad owner
+    # ranking service squad owner ..."), which uncapped ran to 12,288 tokens and the request
+    # timeout. A cap the operator set is sent as-is (#4437, #6560): on a reasoning model the
+    # budget also pays for the thinking, which alone can spend 1024 before the reply starts.
     loop_turn_max_completion_tokens = synthesis_max_completion_tokens
-    if closing_step_answers:
-        loop_turn_max_completion_tokens = min(
-            synthesis_max_completion_tokens or _SCHEMA_LOOP_TURN_MAX_TOKENS, _SCHEMA_LOOP_TURN_MAX_TOKENS
-        )
+    if closing_step_answers and loop_turn_max_completion_tokens is None:
+        loop_turn_max_completion_tokens = _SCHEMA_LOOP_TURN_MAX_TOKENS
     tools = get_reflect_tools(
         directive_rules=directive_rules,
         include_mental_models=has_mental_models,
@@ -665,7 +666,7 @@ async def _run_reflect_agent_inner(
         answer_ready=closing_step_answers,
     )
     # When the closing step writes the answer, a free turn picks a search or answer_ready, never
-    # done: its turn is capped (above), and a page sent through it would be cut off at the cap.
+    # done: its turn may be capped at 1024 (above), which would cut a page off.
     # Done stays declared in the prompt (``declared_tools``), so every turn shares one prefix.
     loop_tools = tools
     if closing_step_answers:
@@ -1371,8 +1372,8 @@ async def _run_reflect_agent_inner(
                     # The uncapped-by-default ceiling the synthesis calls use, since a free
                     # turn's done can carry the answer: left unset this fell through to the
                     # provider's own default, which on Anthropic truncated long ``done``
-                    # payloads before the answer field was written (#4437). Capped only
-                    # through a response schema with a closing step (see its definition).
+                    # payloads before the answer field was written (#4437). With none
+                    # configured and a closing step, 1024 (see its definition).
                     max_completion_tokens=loop_turn_max_completion_tokens,
                 )
                 result = await llm_config.call_with_tools(**ct_kwargs)
