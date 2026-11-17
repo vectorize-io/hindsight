@@ -512,6 +512,10 @@ class RerankStub:
     #: stories about a recall whose decision model fails. The /rerank endpoint ignores it.
     fail_with_status: int | None = None
 
+    #: Answer every /rerank request with this provider error instead, for the stories
+    #: about a reranker that is down while something searches.
+    rerank_fail_with_status: int | None = None
+
     def __init__(self) -> None:
         self.verdicts = {}
         self.states = []
@@ -609,6 +613,7 @@ class Stubs:
         self.rerank.states = []
         self.rerank.repeats = set()
         self.rerank.fail_with_status = None
+        self.rerank.rerank_fail_with_status = None
         self.triage.reset()
         self.rejected_requests.clear()
         self.webhooks.clear()

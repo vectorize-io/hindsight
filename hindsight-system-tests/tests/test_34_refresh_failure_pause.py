@@ -15,6 +15,10 @@ Except when the failure was the provider being out for a while — a rate limit,
 5xx. Pausing on those froze every page in a bank for days after a subscription's
 session limit had already reset, while new memory kept arriving (#5394). The next
 automatic trigger must run them.
+
+The same holds when the outage is under the reflect loop rather than the LLM: a
+reranker down while the refresh searches. That failure was recorded on a separate
+path, which paused without asking whether it would pass (#6582).
 """
 
 from __future__ import annotations
@@ -122,6 +126,45 @@ async def test_a_refresh_failed_by_a_rate_limit_runs_again_on_the_next_consolida
     # The limit has lifted. The next consolidation refreshes the model on its own.
     llm.reset()
     reflect_loop(llm, answer=ANSWER)
+    await _retain(client, llm, bank_id, "Alice started a new job")
+    assert await _refreshes(client, bank_id) == baseline + 2
+    assert await _refreshes(client, bank_id, status="failed") == 1
+    assert (await client.mental_models.get_mental_model(bank_id, model, detail="full")).content.strip() == ANSWER
+
+
+async def test_a_refresh_failed_by_a_reranker_outage_runs_again_on_the_next_consolidation(
+    client, llm, stubs, bank_id, settled
+):
+    reflect_loop(llm, answer=ANSWER)
+    await _retain(client, llm, bank_id, "Alice moved to Berlin")
+    created = await client.mental_models.create_mental_model(
+        bank_id,
+        {
+            "name": "Housing",
+            "source_query": "Where does Alice live?",
+            "trigger": {"refresh_after_consolidation": True},
+        },
+    )
+    await settled(bank_id)
+    model = created.mental_model_id
+    baseline = await _refreshes(client, bank_id)
+
+    # The reranker is down while the refresh searches, so the search fails under reflect.
+    # The search has to find the fact: an empty candidate list never reaches the reranker.
+    llm.reset()
+    reflect_loop(llm, answer=ANSWER, query="Alice Berlin")
+    stubs.rerank.rerank_fail_with_status = 503
+    await client.mental_models.refresh_mental_model(bank_id, model)
+    await wait_until_settled(client, bank_id, allow_failed=True)
+    assert await _refreshes(client, bank_id, status="failed") == 1
+    history = await client.mental_models.get_mental_model_history(bank_id, model)
+    assert history[0]["kind"] == "refresh_failed"
+    assert history[0]["failure_reason"] == "retrieval_failed", "the search under reflect is what failed"
+    # An outage is not a pause, so nothing is counted as paused.
+    assert await _paused(client, bank_id) == 0
+
+    # The reranker is back. The next consolidation refreshes the model on its own.
+    stubs.rerank.rerank_fail_with_status = None
     await _retain(client, llm, bank_id, "Alice started a new job")
     assert await _refreshes(client, bank_id) == baseline + 2
     assert await _refreshes(client, bank_id, status="failed") == 1

@@ -19502,6 +19502,9 @@ class MemoryEngine(MemoryEngineInterface):
                         outcome="refresh_failed_error",
                         failure_reason=failure_reason,
                         error_message=detail,
+                        # A reranker or embedder that timed out inside a search answers
+                        # on the next trigger; only a failure that would repeat pauses (#6582).
+                        pause_automatic=not is_transient_remote_error(exc),
                     )
                     raise MentalModelRefreshError(
                         f"Refresh failed for mental_model_id={mental_model_id}: {detail} "

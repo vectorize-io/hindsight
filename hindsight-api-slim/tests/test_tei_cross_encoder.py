@@ -25,6 +25,7 @@ from aiohttp import web
 
 from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.cross_encoder import RemoteTEICrossEncoder
+from hindsight_api.engine.remote_retry import is_transient_remote_error
 from tests.aiohttp_stub import stub_server
 
 # Nothing listens on port 1, so connecting is refused immediately.
@@ -418,8 +419,10 @@ class TestRemoteTEICrossEncoderRetry:
                 await encoder.predict([("Query", "Doc 1")])
 
         assert attempt_count == 3
-        assert isinstance(exc_info.value.__context__, UpstreamHTTPError)
-        assert exc_info.value.__context__.status_code == 429
+        assert isinstance(exc_info.value.__cause__, UpstreamHTTPError)
+        assert exc_info.value.__cause__.status_code == 429
+        # Chained with `from`, so a refresh that hits it does not pause (#6582).
+        assert is_transient_remote_error(exc_info.value)
 
 
 class TestRemoteTEICrossEncoderConfig:

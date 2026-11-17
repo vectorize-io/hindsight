@@ -17,6 +17,7 @@ from aiohttp import web
 from hindsight_api.engine import embeddings as embeddings_module
 from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.embeddings import RemoteTEIEmbeddings
+from hindsight_api.engine.remote_retry import is_transient_remote_error
 from hindsight_api.engine.tei_retry import TEI_KEEPALIVE_EXPIRY_SECONDS
 from tests.aiohttp_stub import Handler, stub_server
 
@@ -148,7 +149,7 @@ async def test_persistent_dropped_connection_exhausts_retry_budget() -> None:
             await embeddings.encode(["text"])
 
     assert attempts == 3
-    assert isinstance(exc_info.value.__context__, aiohttp.ClientConnectionError)
+    assert isinstance(exc_info.value.__cause__, aiohttp.ClientConnectionError)
 
 
 async def test_retry_on_too_many_requests() -> None:
@@ -224,8 +225,10 @@ async def test_persistent_too_many_requests_exhausts_retry_budget() -> None:
             await embeddings.encode(["text"])
 
     assert attempts == 3
-    assert isinstance(exc_info.value.__context__, UpstreamHTTPError)
-    assert exc_info.value.__context__.status_code == 429
+    assert isinstance(exc_info.value.__cause__, UpstreamHTTPError)
+    assert exc_info.value.__cause__.status_code == 429
+    # Chained with `from`, so a refresh that hits it does not pause (#6582).
+    assert is_transient_remote_error(exc_info.value)
 
 
 async def test_initialize_probes_info_and_detects_dimension() -> None:

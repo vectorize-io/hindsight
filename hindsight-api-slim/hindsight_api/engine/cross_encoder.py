@@ -682,7 +682,7 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
             self._model_id = info.get("model_id", "unknown")
             logger.info(f"Reranker: TEI provider initialized (model: {self._model_id})")
         except (aiohttp.ClientError, UpstreamHTTPError, TimeoutError) as e:
-            raise RuntimeError(f"Failed to connect to TEI server at {self.base_url}: {e}")
+            raise RuntimeError(f"Failed to connect to TEI server at {self.base_url}: {e}") from e
 
     async def _rerank_query_group(
         self,
@@ -706,7 +706,7 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
             # TEI returns results sorted by score descending, with original index
             return [(result["index"], result["score"]) for result in results]
         except (aiohttp.ClientError, UpstreamHTTPError, TimeoutError) as e:
-            raise RuntimeError(f"TEI rerank request failed: {e}")
+            raise RuntimeError(f"TEI rerank request failed: {e}") from e
 
     async def _predict_async(self, pairs: list[tuple[str, str]]) -> list[float]:
         """Async implementation of predict that runs requests in parallel with backpressure."""
