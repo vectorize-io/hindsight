@@ -48,9 +48,9 @@ separate from the dev database and from the api-slim suite's, and run the server
 from a scratch directory holding an empty `.env` so your own `.env` cannot leak
 into the test configuration.
 
-If your shell exports `PYTEST_ADDOPTS=-n ...`, clear it for this suite —
-`pytest-xdist` is not installed here, and the session-scoped server makes it
-pointless anyway.
+A `-n` from `PYTEST_ADDOPTS` (set to tame the api-slim suite) is accepted and
+ignored with a warning: the suite runs serially, since the session-scoped server
+listens on one fixed pg0 port.
 
 **Background work is off by default.** Observation extraction and auto
 consolidation run in the worker after a retain returns, so their LLM calls would

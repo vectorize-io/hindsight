@@ -33,6 +33,23 @@ SettleFn = Callable[[str], Awaitable[None]]
 BANK_PREFIX = "systest-"
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    # Accept `-n` and ignore it. A shell or agent that exports `PYTEST_ADDOPTS=-n 3` to tame the
+    # api-slim suite otherwise aborts this one with "unrecognized arguments: -n": pytest-xdist is
+    # not installed here, and running in parallel would be wrong anyway, since every worker would
+    # start its own server on the one fixed pg0 port. `_addoption` because pytest reserves
+    # lowercase short flags for itself; it is the same call pytest-xdist makes to register `-n`.
+    parser.getgroup("system-tests")._addoption("-n", dest="ignored_numprocesses", default=None)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    if config.getoption("ignored_numprocesses") is not None:
+        config.issue_config_time_warning(
+            pytest.PytestConfigWarning("-n is ignored: the system tests run serially against one server."),
+            stacklevel=2,
+        )
+
+
 @pytest.fixture(scope="session")
 def stubs() -> Stubs:
     return Stubs()
