@@ -195,13 +195,14 @@ install_node_deps() {
 prewarm_models() {
     step "Pre-download ML models (offline readiness)"
     # Respect provider/model overrides from .env; default to local + repo
-    # defaults (BAAI/bge-small-en-v1.5, hindsight-ai/hs-rerank-1).
+    # defaults (BAAI/bge-small-en-v1.5, hindsight-ai/hs-rerank-1, and the knowledge
+    # banks' google/embeddinggemma-2).
     set -a; [ -f "$ROOT_DIR/.env" ] && . "$ROOT_DIR/.env"; set +a
 
     # Only the "local" provider downloads weights; remote providers (TEI,
     # OpenAI, Cohere, ...) fetch nothing here. The tokenizer needs no step at
     # all — toktok compiles its vocabularies into the wheel.
-    local emb_model="" rer_model=""
+    local emb_model="" rer_model="" kb_model=""
     if [ "${HINDSIGHT_API_EMBEDDINGS_PROVIDER:-local}" = "local" ]; then
         emb_model="${HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL:-BAAI/bge-small-en-v1.5}"
         info "embeddings (local): $emb_model"
@@ -214,10 +215,17 @@ prewarm_models() {
     else
         info "reranker provider is '${HINDSIGHT_API_RERANKER_PROVIDER}' — no local weights to fetch"
     fi
+    local kb_provider="${HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER:-local}"
+    if [ "$kb_provider" = "local" ]; then
+        kb_model="${HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODEL:-google/embeddinggemma-2}"
+        info "knowledge embeddings (local): $kb_model"
+    else
+        info "knowledge embeddings provider is '$kb_provider' — no local weights to fetch"
+    fi
 
     # With the tokenizer needing no cache, an all-remote setup has nothing left to
     # fetch here — say so rather than starting a python process to warm nothing.
-    if [ -z "$emb_model" ] && [ -z "$rer_model" ]; then
+    if [ -z "$emb_model" ] && [ -z "$rer_model" ] && [ -z "$kb_model" ]; then
         ok "nothing to pre-download (no local providers configured)"
         SUMMARY+=("models: none needed (remote providers)")
         return
@@ -228,7 +236,7 @@ prewarm_models() {
     # a fast cache validation rather than a re-download.
     local attempt delay=10
     for attempt in 1 2 3; do
-        if PREWARM_EMB="$emb_model" PREWARM_RER="$rer_model" \
+        if PREWARM_EMB="$emb_model" PREWARM_RER="$rer_model" PREWARM_KB="$kb_model" \
            HF_HUB_DOWNLOAD_TIMEOUT=600 \
            uv run --directory "$ROOT_DIR/hindsight-api-slim" python - <<'PY'
 import os
@@ -237,6 +245,7 @@ os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "600")
 
 emb = os.environ.get("PREWARM_EMB") or ""
 rer = os.environ.get("PREWARM_RER") or ""
+kb = os.environ.get("PREWARM_KB") or ""
 if emb:
     from sentence_transformers import SentenceTransformer
 
@@ -247,6 +256,12 @@ if rer:
 
     print(f"  caching cross-encoder model {rer} ...", flush=True)
     CrossEncoder(rer)
+if kb:
+    from huggingface_hub import snapshot_download
+
+    # Download only, like the Docker build: loading the 740M model just to cache it is wasted RAM.
+    print(f"  caching knowledge embedding model {kb} ...", flush=True)
+    snapshot_download(kb)
 print("  models cached", flush=True)
 PY
         then

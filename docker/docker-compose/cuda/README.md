@@ -15,8 +15,8 @@ for NVIDIA GPU-accelerated local embeddings and reranking.
 > The LLM (used for retain/recall/reflect) is external by default (e.g. OpenAI, Anthropic, Ollama, vLLM).
 
 The CUDA runtime is added on top of the full image, whose CPU PyTorch wheel stays
-in the base layers. Expect the result to be **roughly 11 GB on disk**, against
-~9 GB for the base image it builds on.
+in the base layers. Expect the result to be **roughly 12.5 GB on disk**, against
+~10.5 GB for the base image it builds on.
 
 ## Prerequisites
 

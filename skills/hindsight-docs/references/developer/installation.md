@@ -135,7 +135,7 @@ Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_
 
 | Variant | Size (AMD64) | Size (ARM64) | When to use |
 |---------|--------------|--------------|-------------|
-| **Full** (`latest`) | ~9 GB | ~3.7 GB | Default. Embeddings and reranking run in the image; the LLM is always external, including for local inference. |
+| **Full** (`latest`) | ~10.5 GB | ~4.4 GB | Default. Embeddings and reranking run in the image, and the knowledge banks' EmbeddingGemma 2 model (~1.5 GB) is bundled so they work offline; the LLM is always external, including for local inference. |
 | **Slim** (`slim`) | ~500 MB | ~500 MB | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration.md#embeddings). |
 
 The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration.md#embeddings) for external provider options.
@@ -152,7 +152,7 @@ docker compose -f docker/docker-compose/cuda/docker-compose.yaml up --build
 
 The recipe upgrades in-process PyTorch to CUDA 12.6 and configures GPU passthrough via the NVIDIA Container Toolkit. Build it on the machine that will run it — an emulated cross-architecture image cannot reach the GPU.
 
-The CUDA runtime is additive: the base image's CPU PyTorch wheel stays in the lower layers, so the result is **roughly 11 GB on disk** against the ~9 GB Full image. This is why no CUDA image is published — the cost is only worth paying when you actually have a GPU to use.
+The CUDA runtime is additive: the base image's CPU PyTorch wheel stays in the lower layers, so the result is **roughly 12.5 GB on disk** against the ~10.5 GB Full image. This is why no CUDA image is published — the cost is only worth paying when you actually have a GPU to use.
 
 See [`docker/docker-compose/cuda/README.md`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/cuda) for prerequisites, manual build steps, and verification.
 
