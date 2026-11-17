@@ -2089,3 +2089,15 @@ async def test_reflect_searches_linked_banks_at_the_servers_budget(
     with pytest.raises(ValueError, match="REFLECT_KB_SEARCH_BUDGET"):
         _parse_reflect_kb_search_budget("deep")
     await memory.delete_bank(mem_bank, request_context=request_context)
+
+
+async def test_re_ingesting_with_reordered_tags_is_unchanged(api_client, kb):
+    """#6591: the same tags in another order are not a change, so nothing is re-indexed."""
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest", json={"items": [{"document_id": "a", "text": "red", "tags": ["x", "y"]}]}
+    )
+    assert r.status_code == 200, r.text
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest", json={"items": [{"document_id": "a", "text": "red", "tags": ["y", "x"]}]}
+    )
+    assert r.json()["unchanged_document_ids"] == ["a"]

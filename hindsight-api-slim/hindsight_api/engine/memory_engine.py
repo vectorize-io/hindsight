@@ -17692,7 +17692,8 @@ class MemoryEngine(MemoryEngineInterface):
                 if tags_match == "all":
                     tag_filter = " AND tags @> $2::varchar[]"
                 elif tags_match == "exact":
-                    tag_filter = " AND tags = $2::varchar[]"
+                    # Set equality, as `build_tags_where_clause` does: `=` on arrays is order-sensitive.
+                    tag_filter = " AND (tags @> $2::varchar[] AND tags <@ $2::varchar[])"
                 else:  # any
                     tag_filter = " AND tags && $2::varchar[]"
                 filter_params.append(tags)
