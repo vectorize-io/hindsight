@@ -1286,6 +1286,8 @@ class TestAdvancedFeatures:
             )
             assert past_end["scopes"] == [] and past_end["total"] == 3
 
+            # The engine passes only the caller's forced tag scope, so drive an exact
+            # match through the store function directly.
             async with backend.acquire() as conn:
                 exact = await observation_scope_counts(
                     conn=conn,

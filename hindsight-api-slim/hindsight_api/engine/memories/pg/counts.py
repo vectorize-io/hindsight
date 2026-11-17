@@ -197,11 +197,11 @@ async def observation_scope_counts(
     from ...schema import _is_oracle  # noqa: PLC0415
 
     groups = build_tag_groups_where_clause(tag_groups, 2)
-    limit_idx = groups.next_param_offset
     if _is_oracle():
         return await _oracle_observation_scope_counts(
             conn=conn, fq_table=fq_table, bank_id=bank_id, limit=limit, offset=offset, groups=groups
         )
+    limit_idx = groups.next_param_offset
     # A scope is the observation's tags, sorted. Sorting per observation is the
     # expensive part, and many observations share the exact same tag list, so
     # count identical lists first (a cheap hash aggregate) and sort only the
