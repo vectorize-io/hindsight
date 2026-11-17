@@ -111,6 +111,9 @@ class KnowledgeBanks:
     async def file(self, bank_id: str, document_id: str) -> Response:
         return await self.call("GET", f"{KB}/{bank_id}/documents/{document_id}/file")
 
+    async def tags(self, bank_id: str, **query: Any) -> Response:
+        return await self.call("GET", f"{KB}/{bank_id}/tags", query=query)
+
     async def search(self, bank_id: str, **body: Any) -> Response:
         return await self.call("POST", f"{KB}/{bank_id}/search", json_body=body)
 
