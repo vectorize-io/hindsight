@@ -544,7 +544,9 @@ async def test_litellm_tool_call_arg_parse_failure_keeps_usage(registered_record
     that did not follow the schema), and the error trace keeps the provider's usage."""
     llm = LLMProvider(provider="litellm", api_key="test-key", base_url="https://example.test/v1", model="gpt-4o-mini")
     # Valid response + usage, but the reply is prose, which no JSON repair turns into a call.
-    llm._provider_impl._acompletion = AsyncMock(return_value=_litellm_tool_response_with_usage("I would search the memories first."))
+    llm._provider_impl._acompletion = AsyncMock(
+        return_value=_litellm_tool_response_with_usage("I would search the memories first.")
+    )
 
     result = await llm.call_with_tools(
         messages=[{"role": "user", "content": "x"}],
