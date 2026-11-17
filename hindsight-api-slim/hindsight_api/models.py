@@ -28,6 +28,13 @@ class RequestContext:
     internal: bool = False  # True for background/internal operations (skips extension auth)
     mcp_authenticated: bool = False  # True when MCP transport auth already validated (skips tenant re-auth)
     user_initiated: bool = False  # True for async operations that originated from a user request
+    # True when this operation runs as a sub-step of a larger operation the caller is already
+    # accounted for — e.g. a search a reflect issues against a linked bank on the caller's behalf.
+    # Unlike ``internal`` it does NOT skip extension auth: the operation is still authorized as the
+    # caller, because a validator must see who it acts for. It only marks the operation as not
+    # independently chargeable, so a metering or quota extension can avoid counting it a second time
+    # against the parent operation it belongs to.
+    sub_operation: bool = False
     # Number of times this task has been retried. Populated by the worker
     # from async_operations.retry_count before dispatching to a task handler;
     # 0 for sync/HTTP requests and for the first worker attempt. Useful for

@@ -876,6 +876,8 @@ class KnowledgeBankIngestResult:
     tenant_id: str | None
     api_key_id: str | None
     passages: int
+    #: The document(s)' billable content size (text tokens, or media bytes at a fixed rate).
+    content_tokens: int = 0
 
 
 @dataclass
@@ -889,6 +891,8 @@ class KnowledgeBankDeleteResult:
     bank_id: str
     request_context: "RequestContext"
     passages: int
+    #: The content tokens that went with the deleted passages, for storage metering to decrement.
+    content_tokens: int = 0
 
 
 @dataclass

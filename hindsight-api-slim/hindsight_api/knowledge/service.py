@@ -397,6 +397,19 @@ def _passage_bytes(draft: media.PassageDraft, vectors: list[list[float]]) -> int
     return len(draft.data or b"") + len(draft.text or "") + sum(_vector_bytes(v) for v in vectors)
 
 
+#: Bytes of stored media per content token, for a binary file whose content is bytes, not words
+#: (a high-bitrate video is the tightest case). Text is counted by its own tokens instead.
+_MEDIA_BYTES_PER_CONTENT_TOKEN = 5120
+
+
+def _content_tokens(item: IngestItem) -> int:
+    """A document's billable content size. Text (the text-ingest API, or an uploaded .txt/.md) is
+    counted by its tokens; any other file is counted by its size at ``_MEDIA_BYTES_PER_CONTENT_TOKEN``."""
+    if (item.content_type or "").startswith("text/"):
+        return count_tokens(item.data.decode("utf-8", "ignore"))
+    return -(-len(item.data) // _MEDIA_BYTES_PER_CONTENT_TOKEN)  # ceil(bytes / rate)
+
+
 class _MemoryBudget:
     """The bytes of cut-but-uncommitted passages (their text, file and vectors) one batch may hold, as
     retain bounds its extracted-but-unwritten facts: the splitter reserves a passage's cost before queueing
@@ -714,6 +727,7 @@ class KnowledgeService:
         # What the bank holds now, read before the delete, so storage metering can decrement it.
         bank_passages = (await self.store.bank_stats([bank_id])).get(bank_id)
         passages_removed = bank_passages.passage_count if bank_passages else 0
+        content_tokens_removed = bank_passages.content_tokens if bank_passages else 0
         # Its queued ingests are cancelled first (the worker no longer claims them), then its documents
         # go a batch per transaction: the banks row cascades to kb_documents -> kb_passages -> vectors,
         # and on a 100k-document bank that one cascading statement ran past the command timeout
@@ -736,7 +750,7 @@ class KnowledgeService:
             await asyncio.sleep(1)
         await self._engine.delete_bank(bank_id, request_context=request_context, _knowledge_bank=True)
         await self._engine._file_storage.delete_prefix(f"{bank_storage_prefix(bank_id)}kb/")
-        await self._on_delete_complete(bank_id, request_context, passages_removed)
+        await self._on_delete_complete(bank_id, request_context, passages_removed, content_tokens_removed)
 
     # --- per-bank settings ------------------------------------------------------------------
 
@@ -1051,6 +1065,7 @@ class KnowledgeService:
                     passage_count=before.passage_count if before else 0,
                     tags=item.tags,
                     source_document_id=e.source_document_id,
+                    content_tokens=_content_tokens(item),
                 )
             )
         # Saved one after another, these were most of an ingest's time (a commit each on Postgres, a few
@@ -1473,6 +1488,7 @@ class KnowledgeService:
                     ],
                 )
             committed_passages = sum(d.committed_passages for d in kept)
+            committed_content_tokens = sum(d.document.content_tokens for d in kept)
             logger.info(
                 f"Knowledge ingest {bank_id}: {len(kept)} documents, "
                 f"{committed_passages} passages, "
@@ -1488,6 +1504,7 @@ class KnowledgeService:
                             tenant_id=(caller or {}).get("_tenant_id"),
                             api_key_id=(caller or {}).get("_api_key_id"),
                             passages=committed_passages,
+                            content_tokens=committed_content_tokens,
                         )
                     )
                 )
@@ -1706,7 +1723,14 @@ class KnowledgeService:
         deleted = await self._delete_trees(bank_id, [document_id])
         if not any(d.document_id == document_id for d in deleted):
             raise KnowledgeBankError(f"document '{document_id}' not found", 404)
-        await self._on_delete_complete(bank_id, request_context, sum(d.passage_count for d in deleted))
+        await self._on_delete_complete(
+            bank_id,
+            request_context,
+            sum(d.passage_count for d in deleted),
+            # Only passage-bearing documents, matching what ingest added: a split parent carries a
+            # content_tokens figure but its content was billed through its children.
+            sum(d.content_tokens for d in deleted if d.passage_count > 0),
+        )
 
     async def open_file(self, bank_id: str, document_id: str, request_context: RequestContext) -> OpenedFile:
         """The original upload: its byte stream, content type and filename."""
@@ -1840,14 +1864,21 @@ class KnowledgeService:
         except Exception:
             logger.warning("A knowledge-bank metering hook raised; ignoring", exc_info=True)
 
-    async def _on_delete_complete(self, bank_id: str, request_context: RequestContext, passages: int) -> None:
-        """Fire the validator's post-delete hook with how many passages went with the deletion (see
-        on_knowledge_bank_delete_complete). A no-op when nothing was removed."""
+    async def _on_delete_complete(
+        self, bank_id: str, request_context: RequestContext, passages: int, content_tokens: int
+    ) -> None:
+        """Fire the validator's post-delete hook with how many passages and content tokens went with the
+        deletion (see on_knowledge_bank_delete_complete). A no-op when nothing was removed."""
         if passages <= 0:
             return
         await self._fire_completion_hook(
             lambda v: v.on_knowledge_bank_delete_complete(
-                KnowledgeBankDeleteResult(bank_id=bank_id, request_context=request_context, passages=passages)
+                KnowledgeBankDeleteResult(
+                    bank_id=bank_id,
+                    request_context=request_context,
+                    passages=passages,
+                    content_tokens=content_tokens,
+                )
             )
         )
 
@@ -2031,8 +2062,10 @@ async def documents_for_memory_bank(
     if not linked or not (query or "").strip():
         return None
     # Reflect's recall runs as an internal operation, but the linked banks are read on the caller's
-    # behalf: the validator must see the caller, not a background job it would let through.
-    caller = replace(request_context, internal=False)
+    # behalf: the validator must see the caller (``internal=False``), not a background job it would
+    # let through. ``sub_operation`` marks it as part of the reflect the caller is already accounted
+    # for, so a metering extension does not charge these linked searches a second time.
+    caller = replace(request_context, internal=False, sub_operation=True)
     try:
         return await _linked_documents(engine, bank_id, linked, query, max_tokens, filters, caller)
     except Exception as exc:

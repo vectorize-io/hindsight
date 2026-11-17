@@ -193,10 +193,12 @@ async def test_completion_hooks_fire_with_their_work_size(api_client, kb, instal
     try:
         r = await _upload(api_client, kb, [("red.png", _png((255, 0, 0)), "image/png")], [{"document_id": "red"}])
         assert r.is_success, r.text
-        # An ingest fired, carrying the bank and at least one committed passage.
+        # An ingest fired, carrying the bank and at least one committed passage, and the document's
+        # billable content size — for an image, its bytes at the media rate (so at least one token).
         assert validator.ingests, "ingest hook did not fire"
         assert all(i.bank_id == kb for i in validator.ingests)
         assert sum(i.passages for i in validator.ingests) >= 1
+        assert sum(i.content_tokens for i in validator.ingests) >= 1
 
         # Traced or not, a search reports what its results weigh: the figure the trace calls tokens_used.
         r = await api_client.post(f"{KB}/{kb}/search", json={"query": "red", "trace": True})
@@ -210,6 +212,7 @@ async def test_completion_hooks_fire_with_their_work_size(api_client, kb, instal
         assert (await api_client.delete(f"{KB}/{kb}/documents/red")).status_code == 200
         assert validator.deletes, "delete hook did not fire"
         assert sum(d.passages for d in validator.deletes) >= 1
+        assert sum(d.content_tokens for d in validator.deletes) >= 1
     finally:
         install_validator(None)
 
