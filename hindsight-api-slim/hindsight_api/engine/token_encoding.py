@@ -50,6 +50,11 @@ toktok's ``count``/``truncate``, which have no special-token machinery to trigge
 That is the reason to keep using the functions below rather than the tokenizer's own
 ``encode()`` — that call is the raising one, and #1883 is what it looks like in
 production. It is also why the tokenizer itself is not part of this interface.
+
+**Lone surrogates.** A string cut mid-emoji (``"\\ud83e"``) is legal in JSON and in
+Python but not in UTF-8. toktok before 0.5.0 raised ``UnicodeEncodeError`` on it, so
+retain or recall content carrying one failed the request; 0.5.0 counts it as U+FFFD,
+as tiktoken does. That is why the dependency floor is 0.5.0.
 """
 
 from collections.abc import Sequence
