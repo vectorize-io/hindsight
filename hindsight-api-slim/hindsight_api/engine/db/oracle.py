@@ -611,6 +611,19 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
 
     query = re.sub(r"(\w+)\s*&&\s*(:\w+)", _rewrite_array_overlap, query)
 
+    # PG array contained-by: tags <@ :N → Oracle: no element of col is missing from param.
+    # The exact tag match emits it as `tags @> :N AND tags <@ :N` (#6585).
+    def _rewrite_array_contained_by(m):
+        col = m.group(1)
+        param = m.group(2)
+        return (
+            f"NOT EXISTS (SELECT 1 FROM JSON_TABLE({col}, '$[*]' COLUMNS (val VARCHAR2(256) PATH '$')) c "
+            f"WHERE NOT EXISTS (SELECT 1 FROM JSON_TABLE({param}, '$[*]' COLUMNS (val VARCHAR2(256) PATH '$')) p "
+            f"WHERE p.val = c.val))"
+        )
+
+    query = re.sub(r"(\w+)\s*<@\s*(:\w+)", _rewrite_array_contained_by, query)
+
     # PG array containment: tags @> :N → Oracle: all elements from param exist in col
     # (Override the JSONB contains regex which doesn't work for array containment)
     # Already handled by _JSONB_CONTAINS_RE above, but that generates wrong SQL for arrays.
