@@ -519,14 +519,15 @@ async def test_retain_extract_success_records_usage_once(registered_recorder):
 # ── real provider: litellm tool-call arg-parse failure keeps usage (#2387) ────
 
 
-def _litellm_tool_response_with_usage(arguments: str):
-    """A successful LiteLLM (OpenAI-shaped) tool-call response carrying usage,
-    like ``call_with_tools`` sees right before it ``json.loads`` the tool
-    arguments."""
-    function = SimpleNamespace(name="extract", arguments=arguments)
-    tool_call = SimpleNamespace(id="call_1", function=function)
-    message = SimpleNamespace(content=None, tool_calls=[tool_call])
-    choice = SimpleNamespace(finish_reason="tool_calls", message=message)
+def _litellm_tool_response_with_usage(content: str):
+    """A successful LiteLLM (OpenAI-shaped) reply to a tool turn, carrying usage.
+
+    The turn's call is the reply text, held to a response schema (tools_via_schema). It
+    used to be a native tool call with unparseable arguments; a native call is now read as
+    the reply (#6520), so a reply that is not JSON is plain text that is not JSON.
+    """
+    message = SimpleNamespace(content=content, tool_calls=None)
+    choice = SimpleNamespace(finish_reason="stop", message=message)
     usage = SimpleNamespace(
         prompt_tokens=140,
         completion_tokens=18,
@@ -542,8 +543,8 @@ async def test_litellm_tool_call_arg_parse_failure_keeps_usage(registered_record
     the tokens before the reply was parsed. The turn comes back with no call (a model
     that did not follow the schema), and the error trace keeps the provider's usage."""
     llm = LLMProvider(provider="litellm", api_key="test-key", base_url="https://example.test/v1", model="gpt-4o-mini")
-    # Valid response + usage, but the reply is not valid JSON.
-    llm._provider_impl._acompletion = AsyncMock(return_value=_litellm_tool_response_with_usage("{not valid json"))
+    # Valid response + usage, but the reply is prose, which no JSON repair turns into a call.
+    llm._provider_impl._acompletion = AsyncMock(return_value=_litellm_tool_response_with_usage("I would search the memories first."))
 
     result = await llm.call_with_tools(
         messages=[{"role": "user", "content": "x"}],
