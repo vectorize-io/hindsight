@@ -48,7 +48,7 @@
     "darkMode": "Switch to dark mode",
     "lightMode": "Switch to light mode",
     "bank": {
-      "select": "Select a memory bank...",
+      "select": "Select a bank...",
       "allBanks": "All memory banks",
       "search": "Search memory banks...",
       "empty": "No memory banks yet.",

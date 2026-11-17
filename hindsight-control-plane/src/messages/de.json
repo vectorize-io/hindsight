@@ -48,7 +48,7 @@
     "darkMode": "Zum Dunkelmodus wechseln",
     "lightMode": "Zum Hellmodus wechseln",
     "bank": {
-      "select": "Speicherbank auswählen...",
+      "select": "Bank auswählen...",
       "allBanks": "Alle Speicherbänke",
       "search": "Speicherbänke durchsuchen...",
       "empty": "Noch keine Speicherbänke vorhanden.",

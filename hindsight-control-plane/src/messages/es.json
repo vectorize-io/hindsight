@@ -48,7 +48,7 @@
     "darkMode": "Cambiar a modo oscuro",
     "lightMode": "Cambiar a modo claro",
     "bank": {
-      "select": "Selecciona un banco de memoria...",
+      "select": "Selecciona un banco...",
       "allBanks": "Todos los bancos de memoria",
       "search": "Buscar bancos de memoria...",
       "empty": "Aún no hay bancos de memoria.",
