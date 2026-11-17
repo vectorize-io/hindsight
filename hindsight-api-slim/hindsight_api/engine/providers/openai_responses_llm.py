@@ -419,7 +419,7 @@ class OpenAIResponsesLLM(LLMInterface):
                         provider=self.provider,
                         model=self.model,
                         scope=scope,
-                        messages=params.get("input") or [],
+                        messages=params["input"],
                         error=e,
                         started=attempt_started,
                     )

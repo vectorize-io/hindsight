@@ -404,7 +404,7 @@ def record_retried_attempt(
     error: BaseException,
     started: float,
 ) -> None:
-    """Trace an attempt that came back unusable or timed out and is about to be retried.
+    """Trace an attempt that failed (an unusable reply, a timeout, a dropped connection) and is about to be retried.
 
     The final failure is traced by the wrapper, but a retried attempt otherwise leaves
     only a log line: it was still billed (often for reasoning tokens), and counting
@@ -413,6 +413,9 @@ def record_retried_attempt(
     from hindsight_api.tracing import get_span_recorder
 
     usage = current_response_usage()
+    # Consumed here: a later attempt that dies before any reply (a timeout) would
+    # otherwise attach this attempt's tokens again and count them twice.
+    stash_response_usage(None)
     duration = time.perf_counter() - started
     get_metrics_collector().record_llm_call(
         provider=provider,

@@ -33,13 +33,20 @@ def recorder():
     unregister_span_recorder(rec)
 
 
-def _completion(content: str) -> ChatCompletion:
+def _completion(content: str | None, finish_reason: str = "stop") -> ChatCompletion:
+    choice: dict[str, Any] = {
+        "index": 0,
+        "finish_reason": finish_reason,
+        "message": {"role": "assistant", "content": content},
+    }
+    if finish_reason == "error":
+        choice["error"] = {"code": 502, "message": "upstream connection reset"}
     payload = {
         "id": "gen-1",
         "object": "chat.completion",
         "created": 0,
         "model": "m",
-        "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": content}}],
+        "choices": [choice],
         "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
     }
     return construct_type(type_=ChatCompletion, value=payload)  # type: ignore[return-value]
@@ -67,6 +74,19 @@ async def test_openai_compatible_traces_the_timed_out_attempt_before_retrying(re
     retried, succeeded = recorder.records
     assert isinstance(retried["error"], TimeoutError)
     assert succeeded["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_attempt_does_not_reuse_the_previous_attempts_tokens(recorder):
+    """The timeout produced no reply, so it must not count the earlier attempt's tokens again."""
+    llm = OpenAICompatibleLLM(provider="openai", api_key="sk-test", base_url="", model="m")
+    with patch.object(llm._client.chat.completions, "create", new_callable=AsyncMock) as create:
+        create.side_effect = [_completion(None, "error"), TimeoutError(), _completion("Paris.")]
+        await llm.call(messages=[{"role": "user", "content": "q"}], max_retries=2, initial_backoff=0)
+    unusable, timed_out, _ = recorder.records
+    assert unusable["input_tokens"] == 3
+    assert isinstance(timed_out["error"], TimeoutError)
+    assert timed_out["input_tokens"] == 0
 
 
 class _HangingProvider:
