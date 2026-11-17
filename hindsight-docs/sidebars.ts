@@ -51,12 +51,6 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
-          id: 'developer/observation-tree',
-          label: 'Observation Tree',
-          customProps: { icon: 'lu-folder-tree' },
-        },
-        {
-          type: 'doc',
           id: 'developer/decision-models',
           label: 'Decision Models',
           customProps: { icon: 'lu-network' },

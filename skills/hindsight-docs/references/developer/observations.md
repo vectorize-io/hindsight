@@ -400,6 +400,102 @@ The request body is optional. When omitted (or sent as an empty body), all uncon
 |-----------|------|-------------|
 | `observation_scopes` | `list[list[str]]` \| `null` | Optional list of tag scopes. Only memories whose tags contain all tags in at least one scope are processed. Omit for a full-bank sweep. |
 
+## Observation Tree {#observation-tree}
+
+The observation tree shows every observation in a bank as a folder of markdown files: one file per topic, and an `index.md` in each folder that says what is inside. An agent can `ls` and `grep` it to see what the bank knows before it has a question to ask. A person can browse it to check what was learned.
+
+Topics are grouped by the entities the observations mention, with no LLM call. The tree is rebuilt on every request, and the same bank always gives the same paths. It follows the [Open Knowledge Format](https://okf.md/spec/), so tools that read OKF can read it as-is.
+
+> **📝 Experimental**
+>
+The endpoint and the file layout may still change.
+In the control plane, open a bank and go to **Pages → Observations** to browse it, search it, or download it as a `.zip`. Over the API, `GET /v1/default/banks/{bank_id}/observations/tree` returns the folders and files, each with its markdown in `content`. Pass `tags`, `tags_match` or `tag_groups` (as in recall) to build it from matching observations only.
+
+### Python
+
+```python
+# The whole bank: folders, topic files and each folder's index.md.
+tree = await client.memory.get_observation_tree(bank_id=BANK_ID)
+print(f"{tree.observation_count} observations")
+
+def walk(folder):
+    for f in folder.files:
+        print(f"/{f.path} ({f.observation_count})")
+    for sub in folder.folders:
+        walk(sub)
+
+walk(tree)
+
+# Only one scope: the same tag filters as recall.
+platform = await client.memory.get_observation_tree(bank_id=BANK_ID, tags=["team:platform"], tags_match="any_strict")
+walk(platform)
+```
+
+### Node.js
+
+```javascript
+// The whole bank: folders, topic files and each folder's index.md.
+const apiClient = createClient(createConfig({ baseUrl: HINDSIGHT_URL }));
+const { data: tree } = await sdk.getObservationTree({ client: apiClient, path: { bank_id: BANK_ID } });
+console.log(`${tree.observation_count} observations`);
+
+const walk = (folder) => {
+    for (const f of folder.files) console.log(`/${f.path} (${f.observation_count})`);
+    folder.folders.forEach(walk);
+};
+walk(tree);
+
+// Only one scope: the same tag filters as recall.
+const { data: platform } = await sdk.getObservationTree({
+    client: apiClient,
+    path: { bank_id: BANK_ID },
+    query: { tags: ['team:platform'], tags_match: 'any_strict' },
+});
+walk(platform);
+```
+
+### CLI
+
+```bash
+# The whole bank: folders, topic files and each folder's index.md (-o json for the full tree).
+hindsight memory observation-tree "$BANK_ID"
+
+# Only one scope: the same tag filters as recall.
+hindsight memory observation-tree "$BANK_ID" --tags team:platform --tags-match any_strict
+```
+
+### Go
+
+```go
+// The whole bank: folders, topic files and each folder's index.md.
+tree, _, err := client.MemoryAPI.GetObservationTree(ctx, mtBankID).Execute()
+if err != nil {
+	panic(err)
+}
+fmt.Printf("%d observations\n", tree.GetObservationCount())
+
+var walk func(folder hindsight.ObservationTreeFolder)
+walk = func(folder hindsight.ObservationTreeFolder) {
+	for _, f := range folder.GetFiles() {
+		fmt.Printf("/%s (%d)\n", f.GetPath(), f.GetObservationCount())
+	}
+	for _, sub := range folder.GetFolders() {
+		walk(sub)
+	}
+}
+walk(*tree)
+
+// Only one scope: the same tag filters as recall.
+platform, _, err := client.MemoryAPI.GetObservationTree(ctx, mtBankID).
+	Tags([]string{"team:platform"}).TagsMatch("any_strict").Execute()
+if err != nil {
+	panic(err)
+}
+walk(*platform)
+```
+
+---
+
 ## Configuration
 
 Observation consolidation runs automatically by default. You can disable auto-consolidation with [`HINDSIGHT_API_ENABLE_AUTO_CONSOLIDATION`](configuration.md#observations) and trigger it on-demand via the [consolidate endpoint](#trigger-consolidation). Monitor consolidation progress via the [Operations API](./api/operations.md).
