@@ -21,6 +21,7 @@ storage instead of the seam.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -2249,6 +2250,7 @@ async def test_store_owned_bank_stops_writing_the_postgres_page_search_columns(
             content="Revenue forecast for the platform team.",
             request_context=request_context,
         )
+        await memory.wait_for_background_tasks()  # the create hands its index write off
         # It reached the store's index -- otherwise "not in Postgres" would just mean "lost".
         assert "index_pages" in store.calls
         assert store.knowledge_pages.get(bank), "the page must be searchable in the store"
@@ -2275,6 +2277,37 @@ async def test_store_owned_bank_stops_writing_the_postgres_page_search_columns(
         # index stops that, and both are per-SCHEMA, so they need the deployment-level decision this
         # per-bank flag cannot make. Asserting NULL here would encode a saving that does not exist.
     finally:
+        await memory.delete_bank(bank, request_context=request_context)
+
+
+async def test_a_create_does_not_wait_on_the_page_index_write(memory, request_context, restore_default_store):
+    """The create answers before the store has acked the page's index write.
+
+    A store may pace writes per bank, so waiting here made a burst of creates on one bank take
+    seconds each. The write still has to land: the page is searchable once it does.
+    """
+    release = asyncio.Event()
+
+    class SlowIndex(InMemoryMemories):
+        async def index_pages(self, bank_id, entries):
+            await release.wait()
+            await super().index_pages(bank_id, entries)
+
+    store = SlowIndex({})
+    set_memories(store)
+    bank = "seam-kp-slow-index"
+    try:
+        model = await asyncio.wait_for(
+            memory.create_mental_model(bank, "Refund window", "refunds?", "", request_context=request_context),
+            timeout=30,
+        )
+        assert not store.knowledge_pages.get(bank), "the index write is still held, so nothing is indexed yet"
+
+        release.set()
+        await memory.wait_for_background_tasks()
+        assert model["id"] in store.knowledge_pages[bank], "the handed-off write must still land"
+    finally:
+        release.set()
         await memory.delete_bank(bank, request_context=request_context)
 
 
