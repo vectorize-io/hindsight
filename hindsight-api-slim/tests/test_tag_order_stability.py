@@ -21,8 +21,10 @@ _CONTENT = " ".join(f"The Grandview property offers mobile room key access on fl
 
 
 def test_merged_tags_come_out_in_one_order():
-    _params, merged = _build_retain_params([{"content": "x", "tags": ["zeta", "mid"]}], ["alpha", "zeta"])
-    assert merged == ["alpha", "mid", "zeta"]
+    # Enough tags that set order matching sorted order by chance is negligible.
+    tags = [f"tag-{i:02d}" for i in range(12)]
+    _params, merged = _build_retain_params([{"content": "x", "tags": tags[6:]}], tags[:7])
+    assert merged == tags
 
 
 @pytest.mark.asyncio
@@ -45,8 +47,9 @@ async def test_relabel_with_reordered_tags_patches_nothing():
 
 
 @pytest.mark.asyncio
-# Stages the case by rewriting the `memory_units` column directly, which an alternative store
-# never reads (see test_memory_units_updated_at.py).
+# Raw SQL on purpose: no API writes a unit's tags in a chosen order (that is the other worker's
+# hash seed), and none reads `updated_at`, the column this asserts. An alternative store keeps
+# its rows elsewhere, hence the marker (same as test_memory_units_updated_at.py).
 @pytest.mark.memory_backend_incompatible
 async def test_re_retain_does_not_rewrite_units_stored_in_another_tag_order(
     memory: MemoryEngine, request_context: RequestContext

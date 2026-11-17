@@ -3852,6 +3852,7 @@ class MemoriesExtension(Extension, ABC):
                 },
             )
             for m in units
+            # As sets, like the Postgres relabel: tag order is not a label change (#6591).
             if set(m.tags or []) != set(new_tags_by_unit[m.unit_id])
             or (m.metadata or {}) != new_metadata
             or m.observation_scopes != observation_scopes

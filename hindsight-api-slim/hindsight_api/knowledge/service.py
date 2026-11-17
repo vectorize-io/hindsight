@@ -1021,6 +1021,7 @@ class KnowledgeService:
                 before
                 and before.content_hash == content_hash
                 and before.status == "ready"
+                # As sets: the same tags sent in another order are not a change worth re-indexing.
                 and set(before.tags or []) == set(item.tags or [])
                 # The name is embedded as each passage's title, and the type decides how it is served.
                 and before.filename == item.filename

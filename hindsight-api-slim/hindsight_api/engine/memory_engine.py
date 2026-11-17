@@ -23564,7 +23564,7 @@ class MemoryEngine(MemoryEngineInterface):
                             if incoming_tags:
                                 existing_tags = row_dict.get("pending_refresh_tags") or []
                                 merged_tags = sorted(set(existing_tags) | set(incoming_tags))
-                                if set(merged_tags) != set(existing_tags):
+                                if merged_tags != existing_tags:
                                     row_dict["pending_refresh_tags"] = merged_tags
                                     await conn.execute(
                                         f"""
