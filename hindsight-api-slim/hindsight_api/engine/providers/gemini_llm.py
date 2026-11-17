@@ -28,6 +28,7 @@ from hindsight_api.engine.llm_interface import (
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.providers.openai_compatible_llm import record_retried_attempt
 from hindsight_api.engine.providers.tools_via_schema import SchemaFormat
 from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import (
@@ -482,6 +483,7 @@ class GeminiLLM(LLMInterface):
         timeout_retries_left = _TIMEOUT_RETRIES
 
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.gemini.{scope}.attempt={attempt + 1}/{max_retries + 1}")
@@ -724,6 +726,14 @@ class GeminiLLM(LLMInterface):
                     logger.warning(
                         f"Gemini call hit its {self._request_timeout}s deadline with no response; "
                         f"retrying ({timeout_retries_left} left)"
+                    )
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
                     )
                     continue
                 logger.error(f"Gemini call hit its {self._request_timeout}s deadline; giving up")

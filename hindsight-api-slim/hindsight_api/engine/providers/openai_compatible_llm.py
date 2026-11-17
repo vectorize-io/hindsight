@@ -401,10 +401,10 @@ def record_retried_attempt(
     model: str,
     scope: str,
     messages: list[dict[str, Any]],
-    error: ProviderResponseError,
+    error: BaseException,
     started: float,
 ) -> None:
-    """Trace an attempt that came back unusable and is about to be retried.
+    """Trace an attempt that came back unusable or timed out and is about to be retried.
 
     The final failure is traced by the wrapper, but a retried attempt otherwise leaves
     only a log line: it was still billed (often for reasoning tokens), and counting
@@ -437,7 +437,7 @@ def record_retried_attempt(
         thoughts_tokens=usage.thoughts_tokens if usage else 0,
         duration=duration,
         error=error,
-        served_by=error.served_by,
+        served_by=getattr(error, "served_by", None),
     )
 
 
@@ -1401,6 +1401,7 @@ class OpenAICompatibleLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             # Surface attempt count in worker stage so JSON-schema retry loops
             # are visible from logs (small models on strict structured output
             # often loop here). Cheap no-op outside worker context.
@@ -1592,6 +1593,14 @@ class OpenAICompatibleLLM(LLMInterface):
                 )
                 logger.warning(f"Connection error (HTTP {status_code}), attempt {attempt + 1}: {describe_llm_error(e)}")
                 if attempt < max_retries:
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
+                    )
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue
@@ -1691,7 +1700,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         scope=scope,
                         messages=messages,
                         error=e,
-                        started=start_time,
+                        started=attempt_started,
                     )
                     logger.warning(
                         f"Provider response error ({self.provider}/{self.model}, scope={scope}, "
@@ -1794,6 +1803,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
         session = self._ollama_http.get()
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
@@ -1955,7 +1965,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         scope=scope,
                         messages=messages,
                         error=e,
-                        started=start_time,
+                        started=attempt_started,
                     )
                     logger.warning(f"Ollama response error (attempt {attempt + 1}/{max_retries + 1}): {e}")
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
@@ -1981,6 +1991,14 @@ class OpenAICompatibleLLM(LLMInterface):
                 last_exception = e
                 if attempt < max_retries:
                     logger.warning(f"Ollama connection error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
+                    )
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue

@@ -453,7 +453,7 @@ class LLMSpanRecorder:
         output_tokens: int,
         duration: float,
         finish_reason: Optional[str] = None,
-        error: Optional[Exception] = None,
+        error: Optional[BaseException] = None,
         tool_calls: Optional[list[dict[str, Any]]] = None,
         cached_tokens: int = 0,
         thoughts_tokens: Optional[int] = None,

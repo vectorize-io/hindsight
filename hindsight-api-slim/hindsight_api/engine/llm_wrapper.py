@@ -1528,10 +1528,12 @@ class LLMProvider:
                         **cache_kwarg,
                         **attempt_kwarg,
                     )
-                except Exception as e:
+                except BaseException as e:
                     # The provider call may have succeeded (and incurred token
                     # cost) before local parsing/validation raised; attach the
                     # provider-reported usage to the error trace when available.
+                    # BaseException so a cancelled call (client gone mid-reflect)
+                    # still leaves a span; it is re-raised unchanged (#6624).
                     usage = current_response_usage()
                     get_span_recorder().record_llm_call(
                         provider=self.provider,
@@ -1786,10 +1788,12 @@ class LLMProvider:
                         tool_choice=tool_choice,
                         **attempt_kwarg,
                     )
-                except Exception as e:
+                except BaseException as e:
                     # The provider call may have succeeded (and incurred token
                     # cost) before local parsing/validation raised; attach the
                     # provider-reported usage to the error trace when available.
+                    # BaseException so a cancelled call (client gone mid-reflect)
+                    # still leaves a span; it is re-raised unchanged (#6624).
                     usage = current_response_usage()
                     get_span_recorder().record_llm_call(
                         provider=self.provider,

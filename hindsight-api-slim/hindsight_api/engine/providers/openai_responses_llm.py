@@ -57,6 +57,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     _raise_provider_quota_defer,
     _strip_code_fences,
     _strip_reasoning_tags,
+    record_retried_attempt,
 )
 from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import TokenUsage
@@ -373,6 +374,7 @@ class OpenAIResponsesLLM(LLMInterface):
         """
         last_exception: Exception | None = None
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
@@ -413,6 +415,14 @@ class OpenAIResponsesLLM(LLMInterface):
                     f"attempt {attempt + 1}/{max_retries + 1}): {describe_llm_error(e)}"
                 )
                 if attempt < max_retries:
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=params.get("input") or [],
+                        error=e,
+                        started=attempt_started,
+                    )
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue
                 raise
