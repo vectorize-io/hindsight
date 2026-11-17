@@ -3503,6 +3503,10 @@ class MemoryEngine(MemoryEngineInterface):
         self._reflect_decision_model_client: TypeSafeCrossEncoder | None = None
         self._reflect_decision_model_unsupported_logged = False
 
+        # Page-index writes a create hands off instead of waiting on; held so the loop does not
+        # collect a task mid-write, and so `wait_for_background_tasks` can drain them.
+        self._page_index_tasks: set[asyncio.Task] = set()
+
         # Initialize task backend.
         # All backends use BrokerTaskBackend + WorkerPoller for async background execution.
         # Create the backend object early so we can query its capabilities.
@@ -6984,6 +6988,8 @@ class MemoryEngine(MemoryEngineInterface):
         """
         if hasattr(self._task_backend, "wait_for_pending_tasks"):
             await self._task_backend.wait_for_pending_tasks()
+        if self._page_index_tasks:
+            await asyncio.gather(*self._page_index_tasks, return_exceptions=True)
 
     # "Month Year" (e.g. "June 2024"), shared with every other path that embeds a fact's text.
     _format_readable_date = staticmethod(format_readable_date)
@@ -17971,8 +17977,13 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model_id: str,
         *,
         embedding: list[float] | None,
+        unless_changed: tuple[str, str] | None = None,
     ) -> None:
         """Push one page's searchable half into the store.
+
+        ``unless_changed`` is ``(name, content)`` as the caller wrote them: the write is skipped
+        when the row no longer holds them, because ``embedding`` was computed from those and the
+        write that changed the row has indexed it already.
 
         Reads the name, content and tags back from the row rather than taking them from the caller,
         so every write path indexes the same thing and one that forgets a field cannot leave the
@@ -17990,6 +18001,8 @@ class MemoryEngine(MemoryEngineInterface):
         )
         if row is None:
             return
+        if unless_changed is not None and (row["name"] or "", row["content"] or "") != unless_changed:
+            return
         from .memories import PageEntry
 
         await store.index_pages(
@@ -18006,6 +18019,62 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             ],
         )
+
+    def _index_created_page_soon(
+        self,
+        bank_id: str,
+        mental_model_id: str,
+        *,
+        name: str | None,
+        content: str | None,
+        embedding: list[float] | None,
+    ) -> None:
+        """Index a just-created page after the create has answered, instead of before.
+
+        The store acks a page write only once it is durable in the bank's write log, and a store
+        may pace those writes per bank: a burst of creates on one bank then waits seconds each on
+        an index entry the queued refresh rewrites moments later anyway. So the create hands the
+        write off. The page is searchable once the write lands, not when the create returns.
+
+        Failure is no worse than waiting was. A create that waited and then failed here left a
+        committed row with no refresh queued (the caller queues it only after the create returns)
+        and a retry that hits 409 — an empty page nothing ever fills. Here the refresh is already
+        queued, and when it writes content `update_mental_model` re-indexes the page, so a lost
+        write heals. Only a page whose refresh never produces content stays out of the index until
+        `reconcile_page_index` runs.
+
+        Skipped once the row no longer holds what the create wrote: whatever changed it (a rename,
+        a refresh) indexed the page itself, and writing here could land after that write and
+        replace it with the create's older name and embedding.
+        """
+        if self._page_index_store(bank_id) is None:
+            return
+
+        async def _run() -> None:
+            for attempt in range(3):
+                try:
+                    backend = await self._get_backend()
+                    async with acquire_with_retry(backend) as conn:
+                        await self._index_page(
+                            conn,
+                            bank_id,
+                            mental_model_id,
+                            embedding=embedding,
+                            unless_changed=(name or "", content or ""),
+                        )
+                    return
+                except Exception as exc:
+                    if attempt == 2:
+                        logger.warning(
+                            f"[MENTAL_MODELS] indexing new page {mental_model_id} in bank {bank_id} failed; "
+                            f"it is searchable once its refresh writes content: {exc!r}"
+                        )
+                        return
+                    await asyncio.sleep(0.5 * 2**attempt)
+
+        task = asyncio.create_task(_run())
+        self._page_index_tasks.add(task)
+        task.add_done_callback(self._page_index_tasks.discard)
 
     async def _deindex_pages(self, bank_id: str, mental_model_ids: list[str]) -> None:
         """Drop pages from the store's index. Safe for ids the store never held."""
@@ -18246,11 +18315,6 @@ class MemoryEngine(MemoryEngineInterface):
 
         try:
             row = await retry_with_backoff(_write)
-            # After the transaction commits: the index is derived from a row that must already
-            # exist, and indexing inside the transaction would publish a page a rollback then
-            # un-creates.
-            async with acquire_with_retry(backend) as conn:
-                await self._index_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
         except asyncpg.UniqueViolationError as exc:
             # mental_models_pkey is the table's only unique constraint, so a violation naming
             # this table is the caller's id colliding with a model that already exists. Anything
@@ -18263,6 +18327,11 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Mental model '{mental_model_id}' already exists in bank '{bank_id}'",
                 status_code=409,
             ) from exc
+        # After the transaction commits: the index is derived from a row that must already exist,
+        # and indexing inside the transaction would publish a page a rollback then un-creates.
+        self._index_created_page_soon(
+            bank_id, mental_model_id, name=row["name"], content=row["content"], embedding=embedding_vec
+        )
 
         # Best-effort default-template hook runs after the bank-create commits
         # (it opens its own connections and can create pinned models).
@@ -20787,14 +20856,15 @@ class MemoryEngine(MemoryEngineInterface):
 
         try:
             await retry_with_backoff(_write)
-            async with acquire_with_retry(backend) as conn:
-                await self._index_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
         except asyncpg.UniqueViolationError as exc:
             if getattr(exc, "constraint_name", None) != "uq_kp_folder_pagename":
                 raise
             # The transaction already rolled the MM back; preserve the existing
             # API contract that a duplicate page is surfaced as HTTP 409.
             return None
+        self._index_created_page_soon(
+            bank_id, mental_model_id, name=mm_row["name"], content=mm_row["content"], embedding=embedding_vec
+        )
 
         # This hook opens its own connections and therefore must run after commit.
         if created:
