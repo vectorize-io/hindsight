@@ -3,7 +3,9 @@
 No LLM. Observations are grouped by the entities they are about (rare entities weigh more,
 ids and near-ubiquitous entities are ignored), split recursively with spherical k-means until a
 group is small enough to be one file, and every folder is named after the entities that set it
-apart from its siblings. Each topic is one markdown file listing every observation in it, with
+apart from its siblings. What fits no topic is the folder's misc, which is split again with a
+smaller minimum (a subject of a handful of observations is still worth its own file there) before
+the rest is cut by date. Each topic is one markdown file listing every observation in it, with
 dates and source counts, so a grep over the tree finds everything. Each folder holds a
 ``index.md``: what the folder is about, its topics, and its best-supported observations.
 
@@ -32,6 +34,11 @@ from .. import __version__
 LEAF_MAX = 120
 # Groups smaller than this are not a topic of their own: they go to the folder's other.
 LEAF_MIN = 15
+# Inside a folder's other (what fits none of its topics) a subject this small is still a topic:
+# beside the big topics it would be noise, among the leftovers it is the only thing with a name.
+# (With LEAF_MIN everywhere, 57% of a coding bank sat in misc files cut by date, and the one fact
+# a task needed — a constant's measured value — was in a weekly file titled after other things.)
+SMALL_TOPIC_MIN = 5
 BRANCH = 8
 MAX_DEPTH = 6
 SUMMARY_TOP = 10
@@ -205,7 +212,9 @@ def _build_features(observations: list[TreeObservation]) -> _BankFeatures:
     )
 
 
-def _seed_entities(feats: _Features, k: int, exclude: frozenset[int] = frozenset()) -> list[int]:
+def _seed_entities(
+    feats: _Features, k: int, exclude: frozenset[int] = frozenset(), min_rows: int = LEAF_MIN
+) -> list[int]:
     """Up to ``k`` entities to start the groups from: the strongest entities in the group (by
     their summed weight, so an entity on nearly every row counts for little), skipping any that
     mostly co-occurs with one already chosen. Ties go to the name, so the choice depends only on
@@ -217,7 +226,7 @@ def _seed_entities(feats: _Features, k: int, exclude: frozenset[int] = frozenset
     df = np.bincount(feats.cols[feats.vals > 0], minlength=len(feats.vocab))
     rows_of = {}
     chosen: list[int] = []
-    candidates = [c for c in np.flatnonzero(df >= LEAF_MIN) if int(c) not in exclude]
+    candidates = [c for c in np.flatnonzero(df >= min_rows) if int(c) not in exclude]
     for c in sorted(candidates, key=lambda c: (-round(mass[c], 9), feats.vocab[c])):
         rows = set(feats.rows[(feats.cols == c) & (feats.vals > 0)].tolist())
         if any(len(rows & rows_of[o]) / len(rows | rows_of[o]) > SEED_OVERLAP for o in chosen):
@@ -260,20 +269,33 @@ def _assign(feats: _Features, seeds: list[int]) -> np.ndarray:
     return labels
 
 
-def _split(feats: _Features, members: np.ndarray, depth: int, ancestors: frozenset[int] = frozenset()) -> _Node:
+def _split(
+    feats: _Features,
+    members: np.ndarray,
+    depth: int,
+    ancestors: frozenset[int] = frozenset(),
+    leftovers: bool = False,
+) -> _Node:
     sub = feats.subset(members)
     node = _Node(members=members, centroid=sub.centroids(np.zeros(sub.n, dtype=np.int64), 1)[0])
-    if len(members) <= LEAF_MAX or depth >= MAX_DEPTH:
+    # ``leftovers``: this is a folder's rest. It is split even when it fits one file, and around a
+    # single subject: misc is for what has no name, so a subject in it is worth a file of its own.
+    min_rows = SMALL_TOPIC_MIN if leftovers else LEAF_MIN
+    if (len(members) <= LEAF_MAX and not leftovers) or depth >= MAX_DEPTH:
         return node
     # Ask for BRANCH groups and let the data decide how many survive: seeding stops when
     # every row already sits on a centre, and groups under LEAF_MIN fold into a neighbour.
     # (Sizing k as ceil(n / LEAF_MAX) asked a 160-observation bank with four unrelated
     # subjects for 2 groups, so files mixed subjects that share no entity.)
-    local = sub.reweighted()
+    # Not for a rest: its rows share nothing that made them a group, so an entity on all of them
+    # is a subject, not the group's reason (re-weighting zeroed a rest made of one subject).
+    local = sub if leftovers else sub.reweighted()
     # An ancestor's seed is what this whole group is about: seeding on it again only peels
     # the group into memlake/memlake/... folders.
-    seeds = _seed_entities(local, BRANCH, ancestors)
-    if len(seeds) < 2:
+    # A rest takes every small subject at once: capped at BRANCH, the subjects past the cap went to
+    # the rest's own rest and were re-seeded there, so one row more or less re-dealt them all.
+    seeds = _seed_entities(local, len(local.vocab) if leftovers else BRANCH, ancestors, min_rows)
+    if len(seeds) < (1 if leftovers else 2):
         return node
     labels = _assign(local, seeds)
     rest = len(seeds)
@@ -283,14 +305,17 @@ def _split(feats: _Features, members: np.ndarray, depth: int, ancestors: frozens
     # A group too small to stand alone goes to the rest too, rather than into whichever group
     # is nearest (the rest itself is never folded away: it is the folder's ``other``).
     sizes = np.bincount(labels, minlength=rest + 1)
-    labels[np.isin(labels, [c for c in range(rest) if sizes[c] < LEAF_MIN])] = rest
+    labels[np.isin(labels, [c for c in range(rest) if sizes[c] < min_rows])] = rest
     kept = np.unique(labels)
-    if len(kept) < 2:
+    # A rest that is one subject entirely becomes that subject's topic.
+    if len(kept) < 2 and not (leftovers and kept[0] != rest):
         return node
     node.children = []
     for c in kept:
         own = frozenset([seeds[c]]) if c < rest else frozenset()
-        child = _split(feats, members[labels == c], depth + 1, ancestors | own)
+        # The rest is re-split with the small-topic minimum; a topic, even one found among
+        # leftovers, is split like any other.
+        child = _split(feats, members[labels == c], depth + 1, ancestors | own, leftovers=c == rest)
         child.seed = local.vocab[seeds[c]] if c < rest else ""
         child.rest = c == rest
         if child.rest and child.children:
@@ -303,27 +328,38 @@ def _split(feats: _Features, members: np.ndarray, depth: int, ancestors: frozens
     return node
 
 
+def _distinctive(
+    members: np.ndarray | list[int],
+    parent: np.ndarray | list[int],
+    obs_cols: list[list[int]],
+    vocab: list[str],
+    taken: frozenset[str] = frozenset(),
+) -> list[str]:
+    """Up to five entities common in ``members`` but rarer in ``parent``, most distinctive first."""
+    parent_df = Counter(c for i in parent for c in obs_cols[i])
+    df = Counter(c for i in members for c in obs_cols[i])
+    n, parent_n = len(members), len(parent)
+    scored = sorted(
+        ((df[c] / n) * math.log((df[c] / n) / (parent_df[c] / parent_n)), vocab[c])
+        for c in df
+        if df[c] >= 2 and vocab[c] not in taken
+    )
+    return [name for score, name in reversed(scored) if score > 0][:5]
+
+
 def _name_children(
     node: _Node, obs_cols: list[list[int]], vocab: list[str], taken: frozenset[str] = frozenset()
 ) -> None:
     """Name each child after the entities that are common in it but rarer in its parent.
 
     ``taken`` are the names its ancestors already use, so a child never repeats its parent."""
-    parent_df = Counter(c for i in node.members for c in obs_cols[i])
-    parent_n = len(node.members)
     used: set[str] = set()
     for child in node.children:
-        df = Counter(c for i in child.members for c in obs_cols[i])
-        n = len(child.members)
-        scored = sorted(
-            ((df[c] / n) * math.log((df[c] / n) / (parent_df[c] / parent_n)), vocab[c])
-            for c in df
-            if df[c] >= 2 and vocab[c] not in taken
-        )
-        child.top_entities = [name for score, name in reversed(scored) if score > 0][:5]
+        child.top_entities = _distinctive(child.members, node.members, obs_cols, vocab, taken)
         if not child.top_entities and not child.rest:
             # Nothing sets it apart from its parent (a bank small enough for one topic file):
             # title it after its most common entities (its path stays LONE_NAME).
+            df = Counter(c for i in child.members for c in obs_cols[i])
             common = sorted(((-df[c], vocab[c]) for c in df if df[c] >= 2 and vocab[c] not in taken))
             child.top_entities = [name for _, name in common[:5]]
         if child.rest:
@@ -485,41 +521,50 @@ def _render(
     return folder
 
 
-def _split_misc(node: _Node, observations: list[TreeObservation]) -> None:
-    """Split every misc file over LEAF_MAX into one file per month of its observations' dates
-    (and a month over LEAF_MAX into ISO weeks). Calendar buckets, not misc-1/misc-2: an
-    observation's month or week never changes, so it never moves file."""
+def _calendar_buckets(ids: list[int], observations: list[TreeObservation]) -> dict[str, list[int]]:
+    """One bucket per month, and a month over LEAF_MAX per ISO week; no further. (Year first, to
+    spare quiet months a file of one or two rows, was tried and dropped: a year flipped from one
+    file to twelve whenever it crossed LEAF_MAX, and 100 of 519 rows moved on a 1% change.)"""
+    by_month: dict[str, list[int]] = {}
+    for i in ids:
+        d = _shown(observations[i])
+        by_month.setdefault(d.astimezone(UTC).strftime("%Y-%m") if d else "undated", []).append(i)
+    buckets: dict[str, list[int]] = {}
+    for month, group in by_month.items():
+        if len(group) <= LEAF_MAX or month == "undated":
+            buckets[month] = group
+            continue
+        for i in group:
+            d = _shown(observations[i])
+            buckets.setdefault(d.astimezone(UTC).strftime("%G-w%V") if d else "undated", []).append(i)
+    return buckets
+
+
+def _split_misc(node: _Node, observations: list[TreeObservation], obs_cols: list[list[int]], vocab: list[str]) -> None:
+    """Split every misc file over LEAF_MAX by calendar (see ``_calendar_buckets``). Calendar
+    buckets, not misc-1/misc-2: an observation's date never changes, so it never moves file.
+    Each bucket is titled after what sets it apart from the folder: they all used to carry the
+    folder's misc title, so an index listed twenty files under one name."""
     children: list[_Node] = []
     for child in node.children:
         if child.rest and not child.children and len(child.members) > LEAF_MAX:
-            by_month: dict[str, list[int]] = {}
-            for i in child.members:
-                d = _shown(observations[i])
-                by_month.setdefault(d.astimezone(UTC).strftime("%Y-%m") if d else "undated", []).append(int(i))
-            # A month still over LEAF_MAX splits once more, by ISO week; no further.
-            buckets: dict[str, list[int]] = {}
-            for month, ids in by_month.items():
-                if len(ids) <= LEAF_MAX or month == "undated":
-                    buckets[month] = ids
-                    continue
-                for i in ids:
-                    d = _shown(observations[i])
-                    week = d.astimezone(UTC).strftime("%G-w%V") if d else "undated"
-                    buckets.setdefault(week, []).append(i)
+            buckets = _calendar_buckets([int(i) for i in child.members], observations)
             for key in sorted(buckets):
+                ids = buckets[key]
+                about = _distinctive(ids, node.members, obs_cols, vocab)
                 slug = f"{MISC_NAME}-{key}"
                 children.append(
                     _Node(
-                        members=np.array(buckets[key]),
+                        members=np.array(ids),
                         centroid=None,
-                        top_entities=child.top_entities,
+                        top_entities=about,
                         slug=slug,
                         path=posixpath.join(node.path, slug),
                         rest=True,
                     )
                 )
         else:
-            _split_misc(child, observations)
+            _split_misc(child, observations, obs_cols, vocab)
             children.append(child)
     node.children = children
 
@@ -552,7 +597,7 @@ def build_observation_tree(observations: list[TreeObservation], bank_title: str 
                 _Node(members=np.array(without), centroid=None, slug=MISC_NAME, path=MISC_NAME, rest=True)
             )
 
-    _split_misc(root, observations)
+    _split_misc(root, observations, obs_cols, feats.vocab)
     leaves = [leaf for leaf in _leaves(root) if leaf.centroid is not None and leaf is not root]
     related: dict[str, list[_Node]] = {}
     if len(leaves) > 1:
