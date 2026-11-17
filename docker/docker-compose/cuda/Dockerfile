@@ -5,7 +5,7 @@
 # BAAI/bge-small-en-v1.5 and hindsight-ai/hs-rerank-1 models, plus the knowledge banks'
 # google/embeddinggemma-2).
 # The CPU torch wheel stays in the base layers, so the CUDA runtime is purely
-# additive: expect roughly 12.5 GB on disk against ~10.5 GB for the base image.
+# additive: it adds a few GB of CUDA libraries on top of the base image.
 #
 # Requirements on the host:
 # - NVIDIA GPU with driver >= 525.60.13

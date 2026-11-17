@@ -135,10 +135,10 @@ Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_
 
 | Variant | Size (AMD64) | Size (ARM64) | When to use |
 |---------|--------------|--------------|-------------|
-| **Full** (`latest`) | ~10.5 GB | ~4.4 GB | Default. Embeddings and reranking run in the image, and the knowledge banks' EmbeddingGemma 2 model (~1.5 GB) is bundled so they work offline; the LLM is always external, including for local inference. |
-| **Slim** (`slim`) | ~500 MB | ~500 MB | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration.md#embeddings). |
+| **Full** (`latest`) | ~4.5 GB (~2.2 GB download) | ~4.4 GB (~2.1 GB download) | Default. Embeddings and reranking run in the image, and the knowledge banks' EmbeddingGemma 2 model (~1.5 GB) is bundled so they work offline; the LLM is always external, including for local inference. |
+| **Slim** (`slim`) | ~1.4 GB (~600 MB download) | ~1.4 GB (~570 MB download) | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration.md#embeddings). |
 
-The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration.md#embeddings) for external provider options.
+Sizes are on disk once pulled; the download is the compressed size. The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration.md#embeddings) for external provider options.
 
 Neither image bundles llama.cpp, so the built-in `llamacpp` provider is not available in Docker. To run inference locally, start llama.cpp (or Ollama, LM Studio, vLLM) alongside Hindsight and point `HINDSIGHT_API_LLM_BASE_URL` at it — see [`docker/docker-compose/local-llm/`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/local-llm) for a working compose file.
 
@@ -152,7 +152,7 @@ docker compose -f docker/docker-compose/cuda/docker-compose.yaml up --build
 
 The recipe upgrades in-process PyTorch to CUDA 12.6 and configures GPU passthrough via the NVIDIA Container Toolkit. Build it on the machine that will run it — an emulated cross-architecture image cannot reach the GPU.
 
-The CUDA runtime is additive: the base image's CPU PyTorch wheel stays in the lower layers, so the result is **roughly 12.5 GB on disk** against the ~10.5 GB Full image. This is why no CUDA image is published — the cost is only worth paying when you actually have a GPU to use.
+The CUDA runtime is additive: the base image's CPU PyTorch wheel stays in the lower layers, so the CUDA libraries add **a few GB on disk** on top of the Full image. This is why no CUDA image is published — the cost is only worth paying when you actually have a GPU to use.
 
 See [`docker/docker-compose/cuda/README.md`](https://github.com/vectorize-io/hindsight/tree/main/docker/docker-compose/cuda) for prerequisites, manual build steps, and verification.
 
