@@ -3480,7 +3480,7 @@ async def _apply_update_action(
     # SECURITY: Merge source fact's tags into existing observation tags so all contributors can see it
     existing_tags = set(current_tags)
     source_tags = set(source_fact_tags or [])
-    merged_tags = list(existing_tags | source_tags)
+    merged_tags = sorted(existing_tags | source_tags)
 
     t0 = time.perf_counter()
     rewritten = await store.rewrite_observation(

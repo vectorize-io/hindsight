@@ -3852,7 +3852,7 @@ class MemoriesExtension(Extension, ABC):
                 },
             )
             for m in units
-            if m.tags != new_tags_by_unit[m.unit_id]
+            if set(m.tags or []) != set(new_tags_by_unit[m.unit_id])
             or (m.metadata or {}) != new_metadata
             or m.observation_scopes != observation_scopes
         ]

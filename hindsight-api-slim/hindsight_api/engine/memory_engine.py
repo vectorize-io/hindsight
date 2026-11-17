@@ -17692,7 +17692,8 @@ class MemoryEngine(MemoryEngineInterface):
                 if tags_match == "all":
                     tag_filter = " AND tags @> $2::varchar[]"
                 elif tags_match == "exact":
-                    tag_filter = " AND tags = $2::varchar[]"
+                    # Set equality, as `build_tags_where_clause` does: `=` on arrays is order-sensitive.
+                    tag_filter = " AND (tags @> $2::varchar[] AND tags <@ $2::varchar[])"
                 else:  # any
                     tag_filter = " AND tags && $2::varchar[]"
                 filter_params.append(tags)
@@ -23563,7 +23564,7 @@ class MemoryEngine(MemoryEngineInterface):
                             if incoming_tags:
                                 existing_tags = row_dict.get("pending_refresh_tags") or []
                                 merged_tags = sorted(set(existing_tags) | set(incoming_tags))
-                                if merged_tags != existing_tags:
+                                if set(merged_tags) != set(existing_tags):
                                     row_dict["pending_refresh_tags"] = merged_tags
                                     await conn.execute(
                                         f"""

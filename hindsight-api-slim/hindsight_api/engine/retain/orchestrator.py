@@ -672,7 +672,9 @@ def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
     for item in items:
         item_tags = item.get("tags", []) or []
         all_tags.update(item_tags)
-    merged_tags = list(all_tags)
+    # Sorted, not set order: string hashing differs per process, and a document's tags written
+    # in another order by another worker read as a change and rewrite every unit it owns (#6591).
+    merged_tags = sorted(all_tags)
 
     retain_params = {}
     if items:
@@ -4835,7 +4837,7 @@ def _build_contents(
     contents = []
     for item in contents_dicts:
         item_tags = item.get("tags", []) or []
-        merged_tags = list(set(item_tags + (document_tags or [])))
+        merged_tags = sorted(set(item_tags + (document_tags or [])))
 
         if "event_date" in item and item["event_date"] is None:
             event_date_value = None

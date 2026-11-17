@@ -1021,7 +1021,7 @@ class KnowledgeService:
                 before
                 and before.content_hash == content_hash
                 and before.status == "ready"
-                and before.tags == item.tags
+                and set(before.tags or []) == set(item.tags or [])
                 # The name is embedded as each passage's title, and the type decides how it is served.
                 and before.filename == item.filename
                 and before.content_type == item.content_type
