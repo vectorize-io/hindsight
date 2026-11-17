@@ -246,6 +246,11 @@ def _is_unwritten_body(content: str | None) -> bool:
 PAGE_SNIPPET_CHARS = 280
 
 
+def _page_index_text(name: str | None, content: str | None) -> str:
+    """The document a page is indexed under: name + content, as BM25 sees it."""
+    return f"{name or ''} {content or ''}"
+
+
 def _page_snippet(content: str | None) -> str:
     """The snippet a search result shows, including when the page has no body.
 
@@ -6988,8 +6993,12 @@ class MemoryEngine(MemoryEngineInterface):
         """
         if hasattr(self._task_backend, "wait_for_pending_tasks"):
             await self._task_backend.wait_for_pending_tasks()
-        if self._page_index_tasks:
-            await asyncio.gather(*self._page_index_tasks, return_exceptions=True)
+        # Only this loop's: a task belongs to the loop that created it, and gathering another
+        # loop's raises (tests run several loops against one engine).
+        loop = asyncio.get_running_loop()
+        mine = [t for t in tuple(self._page_index_tasks) if t.get_loop() is loop]
+        if mine:
+            await asyncio.gather(*mine, return_exceptions=True)
 
     # "Month Year" (e.g. "June 2024"), shared with every other path that embeds a fact's text.
     _format_readable_date = staticmethod(format_readable_date)
@@ -17977,13 +17986,13 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model_id: str,
         *,
         embedding: list[float] | None,
-        unless_changed: tuple[str, str] | None = None,
+        unless_changed_from: str | None = None,
     ) -> None:
         """Push one page's searchable half into the store.
 
-        ``unless_changed`` is ``(name, content)`` as the caller wrote them: the write is skipped
-        when the row no longer holds them, because ``embedding`` was computed from those and the
-        write that changed the row has indexed it already.
+        ``unless_changed_from`` is the index text the caller's write produced: the write is
+        skipped when the row no longer yields it, because ``embedding`` was computed from that text
+        and the write that changed the row has indexed it already.
 
         Reads the name, content and tags back from the row rather than taking them from the caller,
         so every write path indexes the same thing and one that forgets a field cannot leave the
@@ -18001,7 +18010,10 @@ class MemoryEngine(MemoryEngineInterface):
         )
         if row is None:
             return
-        if unless_changed is not None and (row["name"] or "", row["content"] or "") != unless_changed:
+        # The same document the native tsvector column generates, so the two backends match on
+        # more than intent.
+        index_text = _page_index_text(row["name"], row["content"])
+        if unless_changed_from is not None and index_text != unless_changed_from:
             return
         from .memories import PageEntry
 
@@ -18010,9 +18022,7 @@ class MemoryEngine(MemoryEngineInterface):
             [
                 PageEntry(
                     page_id=mental_model_id,
-                    # The same document the native tsvector column generates, so the two backends
-                    # match on more than intent.
-                    index_text=f"{row['name'] or ''} {row['content'] or ''}",
+                    index_text=index_text,
                     embedding=embedding,
                     tags=list(row["tags"] or []),
                     updated_at=row["last_refreshed_at"],
@@ -18025,8 +18035,7 @@ class MemoryEngine(MemoryEngineInterface):
         bank_id: str,
         mental_model_id: str,
         *,
-        name: str | None,
-        content: str | None,
+        index_text: str,
         embedding: list[float] | None,
     ) -> None:
         """Index a just-created page after the create has answered, instead of before.
@@ -18060,7 +18069,7 @@ class MemoryEngine(MemoryEngineInterface):
                             bank_id,
                             mental_model_id,
                             embedding=embedding,
-                            unless_changed=(name or "", content or ""),
+                            unless_changed_from=index_text,
                         )
                     return
                 except Exception as exc:
@@ -18136,7 +18145,7 @@ class MemoryEngine(MemoryEngineInterface):
                 [
                     PageEntry(
                         page_id=str(row["id"]),
-                        index_text=f"{row['name'] or ''} {row['content'] or ''}",
+                        index_text=_page_index_text(row["name"], row["content"]),
                         embedding=vec,
                         tags=list(row["tags"] or []),
                         updated_at=row["last_refreshed_at"],
@@ -18330,7 +18339,7 @@ class MemoryEngine(MemoryEngineInterface):
         # After the transaction commits: the index is derived from a row that must already exist,
         # and indexing inside the transaction would publish a page a rollback then un-creates.
         self._index_created_page_soon(
-            bank_id, mental_model_id, name=row["name"], content=row["content"], embedding=embedding_vec
+            bank_id, mental_model_id, index_text=_page_index_text(row["name"], row["content"]), embedding=embedding_vec
         )
 
         # Best-effort default-template hook runs after the bank-create commits
@@ -20863,7 +20872,10 @@ class MemoryEngine(MemoryEngineInterface):
             # API contract that a duplicate page is surfaced as HTTP 409.
             return None
         self._index_created_page_soon(
-            bank_id, mental_model_id, name=mm_row["name"], content=mm_row["content"], embedding=embedding_vec
+            bank_id,
+            mental_model_id,
+            index_text=_page_index_text(mm_row["name"], mm_row["content"]),
+            embedding=embedding_vec,
         )
 
         # This hook opens its own connections and therefore must run after commit.
