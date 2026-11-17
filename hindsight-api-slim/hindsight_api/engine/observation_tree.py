@@ -212,9 +212,7 @@ def _build_features(observations: list[TreeObservation]) -> _BankFeatures:
     )
 
 
-def _seed_entities(
-    feats: _Features, k: int, exclude: frozenset[int] = frozenset(), min_rows: int = LEAF_MIN
-) -> list[int]:
+def _seed_entities(feats: _Features, k: int, exclude: frozenset[int], min_rows: int) -> list[int]:
     """Up to ``k`` entities to start the groups from: the strongest entities in the group (by
     their summed weight, so an entity on nearly every row counts for little), skipping any that
     mostly co-occurs with one already chosen. Ties go to the name, so the choice depends only on
@@ -284,7 +282,7 @@ def _split(
     if (len(members) <= LEAF_MAX and not leftovers) or depth >= MAX_DEPTH:
         return node
     # Ask for BRANCH groups and let the data decide how many survive: seeding stops when
-    # every row already sits on a centre, and groups under LEAF_MIN fold into a neighbour.
+    # every row already sits on a centre, and groups under the minimum go to the rest.
     # (Sizing k as ceil(n / LEAF_MAX) asked a 160-observation bank with four unrelated
     # subjects for 2 groups, so files mixed subjects that share no entity.)
     # Not for a rest: its rows share nothing that made them a group, so an entity on all of them
