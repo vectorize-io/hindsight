@@ -400,7 +400,7 @@ def _passage_bytes(draft: media.PassageDraft, vectors: list[list[float]]) -> int
 _MEDIA_BYTES_PER_CONTENT_TOKEN = 5120
 
 
-def _content_tokens(item: _Item) -> int:
+def _content_tokens(item: IngestItem) -> int:
     """A document's billable content size. Text (the text-ingest API, or an uploaded .txt/.md) is
     counted by its tokens; any other file is counted by its size at ``_MEDIA_BYTES_PER_CONTENT_TOKEN``."""
     if (item.content_type or "").startswith("text/"):
@@ -1725,7 +1725,9 @@ class KnowledgeService:
             bank_id,
             request_context,
             sum(d.passage_count for d in deleted),
-            sum(d.content_tokens for d in deleted),
+            # Only passage-bearing documents, matching what ingest added: a split parent carries a
+            # content_tokens figure but its content was billed through its children.
+            sum(d.content_tokens for d in deleted if d.passage_count > 0),
         )
 
     async def open_file(self, bank_id: str, document_id: str, request_context: RequestContext) -> OpenedFile:

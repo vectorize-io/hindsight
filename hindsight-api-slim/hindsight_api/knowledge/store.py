@@ -1100,7 +1100,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
             rows = await conn.fetch(
                 f"""
                 SELECT bank_id, media_type, status, COUNT(*) AS documents, COALESCE(SUM(passage_count), 0) AS passages,
-                       COALESCE(SUM(content_tokens), 0) AS content_tokens, MAX(updated_at) AS last_at
+                       -- Only passage-bearing documents: a split parent holds a content_tokens figure but
+                       -- no passages, and its content is billed via its children (which do hold passages).
+                       COALESCE(SUM(content_tokens) FILTER (WHERE passage_count > 0), 0) AS content_tokens,
+                       MAX(updated_at) AS last_at
                 FROM {fq_table("kb_documents")} WHERE bank_id = ANY($1::text[])
                 GROUP BY bank_id, media_type, status
                 """,
