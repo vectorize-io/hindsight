@@ -2025,8 +2025,10 @@ async def documents_for_memory_bank(
     if not linked or not (query or "").strip():
         return None
     # Reflect's recall runs as an internal operation, but the linked banks are read on the caller's
-    # behalf: the validator must see the caller, not a background job it would let through.
-    caller = replace(request_context, internal=False)
+    # behalf: the validator must see the caller (``internal=False``), not a background job it would
+    # let through. ``sub_operation`` marks it as part of the reflect the caller is already accounted
+    # for, so a metering extension does not charge these linked searches a second time.
+    caller = replace(request_context, internal=False, sub_operation=True)
     try:
         return await _linked_documents(engine, bank_id, linked, query, max_tokens, caller)
     except Exception as exc:
