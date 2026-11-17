@@ -1239,6 +1239,65 @@ class TestAdvancedFeatures:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
+    async def test_observation_scope_counts(self, oracle_memory: MemoryEngine, request_context: RequestContext):
+        """#6585: the scope histogram and the exact tag match (`<@`) run on Oracle."""
+        from hindsight_api.engine.memories.pg.counts import observation_scope_counts
+        from hindsight_api.engine.schema import fq_table
+        from hindsight_api.engine.search.tags import TagGroupLeaf
+
+        bank_id = _bank_id("scopes")
+        dim = oracle_memory.embeddings.dimension
+        tag_sets = [["a", "b"], ["b", "a"], [], ["a", "a"], ["a", "b"]]
+        n = len(tag_sets)
+        try:
+            await oracle_memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+            backend = await oracle_memory._get_backend()
+            async with backend.transaction() as conn:
+                await backend.ops.insert_facts_batch(
+                    conn,
+                    bank_id,
+                    fact_texts=[f"fact {i}" for i in range(n)],
+                    embeddings=[embedding_to_pgvector([1.0] + [0.0] * (dim - 1))] * n,
+                    event_dates=[datetime(2024, 1, 1, tzinfo=timezone.utc)] * n,
+                    occurred_starts=[None] * n,
+                    occurred_ends=[None] * n,
+                    mentioned_ats=[None] * n,
+                    contexts=[""] * n,
+                    # The last row is not an observation, so it is not counted.
+                    fact_types=["observation"] * (n - 1) + ["world"],
+                    metadata_jsons=["{}"] * n,
+                    chunk_ids=[None] * n,
+                    document_ids=[None] * n,
+                    tags_list=[json.dumps(t) for t in tag_sets],
+                    observation_scopes_list=[None] * n,
+                    text_signals_list=[None] * n,
+                )
+
+            page = await oracle_memory.list_observation_scopes(bank_id, request_context=request_context)
+            assert page["scopes"] == [
+                {"tags": ["a", "b"], "count": 2},
+                {"tags": ["a", "a"], "count": 1},
+                {"tags": [], "count": 1},
+            ]
+            assert page["total"] == 3
+
+            past_end = await oracle_memory.list_observation_scopes(
+                bank_id, limit=1, offset=3, request_context=request_context
+            )
+            assert past_end["scopes"] == [] and past_end["total"] == 3
+
+            async with backend.acquire() as conn:
+                exact = await observation_scope_counts(
+                    conn=conn,
+                    fq_table=fq_table,
+                    bank_id=bank_id,
+                    tag_groups=[TagGroupLeaf(tags=["a", "b"], match="exact")],
+                )
+            assert exact["scopes"] == [{"tags": ["a", "b"], "count": 2}] and exact["total"] == 1
+        finally:
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
+
+    @pytest.mark.asyncio
     async def test_task_queue(self, oracle_memory: MemoryEngine, request_context: RequestContext):
         bank_id = _bank_id("taskq")
         try:

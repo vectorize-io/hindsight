@@ -9,11 +9,12 @@ carry it; only the connection and ``fq_table`` resolver are now parameters.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from ...search.tags import TagGroup, build_tag_groups_where_clause
+from ...search.tags import TagClause, TagGroup, build_tag_groups_where_clause
 
 
 async def consolidation_freshness(*, conn, fq_table: Callable[[str], str], bank_id: str) -> dict[str, Any]:
@@ -193,8 +194,14 @@ async def observation_scope_counts(
     SQL — the whole histogram never crosses the wire. ``tag_groups`` (a caller's
     forced tag scope) keeps only the observations it admits.
     """
+    from ...schema import _is_oracle  # noqa: PLC0415
+
     groups = build_tag_groups_where_clause(tag_groups, 2)
     limit_idx = groups.next_param_offset
+    if _is_oracle():
+        return await _oracle_observation_scope_counts(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, limit=limit, offset=offset, groups=groups
+        )
     # A scope is the observation's tags, sorted. Sorting per observation is the
     # expensive part, and many observations share the exact same tag list, so
     # count identical lists first (a cheap hash aggregate) and sort only the
@@ -237,6 +244,56 @@ async def observation_scope_counts(
     rows = [r for r in rows if r["scope"] is not None]
     return {
         "scopes": [{"tags": list(r["scope"]), "count": int(r["count"])} for r in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+async def _oracle_observation_scope_counts(
+    *, conn, fq_table: Callable[[str], str], bank_id: str, limit: int, offset: int, groups: TagClause
+) -> dict[str, Any]:
+    """Oracle shape of ``observation_scope_counts`` (#6585).
+
+    Oracle keeps ``tags`` as a JSON array in a CLOB, which it cannot group by and which
+    has no ``unnest``, so each observation's tags are sorted into a JSON string first and
+    the strings are grouped. The ``tags`` column stays unaliased: the SQL rewriter only
+    translates the tag-group operators on a bare column name. Ties on ``count`` order by
+    that string, not element by element as PostgreSQL does, so a tie can page differently.
+    """
+    # ponytail: VARCHAR2(4000) caps one observation's sorted tag list at 4000 characters;
+    # past that Oracle errors (ORA-40478). Hash-group the CLOB if real tag sets grow that big.
+    scopes_sql = f"""
+        SELECT scope, COUNT(*) AS n
+        FROM (
+            SELECT COALESCE(
+                (SELECT JSON_ARRAYAGG(jt.val ORDER BY jt.val RETURNING VARCHAR2(4000))
+                 FROM JSON_TABLE(tags, '$[*]' COLUMNS (val VARCHAR2(256) PATH '$')) jt),
+                '[]') AS scope
+            FROM {fq_table("memory_units")}
+            WHERE bank_id = $1 AND fact_type = 'observation' {groups.sql}
+        )
+        GROUP BY scope
+    """
+    limit_idx = groups.next_param_offset
+    rows = await conn.fetch(
+        f"""
+        SELECT scope, n, COUNT(*) OVER () AS total FROM ({scopes_sql})
+        ORDER BY n DESC, scope
+        LIMIT ${limit_idx} OFFSET ${limit_idx + 1}
+        """,
+        bank_id,
+        *groups.params,
+        limit,
+        offset,
+    )
+    if rows:
+        total = int(rows[0]["total"])
+    else:
+        # Past the last page (or no observations): the window carried no total.
+        total = int(await conn.fetchval(f"SELECT COUNT(*) FROM ({scopes_sql})", bank_id, *groups.params) or 0)
+    return {
+        "scopes": [{"tags": json.loads(r["scope"]), "count": int(r["n"])} for r in rows],
         "total": total,
         "limit": limit,
         "offset": offset,
