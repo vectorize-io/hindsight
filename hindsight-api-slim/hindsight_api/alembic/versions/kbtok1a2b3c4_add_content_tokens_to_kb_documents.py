@@ -7,7 +7,7 @@ the stored total). Knowledge-bank tables are PostgreSQL-only (see k7b1c2d3e4f5),
 no-op.
 
 Revision ID: kbtok1a2b3c4
-Revises: z1u2v3w4x5y6
+Revises: 300fe58170e9
 Create Date: 2026-11-17
 """
 
@@ -18,13 +18,12 @@ from alembic import context, op
 from hindsight_api.alembic._dialect import run_for_dialect
 
 revision: str = "kbtok1a2b3c4"
-down_revision: str | Sequence[str] | None = "z1u2v3w4x5y6"
+# Chains after the current head 300fe58170e9, which descends from k7b1c2d3e4f5
+# (the migration that CREATEs kb_documents) — so that table already exists by the
+# time this ALTER runs, with no depends_on / cross-branch ordering needed.
+down_revision: str | Sequence[str] | None = "300fe58170e9"
 branch_labels: str | Sequence[str] | None = None
-# The KB tables are created by k7b1c2d3e4f5, which is on a different branch from
-# this migration's down_revision chain. Without this, a from-scratch multi-head
-# upgrade can run this ALTER before that CREATE ("relation kb_documents does not
-# exist"). depends_on forces the CREATE to apply first.
-depends_on: str | Sequence[str] | None = "k7b1c2d3e4f5"
+depends_on: str | Sequence[str] | None = None
 
 
 def _pg_schema_prefix() -> str:

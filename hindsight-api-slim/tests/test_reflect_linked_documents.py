@@ -62,18 +62,21 @@ async def test_linked_search_runs_as_caller_but_marked_sub_operation(monkeypatch
     who it acts for) yet flagged ``sub_operation`` — it is part of the reflect the caller is already
     accounted for, so metering must not bill it a second time."""
     from hindsight_api.knowledge import service as kb_service
+    from hindsight_api.knowledge.store import SearchFilters
 
     captured: dict[str, RequestContext] = {}
 
-    async def fake_linked_documents(engine, bank_id, linked, query, max_tokens, caller):
+    async def fake_linked_documents(engine, bank_id, linked, query, max_tokens, filters, caller):
         captured["caller"] = caller
         return []
 
     monkeypatch.setattr(kb_service, "_linked_documents", fake_linked_documents)
-    monkeypatch.setattr(kb_service, "get_config", lambda: SimpleNamespace(enable_knowledge_banks=True))
+    monkeypatch.setattr(kb_service, "get_config", lambda: SimpleNamespace(enable_kb=True))
 
     rc = RequestContext(internal=True, user_initiated=True, tenant_id="t", api_key_id="k")
-    await kb_service.documents_for_memory_bank(SimpleNamespace(), "mem-bank", ["kb1"], "a question", 100, rc)
+    await kb_service.documents_for_memory_bank(
+        SimpleNamespace(), "mem-bank", ["kb1"], "a question", 100, SearchFilters(), rc
+    )
 
     caller = captured["caller"]
     assert caller.internal is False  # the validator must authorize it as the caller
