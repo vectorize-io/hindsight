@@ -272,6 +272,10 @@ def native_call_reply(response_format: Any, tool_calls: Any) -> str | None:
     ``None`` for any call that is not a tool turn's, or with no call: the caller's own
     empty-content handling stands. Takes OpenAI-shaped objects (SDK, LiteLLM) and Ollama's
     dicts, whose arguments arrive already parsed.
+
+    Used by the providers that can serve gpt-oss: OpenAI-compatible (Ollama included) and
+    LiteLLM (Bedrock). GitHub Copilot answers through an agent session with no tool-call field,
+    and xAI's typed reply parses none; neither serves a model seen doing this.
     """
     if not (isinstance(response_format, type) and issubclass(response_format, SchemaFormat)) or not tool_calls:
         return None
