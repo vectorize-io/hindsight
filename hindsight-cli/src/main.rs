@@ -689,7 +689,9 @@ enum MemoryCommands {
         document_tags: Option<Vec<String>>,
     },
 
-    /// Bulk import memories from files (retain)
+    /// Bulk import memories from files (retain). Each file is stored under a
+    /// document id built from its path relative to the current dir
+    /// (`notes/a/README.md` -> `notes_a_README.md`), so re-running updates it.
     RetainFiles {
         /// Bank ID
         bank_id: String,

@@ -138,6 +138,13 @@ pub struct MemoryPutResult {
     pub operation_id: Option<String>,
 }
 
+/// One file to upload: its name, the document id to store it under, and its bytes.
+pub struct FileUpload {
+    pub filename: String,
+    pub document_id: String,
+    pub content: Vec<u8>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileRetainResult {
     pub operation_ids: Vec<String>,
@@ -345,7 +352,7 @@ impl ApiClient {
     pub fn file_retain(
         &self,
         bank_id: &str,
-        files: Vec<(String, Vec<u8>)>,
+        files: Vec<FileUpload>,
         context: Option<String>,
         strategy: Option<String>,
         verbose: bool,
@@ -358,7 +365,7 @@ impl ApiClient {
 
             let files_metadata: Vec<serde_json::Value> = files
                 .iter()
-                .map(|(name, _)| {
+                .map(|file| {
                     let mut meta = serde_json::json!({});
                     if let Some(ctx) = &context {
                         meta["context"] = serde_json::Value::String(ctx.clone());
@@ -366,13 +373,7 @@ impl ApiClient {
                     if let Some(strat) = &strategy {
                         meta["strategy"] = serde_json::Value::String(strat.clone());
                     }
-                    // Use filename stem as document_id for deduplication
-                    if let Some(stem) = std::path::Path::new(name)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                    {
-                        meta["document_id"] = serde_json::Value::String(stem.to_string());
-                    }
+                    meta["document_id"] = serde_json::Value::String(file.document_id.clone());
                     meta
                 })
                 .collect();
@@ -384,9 +385,9 @@ impl ApiClient {
             let mut form =
                 reqwest::multipart::Form::new().text("request", request_json.to_string());
 
-            for (filename, content) in files {
-                let part = reqwest::multipart::Part::bytes(content)
-                    .file_name(filename)
+            for file in files {
+                let part = reqwest::multipart::Part::bytes(file.content)
+                    .file_name(file.filename)
                     .mime_str("application/octet-stream")?;
                 form = form.part("files", part);
             }
