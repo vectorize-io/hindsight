@@ -128,6 +128,79 @@ async def test_oracle_connection_batch_links_drops_dups_and_vanished_fks_and_rol
         assert any(sql.startswith("ROLLBACK TO SAVEPOINT ") for sql in executed_sql)
 
 
+@pytest.mark.asyncio
+async def test_executemany_filtered_preserves_ora_message_code_and_offset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected batch error is re-raised as DatabaseError(err) preserving the
+    original args[0] for _is_oracle_deadlock/_is_retryable plus .code/.offset."""
+    import sys
+    from types import SimpleNamespace
+
+    from hindsight_api.engine.db.oracle import OracleConnection
+    from hindsight_api.engine.db_utils import _is_oracle_deadlock, _is_retryable
+
+    class _FakeDatabaseError(Exception):
+        pass
+
+    class _FakeOraError:
+        def __init__(self, code: int, offset: int, message: str) -> None:
+            self.code = code
+            self.offset = offset
+            self.message = message
+
+        def __str__(self) -> str:
+            return self.message
+
+    monkeypatch.setitem(
+        sys.modules,
+        "oracledb",
+        SimpleNamespace(
+            DatabaseError=_FakeDatabaseError,
+            DB_TYPE_CLOB="CLOB",
+            defaults=SimpleNamespace(fetch_lobs=False),
+        ),
+    )
+
+    class _FakeCursor:
+        def execute(self, sql: str, *args: object):
+            return asyncio.sleep(0)
+
+        def executemany(self, sql: str, rows: list[dict], *, batcherrors: bool = False):
+            return asyncio.sleep(0)
+
+        def getbatcherrors(self) -> list[object]:
+            return [
+                _FakeOraError(
+                    code=60,
+                    offset=7,
+                    message="ORA-00060: deadlock detected while waiting for resource",
+                )
+            ]
+
+        def setinputsizes(self, **kwargs: object) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    conn = OracleConnection(SimpleNamespace(cursor=lambda: _FakeCursor()))
+
+    with pytest.raises(_FakeDatabaseError) as exc_info:
+        await conn.executemany_filtered(
+            "INSERT INTO memory_links (from_unit_id, to_unit_id) VALUES ($1, $2)",
+            [("from", "to")],
+            is_ignored_error=lambda err: False,
+        )
+
+    exc = exc_info.value
+    assert "ORA-00060: deadlock detected while waiting for resource" == str(exc)
+    assert exc.code == 60
+    assert exc.offset == 7
+    assert _is_oracle_deadlock(exc) is True
+    assert _is_retryable(exc) is True
+
+
 @pytest.fixture
 def _oracle_backend(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Table names resolve per backend from config; point it at Oracle for these tests."""

@@ -1277,7 +1277,10 @@ class OracleConnection(DatabaseConnection):
                         query[:500],
                         getattr(err, "message", err),
                     )
-                    raise oracledb.DatabaseError(err)
+                    exc = oracledb.DatabaseError(err)
+                    exc.code = getattr(err, "code", None)
+                    exc.offset = getattr(err, "offset", None)
+                    raise exc
             finally:
                 cursor.close()
 
