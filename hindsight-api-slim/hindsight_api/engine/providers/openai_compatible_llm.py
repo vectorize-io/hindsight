@@ -59,6 +59,7 @@ from hindsight_api.engine.llm_transport import (
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
+from hindsight_api.engine.providers.tools_via_schema import native_call_reply
 from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import (
     BatchRequest,
@@ -445,7 +446,9 @@ def _is_openrouter(provider: str, base_url: str | None) -> bool:
     return provider == "openrouter" or urlparse(base_url or "").hostname == "openrouter.ai"
 
 
-def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -> tuple[str, Any]:
+def _content_or_error(
+    response: Any, *, provider: str, model: str, scope: str, response_format: Any = None
+) -> tuple[str, Any]:
     """Extract message.content, turning provider shape issues into useful errors.
 
     Raises ``OutputTooLongError`` on a token-limit truncation and
@@ -485,6 +488,9 @@ def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -
     content = _message_content(message)
     if content is None or content == "":
         tool_calls = _message_tool_calls(message)
+        native = native_call_reply(response_format, tool_calls)
+        if native is not None:
+            return native, choice
         refusal = _message_refusal(message)
         retryable = finish_reason not in {"content_filter"}
         raise ProviderResponseError(
@@ -1417,6 +1423,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         provider=self.provider,
                         model=self.model,
                         scope=scope,
+                        response_format=response_format,
                     )
 
                     # Strip reasoning model thinking tags (closed and unclosed).
@@ -1496,6 +1503,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         provider=self.provider,
                         model=self.model,
                         scope=scope,
+                        response_format=response_format,
                     )
 
                     # Free-form (non-structured) output also leaks reasoning tags:
@@ -1807,6 +1815,8 @@ class OpenAICompatibleLLM(LLMInterface):
                     )
                 )
                 content = result.get("message", {}).get("content", "")
+                if not content:
+                    content = native_call_reply(response_format, result.get("message", {}).get("tool_calls")) or ""
 
                 # Same case as the OpenAI-compatible path, different key: Ollama
                 # reports a token cap as done_reason "length". Raised ahead of the

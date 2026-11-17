@@ -36,6 +36,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     record_retried_attempt,
     visible_token_usage,
 )
+from hindsight_api.engine.providers.tools_via_schema import native_call_reply
 from hindsight_api.engine.remote_retry import is_transient_remote_error, jittered_backoff
 from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
@@ -379,7 +380,7 @@ class LiteLLMLLM(LLMInterface):
                 choice = response.choices[0]
                 _raise_if_generation_failed(response, choice, provider=self.provider, model=self.model, scope=scope)
                 message = choice.message
-                content = message.content or ""
+                content = message.content or native_call_reply(response_format, message.tool_calls) or ""
                 finish_reason = choice.finish_reason
                 model_name = self._resolve_completion_model(response)
 

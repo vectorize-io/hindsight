@@ -135,7 +135,7 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
             )
 
         message, finish_reason = reply.message, reply.finish_reason
-        if turn is not None and message.get("tool_calls"):
+        if turn is not None and message.get("tool_calls") and not reply.native:
             message, finish_reason = turn.reply_for(message["tool_calls"][0]["function"]), "stop"
 
         return JSONResponse(

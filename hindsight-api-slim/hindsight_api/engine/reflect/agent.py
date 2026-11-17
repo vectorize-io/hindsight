@@ -169,6 +169,9 @@ _COMPACTED_TOOL_RESULT = "[Earlier tool result omitted to fit the context budget
 #: rest of the iteration budget on it costs a reflect either way.
 _MAX_DOCUMENT_REJECTIONS = 1
 
+#: How many times a ``done`` with no answer in it is sent back before the run fails (#6520).
+_MAX_EMPTY_ANSWER_REASKS = 1
+
 #: A loop turn's default output cap when the closing step writes the answer, so the turn only
 #: names a search (its reply is held to a response schema, see providers/tools_via_schema). The
 #: longest valid one measured was 130 tokens. A configured reflect cap replaces it (#6560).
@@ -832,7 +835,10 @@ async def _run_reflect_agent_inner(
         return response.strip()
 
     def _document_rejection_messages(
-        done_call: "LLMToolCall", exc: DocumentSectionsInvalidError
+        done_call: "LLMToolCall",
+        errors: Sequence[str],
+        instruction: str = "Your done() call could not be read, so it was discarded. "
+        "Call done() again with the same content, fixing: ",
     ) -> list[dict[str, Any]]:
         """The rejected ``done`` call and why, as the messages that re-ask for it.
 
@@ -849,10 +855,7 @@ async def _run_reflect_agent_inner(
                 "tool_call_id": wire_id,
                 "content": json.dumps(
                     {
-                        "error": (
-                            "Your done() call could not be read, so it was discarded. "
-                            "Call done() again with the same content, fixing: " + "; ".join(exc.errors)
-                        ),
+                        "error": instruction + "; ".join(errors),
                     },
                     ensure_ascii=False,
                 ),
@@ -942,9 +945,21 @@ async def _run_reflect_agent_inner(
         """
         feedback: Sequence[dict[str, Any]] = ()
         rejections = 0
+        empty_answers = 0
         while True:
             reply = await _ask_for_done(feedback)
             closing = next((tc for tc in reply.tool_calls if _is_done_tool(tc.name)), None) if reply else None
+            if reply is not None and closing is not None and empty_answers < _MAX_EMPTY_ANSWER_REASKS:
+                missing = _missing_done_answer(closing, reply.finish_reason, answer_as_document)
+                if missing:
+                    empty_answers += 1
+                    logger.warning(f"[REFLECT {reflect_id}] closing done carried no answer; asking once more")
+                    feedback = _document_rejection_messages(
+                        closing,
+                        [missing],
+                        "Your done() call carried no answer, so it was discarded. Call done() again: ",
+                    )
+                    continue
             if reply is None or closing is None:
                 if rejections:
                     # A done was already refused on this path. The refusal stands,
@@ -984,7 +999,7 @@ async def _run_reflect_agent_inner(
                 logger.warning(f"[REFLECT {reflect_id}] closing done document rejected (attempt {rejections}): {exc}")
                 if rejections > _MAX_DOCUMENT_REJECTIONS:
                     raise
-                feedback = _document_rejection_messages(closing, exc)
+                feedback = _document_rejection_messages(closing, exc.errors)
 
     async def _forced_final_synthesis(iterations_completed: int) -> ReflectAgentResult:
         """Answer without tools from the accumulated tool results.
@@ -1526,7 +1541,13 @@ async def _run_reflect_agent_inner(
             # A document (a page refresh) still goes through the closing step: the page update
             # merges only the facts the answer cites, and the free turn's done cited fewer of them
             # (a Q2 count lost two of four new customers on the refresh-pages eval, hq-count-billing).
-            if not decision_orchestrated or decision_model_failed or answer_as_document:
+            # A done with no answer in it goes there too, where it is asked for once more.
+            if (
+                not decision_orchestrated
+                or decision_model_failed
+                or answer_as_document
+                or _missing_done_answer(done_call, result.finish_reason, answer_as_document)
+            ):
                 return await (_forced_final_synthesis if compacted else _finish)(iteration + 1)
 
             from hindsight_api.tracing import get_tracer
@@ -1566,7 +1587,7 @@ async def _run_reflect_agent_inner(
                     )
                     if document_rejections > _MAX_DOCUMENT_REJECTIONS or iteration >= max_iterations - 1:
                         raise
-                    messages.extend(_document_rejection_messages(done_call, exc))
+                    messages.extend(_document_rejection_messages(done_call, exc.errors))
                     continue
 
         # After a "not enough" verdict: the LLM wrote its next search, and that query
@@ -2285,6 +2306,24 @@ def _done_arguments(done_call: "LLMToolCall", finish_reason: str | None) -> dict
     # Repair only ever returns a dict, and a plain parse of what the provider
     # already failed to parse fails again — so this is a dict or it raised.
     return _decode_json_argument(args["_raw"], finish_reason)
+
+
+def _missing_done_answer(done_call: "LLMToolCall", finish_reason: str | None, as_document: bool) -> str | None:
+    """Why ``done`` holds no answer, in words the model can fix; ``None`` if it holds one.
+
+    The same reading ``_process_done_tool`` makes. A reply no schema held can leave the answer out:
+    gpt-oss answered a forced ``done`` with ``answer_ready``'s lone ``answer_found`` (#6520). A payload
+    that does not parse is not this case: its own re-ask handles it (``_done_arguments``).
+    """
+    try:
+        args = _done_arguments(done_call, finish_reason)
+    except DocumentSectionsInvalidError:
+        return None
+    text = args.get("markdown") if isinstance(args.get("markdown"), str) else args.get("answer")
+    if isinstance(text, str) and text.strip():
+        return None
+    field = "markdown" if as_document else "answer"
+    return f"the call has no `{field}`: write the full answer in `{field}`, not only `answer_found`"
 
 
 #: Which alias prefix each of done's id fields cites (presentation._LISTS).

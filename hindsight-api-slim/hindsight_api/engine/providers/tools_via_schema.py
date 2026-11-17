@@ -259,6 +259,36 @@ def schema_format(held: ResponseSchema) -> type[SchemaFormat]:
     return type(held.name, (SchemaFormat,), {"schema": held.schema})
 
 
+def native_call_reply(response_format: Any, tool_calls: Any) -> str | None:
+    """A tool turn answered with a native call, as the reply the schema asked for.
+
+    The turn sends no ``tools``, but it describes the functions and asks for one by name,
+    and some models answer that with a native call whatever the request declares: gpt-oss
+    did on every forced reflect step, on Bedrock and on Ollama (#6520), leaving ``content``
+    empty. The call is the answer in another envelope, so it is read as the free-turn shape
+    ``{"call": {"name", "arguments"}}`` — which ``calls_from_reply`` reads on a named turn too
+    — and judged by ``reply_violation`` like any other reply.
+
+    ``None`` for any call that is not a tool turn's, or with no call: the caller's own
+    empty-content handling stands. Takes OpenAI-shaped objects (SDK, LiteLLM) and Ollama's
+    dicts, whose arguments arrive already parsed.
+    """
+    if not (isinstance(response_format, type) and issubclass(response_format, SchemaFormat)) or not tool_calls:
+        return None
+    first = tool_calls[0]
+    function = first.get("function") if isinstance(first, dict) else getattr(first, "function", None)
+    name = function.get("name") if isinstance(function, dict) else getattr(function, "name", None)
+    arguments = function.get("arguments") if isinstance(function, dict) else getattr(function, "arguments", None)
+    if not name:
+        return None
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            pass  # rides as a string: reply_violation asks for one JSON object
+    return json.dumps({"call": {"name": name, "arguments": arguments}}, ensure_ascii=False)
+
+
 def _declarations(tools: list[dict[str, Any]]) -> str:
     functions = [{k: v for k, v in _function(t).items() if k in ("name", "description", "parameters")} for t in tools]
     return "## Functions\n\nYou act by calling these functions:\n\n" + json.dumps(
