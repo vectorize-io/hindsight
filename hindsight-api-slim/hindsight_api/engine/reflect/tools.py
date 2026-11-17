@@ -7,7 +7,6 @@ Implements hierarchical retrieval:
 3. recall - Raw facts as ground truth
 """
 
-import base64
 import json
 import logging
 import uuid
@@ -15,6 +14,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, cast
 
+from ..decision_rerank_interface import EvidenceImage
 from ..prompt_utils import truncate_context_for_prompt
 from ..response_models import KnowledgeDocumentHit, MemoryFact
 from ..schema import fq_table
@@ -553,9 +553,8 @@ async def tool_recall(
     chunk_dates = {m.chunk_id: m.mentioned_at for m in reversed(result.results) if m.chunk_id and m.mentioned_at}
     pictures = await _knowledge_pictures(memory_engine, result.documents, kb_images, request_context)
     documents = _knowledge_documents(result.documents, pictures)
-    image_parts = [part for picture in pictures.values() for part in picture]
     return {
-        **({KB_IMAGES_KEY: image_parts} if image_parts else {}),
+        **({KB_IMAGES_KEY: list(pictures.values())} if pictures else {}),
         **documents,
         "query": query,
         "memories": [_drop_unread_fields(_prune_nulls(m.model_dump())) for m in result.results],
@@ -577,8 +576,8 @@ _DOCUMENTS_NOTE = (
 )
 
 
-#: Where ``tool_recall`` puts the knowledge-bank pictures: OpenAI-shaped content parts (a label, then
-#: the image) that the agent pops before anything else reads the output, and sends as a user turn.
+#: Where ``tool_recall`` puts the knowledge-bank pictures (``EvidenceImage``s): the agent pops them before
+#: anything else reads the output, and shows them to the model (and a decision model that reads images).
 KB_IMAGES_KEY = "_kb_images"
 #: A picture bigger than this is not sent: the strictest provider (Anthropic) refuses one over 5 MB.
 _MAX_PICTURE_BYTES = 5 * 1024 * 1024
@@ -594,7 +593,7 @@ async def _knowledge_pictures(
     hits: list[KnowledgeDocumentHit] | None,
     limit: int,
     request_context: "RequestContext",
-) -> dict[int, list[dict[str, Any]]]:
+) -> dict[int, EvidenceImage]:
     """The pictures behind the first ``limit`` image and PDF-page hits, by the hit's place in ``hits``.
 
     Read on the caller's behalf, as the search was. A picture that cannot be read, or is too big,
@@ -606,7 +605,7 @@ async def _knowledge_pictures(
 
     service = get_knowledge_service(engine)
     caller = replace(request_context, internal=False)
-    pictures: dict[int, list[dict[str, Any]]] = {}
+    pictures: dict[int, EvidenceImage] = {}
     for position, hit in enumerate(hits):
         if len(pictures) >= limit:
             break
@@ -622,17 +621,11 @@ async def _knowledge_pictures(
             continue
         if len(data) > _MAX_PICTURE_BYTES:
             continue
-        uri = f"data:{opened.content_type};base64,{base64.b64encode(data).decode()}"
-        pictures[position] = [
-            {"type": "text", "text": _picture_label(hit)},
-            {"type": "image_url", "image_url": {"url": uri}},
-        ]
+        pictures[position] = EvidenceImage(label=_picture_label(hit), media_type=opened.content_type, data=data)
     return pictures
 
 
-def _knowledge_documents(
-    hits: list[KnowledgeDocumentHit] | None, pictures: dict[int, list[dict[str, Any]]]
-) -> dict[str, Any]:
+def _knowledge_documents(hits: list[KnowledgeDocumentHit] | None, pictures: dict[int, EvidenceImage]) -> dict[str, Any]:
     """The linked knowledge banks' passages, for the agent: what it can read of them, plus who wins."""
     if not hits:
         return {}
@@ -648,7 +641,7 @@ def _knowledge_documents(
                 # A page image or a clip has no text the agent can read; it still learns the doc matched.
                 "text": h.text or f"[{h.media_type} passage: no text]",
                 # Its picture follows the results, under this label.
-                "picture": _picture_label(h) if position in pictures else None,
+                "picture": pictures[position].label if position in pictures else None,
             }
         )
         for position, h in enumerate(hits)

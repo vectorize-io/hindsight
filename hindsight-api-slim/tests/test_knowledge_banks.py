@@ -316,16 +316,16 @@ async def test_a_bank_config_starts_on_the_server_defaults_and_shows_no_system_s
     assert r.json() == {
         "bank_id": kb,
         "config": {
-            "text_passage_tokens": c.knowledge_text_passage_tokens,
-            "pdf_page_pixels": c.knowledge_pdf_page_pixels,
-            "pdf_bands": c.knowledge_pdf_bands,
-            "image_tokens": c.knowledge_image_tokens,
-            "audio_window_seconds": c.knowledge_audio_window_seconds,
-            "video_window_seconds": c.knowledge_video_window_seconds,
-            "media_overlap_seconds": c.knowledge_media_overlap_seconds,
-            "max_media_seconds": c.knowledge_max_media_seconds,
-            "max_pdf_pages": c.knowledge_max_pdf_pages,
-            "disabled_media_types": sorted(c.knowledge_disabled_media_types),
+            "text_passage_tokens": c.kb_text_passage_tokens,
+            "pdf_page_pixels": c.kb_pdf_page_pixels,
+            "pdf_bands": c.kb_pdf_bands,
+            "image_tokens": c.kb_image_tokens,
+            "audio_window_seconds": c.kb_audio_window_seconds,
+            "video_window_seconds": c.kb_video_window_seconds,
+            "media_overlap_seconds": c.kb_media_overlap_seconds,
+            "max_media_seconds": c.kb_max_media_seconds,
+            "max_pdf_pages": c.kb_max_pdf_pages,
+            "disabled_media_types": sorted(c.kb_disabled_media_types),
         },
         "overrides": {},
     }
@@ -389,13 +389,13 @@ async def test_a_bank_config_refuses_what_a_bank_may_not_set(api_client, kb):
     # Models, providers, keys and the server's limits are the server's: named back, nothing written.
     detail = await refused({"embeddings_model": "x", "max_file_mb": 1, "text_passage_tokens": 64})
     assert "embeddings_model" in detail and "max_file_mb" in detail
-    assert "knowledge_text_passage_tokens" in await refused({"knowledge_text_passage_tokens": 64})
+    assert "kb_text_passage_tokens" in await refused({"kb_text_passage_tokens": 64})
     assert "text_passage_tokens" in await refused({"text_passage_tokens": 0})
     assert "text_passage_tokens" in await refused({"text_passage_tokens": "64"})
     assert "image_tokens" in await refused({"image_tokens": 5000})
     assert "disabled_media_types" in await refused({"disabled_media_types": ["pictures"]})
     assert "media_overlap_seconds" in await refused({"media_overlap_seconds": 30, "video_window_seconds": 30})
-    over = get_config().knowledge_max_pdf_pages + 1
+    over = get_config().kb_max_pdf_pages + 1
     assert "server's limit" in await refused({"max_pdf_pages": over})
     assert (await api_client.get(f"{KB}/{kb}/config")).json()["overrides"] == {}
 
@@ -590,9 +590,9 @@ async def test_reflect_hands_the_model_the_pictures_of_image_hits_up_to_its_cap(
     mem_bank = await _linked_memory_bank(api_client, kb)
 
     out = await tool_recall(memory, mem_bank, "red", request_context, include_documents=True, kb_images=1)
-    labels = [p["text"] for p in out[KB_IMAGES_KEY] if p["type"] == "text"]
-    images = [p["image_url"]["url"] for p in out[KB_IMAGES_KEY] if p["type"] == "image_url"]
-    assert len(images) == 1 and images[0].startswith("data:image/png;base64,")
+    labels = [p.label for p in out[KB_IMAGES_KEY]]
+    [picture] = out[KB_IMAGES_KEY]
+    assert picture.media_type == "image/png" and Image.open(io.BytesIO(picture.data)).size[0] > 0
     # The hit it belongs to says so, under the same label; the text hit and the other image do not.
     assert [d["picture"] for d in out["documents"] if "picture" in d] == labels
     assert labels[0].startswith(("Picture of keys.png", "Picture of door.png"))
@@ -722,7 +722,7 @@ async def test_knowledge_banks_are_hidden_when_the_flag_is_off(api_client, memor
     await api_client.post(f"/v1/default/banks/{mem_bank}/memories", json={"items": [{"content": "Red cars."}]})
     await api_client.patch(f"/v1/default/banks/{mem_bank}/config", json={"updates": {"knowledge_banks": [kb]}})
 
-    monkeypatch.setenv("HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS", "false")
+    monkeypatch.setenv("HINDSIGHT_API_ENABLE_KB", "false")
     clear_config_cache()
     assert (await api_client.get("/v1/version")).json()["features"]["knowledge_banks"] is False
     assert (await api_client.get(KB)).status_code == 404
@@ -732,7 +732,7 @@ async def test_knowledge_banks_are_hidden_when_the_flag_is_off(api_client, memor
 
     assert "documents" not in await tool_recall(memory, mem_bank, "red", request_context, include_documents=True)
 
-    monkeypatch.setenv("HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS", "true")
+    monkeypatch.setenv("HINDSIGHT_API_ENABLE_KB", "true")
     clear_config_cache()
     assert (await api_client.get("/v1/version")).json()["features"]["knowledge_banks"] is True
     assert (await api_client.get(f"{KB}/{kb}")).status_code == 200
@@ -758,12 +758,12 @@ async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, 
     doc = (await api_client.get(f"{KB}/{kb}/documents")).json()["documents"][0]
     assert doc["passage_count"] == 1  # one page = one passage, however many vectors it is stored as
     # Text weight 0: the score is the page image (+ bands) alone, which says nothing about invoices to the fake.
-    monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT", "0")
+    monkeypatch.setenv("HINDSIGHT_API_KB_PDF_TEXT_WEIGHT", "0")
     clear_config_cache()
     # The page's own score, before the keyword mix rescales the candidates (one page alone is 1.0 there).
     assert (await _scored(memory, kb, "invoice"))[0].explain.passage_score < 0.5
     # The default weight brings in the page's text layer (whole page and 128-token units).
-    monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_PDF_TEXT_WEIGHT", "0.6")
+    monkeypatch.setenv("HINDSIGHT_API_KB_PDF_TEXT_WEIGHT", "0.6")
     clear_config_cache()
     top = (await _scored(memory, kb, "invoice"))[0]
     assert top.explain.passage_score > 0.5 and top.passage.text == text and top.passage.page == 1
@@ -1283,11 +1283,11 @@ def child_bytes(monkeypatch):
     from hindsight_api.config import clear_config_cache
 
     def set_budget(n: int) -> None:
-        monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_INGEST_CHILD_BYTES", str(n))
+        monkeypatch.setenv("HINDSIGHT_API_KB_INGEST_CHILD_BYTES", str(n))
         clear_config_cache()
 
     yield set_budget
-    monkeypatch.delenv("HINDSIGHT_API_KNOWLEDGE_INGEST_CHILD_BYTES", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_KB_INGEST_CHILD_BYTES", raising=False)
     clear_config_cache()
 
 
@@ -1345,11 +1345,11 @@ def memory_budget_mb(monkeypatch):
     from hindsight_api.config import clear_config_cache
 
     def set_budget(n: int) -> None:
-        monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB", str(n))
+        monkeypatch.setenv("HINDSIGHT_API_KB_INGEST_MEMORY_BUDGET_MB", str(n))
         clear_config_cache()
 
     yield set_budget
-    monkeypatch.delenv("HINDSIGHT_API_KNOWLEDGE_INGEST_MEMORY_BUDGET_MB", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_KB_INGEST_MEMORY_BUDGET_MB", raising=False)
     clear_config_cache()
 
 

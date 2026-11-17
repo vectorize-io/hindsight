@@ -3,7 +3,7 @@
 Knowledge banks ingest and search, as memory banks retain and recall. An ingestion strategy is
 named, like a retain strategy, and maps file types (an extension such as ``.zip``, or a content
 type such as ``application/zip``) to the extension class that handles them, with its settings.
-Strategies are defined on the server, ``HINDSIGHT_API_INGEST_STRATEGIES`` (JSON)::
+Strategies are defined on the server, ``HINDSIGHT_API_KB_INGEST_STRATEGIES`` (JSON)::
 
     {
       "game-assets": {
@@ -13,7 +13,7 @@ Strategies are defined on the server, ``HINDSIGHT_API_INGEST_STRATEGIES`` (JSON)
     }
 
 A strategy applies only when it is chosen: ``strategy`` on the ingested item, else the server's
-``HINDSIGHT_API_INGEST_DEFAULT_STRATEGY``. A file whose type the chosen strategy does not map is
+``HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY``. A file whose type the chosen strategy does not map is
 chunked by the knowledge bank itself, as with no strategy.
 
 For each file it handles, an extension returns either:

@@ -186,7 +186,7 @@ async def test_an_untyped_upload_is_typed_from_its_filename(api_client, kb):
 async def test_an_empty_or_too_big_file_is_refused(api_client, kb, monkeypatch):
     r = await _upload(api_client, kb, [("empty.md", b"", "text/markdown")])
     assert r.status_code == 400 and "is empty" in r.json()["detail"]
-    monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_MAX_FILE_MB", "1")
+    monkeypatch.setenv("HINDSIGHT_API_KB_MAX_FILE_MB", "1")
     clear_config_cache()
     try:
         r = await _upload(api_client, kb, [("big.md", b"x" * (1024 * 1024 + 1), "text/markdown")])

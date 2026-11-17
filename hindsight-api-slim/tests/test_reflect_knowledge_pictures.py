@@ -8,11 +8,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from hindsight_api.engine.decision_rerank_interface import EvidenceImage
 from hindsight_api.engine.reflect.agent import run_reflect_agent
 from hindsight_api.engine.reflect.tools import KB_IMAGES_KEY
-from hindsight_api.engine.response_models import LLMToolCall, LLMToolCallResult
+from hindsight_api.engine.response_models import LLMCallResult, LLMToolCall, LLMToolCallResult, TokenUsage
 from tests.test_reflect_agent import _ScriptedProvider, mock_functions  # noqa: F401  (fixture)
 
+_PICTURE = EvidenceImage(label="Picture of keys.png", media_type="image/png", data=b"\x00\x00\x00")
 _IMAGE = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
 
 
@@ -40,7 +42,7 @@ async def test_knowledge_pictures_follow_the_results_as_images(mock_functions, w
         "documents": [{"source": "keys.png", "text": "[image passage: no text]", "picture": "Picture of keys.png"}],
     }
     if with_pictures:
-        output[KB_IMAGES_KEY] = [{"type": "text", "text": "Picture of keys.png"}, _IMAGE]
+        output[KB_IMAGES_KEY] = [_PICTURE]
     provider = _RecordingProvider(
         [
             _recall_turn(),
@@ -87,7 +89,7 @@ async def test_the_standalone_synthesis_gets_the_pictures_back(mock_functions): 
     from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 
     output = {"memories": [], "documents": [{"source": "door.png", "picture": "Picture of door.png"}]}
-    output[KB_IMAGES_KEY] = [{"type": "text", "text": "Picture of door.png"}, _IMAGE]
+    output[KB_IMAGES_KEY] = [EvidenceImage(label="Picture of door.png", media_type="image/png", data=b"\x00\x00\x00")]
     provider = _RecordingProvider(
         [
             _recall_turn(),
@@ -114,3 +116,38 @@ async def test_the_standalone_synthesis_gets_the_pictures_back(mock_functions): 
     assert result.text == "4817"
     user_turn = provider.call.await_args.kwargs["messages"][-1]
     assert user_turn["role"] == "user" and _IMAGE in user_turn["content"]
+
+
+@pytest.mark.asyncio
+async def test_the_decision_model_is_asked_with_the_pictures_the_evidence_names(mock_functions):  # noqa: F811
+    """Without them an answer only a picture holds read as "not enough", and bought another round."""
+    output = {
+        "memories": [{"id": "mem-1", "text": "a fact"}],
+        "documents": [{"source": "keys.png", "picture": "Picture of keys.png"}],
+        KB_IMAGES_KEY: [_PICTURE],
+    }
+    provider = _RecordingProvider(
+        [
+            LLMToolCallResult(
+                tool_calls=[LLMToolCall(id="1", name="done", arguments={"answer": "A", "memory_ids": []})],
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+    sufficient = AsyncMock(return_value=True)
+    # The tool-less call that rewrites the request into a search query.
+    provider.call = AsyncMock(return_value=LLMCallResult(content="q", usage=TokenUsage()))
+    await run_reflect_agent(
+        llm_config=provider,
+        bank_id="b",
+        query="q",
+        bank_profile={"name": "T", "mission": "M"},
+        has_mental_models=False,
+        budget="mid",
+        max_iterations=4,
+        evidence_is_sufficient_fn=sufficient,
+        **{**mock_functions, "recall_fn": AsyncMock(return_value=output)},
+    )
+
+    assert sufficient.await_args.kwargs == {"pictures": [_PICTURE]}
+    assert "Picture of keys.png" in sufficient.await_args.args[1]

@@ -8,16 +8,18 @@ Uses hierarchical retrieval:
 """
 
 import asyncio
+import base64
 import copy
 import json
 import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
 from ...cancellation import OperationCancelledError
 from ...config import DEFAULT_RECALL_CHUNKS_MAX_TOKENS, DEFAULT_RECALL_MAX_TOKENS, get_config
+from ..decision_rerank_interface import EvidenceImage
 from ..llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice
 from ..llm_trace import LLMQueueWait, reset_queue_wait_sink, set_queue_wait_sink
 from ..llm_transport import describe_llm_error
@@ -57,6 +59,13 @@ from .structured_doc import (
 from .tokenization import count_prompt_tokens
 from .tools import KB_IMAGES_KEY, returned_memories
 from .tools_schema import get_reflect_tools
+
+
+class EvidenceIsSufficient(Protocol):
+    """A decision model's "does this evidence already answer the question?"."""
+
+    def __call__(self, question: str, evidence: str, *, pictures: Sequence[EvidenceImage] = ()) -> Awaitable[bool]: ...
+
 
 #: Bounds on any token argument the model supplies to a retrieval tool. Below the
 #: floor a tool returns too little to be worth the round-trip; above the ceiling one
@@ -572,7 +581,7 @@ async def _run_reflect_agent_inner(
     store_document_text: bool = True,
     answer_as_document: bool = False,
     tool_token_limits: ReflectToolTokenLimits | None = None,
-    evidence_is_sufficient_fn: Callable[[str, str], Awaitable[bool]] | None = None,
+    evidence_is_sufficient_fn: EvidenceIsSufficient | None = None,
     prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]] | None = None,
     *,
     reflect_id: str,
@@ -605,8 +614,9 @@ async def _run_reflect_agent_inner(
             uncapped-by-default config (``reflect_max_completion_tokens``).
         response_schema: Optional JSON Schema for structured output in final response
         directives: Optional list of directive mental models to inject as hard rules
-        evidence_is_sufficient_fn: (question, evidence) -> whether the evidence already
-            answers the question, asked of a decision model. Given, reflect is
+        evidence_is_sufficient_fn: (question, evidence, pictures=) -> whether the evidence already
+            answers the question, asked of a decision model. ``pictures`` are the knowledge-bank
+            pictures the evidence names, passed only when there are some. Given, reflect is
             decision-orchestrated: the retrieval layers run in parallel rounds with one
             query each, instead of one LLM turn per layer writing its own, and this check
             ends retrieval after a round. Without it, reflect runs agent turns.
@@ -713,7 +723,7 @@ async def _run_reflect_agent_inner(
     context_history: list[dict[str, Any]] = []  # For final prompt fallback
     # Every knowledge-bank picture the run was shown: the standalone synthesis rebuilds its prompt
     # from ``context_history``, which is text, so it gets them back from here.
-    knowledge_pictures: list[dict[str, Any]] = []
+    knowledge_pictures: list[EvidenceImage] = []
 
     def _record_llm(entry: dict[str, Any]) -> None:
         # Recorded as the call ends, so its start is now minus its duration.
@@ -797,7 +807,7 @@ async def _run_reflect_agent_inner(
         system_prompt: str,
         completion_cap: int | None,
         temperature: float | None = None,
-        pictures: list[dict[str, Any]] | None = None,
+        pictures: list[EvidenceImage] | None = None,
     ) -> str:
         """One tool-less LLM call with usage/trace accounting folded in.
 
@@ -811,7 +821,7 @@ async def _run_reflect_agent_inner(
         queue_token = set_queue_wait_sink(queue_wait)
         # Any, as retain's multimodal turn is: the pictures make it a part list, not a string.
         user_content: Any = (
-            [{"type": "text", "text": prompt}, {"type": "text", "text": _PICTURES_NOTE}, *pictures]
+            [{"type": "text", "text": prompt}, {"type": "text", "text": _PICTURES_NOTE}, *_picture_parts(pictures)]
             if pictures
             else prompt
         )
@@ -1135,7 +1145,9 @@ async def _run_reflect_agent_inner(
             directives_applied=directives_applied,
         )
 
-    async def _decision_says_sufficient(evidence: str, trace_scope: str) -> bool:
+    async def _decision_says_sufficient(
+        evidence: str, trace_scope: str, pictures: list[EvidenceImage] | None = None
+    ) -> bool:
         """The decision model's verdict on ``evidence``; False when it errors.
 
         The decision model only ever saves LLM turns, and without its verdict the agent
@@ -1147,6 +1159,10 @@ async def _run_reflect_agent_inner(
             # Judged against the request itself, not the distilled search query: that query is
             # a retrieval aid and can ask for more than the request does ("implementation logic
             # and policy"), which read as "partly answered" on evidence the request was happy with.
+            # The pictures go along when there are some: an answer only a picture holds read as
+            # "not enough", and bought a round the evidence did not need.
+            if pictures:
+                return await evidence_is_sufficient_fn(query, evidence, pictures=pictures)
             return await evidence_is_sufficient_fn(query, evidence)
         except OperationCancelledError:
             raise
@@ -1265,7 +1281,7 @@ async def _run_reflect_agent_inner(
         if round_landed and evidence_is_sufficient_fn is not None and not decision_model_failed:
             round_landed = False
             evidence = "\n\n".join(m["content"] for m in messages if m.get("role") == "tool")
-            if await _decision_says_sufficient(evidence, "decision_sufficiency"):
+            if await _decision_says_sufficient(evidence, "decision_sufficiency", knowledge_pictures):
                 logger.info(f"[REFLECT {reflect_id}] Decision-orchestrated: the first retrieval answers the question.")
                 return await _finish(iteration)
             follow_up_required = not searched_after_not_enough and not decision_model_failed
@@ -1911,7 +1927,10 @@ async def _run_reflect_agent_inner(
                 knowledge_pictures.extend(round_pictures)
                 # Tool results reach the model as user turns (tools_via_schema), which this one joins.
                 messages.append(
-                    {"role": "user", "content": [{"type": "text", "text": _PICTURES_NOTE}, *round_pictures]}
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": _PICTURES_NOTE}, *_picture_parts(round_pictures)],
+                    }
                 )
 
     # Unreachable in practice: the last iteration returns the forced synthesis
@@ -1930,12 +1949,22 @@ _PICTURES_NOTE = (
 )
 
 
-def _pop_knowledge_pictures(tool_results: list[Any]) -> list[dict[str, Any]]:
+def _pop_knowledge_pictures(tool_results: list[Any]) -> list[EvidenceImage]:
     """The knowledge-bank pictures the round's recall calls returned, taken out of their outputs."""
-    parts: list[dict[str, Any]] = []
+    pictures: list[EvidenceImage] = []
     for result in tool_results:
         if isinstance(result, tuple) and isinstance(result[0], dict):
-            parts.extend(result[0].pop(KB_IMAGES_KEY, None) or [])
+            pictures.extend(result[0].pop(KB_IMAGES_KEY, None) or [])
+    return pictures
+
+
+def _picture_parts(pictures: Sequence[EvidenceImage]) -> list[dict[str, Any]]:
+    """The pictures as message content parts, each after its label (the OpenAI part shape every
+    provider converts from, as retain's ``attachment_content._prompt_part``)."""
+    parts: list[dict[str, Any]] = []
+    for picture in pictures:
+        uri = f"data:{picture.media_type};base64,{base64.b64encode(picture.data).decode()}"
+        parts += [{"type": "text", "text": picture.label}, {"type": "image_url", "image_url": {"url": uri}}]
     return parts
 
 

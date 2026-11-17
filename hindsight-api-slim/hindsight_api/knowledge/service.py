@@ -538,7 +538,7 @@ class KnowledgeService:
     @property
     def store(self) -> KnowledgeStore:
         if self._store is None:
-            self._store = load_knowledge_store(self._engine._get_backend, get_config().knowledge_store_extension)
+            self._store = load_knowledge_store(self._engine._get_backend, get_config().kb_store_extension)
         return self._store
 
     async def _ready(self, request_context: RequestContext | None) -> None:
@@ -802,10 +802,10 @@ class KnowledgeService:
     def _strategy(self, name: str | None) -> ingest_strategy.IngestStrategy | None:
         """The ingestion strategy named for an item, else the server's default; None when neither is set."""
         config = get_config()
-        name = name or config.ingest_default_strategy
+        name = name or config.kb_ingest_default_strategy
         if name is None:
             return None
-        strategies = ingest_strategy.parse_strategies(config.ingest_strategies)
+        strategies = ingest_strategy.parse_strategies(config.kb_ingest_strategies)
         if name not in strategies:
             raise KnowledgeBankError(
                 f"unknown ingestion strategy '{name}' (this server has: {', '.join(sorted(strategies)) or 'none'})"
@@ -814,11 +814,11 @@ class KnowledgeService:
 
     def _check_item(self, item: IngestItem, settings: KnowledgeBankSettings, *, depth: int = 0) -> _Plan:
         """How the file will be split; refuses what cannot be ingested."""
-        limit = get_config().knowledge_max_file_mb * 1024 * 1024
+        limit = get_config().kb_max_file_mb * 1024 * 1024
         if len(item.data) > limit:
             raise KnowledgeBankError(
                 f"'{item.filename}' is {len(item.data) / 1048576:.1f}MB; the limit is "
-                f"{get_config().knowledge_max_file_mb}MB (HINDSIGHT_API_KNOWLEDGE_MAX_FILE_MB)",
+                f"{get_config().kb_max_file_mb}MB (HINDSIGHT_API_KB_MAX_FILE_MB)",
                 413,
             )
         if not item.data:
@@ -852,10 +852,10 @@ class KnowledgeService:
                 415,
             )
         media_type = media.media_type_of(kind, item.filename)
-        if media_type in get_config().knowledge_disabled_media_types:
+        if media_type in get_config().kb_disabled_media_types:
             raise KnowledgeBankError(
                 f"'{item.filename}' is {media_type}, which this server does not ingest "
-                "(HINDSIGHT_API_KNOWLEDGE_DISABLED_MEDIA_TYPES)",
+                "(HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES)",
                 415,
             )
         if media_type in settings.disabled_media_types:
@@ -866,7 +866,7 @@ class KnowledgeService:
         if not _NEEDS[kind] & self.embedder.modalities:
             raise KnowledgeBankError(
                 f"'{item.filename}' is {media_type}, but the knowledge embedder only embeds "
-                f"{', '.join(sorted(self.embedder.modalities))}. Configure HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER "
+                f"{', '.join(sorted(self.embedder.modalities))}. Configure HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER "
                 "with a model that embeds it.",
                 415,
             )
@@ -890,7 +890,7 @@ class KnowledgeService:
         settings = (
             f"v{_PIPELINE_VERSION}|{how}|{self.embedder.provider}:{self.embedder.model}:{self.embedder.dimension}|{s.pdf_page_pixels}"
             f"|{s.image_tokens}|{s.audio_window_seconds}|{s.video_window_seconds}"
-            f"|{s.media_overlap_seconds}|{c.knowledge_pdf_text_weight}|{s.pdf_bands}|{s.text_passage_tokens}"
+            f"|{s.media_overlap_seconds}|{c.kb_pdf_text_weight}|{s.pdf_bands}|{s.text_passage_tokens}"
         )
         return hashlib.sha256(item.data + settings.encode()).hexdigest()
 
@@ -938,7 +938,7 @@ class KnowledgeService:
         task of its own and completes (or fails) once every child has, like a batch retain's. Each child
         is a worker task over a slice of the documents (see ``_children``), so a big upload spreads across
         free slots, and a retry redoes one child, not the whole upload."""
-        children = _children(work, get_config().knowledge_ingest_child_bytes)
+        children = _children(work, get_config().kb_ingest_child_bytes)
         parent_id = uuid.uuid4()
         payloads: list[dict[str, Any]] = []
         backend = await self._engine._get_backend()
@@ -1222,7 +1222,7 @@ class KnowledgeService:
         settings = await self._bank_settings(bank_id)
         # An image's vision tokens, sent only when the bank overrides the server's: None keeps each
         # embedder's own default, which for a remote one is not necessarily the server setting.
-        image_tokens = settings.image_tokens if settings.image_tokens != get_config().knowledge_image_tokens else None
+        image_tokens = settings.image_tokens if settings.image_tokens != get_config().kb_image_tokens else None
         async with _timing.timed("store.read"):
             rows = await self.store.get_documents(bank_id, [w.document_id for w in work])
         docs: list[_InFlight] = []
@@ -1243,7 +1243,7 @@ class KnowledgeService:
         committed: set[str] = set()
         rounds: list[asyncio.Task[None]] = []
         slots = asyncio.Semaphore(_EMBED_ROUNDS_IN_FLIGHT)
-        budget = _MemoryBudget(get_config().knowledge_ingest_memory_budget_mb * 1024 * 1024)
+        budget = _MemoryBudget(get_config().kb_ingest_memory_budget_mb * 1024 * 1024)
 
         async def run_round(batch: list[_Waiting]) -> None:
             try:
@@ -1865,9 +1865,9 @@ class KnowledgeService:
             vector,
             top_k=SEARCH_CANDIDATES[request.budget],
             filters=request.filters,
-            text_weight=get_config().knowledge_pdf_text_weight,
+            text_weight=get_config().kb_pdf_text_weight,
             query_text=request.query,
-            keyword_weight=get_config().knowledge_keyword_weight,
+            keyword_weight=get_config().kb_keyword_weight,
             trace=trace.store if trace is not None else None,
         )
 
@@ -2024,7 +2024,7 @@ async def documents_for_memory_bank(
 
     A failure here never fails the reflect: the memories are still the answer, without the docs.
     """
-    if not get_config().enable_knowledge_banks:
+    if not get_config().enable_kb:
         return None
     linked = [b for b in linked if b != bank_id]
     if not linked or not (query or "").strip():

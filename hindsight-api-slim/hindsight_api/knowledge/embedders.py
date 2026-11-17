@@ -1,6 +1,6 @@
 """Multimodal embedders for knowledge banks: one embedding space for text, images, audio and video.
 
-One embedder per server (``HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER``). What it embeds decides
+One embedder per server (``HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER``). What it embeds decides
 which media types can be ingested: a model without video simply refuses video files, and a PDF is
 embedded from its text layer alone when the model has no images.
 
@@ -11,7 +11,7 @@ embedded from its text layer alone when the model has no images.
 * ``cohere`` — Cohere Embed v4 (text/image).
 * ``openai`` — any OpenAI-compatible ``/v1/embeddings`` server; its modalities are configured.
 * ``text`` — any memory-bank embeddings provider, text only: the memory banks' own embedder, or
-  one configured with ``HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_*`` (each a
+  one configured with ``HINDSIGHT_API_KB_TEXT_EMBEDDINGS_*`` (each a
   ``HINDSIGHT_API_EMBEDDINGS_*`` setting, read the same way).
 
 Every passage reaches the embedder as bytes plus a MIME type (a PNG page, an m4a window, an
@@ -345,12 +345,12 @@ _IN_FLIGHT: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[int, asyn
 
 @contextlib.asynccontextmanager
 async def _in_flight():
-    """One of this process's ``knowledge_embeddings_max_in_flight`` slots for a remote embedder request,
+    """One of this process's ``kb_embeddings_max_in_flight`` slots for a remote embedder request,
     per event loop (a semaphore belongs to the loop it is used on). Time spent waiting for one is the
     ``embed.wait_slot`` phase of the ingest batch it serves."""
     from ..config import get_config
 
-    limit = get_config().knowledge_embeddings_max_in_flight
+    limit = get_config().kb_embeddings_max_in_flight
     if limit <= 0:
         yield
         return
@@ -680,7 +680,7 @@ class TextEmbedder(KnowledgeEmbedder):
     """A memory-bank embeddings provider, text only: for servers without a multimodal model.
 
     Either the memory banks' own embedder, or a second one built from the
-    ``HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_*`` settings, initialized on first use.
+    ``HINDSIGHT_API_KB_TEXT_EMBEDDINGS_*`` settings, initialized on first use.
     """
 
     provider = "text"
@@ -751,27 +751,27 @@ def _require(embedder: KnowledgeEmbedder, *, image: bytes | None, video: bytes |
 
 
 def create_knowledge_embedder(config: ConfigLike, memory_embeddings: Embeddings) -> KnowledgeEmbedder:
-    provider = config.knowledge_embeddings_provider
+    provider = config.kb_embeddings_provider
     if provider == "local":
-        from ..config import DEFAULT_KNOWLEDGE_EMBEDDINGS_LOCAL_MODEL
+        from ..config import DEFAULT_KB_EMBEDDINGS_LOCAL_MODEL
 
         return LocalGemmaEmbedder(
-            config.knowledge_embeddings_model or DEFAULT_KNOWLEDGE_EMBEDDINGS_LOCAL_MODEL,
-            dimensions=config.knowledge_embeddings_dimensions,
-            device=config.knowledge_embeddings_device,
-            batch_size=config.knowledge_embeddings_batch_size,
-            image_tokens=config.knowledge_image_tokens,
+            config.kb_embeddings_model or DEFAULT_KB_EMBEDDINGS_LOCAL_MODEL,
+            dimensions=config.kb_embeddings_dimensions,
+            device=config.kb_embeddings_device,
+            batch_size=config.kb_embeddings_batch_size,
+            image_tokens=config.kb_image_tokens,
         )
-    dimensions = config.knowledge_embeddings_dimensions
-    batch_size = config.knowledge_embeddings_batch_size
+    dimensions = config.kb_embeddings_dimensions
+    batch_size = config.kb_embeddings_batch_size
     if provider in ("gemini", "vertex"):
-        from ..config import DEFAULT_KNOWLEDGE_EMBEDDINGS_GEMINI_MODEL
+        from ..config import DEFAULT_KB_EMBEDDINGS_GEMINI_MODEL
 
         vertex = None
         if provider == "vertex":
             if not config.embeddings_vertexai_project_id:
                 raise ValueError(
-                    "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER=vertex needs HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID "
+                    "HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER=vertex needs HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID "
                     "(or HINDSIGHT_API_LLM_VERTEXAI_PROJECT_ID)"
                 )
             vertex = VertexSettings(
@@ -780,53 +780,53 @@ def create_knowledge_embedder(config: ConfigLike, memory_embeddings: Embeddings)
                 service_account_key=config.embeddings_vertexai_service_account_key,
             )
         return GeminiEmbedder(
-            config.knowledge_embeddings_model or DEFAULT_KNOWLEDGE_EMBEDDINGS_GEMINI_MODEL,
-            api_key=config.knowledge_embeddings_api_key or config.embeddings_gemini_api_key,
+            config.kb_embeddings_model or DEFAULT_KB_EMBEDDINGS_GEMINI_MODEL,
+            api_key=config.kb_embeddings_api_key or config.embeddings_gemini_api_key,
             dimensions=dimensions,
             batch_size=batch_size,
             vertex=vertex,
         )
     if provider == "voyage":
-        from ..config import DEFAULT_KNOWLEDGE_EMBEDDINGS_VOYAGE_MODEL
+        from ..config import DEFAULT_KB_EMBEDDINGS_VOYAGE_MODEL
 
         return VoyageEmbedder(
-            config.knowledge_embeddings_model or DEFAULT_KNOWLEDGE_EMBEDDINGS_VOYAGE_MODEL,
-            api_key=_required_key(config.knowledge_embeddings_api_key or os.getenv("VOYAGE_API_KEY"), provider),
-            base_url=config.knowledge_embeddings_base_url,
+            config.kb_embeddings_model or DEFAULT_KB_EMBEDDINGS_VOYAGE_MODEL,
+            api_key=_required_key(config.kb_embeddings_api_key or os.getenv("VOYAGE_API_KEY"), provider),
+            base_url=config.kb_embeddings_base_url,
             dimensions=dimensions,
             batch_size=batch_size,
         )
     if provider == "cohere":
-        from ..config import DEFAULT_KNOWLEDGE_EMBEDDINGS_COHERE_MODEL
+        from ..config import DEFAULT_KB_EMBEDDINGS_COHERE_MODEL
 
         return CohereEmbedder(
-            config.knowledge_embeddings_model or DEFAULT_KNOWLEDGE_EMBEDDINGS_COHERE_MODEL,
-            api_key=_required_key(config.knowledge_embeddings_api_key or config.embeddings_cohere_api_key, provider),
-            base_url=config.knowledge_embeddings_base_url,
+            config.kb_embeddings_model or DEFAULT_KB_EMBEDDINGS_COHERE_MODEL,
+            api_key=_required_key(config.kb_embeddings_api_key or config.embeddings_cohere_api_key, provider),
+            base_url=config.kb_embeddings_base_url,
             dimensions=dimensions,
             batch_size=batch_size,
         )
     if provider == "openai":
-        if not config.knowledge_embeddings_base_url or not config.knowledge_embeddings_model:
+        if not config.kb_embeddings_base_url or not config.kb_embeddings_model:
             raise ValueError(
-                "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER=openai needs "
-                "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_BASE_URL and HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MODEL"
+                "HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER=openai needs "
+                "HINDSIGHT_API_KB_EMBEDDINGS_BASE_URL and HINDSIGHT_API_KB_EMBEDDINGS_MODEL"
             )
         modalities = frozenset(
-            m for m in ALL_MODALITIES if m in config.knowledge_embeddings_modalities.split(",") or m == "text"
+            m for m in ALL_MODALITIES if m in config.kb_embeddings_modalities.split(",") or m == "text"
         )
         return OpenAIEmbedder(
-            config.knowledge_embeddings_model,
-            base_url=config.knowledge_embeddings_base_url,
-            api_key=config.knowledge_embeddings_api_key,
+            config.kb_embeddings_model,
+            base_url=config.kb_embeddings_base_url,
+            api_key=config.kb_embeddings_api_key,
             dimensions=dimensions,
             modalities=modalities,
             batch_size=batch_size,
         )
     if provider == "text":
-        return _text_embedder(config.knowledge_text_embeddings, memory_embeddings)
+        return _text_embedder(config.kb_text_embeddings, memory_embeddings)
     raise ValueError(
-        f"Unknown HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER '{provider}'. "
+        f"Unknown HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER '{provider}'. "
         "Expected local, gemini, vertex, voyage, cohere, openai or text."
     )
 
@@ -834,7 +834,7 @@ def create_knowledge_embedder(config: ConfigLike, memory_embeddings: Embeddings)
 def _required_key(key: str | None, provider: str) -> str:
     if not key:
         raise ValueError(
-            f"HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER={provider} needs HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_API_KEY"
+            f"HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER={provider} needs HINDSIGHT_API_KB_EMBEDDINGS_API_KEY"
             + (" (or VOYAGE_API_KEY)" if provider == "voyage" else " (or the memory banks' Cohere key)")
         )
     return key

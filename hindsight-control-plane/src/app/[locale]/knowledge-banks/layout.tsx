@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useFeatures } from "@/lib/features-context";
 
 /** Knowledge bank pages exist only on a server with knowledge banks on
- *  (HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS); otherwise a direct link lands on the home page. */
+ *  (HINDSIGHT_API_ENABLE_KB); otherwise a direct link lands on the home page. */
 export default function KnowledgeBanksLayout({ children }: { children: React.ReactNode }) {
   const { features, loading } = useFeatures();
   const router = useRouter();
