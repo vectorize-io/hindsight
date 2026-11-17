@@ -220,6 +220,8 @@ ENV PATH="/app/api/.venv/bin:${PATH}"
 # Pre-download ML models to avoid runtime download (conditional)
 # Only runs if both PRELOAD_ML_MODELS=true AND INCLUDE_LOCAL_MODELS=true
 # Includes retry logic with exponential backoff for transient network failures
+# The knowledge banks' EmbeddingGemma 2 (~1.5 GB) is fetched with snapshot_download rather than
+# loaded: building the 740M model just to cache it would cost ~3 GB of build RAM for nothing.
 ARG PRELOAD_ML_MODELS
 ARG INCLUDE_LOCAL_MODELS
 ENV HF_HUB_DOWNLOAD_TIMEOUT=600
@@ -235,6 +237,9 @@ print('Downloading embedding model...'); \
 SentenceTransformer('BAAI/bge-small-en-v1.5'); \
 print('Downloading cross-encoder model...'); \
 CrossEncoder('hindsight-ai/hs-rerank-1'); \
+print('Downloading knowledge-bank embedding model...'); \
+from huggingface_hub import snapshot_download; \
+snapshot_download('google/embeddinggemma-2'); \
 print('Models cached successfully')" && break; \
       if [ "$i" -lt "$MAX_RETRIES" ]; then \
         echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."; \
@@ -242,7 +247,7 @@ print('Models cached successfully')" && break; \
         RETRY_DELAY=$((RETRY_DELAY * 2)); \
       fi; \
     done; \
-    if [ "$i" -eq "$MAX_RETRIES" ] && ! /app/api/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')" 2>/dev/null; then \
+    if [ "$i" -eq "$MAX_RETRIES" ] && ! /app/api/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; from huggingface_hub import snapshot_download; SentenceTransformer('BAAI/bge-small-en-v1.5'); snapshot_download('google/embeddinggemma-2', local_files_only=True)" 2>/dev/null; then \
       echo "ERROR: Failed to download models after $MAX_RETRIES attempts"; \
       exit 1; \
     fi; \
@@ -404,6 +409,8 @@ ENV PATH="/app/api/.venv/bin:${PATH}"
 # Pre-download ML models to avoid runtime download (conditional)
 # Only runs if both PRELOAD_ML_MODELS=true AND INCLUDE_LOCAL_MODELS=true
 # Includes retry logic with exponential backoff for transient network failures
+# The knowledge banks' EmbeddingGemma 2 (~1.5 GB) is fetched with snapshot_download rather than
+# loaded: building the 740M model just to cache it would cost ~3 GB of build RAM for nothing.
 ARG PRELOAD_ML_MODELS
 ARG INCLUDE_LOCAL_MODELS
 ENV HF_HUB_DOWNLOAD_TIMEOUT=600
@@ -419,6 +426,9 @@ print('Downloading embedding model...'); \
 SentenceTransformer('BAAI/bge-small-en-v1.5'); \
 print('Downloading cross-encoder model...'); \
 CrossEncoder('hindsight-ai/hs-rerank-1'); \
+print('Downloading knowledge-bank embedding model...'); \
+from huggingface_hub import snapshot_download; \
+snapshot_download('google/embeddinggemma-2'); \
 print('Models cached successfully')" && break; \
       if [ "$i" -lt "$MAX_RETRIES" ]; then \
         echo "Attempt $i failed, retrying in ${RETRY_DELAY}s..."; \
@@ -426,7 +436,7 @@ print('Models cached successfully')" && break; \
         RETRY_DELAY=$((RETRY_DELAY * 2)); \
       fi; \
     done; \
-    if [ "$i" -eq "$MAX_RETRIES" ] && ! /app/api/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')" 2>/dev/null; then \
+    if [ "$i" -eq "$MAX_RETRIES" ] && ! /app/api/.venv/bin/python -c "from sentence_transformers import SentenceTransformer; from huggingface_hub import snapshot_download; SentenceTransformer('BAAI/bge-small-en-v1.5'); snapshot_download('google/embeddinggemma-2', local_files_only=True)" 2>/dev/null; then \
       echo "ERROR: Failed to download models after $MAX_RETRIES attempts"; \
       exit 1; \
     fi; \
