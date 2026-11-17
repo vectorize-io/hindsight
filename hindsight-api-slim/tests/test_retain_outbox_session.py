@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from hindsight_api import RequestContext
-from hindsight_api.engine.memories.base import StoreWriteConflict
+from hindsight_api.engine.memories.base import StoreWriteConflict, StoreWriteUnavailable
 from hindsight_api.engine.memory_engine import MemoryEngine
 from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.retain.types import RetainBatchResult, RetainContentDict
@@ -18,7 +18,7 @@ from hindsight_api.engine.retain.types import RetainBatchResult, RetainContentDi
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_factory", [False, True])
 @pytest.mark.parametrize("previous_count,committed_count", [(0, 4), (4, 4), (0, 0)])
-@pytest.mark.parametrize("failure", [None, "commit", "retain", "outbox"])
+@pytest.mark.parametrize("failure", [None, "commit", "retain", "outbox", "count_shed_once", "count_shed_always"])
 async def test_completion_counts_committed_document(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -50,6 +50,9 @@ async def test_completion_counts_committed_document(
         assert kwargs["bank_id"] == "test-bank"
         assert kwargs["document_id"] == "test-document"
         steps.append("count")
+        # The store sheds the read ("not now, retry shortly"): once, or on every attempt.
+        if failure == "count_shed_always" or (failure == "count_shed_once" and steps.count("count") == 1):
+            raise StoreWriteUnavailable("store unavailable, retry later: bank is busy")
         return visible_count
 
     async def abort() -> None:
@@ -98,6 +101,18 @@ async def test_completion_counts_committed_document(
         start_time=time.perf_counter(),
     )
 
+    monkeypatch.setattr("hindsight_api.engine.memory_engine.asyncio.sleep", AsyncMock())
+
+    if failure == "count_shed_always":
+        # A store that stays shed past every attempt still loses the event, but only after the
+        # bounded retries, and the retain still reports success.
+        with caplog.at_level(logging.ERROR, logger="hindsight_api.engine.memory_engine"):
+            await execution
+        assert steps == ["commit"] + ["count"] * MemoryEngine._OUTBOX_UNAVAILABLE_ATTEMPTS
+        assert "outbox write failed" in caplog.text
+        engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
+        return
+
     if failure == "outbox":
         # The store has already committed by the time the outbox runs, so a failed
         # delivery-row write cannot be undone by failing the retain — that would only
@@ -110,7 +125,7 @@ async def test_completion_counts_committed_document(
         assert "test-operation" in caplog.text
         return
 
-    if failure:
+    if failure in ("commit", "retain"):
         with pytest.raises(RuntimeError, match=f"{failure} failed"):
             await execution
         # A failed single-batch retain aborts instead of committing: committing would store the
@@ -121,8 +136,11 @@ async def test_completion_counts_committed_document(
         engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
         return
 
-    await execution
-    assert steps == ["commit", "count"]
+    with caplog.at_level(logging.ERROR, logger="hindsight_api.engine.memory_engine"):
+        await execution
+    assert "outbox write failed" not in caplog.text
+    # A store that sheds the count read once is asked again, and the event is still queued.
+    assert steps == (["commit", "count", "count"] if failure == "count_shed_once" else ["commit", "count"])
     engine._webhook_manager.fire_event_with_conn.assert_awaited_once()
     call = engine._webhook_manager.fire_event_with_conn.await_args
     assert call.args[0].data.memory_unit_count == committed_count
