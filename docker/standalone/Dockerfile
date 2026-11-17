@@ -220,7 +220,7 @@ ENV PATH="/app/api/.venv/bin:${PATH}"
 # Pre-download ML models to avoid runtime download (conditional)
 # Only runs if both PRELOAD_ML_MODELS=true AND INCLUDE_LOCAL_MODELS=true
 # Includes retry logic with exponential backoff for transient network failures
-# The knowledge banks' EmbeddingGemma 2 (~1.4 GB) is fetched with snapshot_download rather than
+# The knowledge banks' EmbeddingGemma 2 (~1.5 GB) is fetched with snapshot_download rather than
 # loaded: building the 740M model just to cache it would cost ~3 GB of build RAM for nothing.
 ARG PRELOAD_ML_MODELS
 ARG INCLUDE_LOCAL_MODELS
@@ -409,7 +409,7 @@ ENV PATH="/app/api/.venv/bin:${PATH}"
 # Pre-download ML models to avoid runtime download (conditional)
 # Only runs if both PRELOAD_ML_MODELS=true AND INCLUDE_LOCAL_MODELS=true
 # Includes retry logic with exponential backoff for transient network failures
-# The knowledge banks' EmbeddingGemma 2 (~1.4 GB) is fetched with snapshot_download rather than
+# The knowledge banks' EmbeddingGemma 2 (~1.5 GB) is fetched with snapshot_download rather than
 # loaded: building the 740M model just to cache it would cost ~3 GB of build RAM for nothing.
 ARG PRELOAD_ML_MODELS
 ARG INCLUDE_LOCAL_MODELS
