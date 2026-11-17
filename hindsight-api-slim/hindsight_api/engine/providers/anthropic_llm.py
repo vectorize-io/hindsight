@@ -23,6 +23,7 @@ from hindsight_api.engine.llm_interface import (
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
+from hindsight_api.engine.providers.openai_compatible_llm import record_retried_attempt
 from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import (
     BatchRequest,
@@ -416,6 +417,7 @@ class AnthropicLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
@@ -561,6 +563,14 @@ class AnthropicLLM(LLMInterface):
                     )
 
                     if should_retry:
+                        record_retried_attempt(
+                            provider=self.provider,
+                            model=self.model,
+                            scope=scope,
+                            messages=messages,
+                            error=e,
+                            started=attempt_started,
+                        )
                         await asyncio.sleep(jittered_backoff(attempt, initial_backoff, max_backoff))
                         continue
 

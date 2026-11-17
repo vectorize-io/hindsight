@@ -62,7 +62,7 @@ from hindsight_api.engine.cache_affinity import XAI_CONV_ID_HEADER, cache_affini
 from hindsight_api.engine.llm_interface import LLMInterface
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
-from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
+from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences, record_retried_attempt
 from hindsight_api.engine.providers.xai_oauth_auth import (
     DEFAULT_REFRESH_SKEW_SECONDS,
     LOGIN_COMMAND,
@@ -733,6 +733,7 @@ class XaiOAuthLLM(LLMInterface):
 
         last_exception: Exception | None = None
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.xai_oauth.{scope}.attempt={attempt + 1}/{max_retries + 1}")
@@ -816,6 +817,14 @@ class XaiOAuthLLM(LLMInterface):
                         max_retries + 1,
                         scope,
                         e,
+                    )
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
                     )
                     await asyncio.sleep(self._backoff_seconds(e, attempt, initial_backoff, max_backoff))
                     continue

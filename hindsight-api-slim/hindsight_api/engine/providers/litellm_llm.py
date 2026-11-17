@@ -365,6 +365,7 @@ class LiteLLMLLM(LLMInterface):
         finish_reason = None
 
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
@@ -498,6 +499,14 @@ class LiteLLMLLM(LLMInterface):
                     logger.warning(
                         f"LiteLLM call exceeded timeout={self.timeout}s ({exc_name}, scope={scope}), retrying..."
                     )
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
+                    )
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue
@@ -526,7 +535,7 @@ class LiteLLMLLM(LLMInterface):
                             scope=scope,
                             messages=messages,
                             error=e,
-                            started=start_time,
+                            started=attempt_started,
                         )
                     await asyncio.sleep(jittered_backoff(attempt, initial_backoff, max_backoff))
                     continue

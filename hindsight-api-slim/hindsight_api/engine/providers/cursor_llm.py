@@ -33,7 +33,7 @@ from hindsight_api.engine.llm_interface import (
     ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
-from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
+from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences, record_retried_attempt
 from hindsight_api.engine.response_models import (
     LLMCallResult,
     TokenUsage,
@@ -401,6 +401,7 @@ class CursorLLM(LLMInterface):
 
         last_exception: Exception | None = None
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.cursor.{scope}.attempt={attempt + 1}/{max_retries + 1}")
@@ -439,6 +440,14 @@ class CursorLLM(LLMInterface):
                 last_exception = e
                 if attempt < max_retries:
                     logger.warning(f"Cursor error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
+                    )
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue
                 logger.error(f"Cursor error after {max_retries + 1} attempts: {e}")
