@@ -19,7 +19,6 @@ from tests.test_knowledge_banks import (  # noqa: F401  (fixtures)
     _upload,
     fake_embedder,
     kb,
-    needs_ffmpeg,
 )
 
 
@@ -343,7 +342,6 @@ async def test_each_media_type_filter_keeps_only_that_type(api_client, mixed_ban
     assert await found("audio") == [] and await found("video") == []
 
 
-@needs_ffmpeg
 async def test_audio_and_video_media_type_filters_keep_only_that_type(api_client, kb):
     await _ingest(api_client, kb, {"document_id": "notes", "text": "audio video notes"})
     await _upload(

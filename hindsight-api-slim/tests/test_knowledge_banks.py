@@ -10,8 +10,6 @@ import asyncio
 import io
 import json
 import math
-import shutil
-import subprocess
 import uuid
 from dataclasses import replace
 
@@ -26,7 +24,6 @@ from hindsight_api.knowledge.store import StatusUpdate
 
 KB = "/v1/default/knowledge-banks"
 _AXES = ("red", "blue", "key", "password", "invoice", "audio", "video", "green")
-needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
 
 
 class FakeEmbedder(KnowledgeEmbedder):
@@ -115,16 +112,28 @@ def _text_pdf(text: str) -> bytes:
 
 
 def _tone(seconds: int, *, video: bool) -> bytes:
-    with __import__("tempfile").TemporaryDirectory() as tmp:
-        out = f"{tmp}/clip.{'mp4' if video else 'm4a'}"
-        args = ["ffmpeg", "-loglevel", "error", "-y"]
-        if video:
-            args += ["-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=160x120:rate=5"]
-        args += ["-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}"]
-        if video:
-            args += ["-c:v", "libx264", "-pix_fmt", "yuv420p"]
-        subprocess.run([*args, "-c:a", "aac", "-shortest", out], check=True)
-        return open(out, "rb").read()
+    """A 440 Hz tone (and a moving test picture), made with PyAV so no ffmpeg program is needed."""
+    import av
+    import numpy as np
+
+    out = io.BytesIO()
+    with av.open(out, "w", format="mp4") as dst:
+        a = dst.add_stream("aac", rate=16000, layout="mono")
+        v = dst.add_stream("libx264", rate=5) if video else None
+        if v is not None:
+            v.width, v.height, v.pix_fmt = 160, 120, "yuv420p"
+            for i in range(seconds * 5):
+                picture = np.full((120, 160, 3), (i * 7) % 255, np.uint8)
+                dst.mux(v.encode(av.VideoFrame.from_ndarray(picture, format="rgb24")))
+            dst.mux(v.encode(None))
+        step = 1024  # AAC frame size
+        samples = np.sin(2 * np.pi * 440 * np.arange(seconds * 16000) / 16000).astype(np.float32)
+        for start in range(0, samples.size, step):
+            frame = av.AudioFrame.from_ndarray(samples[None, start : start + step], format="fltp", layout="mono")
+            frame.sample_rate, frame.pts = 16000, start
+            dst.mux(a.encode(frame))
+        dst.mux(a.encode(None))
+    return out.getvalue()
 
 
 # --- chunking (no database) ---------------------------------------------------------------------
@@ -210,13 +219,11 @@ def test_passages_follow_structure_and_keep_exact_order():
     assert any(c.startswith("5. TERMINATION") for c in chunks)
 
 
-@needs_ffmpeg
 def test_audio_and_video_are_cut_into_timed_windows():
     audio = list(
         media.split_media(
             _tone(70, video=False),
             "audio",
-            filename="a.m4a",
             window_seconds=30,
             overlap_seconds=5,
             max_seconds=3600,
@@ -225,15 +232,18 @@ def test_audio_and_video_are_cut_into_timed_windows():
     assert [(d.start_ms, d.modality) for d in audio] == [(0, "audio"), (25000, "audio"), (50000, "audio")]
     assert audio[-1].end_ms == pytest.approx(70000, abs=200)
     video = list(
-        media.split_media(
-            _tone(8, video=True), "video", filename="v.mp4", window_seconds=30, overlap_seconds=5, max_seconds=3600
-        )
+        media.split_media(_tone(8, video=True), "video", window_seconds=30, overlap_seconds=5, max_seconds=3600)
     )
     assert len(video) == 1 and video[0].mime == "video/mp4"
     assert media.decode_video_frames(video[0].data or b"").shape[1:] == (448, 448, 3)
     assert media.decode_audio_pcm(video[0].data or b"").size > 16000 * 7
     with pytest.raises(media.MediaError, match="limit is 5s"):
-        list(media.split_media(_tone(8, video=False), "audio", filename="a.m4a", window_seconds=30, overlap_seconds=5, max_seconds=5))  # fmt: skip
+        list(media.split_media(_tone(8, video=False), "audio", window_seconds=30, overlap_seconds=5, max_seconds=5))  # fmt: skip
+
+
+def test_unreadable_media_is_a_media_error():
+    with pytest.raises(media.MediaError, match="unreadable media"):
+        list(media.split_media(b"not a video", "video", window_seconds=30, overlap_seconds=5, max_seconds=60))
 
 
 # --- HTTP ---------------------------------------------------------------------------------------
@@ -514,7 +524,6 @@ async def test_bad_writes_are_refused_or_reported_never_silently_dropped(api_cli
     assert (await api_client.post(f"{KB}/{kb}/search", json={})).status_code == 400
 
 
-@needs_ffmpeg
 async def test_audio_and_video_passages_carry_their_time_ranges_and_clips(api_client, kb):
     await _upload(
         api_client,
