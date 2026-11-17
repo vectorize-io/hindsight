@@ -73,9 +73,7 @@ async def test_linked_search_runs_as_caller_but_marked_sub_operation(monkeypatch
     monkeypatch.setattr(kb_service, "get_config", lambda: SimpleNamespace(enable_knowledge_banks=True))
 
     rc = RequestContext(internal=True, user_initiated=True, tenant_id="t", api_key_id="k")
-    await kb_service.documents_for_memory_bank(
-        SimpleNamespace(), "mem-bank", ["kb1"], "a question", 100, rc
-    )
+    await kb_service.documents_for_memory_bank(SimpleNamespace(), "mem-bank", ["kb1"], "a question", 100, rc)
 
     caller = captured["caller"]
     assert caller.internal is False  # the validator must authorize it as the caller

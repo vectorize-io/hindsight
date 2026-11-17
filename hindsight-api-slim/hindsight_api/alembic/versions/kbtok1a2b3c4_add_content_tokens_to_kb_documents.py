@@ -35,9 +35,7 @@ def _pg_schema_prefix() -> str:
 
 def _pg_upgrade() -> None:
     schema = _pg_schema_prefix()
-    op.execute(
-        f"ALTER TABLE {schema}kb_documents ADD COLUMN IF NOT EXISTS content_tokens BIGINT NOT NULL DEFAULT 0"
-    )
+    op.execute(f"ALTER TABLE {schema}kb_documents ADD COLUMN IF NOT EXISTS content_tokens BIGINT NOT NULL DEFAULT 0")
 
 
 def _pg_downgrade() -> None:
