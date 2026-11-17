@@ -18,7 +18,7 @@ import pytest
 from hindsight_api.engine.llm_interface import ProviderContentPolicyError, ProviderRateLimitResetError
 from hindsight_api.engine.maintenance import MaintenanceLoop
 from hindsight_api.engine.memories import get_memories
-from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.engine.memory_engine import MemoryEngine, MentalModelRefreshError
 from hindsight_api.engine.reflect import ReflectToolExecutionError
 from hindsight_api.engine.response_models import MentalModelTrigger
 from tests.store_seed import store_write_facts
@@ -482,7 +482,7 @@ async def test_a_failed_search_inside_the_real_refresh_pauses_only_when_permanen
         raise _reflect_tool_failure(tei_error)
 
     monkeypatch.setattr(memory, "_execute_mental_model_refresh", _fail)
-    with pytest.raises(Exception, match="Refresh failed"):
+    with pytest.raises(MentalModelRefreshError):
         await memory._handle_refresh_mental_model({"bank_id": bank, "mental_model_id": mm_id})
     assert await memory._automatic_refresh_paused(bank, mm_id) is paused
 

@@ -950,7 +950,7 @@ class RemoteTEIEmbeddings(Embeddings):
 
             logger.info(f"Embeddings: TEI provider initialized (model: {self._model_id}, dim: {self._dimension})")
         except _HTTP_ERRORS as e:
-            raise RuntimeError(f"Failed to connect to TEI server at {self.base_url}: {e}")
+            raise RuntimeError(f"Failed to connect to TEI server at {self.base_url}: {e}") from e
 
     async def encode(self, texts: list[str]) -> list[list[float]]:
         """
