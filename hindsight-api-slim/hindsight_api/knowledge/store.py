@@ -1,7 +1,7 @@
 """Where knowledge-bank documents and passages live.
 
 ``KnowledgeStore`` is the seam an external backend plugs into
-through ``HINDSIGHT_API_KNOWLEDGE_STORE_EXTENSION=module.path:ClassName``. The bank row itself
+through ``HINDSIGHT_API_KB_STORE_EXTENSION=module.path:ClassName``. The bank row itself
 always stays in the ``banks`` table, because async operations, audit and the delete cascade key
 off it. ``PostgresKnowledgeStore`` is the default: ``kb_documents`` + ``kb_passages`` with a
 pgvector HNSW index.
@@ -427,7 +427,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     raise RuntimeError(
                         f"Knowledge banks hold {rows} passages embedded at {current} dimensions, but the "
                         f"configured knowledge embedder makes {dimension}. Use a model with {current} "
-                        f"dimensions (HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_DIMENSIONS) or delete the knowledge "
+                        f"dimensions (HINDSIGHT_API_KB_EMBEDDINGS_DIMENSIONS) or delete the knowledge "
                         f"banks and write them again."
                     )
                 await conn.execute(f"DROP INDEX IF EXISTS {fq_table(f'idx_{table_name}_embedding')}")
@@ -1182,7 +1182,7 @@ def page_score(primary: float, roles: dict[str, list[float]], text_weight: float
 
     A PDF page: image = mean(whole page, best band); text = best of (its 128-token units, its sentences
     once the page is in the rescored top, and a whole-page text vector where an older ingest stored one);
-    score = (1 - w) * image + w * text, w = ``knowledge_pdf_text_weight`` (default 0.7). That beat one
+    score = (1 - w) * image + w * text, w = ``kb_pdf_text_weight`` (default 0.7). That beat one
     blended page vector by ~7 nDCG@10.
     Every other passage has only its primary vector, so its score is that vector's similarity.
     """
@@ -1296,16 +1296,16 @@ def load_knowledge_store(backend_provider: Any, extension_path: str | None) -> K
 
     if ":" not in extension_path:
         raise ValueError(
-            f"Invalid HINDSIGHT_API_KNOWLEDGE_STORE_EXTENSION '{extension_path}'. Expected 'module.path:ClassName'."
+            f"Invalid HINDSIGHT_API_KB_STORE_EXTENSION '{extension_path}'. Expected 'module.path:ClassName'."
         )
     module_path, class_name = extension_path.rsplit(":", 1)
     cls = getattr(importlib.import_module(module_path), class_name, None)
     if not (isinstance(cls, type) and issubclass(cls, KnowledgeStore)):
         raise ValueError(f"Knowledge store extension '{class_name}' must inherit from KnowledgeStore.")
-    prefix = "HINDSIGHT_API_KNOWLEDGE_STORE_"
+    prefix = "HINDSIGHT_API_KB_STORE_"
     config = {
         k[len(prefix) :].lower(): v
         for k, v in os.environ.items()
-        if k.startswith(prefix) and k != "HINDSIGHT_API_KNOWLEDGE_STORE_EXTENSION"
+        if k.startswith(prefix) and k != "HINDSIGHT_API_KB_STORE_EXTENSION"
     }
     return cls(config)

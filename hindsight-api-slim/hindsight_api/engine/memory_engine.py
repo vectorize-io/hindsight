@@ -16125,6 +16125,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # The floor guards the cut's coarse levels: on that count it kept five.
                 shortlist=25,
                 min_keep=15,
+                vision=setup.vision,
             )
             # Retried like the shared decision model (DecisionModel.ask): without it a single 429
             # dropped the cut (every item kept) or the "is this enough?" verdict (an agent turn)

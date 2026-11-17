@@ -5119,7 +5119,7 @@ def _register_routes(app: FastAPI):
                 file_upload_api=config.enable_file_upload_api,
                 document_export_api=config.enable_document_export_api,
                 document_import_api=config.enable_document_import_api,
-                knowledge_banks=config.enable_knowledge_banks,
+                knowledge_banks=config.enable_kb,
                 audit_log=config.audit_log_enabled,
                 llm_trace=config.llm_trace_enabled,
                 store_document_text=config.store_document_text,

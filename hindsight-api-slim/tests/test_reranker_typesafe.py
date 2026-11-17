@@ -6,6 +6,7 @@ is this provider's whole substance. The HTTP round trip is faked; what is assert
 the requests we build and the order and cut we derive from the answers.
 """
 
+import base64
 import json as jsonlib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, fields
@@ -14,12 +15,12 @@ from unittest.mock import patch
 import pytest
 
 from hindsight_api.config import HindsightConfig
+from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.cross_encoder import (
     _OPTION_KEY_OVERHEAD,
     TypeSafeCrossEncoder,
     create_cross_encoder_from_env,
 )
-from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.remote_retry import RetryPolicy
 from hindsight_api.engine.token_encoding import count_tokens
 
@@ -331,6 +332,79 @@ class TestSufficiency:
     async def test_without_probabilities_the_score_is_rounded(self):
         assert await self._verdict(1.6, None) is True
         assert await self._verdict(1.4, None) is False
+
+
+def _picture(label: str, size: tuple[int, int], fmt: str = "PNG", progressive: bool = False):
+    import io
+
+    from PIL import Image
+
+    from hindsight_api.engine.decision_rerank_interface import EvidenceImage
+
+    out = io.BytesIO()
+    Image.new("RGB", size, "white").save(out, format=fmt, **({"progressive": True} if progressive else {}))
+    media_type = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}[fmt]
+    return EvidenceImage(label=label, media_type=media_type, data=out.getvalue())
+
+
+class _HeaderRecordingSufficiencySession(_SufficiencySession):
+    def __init__(self, score: float, probabilities: dict[str, float] | None):
+        super().__init__(score, probabilities)
+        self.headers: list[dict] = []
+
+    def post(self, url, headers=None, json=None):
+        self.headers.append(headers or {})
+        return super().post(url, headers=headers, json=json)
+
+
+class TestSufficiencyPictures:
+    """With HINDSIGHT_API_DECISION_MODEL_VISION, "is this enough?" sees the pictures the evidence names.
+
+    An answer only a picture holds otherwise read as "not enough", and bought reflect another round.
+    """
+
+    @staticmethod
+    async def _ask(vision: bool, pictures: list) -> tuple[dict, dict, list[dict]]:
+        encoder = TypeSafeCrossEncoder(api_key="k", vision=vision)
+        session = _HeaderRecordingSufficiencySession(2.0, {"0": 0.0, "1": 0.1, "2": 0.9})
+        encoder._session = session
+        calls: list[dict] = []
+        recorder = type("R", (), {"record_llm_call": lambda self, **kw: calls.append(kw)})()
+        with patch("hindsight_api.engine.decision_model.get_span_recorder", return_value=recorder):
+            assert await encoder.evidence_is_sufficient("door code?", "door-sign: picture", pictures=pictures)
+        return session.posted[0], session.headers[0], calls
+
+    @pytest.mark.asyncio
+    async def test_the_pictures_jev_takes_go_as_assets_named_after_their_label(self):
+        sign = _picture("Picture of door-sign.png, page 1", (900, 400))
+        scan = _picture("Picture of scan.pdf, page 2", (1200, 1500), fmt="JPEG")
+        ignored = [
+            _picture("tiny", (64, 64)),  # under 280 px a side
+            _picture("huge", (2000, 500)),  # over 1568 px a side
+            _picture("webp", (600, 600), fmt="WEBP"),  # PNG and JPEG only
+            _picture("progressive", (600, 600), fmt="JPEG", progressive=True),  # baseline JPEG only
+        ]
+        body, headers, calls = await self._ask(True, [sign, *ignored, scan])
+
+        assert headers["TypeSafe-Danger-Zone-Images"] == "true"
+        assert body["state"].endswith(
+            "Pictures:\nPicture of door-sign.png, page 1: [[picture-1]]\nPicture of scan.pdf, page 2: [[picture-2]]"
+        )
+        assert {ref: (a["type"], a["format"]) for ref, a in body["assets"].items()} == {
+            "[[picture-1]]": ("image", "png"),
+            "[[picture-2]]": ("image", "jpg"),
+        }
+        assert base64.b64decode(body["assets"]["[[picture-1]]"]["data_base64"]) == sign.data
+        # The trace keeps which pictures went, never their bytes.
+        traced = calls[0]["structured_input"]
+        assert traced["assets"] == {"[[picture-1]]": "<image>", "[[picture-2]]": "<image>"}
+
+    @pytest.mark.asyncio
+    async def test_without_vision_or_any_picture_jev_takes_the_request_is_text_only(self):
+        for vision, pictures in ((False, [_picture("sign", (900, 400))]), (True, [_picture("tiny", (64, 64))])):
+            body, headers, _ = await self._ask(vision, pictures)
+            assert "assets" not in body and "Pictures:" not in body["state"]
+            assert "TypeSafe-Danger-Zone-Images" not in headers
 
 
 class _PageImpactSession(_FakeSession):

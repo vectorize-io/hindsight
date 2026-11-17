@@ -374,17 +374,17 @@ STRATEGIES = {
 @pytest.fixture
 def strategies(monkeypatch):
     def configure(default: str | None = None) -> None:
-        monkeypatch.setenv("HINDSIGHT_API_INGEST_STRATEGIES", json.dumps(STRATEGIES))
+        monkeypatch.setenv("HINDSIGHT_API_KB_INGEST_STRATEGIES", json.dumps(STRATEGIES))
         if default:
-            monkeypatch.setenv("HINDSIGHT_API_INGEST_DEFAULT_STRATEGY", default)
+            monkeypatch.setenv("HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY", default)
         else:
-            monkeypatch.delenv("HINDSIGHT_API_INGEST_DEFAULT_STRATEGY", raising=False)
+            monkeypatch.delenv("HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY", raising=False)
         clear_config_cache()
 
     configure()
     yield configure
-    monkeypatch.delenv("HINDSIGHT_API_INGEST_STRATEGIES")
-    monkeypatch.delenv("HINDSIGHT_API_INGEST_DEFAULT_STRATEGY", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_KB_INGEST_STRATEGIES")
+    monkeypatch.delenv("HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY", raising=False)
     clear_config_cache()
 
 

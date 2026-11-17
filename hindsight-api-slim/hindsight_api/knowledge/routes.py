@@ -89,7 +89,7 @@ class KnowledgeDeletedResponse(BaseModel):
 
 _STRATEGY_FIELD = Field(
     default=None,
-    description="Ingestion strategy for this item (one of the server's `HINDSIGHT_API_INGEST_STRATEGIES`). Omit "
+    description="Ingestion strategy for this item (one of the server's `HINDSIGHT_API_KB_INGEST_STRATEGIES`). Omit "
     "it and the server's default applies. A file whose type the strategy does not map is chunked as it is.",
 )
 
@@ -540,7 +540,7 @@ def _content_disposition(filename: str | None) -> dict[str, str]:
 def _require_enabled() -> None:
     # Checked per request rather than at mount time, so a test (or an operator) can flip the flag
     # without rebuilding the app; with it off the server answers as if the routes did not exist.
-    if not get_config().enable_knowledge_banks:
+    if not get_config().enable_kb:
         raise HTTPException(status_code=404, detail="Not Found")
 
 

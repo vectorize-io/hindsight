@@ -129,28 +129,28 @@ def _config(**changes) -> HindsightConfig:
 
 def test_each_provider_is_built_from_the_knowledge_settings(memory):
     voyage = create_knowledge_embedder(
-        _config(knowledge_embeddings_provider="voyage", knowledge_embeddings_api_key="k"), memory.embeddings
+        _config(kb_embeddings_provider="voyage", kb_embeddings_api_key="k"), memory.embeddings
     )
     assert isinstance(voyage, VoyageEmbedder) and voyage.model == "voyage-multimodal-3.5"
     cohere = create_knowledge_embedder(
-        _config(knowledge_embeddings_provider="cohere", embeddings_cohere_api_key="memory-key"), memory.embeddings
+        _config(kb_embeddings_provider="cohere", embeddings_cohere_api_key="memory-key"), memory.embeddings
     )
     assert isinstance(cohere, CohereEmbedder) and cohere.model == "embed-v4.0"  # the memory banks' Cohere key
-    with pytest.raises(ValueError, match="needs HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_API_KEY"):
+    with pytest.raises(ValueError, match="needs HINDSIGHT_API_KB_EMBEDDINGS_API_KEY"):
         create_knowledge_embedder(
-            _config(knowledge_embeddings_provider="voyage", knowledge_embeddings_api_key=None), memory.embeddings
+            _config(kb_embeddings_provider="voyage", kb_embeddings_api_key=None), memory.embeddings
         )
     with pytest.raises(ValueError, match="needs HINDSIGHT_API_EMBEDDINGS_VERTEXAI_PROJECT_ID"):
         create_knowledge_embedder(
-            _config(knowledge_embeddings_provider="vertex", embeddings_vertexai_project_id=None), memory.embeddings
+            _config(kb_embeddings_provider="vertex", embeddings_vertexai_project_id=None), memory.embeddings
         )
     with pytest.raises(ValueError, match="Expected local, gemini, vertex, voyage, cohere, openai or text"):
-        create_knowledge_embedder(_config(knowledge_embeddings_provider="nope"), memory.embeddings)
+        create_knowledge_embedder(_config(kb_embeddings_provider="nope"), memory.embeddings)
 
 
 async def test_the_text_provider_reuses_the_memory_banks_embedder_by_default(memory):
     embedder = create_knowledge_embedder(
-        _config(knowledge_embeddings_provider="text", knowledge_text_embeddings=None), memory.embeddings
+        _config(kb_embeddings_provider="text", kb_text_embeddings=None), memory.embeddings
     )
     assert isinstance(embedder, TextEmbedder) and embedder.modalities == {"text"}
     assert embedder.dimension == memory.embeddings.dimension
@@ -160,7 +160,7 @@ async def test_the_text_provider_reuses_the_memory_banks_embedder_by_default(mem
 
 
 async def test_the_text_provider_can_use_any_memory_bank_provider_of_its_own(memory, monkeypatch):
-    """HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_* reads every memory-bank embeddings setting again."""
+    """HINDSIGHT_API_KB_TEXT_EMBEDDINGS_* reads every memory-bank embeddings setting again."""
     calls: list[str] = []
 
     async def tei(request: web.Request) -> web.StreamResponse:
@@ -171,18 +171,18 @@ async def test_the_text_provider_can_use_any_memory_bank_provider_of_its_own(mem
         return web.json_response([[1.0, 0.0, 0.0] for _ in (inputs if isinstance(inputs, list) else [inputs])])
 
     async with stub_server(tei) as base_url:
-        monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_PROVIDER", "tei")
-        monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_TEI_URL", base_url)
+        monkeypatch.setenv("HINDSIGHT_API_KB_TEXT_EMBEDDINGS_PROVIDER", "tei")
+        monkeypatch.setenv("HINDSIGHT_API_KB_TEXT_EMBEDDINGS_TEI_URL", base_url)
         config = HindsightConfig.from_env()
-        assert config.knowledge_text_embeddings is not None
-        assert config.knowledge_text_embeddings.embeddings_provider == "tei"
-        embedder = create_knowledge_embedder(replace(config, knowledge_embeddings_provider="text"), memory.embeddings)
+        assert config.kb_text_embeddings is not None
+        assert config.kb_text_embeddings.embeddings_provider == "tei"
+        embedder = create_knowledge_embedder(replace(config, kb_embeddings_provider="text"), memory.embeddings)
         assert isinstance(embedder, TextEmbedder) and embedder.dimension == 0  # started on first use
         vectors = await embedder.embed_documents([EmbedInput(modality="text", text="Keys expire.", title="keys")])
     assert vectors == [[1.0, 0.0, 0.0]] and embedder.dimension == 3 and "/embed" in calls
 
-    monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_TEXT_EMBEDDINGS_NOT_A_SETTING", "x")
-    with pytest.raises(ValueError, match="Unknown knowledge_text embeddings variable"):
+    monkeypatch.setenv("HINDSIGHT_API_KB_TEXT_EMBEDDINGS_NOT_A_SETTING", "x")
+    with pytest.raises(ValueError, match="Unknown kb_text embeddings variable"):
         HindsightConfig.from_env()
 
 
@@ -192,18 +192,18 @@ async def test_the_text_provider_can_use_any_memory_bank_provider_of_its_own(mem
 @pytest.fixture
 def disabled_media(monkeypatch):
     def disable(value: str) -> None:
-        monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_DISABLED_MEDIA_TYPES", value)
+        monkeypatch.setenv("HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES", value)
         clear_config_cache()
 
     yield disable
-    monkeypatch.delenv("HINDSIGHT_API_KNOWLEDGE_DISABLED_MEDIA_TYPES", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES", raising=False)
     clear_config_cache()
 
 
 async def test_a_disabled_media_type_is_refused_whatever_the_embedder(api_client, kb, disabled_media):  # noqa: F811
     disabled_media("image, VIDEO")
     r = await _upload(api_client, kb, [("p.png", PNG, "image/png")])
-    assert r.status_code == 415 and "HINDSIGHT_API_KNOWLEDGE_DISABLED_MEDIA_TYPES" in r.text
+    assert r.status_code == 415 and "HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES" in r.text
     # The bank's settings report what the server refuses, as what the bank refuses too.
     assert (await api_client.get(f"{KB}/{kb}/config")).json()["config"]["disabled_media_types"] == ["image", "video"]
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"text": "still fine"}]})
@@ -236,7 +236,7 @@ async def test_remote_embedder_requests_in_flight_are_capped_across_callers(monk
     from hindsight_api.config import clear_config_cache
     from hindsight_api.knowledge import embedders
 
-    monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT", "3")
+    monkeypatch.setenv("HINDSIGHT_API_KB_EMBEDDINGS_MAX_IN_FLIGHT", "3")
     clear_config_cache()
     try:
         now = peak = 0
@@ -252,7 +252,7 @@ async def test_remote_embedder_requests_in_flight_are_capped_across_callers(monk
         await asyncio.gather(*(one() for _ in range(20)))
         assert peak == 3
     finally:
-        monkeypatch.delenv("HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_MAX_IN_FLIGHT")
+        monkeypatch.delenv("HINDSIGHT_API_KB_EMBEDDINGS_MAX_IN_FLIGHT")
         clear_config_cache()
 
 

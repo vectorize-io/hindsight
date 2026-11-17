@@ -214,7 +214,7 @@ os.environ.setdefault("HINDSIGHT_API_LLM_TRACE_RETENTION_DAYS", "-1")
 os.environ.setdefault("HINDSIGHT_API_ATTACHMENT_SWEEP_INTERVAL_SECONDS", "0")
 # Knowledge banks are off by default (a hidden feature); the suite tests them, so it turns them on.
 # test_knowledge_banks.py checks what a server with the flag off hides.
-os.environ.setdefault("HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS", "true")
+os.environ.setdefault("HINDSIGHT_API_ENABLE_KB", "true")
 
 # Same reason, for the worker poller the API lifespan starts by default. Any test
 # that runs ``app.router.lifespan_context`` (the MCP routing tests, for one) would

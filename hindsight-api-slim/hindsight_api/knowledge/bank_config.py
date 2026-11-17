@@ -3,7 +3,7 @@
 A knowledge bank may override how its files are split into passages, and nothing else: models,
 providers, keys, vector sizes, search weights and the server's limits stay the server's. The
 overrides live where a memory bank's do, in the bank row's ``config`` JSONB, under the server
-field's name (``knowledge_<field>``), so they never collide with a memory-bank setting and the
+field's name (``kb_<field>``), so they never collide with a memory-bank setting and the
 memory-bank config resolver (which keeps only its own configurable fields) never reads them.
 """
 
@@ -18,7 +18,7 @@ from ..config import get_config
 from .media import MediaType
 
 #: Where an override is stored in ``banks.config``: the server field it shadows.
-STORED_PREFIX = "knowledge_"
+STORED_PREFIX = "kb_"
 
 
 class KnowledgeBankSettings(BaseModel):
@@ -74,7 +74,7 @@ def server_settings() -> KnowledgeBankSettings:
         **{
             name: getattr(config, STORED_PREFIX + name) for name in OVERRIDABLE_FIELDS if name != "disabled_media_types"
         },
-        disabled_media_types=sorted(config.knowledge_disabled_media_types),
+        disabled_media_types=sorted(config.kb_disabled_media_types),
     )
 
 

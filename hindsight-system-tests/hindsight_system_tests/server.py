@@ -201,8 +201,8 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         # embedder reuses the memory banks' (the stub's lexical embeddings), so it embeds text only:
         # texts, and PDFs through their text layer. Nothing else changes for the other stories: the
         # flag only adds routes, and the knowledge service starts on first use.
-        "HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS": "true",
-        "HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER": "text",
+        "HINDSIGHT_API_ENABLE_KB": "true",
+        "HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER": "text",
     }
 
 

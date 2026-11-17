@@ -112,6 +112,16 @@ def _date(doc: str) -> str | None:
 
 
 @dataclass(frozen=True)
+class EvidenceImage:
+    """A picture that is part of the evidence, as reflect read it from a knowledge bank: the label the
+    textual evidence names it by (a result's ``picture`` field), its MIME type, and its bytes."""
+
+    label: str
+    media_type: str
+    data: bytes
+
+
+@dataclass(frozen=True)
 class RerankQuestion:
     """One candidate's question: would showing ``memory`` help someone answer, or distract?
 
