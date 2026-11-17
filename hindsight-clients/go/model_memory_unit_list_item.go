@@ -52,7 +52,7 @@ type MemoryUnitListItem struct {
 	EditedAt NullableString `json:"edited_at,omitempty"`
 	UpdatedAt NullableString `json:"updated_at,omitempty"`
 	// An observation's source facts; empty for a source fact
-	SourceMemoryIds []string `json:"source_memory_ids,omitempty"`
+	SourceMemoryIds []*string `json:"source_memory_ids,omitempty"`
 }
 
 type _MemoryUnitListItem MemoryUnitListItem
@@ -884,9 +884,9 @@ func (o *MemoryUnitListItem) UnsetUpdatedAt() {
 }
 
 // GetSourceMemoryIds returns the SourceMemoryIds field value if set, zero value otherwise.
-func (o *MemoryUnitListItem) GetSourceMemoryIds() []string {
+func (o *MemoryUnitListItem) GetSourceMemoryIds() []*string {
 	if o == nil || IsNil(o.SourceMemoryIds) {
-		var ret []string
+		var ret []*string
 		return ret
 	}
 	return o.SourceMemoryIds
@@ -894,7 +894,7 @@ func (o *MemoryUnitListItem) GetSourceMemoryIds() []string {
 
 // GetSourceMemoryIdsOk returns a tuple with the SourceMemoryIds field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *MemoryUnitListItem) GetSourceMemoryIdsOk() ([]string, bool) {
+func (o *MemoryUnitListItem) GetSourceMemoryIdsOk() ([]*string, bool) {
 	if o == nil || IsNil(o.SourceMemoryIds) {
 		return nil, false
 	}
@@ -910,8 +910,8 @@ func (o *MemoryUnitListItem) HasSourceMemoryIds() bool {
 	return false
 }
 
-// SetSourceMemoryIds gets a reference to the given []string and assigns it to the SourceMemoryIds field.
-func (o *MemoryUnitListItem) SetSourceMemoryIds(v []string) {
+// SetSourceMemoryIds gets a reference to the given []*string and assigns it to the SourceMemoryIds field.
+func (o *MemoryUnitListItem) SetSourceMemoryIds(v []*string) {
 	o.SourceMemoryIds = v
 }
 

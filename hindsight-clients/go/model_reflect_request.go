@@ -35,7 +35,7 @@ type ReflectRequest struct {
 	Tags []string `json:"tags,omitempty"`
 	// How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or 'exact' (set equality). Untagged directives remain global in every mode.
 	TagsMatch *string `json:"tags_match,omitempty"`
-	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
+	TagGroups []KnowledgeSearchRequestTagGroupsInner `json:"tag_groups,omitempty"`
 	// Apply every active directive regardless of tags. By default directives are scoped like memories: untagged directives always apply, and tagged directives apply only when the request's tags match them. Set true to apply all active directives, ignoring tag scope.
 	ApplyAllDirectives *bool `json:"apply_all_directives,omitempty"`
 	FactTypes []string `json:"fact_types,omitempty"`
@@ -467,9 +467,9 @@ func (o *ReflectRequest) SetTagsMatch(v string) {
 }
 
 // GetTagGroups returns the TagGroups field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *ReflectRequest) GetTagGroups() []MentalModelTriggerInputTagGroupsInner {
+func (o *ReflectRequest) GetTagGroups() []KnowledgeSearchRequestTagGroupsInner {
 	if o == nil {
-		var ret []MentalModelTriggerInputTagGroupsInner
+		var ret []KnowledgeSearchRequestTagGroupsInner
 		return ret
 	}
 	return o.TagGroups
@@ -478,7 +478,7 @@ func (o *ReflectRequest) GetTagGroups() []MentalModelTriggerInputTagGroupsInner 
 // GetTagGroupsOk returns a tuple with the TagGroups field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *ReflectRequest) GetTagGroupsOk() ([]MentalModelTriggerInputTagGroupsInner, bool) {
+func (o *ReflectRequest) GetTagGroupsOk() ([]KnowledgeSearchRequestTagGroupsInner, bool) {
 	if o == nil || IsNil(o.TagGroups) {
 		return nil, false
 	}
@@ -494,8 +494,8 @@ func (o *ReflectRequest) HasTagGroups() bool {
 	return false
 }
 
-// SetTagGroups gets a reference to the given []MentalModelTriggerInputTagGroupsInner and assigns it to the TagGroups field.
-func (o *ReflectRequest) SetTagGroups(v []MentalModelTriggerInputTagGroupsInner) {
+// SetTagGroups gets a reference to the given []KnowledgeSearchRequestTagGroupsInner and assigns it to the TagGroups field.
+func (o *ReflectRequest) SetTagGroups(v []KnowledgeSearchRequestTagGroupsInner) {
 	o.TagGroups = v
 }
 

@@ -1,0 +1,259 @@
+---
+sidebar_position: 12
+---
+
+# Knowledge Banks
+
+Create knowledge banks, ingest files and text into them, and search their passages. For what a knowledge bank is and how ingest and search work, see [Knowledge Banks](../knowledge-banks).
+
+All endpoints live under `/v1/default/knowledge-banks`. The examples use `curl` against a local server.
+
+---
+
+## Create a Knowledge Bank
+
+```bash
+curl -X POST http://localhost:8888/v1/default/knowledge-banks \
+  -H "Content-Type: application/json" \
+  -d '{"bank_id": "product-manuals"}'
+```
+
+The id shares one space with memory bank ids: creating a knowledge bank with the id of a memory bank fails with `409`.
+
+The response, like `GET /v1/default/knowledge-banks/{bank_id}`, describes the bank:
+
+```json
+{
+  "bank_id": "product-manuals",
+  "created_at": "2026-11-16T09:12:04Z",
+  "document_count": 0,
+  "passage_count": 0,
+  "ready_count": 0,
+  "pending_count": 0,
+  "failed_count": 0,
+  "total_bytes": 0,
+  "documents_by_media_type": {},
+  "last_document_at": null
+}
+```
+
+List banks with `GET /v1/default/knowledge-banks`, with `limit` (default 100), `offset` and `q` (part of the bank id).
+
+---
+
+## Ingest Files
+
+Upload one or more files as `multipart/form-data`. Each file becomes one document. The call returns `202` right away and the files are processed in the background.
+
+```bash
+curl -X POST http://localhost:8888/v1/default/knowledge-banks/product-manuals/files/ingest \
+  -F "files=@x200-manual.pdf" \
+  -F "files=@install-walkthrough.mp4" \
+  -F 'request={"files": [
+        {"document_id": "x200-manual", "tags": ["x200"]},
+        {"document_id": "x200-install", "tags": ["x200", "video"]}
+      ]}'
+```
+
+The optional `request` field is JSON with one entry per file, in the same order:
+
+| Field | Description |
+|---|---|
+| `document_id` | Stable id. Ingesting it again replaces the document. Defaults to a new random id. |
+| `tags` | Tags a search can filter on. |
+| `strategy` | [Ingestion strategy](../knowledge-banks#ingestion-strategies) for this file. Defaults to the server's. |
+
+```json
+{
+  "document_ids": ["x200-manual", "x200-install"],
+  "operation_ids": ["6f1c...", "6f1c..."],
+  "unchanged_document_ids": []
+}
+```
+
+- `operation_ids` has the same id for every queued document: one background operation handles the whole upload.
+- `unchanged_document_ids` lists documents identical to what is already stored. Nothing is queued for them.
+
+**Knowing when it's done.** Poll the operation like any other, with `GET /v1/default/banks/{bank_id}/operations/{operation_id}`, or read each document's `status`. A document goes `pending` → `processing` → `ready`, or `failed` with an `error`.
+
+---
+
+## Ingest Text
+
+Send text as JSON, up to 100 items per call. By default the call returns once every document can be searched.
+
+```bash
+curl -X POST http://localhost:8888/v1/default/knowledge-banks/product-manuals/ingest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      {
+        "document_id": "returns-policy",
+        "text": "# Returns\n\nYou can return an X200 within 30 days...",
+        "tags": ["policy"]
+      }
+    ]
+  }'
+```
+
+| Field | Description |
+|---|---|
+| `items[].text` | The text, read as Markdown. |
+| `items[].document_id` | Stable id. Ingesting it again replaces the document. |
+| `items[].filename` | Defaults to `<document_id>.md`. |
+| `items[].tags` | Tags a search can filter on. |
+| `items[].strategy` | Ingestion strategy for this item. |
+| `async` | `true` to queue the items and return `202` at once, like a file ingest. Default `false`. |
+
+The response has the same shape as a file ingest. `operation_ids` is empty when the ingest ran before returning.
+
+---
+
+## Search
+
+```bash
+curl -X POST http://localhost:8888/v1/default/knowledge-banks/product-manuals/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "X200 keeps losing pressure", "max_tokens": 2048}'
+```
+
+| Field | Description | Default |
+|---|---|---|
+| `query` | Text to search with. | - |
+| `query_image` | A base64 image to search with. | - |
+| `query_video` | A base64 MP4 clip to search with. | - |
+| `budget` | `low`, `mid` or `high`: how many scored candidates stay in the running (50, 200, 500). | `mid` |
+| `max_tokens` | How much text the results can add up to. | `4096` |
+| `tags` | Only documents with these tags. | - |
+| `tags_match` | `any` or `all` of `tags`. | `any` |
+| `document_ids` | Only these documents. | - |
+| `media_types` | Only these kinds: `document`, `image`, `audio`, `video`, `text`. | - |
+| `trace` | Also return how the search ranked, step by step. | `false` |
+
+Text, image and video can be sent together: they are embedded as one query. At least one is needed.
+
+```json
+{
+  "results": [
+    {
+      "document_id": "x200-manual",
+      "filename": "x200-manual.pdf",
+      "tags": ["x200"],
+      "index": 30,
+      "media_type": "document",
+      "page": 31,
+      "text": "Troubleshooting: pressure drop. If the pressure falls below...",
+      "passage_url": "/v1/default/knowledge-banks/product-manuals/documents/x200-manual/passages/30/media",
+      "document_url": "/v1/default/knowledge-banks/product-manuals/documents/x200-manual/file"
+    },
+    {
+      "document_id": "x200-install",
+      "filename": "install-walkthrough.mp4",
+      "tags": ["x200", "video"],
+      "index": 5,
+      "media_type": "video",
+      "start_ms": 150000,
+      "end_ms": 180000,
+      "passage_url": "/v1/default/knowledge-banks/product-manuals/documents/x200-install/passages/5/media",
+      "document_url": "/v1/default/knowledge-banks/product-manuals/documents/x200-install/file"
+    }
+  ],
+  "trace": null
+}
+```
+
+- Results come **best first**. They carry no score: scores are only comparable within one search.
+- A text hit's `text` holds the matched passage together with the passages around it that fit the budget. `index` is the matched one.
+- `page` is set for PDF pages and images, `start_ms` and `end_ms` for audio and video.
+- `passage_url` streams the passage's page image or clip. `document_url` streams the original file.
+
+### Trace
+
+With `"trace": true`, the response also has a `trace`:
+
+| Field | What it shows |
+|---|---|
+| `candidate_searches` | Each candidate search (by meaning, by extra vectors, by keyword) and what it found, best first. |
+| `hits` | Every scored candidate: its final `score`, its `similarity`, its `keyword` score, which searches `found_by` it, and its `outcome`: `returned`, `merged` (inside a better hit's text), `over_budget`, or `below_depth` (past what `budget` keeps). |
+| `budget_steps` | How `max_tokens` was filled, step by step. |
+| `keyword_terms` | The query words the keyword search used, with their weight. A word much more common than the query's rarest word is left out. |
+| `keyword_weight` | The keyword score's share of the final score. |
+| `depth`, `candidates`, `tokens_used` | Candidates kept, candidates found, and tokens returned. |
+| `timings_ms` | Time spent in each step. |
+
+---
+
+## Documents
+
+| Call | What it does |
+|---|---|
+| `GET /{bank_id}/documents` | List documents. Filters: `q` (part of the id or filename), `status`, `media_type`, `tags`. Paging: `limit` (default 50, up to 500), `offset`. |
+| `GET /{bank_id}/documents/{document_id}` | A document with all its passages. |
+| `GET /{bank_id}/documents/{document_id}/file` | Download the original file. |
+| `GET /{bank_id}/documents/{document_id}/passages/{index}/media` | Stream a passage's page image, image, or audio or video window. |
+| `DELETE /{bank_id}/documents/{document_id}` | Delete a document, its passages, its file, and the documents split out of it. |
+
+A document looks like this:
+
+```json
+{
+  "document_id": "x200-manual",
+  "filename": "x200-manual.pdf",
+  "content_type": "application/pdf",
+  "media_type": "document",
+  "size_bytes": 4821337,
+  "status": "ready",
+  "error": null,
+  "passage_count": 40,
+  "tags": ["x200"],
+  "created_at": "2026-11-16T09:14:20Z",
+  "updated_at": "2026-11-16T09:15:02Z",
+  "document_url": "/v1/default/knowledge-banks/product-manuals/documents/x200-manual/file",
+  "source_document_id": null
+}
+```
+
+`source_document_id` is set when an [ingestion strategy](../knowledge-banks#ingestion-strategies) split this document out of another.
+
+---
+
+## Settings
+
+A bank can change how its files are split. See [Per-Bank Settings](../knowledge-banks#per-bank-settings) for every field.
+
+| Call | What it does |
+|---|---|
+| `GET /{bank_id}/config` | `config`: every setting as the bank uses it. `overrides`: only what the bank changes. |
+| `PATCH /{bank_id}/config` | Change settings: `{"updates": {"text_passage_tokens": 512}}`. A `null` value goes back to the server's setting. |
+| `DELETE /{bank_id}/config` | Go back to the server's settings. |
+
+`PATCH` and `DELETE` need `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` on.
+
+---
+
+## Stats
+
+`GET /{bank_id}/stats/timeseries` returns documents and passages added over time. `period` is `1d` (by hour), `7d`, `30d` or `90d` (by day; default `7d`). `media_type` limits it to one kind of file.
+
+---
+
+## Delete a Knowledge Bank
+
+```bash
+curl -X DELETE http://localhost:8888/v1/default/knowledge-banks/product-manuals
+```
+
+Cancels the bank's ingests, then deletes every document, passage and file in it.
+
+---
+
+## Errors
+
+| Status | When |
+|---|---|
+| `400` | A bad request: no query, a query image that isn't base64, an empty file, an unknown ingestion strategy. |
+| `404` | No such bank or document, or knowledge banks are off. |
+| `409` | The bank id is already a memory bank. |
+| `413` | A file over `HINDSIGHT_API_KNOWLEDGE_MAX_FILE_MB`. |
+| `415` | A file type the server, the bank or the embedder doesn't take, or a query the embedder can't embed (a video query on a model without video). |
+| `503` | The embedder or the database can't be reached, or timed out. Try again later. |

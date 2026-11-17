@@ -21,7 +21,7 @@ var _ MappedNullable = &TagGroupAndInput{}
 
 // TagGroupAndInput Compound AND group: all child filters must match.
 type TagGroupAndInput struct {
-	And []MentalModelTriggerInputTagGroupsInner `json:"and"`
+	And []KnowledgeSearchRequestTagGroupsInner `json:"and"`
 }
 
 type _TagGroupAndInput TagGroupAndInput
@@ -30,7 +30,7 @@ type _TagGroupAndInput TagGroupAndInput
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewTagGroupAndInput(and []MentalModelTriggerInputTagGroupsInner) *TagGroupAndInput {
+func NewTagGroupAndInput(and []KnowledgeSearchRequestTagGroupsInner) *TagGroupAndInput {
 	this := TagGroupAndInput{}
 	this.And = and
 	return &this
@@ -45,9 +45,9 @@ func NewTagGroupAndInputWithDefaults() *TagGroupAndInput {
 }
 
 // GetAnd returns the And field value
-func (o *TagGroupAndInput) GetAnd() []MentalModelTriggerInputTagGroupsInner {
+func (o *TagGroupAndInput) GetAnd() []KnowledgeSearchRequestTagGroupsInner {
 	if o == nil {
-		var ret []MentalModelTriggerInputTagGroupsInner
+		var ret []KnowledgeSearchRequestTagGroupsInner
 		return ret
 	}
 
@@ -56,7 +56,7 @@ func (o *TagGroupAndInput) GetAnd() []MentalModelTriggerInputTagGroupsInner {
 
 // GetAndOk returns a tuple with the And field value
 // and a boolean to check if the value has been set.
-func (o *TagGroupAndInput) GetAndOk() ([]MentalModelTriggerInputTagGroupsInner, bool) {
+func (o *TagGroupAndInput) GetAndOk() ([]KnowledgeSearchRequestTagGroupsInner, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -64,7 +64,7 @@ func (o *TagGroupAndInput) GetAndOk() ([]MentalModelTriggerInputTagGroupsInner, 
 }
 
 // SetAnd sets field value
-func (o *TagGroupAndInput) SetAnd(v []MentalModelTriggerInputTagGroupsInner) {
+func (o *TagGroupAndInput) SetAnd(v []KnowledgeSearchRequestTagGroupsInner) {
 	o.And = v
 }
 

@@ -26,8 +26,8 @@ class MentalModelDeltaOperations(BaseModel):
     """
     Structured operations a delta refresh emitted against the existing document.
     """ # noqa: E501
-    applied: Optional[List[Dict[str, Any]]] = Field(default=None, description="Operations applied to the document, in order.")
-    skipped: Optional[List[Dict[str, Any]]] = Field(default=None, description="Operations dropped as invalid, each with a reason.")
+    applied: Optional[List[Optional[Dict[str, Any]]]] = Field(default=None, description="Operations applied to the document, in order.")
+    skipped: Optional[List[Optional[Dict[str, Any]]]] = Field(default=None, description="Operations dropped as invalid, each with a reason.")
     __properties: ClassVar[List[str]] = ["applied", "skipped"]
 
     model_config = ConfigDict(

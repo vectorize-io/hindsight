@@ -13,6 +13,1271 @@
     "version": "1.2.3"
   },
   "paths": {
+    "/v1/default/knowledge-banks": {
+      "post": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Create a knowledge bank",
+        "operationId": "create_knowledge_bank",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateKnowledgeBankRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBankResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "List knowledge banks",
+        "operationId": "list_knowledge_banks",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Part of the bank id, case-insensitive",
+              "title": "Q"
+            },
+            "description": "Part of the bank id, case-insensitive"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBankListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}": {
+      "get": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Get a knowledge bank",
+        "operationId": "get_knowledge_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBankResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Delete a knowledge bank and everything in it",
+        "operationId": "delete_knowledge_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeDeletedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/config": {
+      "get": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Get a knowledge bank's ingest settings",
+        "operationId": "get_knowledge_bank_config",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBankConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Override a knowledge bank's ingest settings",
+        "operationId": "update_knowledge_bank_config",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeBankConfigUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBankConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Reset a knowledge bank's ingest settings to the server's",
+        "operationId": "reset_knowledge_bank_config",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeBankConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/stats/timeseries": {
+      "get": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Documents and passages added over time",
+        "operationId": "get_knowledge_bank_timeseries",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "1d",
+                "7d",
+                "30d",
+                "90d"
+              ],
+              "type": "string",
+              "default": "7d",
+              "title": "Period"
+            }
+          },
+          {
+            "name": "media_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "document",
+                    "image",
+                    "audio",
+                    "video",
+                    "text"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only documents of this media type.",
+              "title": "Media Type"
+            },
+            "description": "Only documents of this media type."
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeTimeseriesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/files/ingest": {
+      "post": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Ingest files (PDF, images, audio, video, text, Office)",
+        "description": "Each file becomes one document, chunked into passages (or pre-processed first by the extension its ingestion strategy maps its type to) and embedded in the background. Poll the operation, or the document's status, to know when it is searchable.",
+        "operationId": "ingest_knowledge_files",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_ingest_knowledge_files"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/ingest": {
+      "post": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Ingest text documents",
+        "description": "Synchronous by default: returns once every document is searchable. With `async: true` each document is queued instead (202) and its operation returned.",
+        "operationId": "ingest_knowledge_texts",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeIngestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeIngestResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Queued (`async: true`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/documents": {
+      "get": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "List documents",
+        "operationId": "list_knowledge_documents",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Substring of the id or filename.",
+              "title": "Q"
+            },
+            "description": "Substring of the id or filename."
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "media_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Media Type"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tags"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeDocumentListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/documents/{document_id}": {
+      "get": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Get a document and its passages",
+        "operationId": "get_knowledge_document",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeDocumentDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Delete a document",
+        "operationId": "delete_knowledge_document",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeDeletedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/tags": {
+      "get": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "List a knowledge bank's document tags, with how many documents carry each",
+        "operationId": "list_knowledge_bank_tags",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.",
+              "title": "Q"
+            },
+            "description": "Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 0,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeTagsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/documents/{document_id}/file": {
+      "get": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Download a document's original file",
+        "operationId": "get_knowledge_document_file",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/documents/{document_id}/passages/{index}/media": {
+      "get": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Stream a passage's media (page image, image, audio or video window)",
+        "operationId": "get_knowledge_passage_media",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Index"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/default/knowledge-banks/{bank_id}/search": {
+      "post": {
+        "tags": [
+          "Knowledge Banks"
+        ],
+        "summary": "Search passages by meaning: a text, image or video query, alone or combined",
+        "operationId": "search_knowledge_bank",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -11424,6 +12689,34 @@
         ],
         "title": "Body_import_documents"
       },
+      "Body_ingest_knowledge_files": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "format": "binary"
+            },
+            "type": "array",
+            "title": "Files"
+          },
+          "request": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_ingest_knowledge_files"
+      },
       "Budget": {
         "type": "string",
         "enum": [
@@ -12281,6 +13574,20 @@
         ],
         "title": "CreateFolderRequest",
         "description": "Create a folder under an optional parent folder."
+      },
+      "CreateKnowledgeBankRequest": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id",
+            "description": "Id of the new knowledge bank. It shares the id space of memory banks."
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id"
+        ],
+        "title": "CreateKnowledgeBankRequest"
       },
       "CreateMentalModelRequest": {
         "properties": {
@@ -14325,6 +15632,1658 @@
         "type": "object",
         "title": "IncludeOptions",
         "description": "Options for including additional data in recall results."
+      },
+      "KnowledgeBankConfigResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "config": {
+            "$ref": "#/components/schemas/KnowledgeBankSettings",
+            "description": "Every per-bank ingest setting as the bank splits files with it: its override, else the server's default."
+          },
+          "overrides": {
+            "$ref": "#/components/schemas/KnowledgeBankOverrides",
+            "description": "Only the settings this bank overrides."
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "config",
+          "overrides"
+        ],
+        "title": "KnowledgeBankConfigResponse"
+      },
+      "KnowledgeBankConfigUpdate": {
+        "properties": {
+          "updates": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Updates",
+            "description": "Settings to override (named as in `config`); a null value clears that override. Each change applies to files ingested after it: re-uploading an unchanged file re-splits it."
+          }
+        },
+        "type": "object",
+        "required": [
+          "updates"
+        ],
+        "title": "KnowledgeBankConfigUpdate"
+      },
+      "KnowledgeBankListResponse": {
+        "properties": {
+          "banks": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeBankResponse"
+            },
+            "type": "array",
+            "title": "Banks"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Knowledge banks matching `q`, before paging"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "banks",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "KnowledgeBankListResponse"
+      },
+      "KnowledgeBankOverrides": {
+        "properties": {
+          "text_passage_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 8192.0,
+                "minimum": 16.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Passage Tokens"
+          },
+          "pdf_page_pixels": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 8192.0,
+                "minimum": 256.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Page Pixels"
+          },
+          "pdf_bands": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Bands"
+          },
+          "image_tokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1120.0,
+                "minimum": 70.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Tokens"
+          },
+          "audio_window_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 3600.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audio Window Seconds"
+          },
+          "video_window_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 3600.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Video Window Seconds"
+          },
+          "media_overlap_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 3599.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Overlap Seconds"
+          },
+          "max_media_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Media Seconds"
+          },
+          "max_pdf_pages": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Pdf Pages"
+          },
+          "disabled_media_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "document",
+                    "image",
+                    "audio",
+                    "video",
+                    "text"
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled Media Types"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "KnowledgeBankOverrides",
+        "description": "What a bank overrides; a field left None follows the server. Strict, so ``\"5\"`` or ``true``\nis not taken for a number."
+      },
+      "KnowledgeBankResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "document_count": {
+            "type": "integer",
+            "title": "Document Count"
+          },
+          "passage_count": {
+            "type": "integer",
+            "title": "Passage Count"
+          },
+          "ready_count": {
+            "type": "integer",
+            "title": "Ready Count"
+          },
+          "pending_count": {
+            "type": "integer",
+            "title": "Pending Count"
+          },
+          "failed_count": {
+            "type": "integer",
+            "title": "Failed Count"
+          },
+          "documents_by_media_type": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Documents By Media Type"
+          },
+          "last_document_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Document At",
+            "description": "When a document was last added or changed; null for an empty bank"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "created_at",
+          "document_count",
+          "passage_count",
+          "ready_count",
+          "pending_count",
+          "failed_count",
+          "documents_by_media_type"
+        ],
+        "title": "KnowledgeBankResponse"
+      },
+      "KnowledgeBankSettings": {
+        "properties": {
+          "text_passage_tokens": {
+            "type": "integer",
+            "title": "Text Passage Tokens"
+          },
+          "pdf_page_pixels": {
+            "type": "integer",
+            "title": "Pdf Page Pixels"
+          },
+          "pdf_bands": {
+            "type": "boolean",
+            "title": "Pdf Bands"
+          },
+          "image_tokens": {
+            "type": "integer",
+            "title": "Image Tokens"
+          },
+          "audio_window_seconds": {
+            "type": "integer",
+            "title": "Audio Window Seconds"
+          },
+          "video_window_seconds": {
+            "type": "integer",
+            "title": "Video Window Seconds"
+          },
+          "media_overlap_seconds": {
+            "type": "integer",
+            "title": "Media Overlap Seconds"
+          },
+          "max_media_seconds": {
+            "type": "integer",
+            "title": "Max Media Seconds"
+          },
+          "max_pdf_pages": {
+            "type": "integer",
+            "title": "Max Pdf Pages"
+          },
+          "disabled_media_types": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "document",
+                "image",
+                "audio",
+                "video",
+                "text"
+              ]
+            },
+            "type": "array",
+            "title": "Disabled Media Types"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text_passage_tokens",
+          "pdf_page_pixels",
+          "pdf_bands",
+          "image_tokens",
+          "audio_window_seconds",
+          "video_window_seconds",
+          "media_overlap_seconds",
+          "max_media_seconds",
+          "max_pdf_pages",
+          "disabled_media_types"
+        ],
+        "title": "KnowledgeBankSettings",
+        "description": "The ingest settings a knowledge bank splits its files with: its overrides, else the server's."
+      },
+      "KnowledgeDeletedResponse": {
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "title": "Deleted",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "KnowledgeDeletedResponse"
+      },
+      "KnowledgeDocumentDetailResponse": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type"
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "document",
+              "image",
+              "audio",
+              "video",
+              "text"
+            ],
+            "title": "Knowledge Media Type"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing",
+              "ready",
+              "failed"
+            ],
+            "title": "Knowledge Document Status"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "passage_count": {
+            "type": "integer",
+            "title": "Passage Count"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "document_url": {
+            "type": "string",
+            "title": "Document Url",
+            "description": "API path that streams the original file."
+          },
+          "source_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Document Id",
+            "description": "The document a pre-processing strategy split this one out of."
+          },
+          "passages": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgePassageResponse"
+            },
+            "type": "array",
+            "title": "Passages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "filename",
+          "content_type",
+          "media_type",
+          "size_bytes",
+          "status",
+          "error",
+          "passage_count",
+          "tags",
+          "created_at",
+          "updated_at",
+          "document_url",
+          "passages"
+        ],
+        "title": "KnowledgeDocumentDetailResponse"
+      },
+      "KnowledgeDocumentListResponse": {
+        "properties": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeDocumentResponse"
+            },
+            "type": "array",
+            "title": "Documents"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "documents",
+          "total"
+        ],
+        "title": "KnowledgeDocumentListResponse"
+      },
+      "KnowledgeDocumentResponse": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type"
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "document",
+              "image",
+              "audio",
+              "video",
+              "text"
+            ],
+            "title": "Knowledge Media Type"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "title": "Size Bytes"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing",
+              "ready",
+              "failed"
+            ],
+            "title": "Knowledge Document Status"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "passage_count": {
+            "type": "integer",
+            "title": "Passage Count"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "document_url": {
+            "type": "string",
+            "title": "Document Url",
+            "description": "API path that streams the original file."
+          },
+          "source_document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Document Id",
+            "description": "The document a pre-processing strategy split this one out of."
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "filename",
+          "content_type",
+          "media_type",
+          "size_bytes",
+          "status",
+          "error",
+          "passage_count",
+          "tags",
+          "created_at",
+          "updated_at",
+          "document_url"
+        ],
+        "title": "KnowledgeDocumentResponse"
+      },
+      "KnowledgeIngestRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeIngestTextItem"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items"
+          },
+          "async": {
+            "type": "boolean",
+            "title": "Async",
+            "description": "If true, queue each document and return at once (202), as the file ingest always does. If false, return once every document is searchable (default: false).",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "KnowledgeIngestRequest"
+      },
+      "KnowledgeIngestResponse": {
+        "properties": {
+          "document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Document Ids",
+            "description": "Every document ingested, in request order."
+          },
+          "operation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Operation Ids",
+            "description": "For each document that was queued, the one background operation that processes the whole ingest (the same id for all of them). Empty for a sync ingest."
+          },
+          "unchanged_document_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unchanged Document Ids",
+            "description": "Documents identical to what is stored: nothing was queued for them."
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_ids",
+          "operation_ids"
+        ],
+        "title": "KnowledgeIngestResponse"
+      },
+      "KnowledgeIngestTextItem": {
+        "properties": {
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id",
+            "description": "Stable id; ingesting it again replaces the document."
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Text"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename",
+            "description": "Defaults to <document_id>.md."
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy",
+            "description": "Ingestion strategy for this item (one of the server's `HINDSIGHT_API_INGEST_STRATEGIES`). Omit it and the server's default applies. A file whose type the strategy does not map is chunked as it is."
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "KnowledgeIngestTextItem"
+      },
+      "KnowledgePassageResponse": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "document",
+              "image",
+              "audio",
+              "video",
+              "text"
+            ],
+            "title": "Knowledge Media Type"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page",
+            "description": "1-based page number (PDF pages and images)."
+          },
+          "start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Ms",
+            "description": "Window start, for audio and video."
+          },
+          "end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Ms"
+          },
+          "passage_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Url",
+            "description": "API path that streams this passage's page image or audio/video clip."
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "media_type"
+        ],
+        "title": "KnowledgePassageResponse"
+      },
+      "KnowledgeSearchRequest": {
+        "properties": {
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query",
+            "description": "Text query."
+          },
+          "query_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Image",
+            "description": "Base64 image to search with (alone or with text)."
+          },
+          "query_video": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Video",
+            "description": "Base64 MP4 clip to search with. Text, image and video can be combined: they are embedded together as one query."
+          },
+          "budget": {
+            "type": "string",
+            "enum": [
+              "low",
+              "mid",
+              "high"
+            ],
+            "title": "Budget",
+            "description": "How deep the search ranks before `max_tokens` picks from it: low is fastest, high reaches the most candidates (as memory-bank recall's budget).",
+            "default": "mid"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Max Tokens",
+            "description": "What the results may weigh in all, as the tokens of their text. Hits come best first, each text hit with the passages around it joined into its `text`, as many as fit; the rest of the budget widens the best hits' context. An image, page or clip costs a small fixed amount plus its text.",
+            "default": 4096
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags",
+            "description": "Filter by document tags, matched as memory-bank recall matches memory tags."
+          },
+          "tags_match": {
+            "type": "string",
+            "enum": [
+              "any",
+              "all",
+              "any_strict",
+              "all_strict",
+              "exact"
+            ],
+            "title": "Tags Match",
+            "description": "How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality, excludes untagged). With 'exact' and no tags (or []), only untagged documents match.",
+            "default": "any"
+          },
+          "tag_groups": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TagGroupLeaf"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupAnd-Input"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupOr-Input"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TagGroupNot-Input"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Groups",
+            "description": "Compound tag filter using boolean groups, as memory-bank recall takes it. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. A leaf may set resolve='fuzzy' to match its tags against this bank's document tags by trigram similarity."
+          },
+          "document_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Ids"
+          },
+          "media_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "document",
+                    "image",
+                    "audio",
+                    "video",
+                    "text"
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Media Types"
+          },
+          "trace": {
+            "type": "boolean",
+            "title": "Trace",
+            "description": "Also return how the search ranked and what the token budget kept: every ranked candidate with its score step by step, the keyword words and their weights, and each phase's time.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "KnowledgeSearchRequest"
+      },
+      "KnowledgeSearchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeSearchResult"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeSearchTrace"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "KnowledgeSearchResponse",
+        "description": "Results best first. Ranks are what a caller compares: scores are fused per query and mean nothing\nacross responses, so a result does not carry one; ``trace: true`` returns them, step by step."
+      },
+      "KnowledgeSearchResult": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "document",
+              "image",
+              "audio",
+              "video",
+              "text"
+            ],
+            "title": "Knowledge Media Type"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page",
+            "description": "1-based page number (PDF pages and images)."
+          },
+          "start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Ms",
+            "description": "Window start, for audio and video."
+          },
+          "end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Ms"
+          },
+          "passage_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Url",
+            "description": "API path that streams this passage's page image or audio/video clip."
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "document_url": {
+            "type": "string",
+            "title": "Document Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "media_type",
+          "document_id",
+          "filename",
+          "tags",
+          "document_url"
+        ],
+        "title": "KnowledgeSearchResult"
+      },
+      "KnowledgeSearchTrace": {
+        "properties": {
+          "budget": {
+            "type": "string",
+            "enum": [
+              "low",
+              "mid",
+              "high"
+            ],
+            "title": "Budget"
+          },
+          "depth": {
+            "type": "integer",
+            "title": "Depth",
+            "description": "How many of the scored candidates the budget level keeps for max_tokens"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "title": "Max Tokens"
+          },
+          "tokens_used": {
+            "type": "integer",
+            "title": "Tokens Used",
+            "description": "What the results weigh, in tokens of their text"
+          },
+          "candidates": {
+            "type": "integer",
+            "title": "Candidates",
+            "description": "Passages the candidate searches found, before scoring"
+          },
+          "keyword_weight": {
+            "type": "number",
+            "title": "Keyword Weight",
+            "description": "The keyword score's share of the final score"
+          },
+          "keyword_terms": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Keyword Terms",
+            "description": "Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) as the query's rarest word is left out"
+          },
+          "timings_ms": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Timings Ms",
+            "description": "Each phase's time: open_bank, embed, store.search, context"
+          },
+          "candidate_searches": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeTraceArm"
+            },
+            "type": "array",
+            "title": "Candidate Searches",
+            "description": "Step 1: each candidate search's own list"
+          },
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeSearchTraceHit"
+            },
+            "type": "array",
+            "title": "Hits",
+            "description": "Steps 2-3: every candidate scored, best first"
+          },
+          "budget_steps": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeTraceBudgetStep"
+            },
+            "type": "array",
+            "title": "Budget Steps",
+            "description": "Step 4: how max_tokens was filled, in order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "budget",
+          "depth",
+          "max_tokens",
+          "tokens_used",
+          "candidates",
+          "keyword_weight",
+          "keyword_terms",
+          "timings_ms",
+          "candidate_searches",
+          "hits",
+          "budget_steps"
+        ],
+        "title": "KnowledgeSearchTrace"
+      },
+      "KnowledgeSearchTraceHit": {
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "description": "Its place among all scored candidates, from 1"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "returned",
+              "merged",
+              "over_budget",
+              "below_depth"
+            ],
+            "title": "Outcome",
+            "description": "returned: a result of its own; merged: inside a better hit's text (merged_into_rank); over_budget: nothing of it fit in max_tokens; below_depth: ranked past what the budget level keeps"
+          },
+          "result_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Rank",
+            "description": "Its place in `results`, from 1, when returned"
+          },
+          "merged_into_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merged Into Rank",
+            "description": "The rank of the hit whose text holds it"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "media_type": {
+            "type": "string",
+            "title": "Media Type"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          },
+          "start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Ms"
+          },
+          "end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Ms"
+          },
+          "snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snippet",
+            "description": "The start of the passage's own text"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "The final score it was ranked by; comparable within this search only"
+          },
+          "found_by": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Found By",
+            "description": "The candidate searches that found it: vector, extra_vectors, keyword"
+          },
+          "similarity": {
+            "type": "number",
+            "title": "Similarity",
+            "description": "Cosine similarity of the query and the passage's main vector"
+          },
+          "roles": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Roles",
+            "description": "Best similarity of each extra vector (band, page_text, unit, sentence)"
+          },
+          "passage_score": {
+            "type": "number",
+            "title": "Passage Score",
+            "description": "The similarity with the extra vectors mixed in"
+          },
+          "with_document": {
+            "type": "number",
+            "title": "With Document",
+            "description": "Averaged with its document's best passage score"
+          },
+          "keyword": {
+            "type": "number",
+            "title": "Keyword",
+            "description": "Keyword score: the summed IDF of the query words it contains"
+          },
+          "reference_page": {
+            "type": "boolean",
+            "title": "Reference Page",
+            "description": "Read as a reference list, and pushed down"
+          }
+        },
+        "type": "object",
+        "required": [
+          "rank",
+          "outcome",
+          "document_id",
+          "filename",
+          "index",
+          "media_type",
+          "score",
+          "found_by",
+          "similarity",
+          "roles",
+          "passage_score",
+          "with_document",
+          "keyword",
+          "reference_page"
+        ],
+        "title": "KnowledgeSearchTraceHit",
+        "description": "One ranked candidate: its score step by step, and what the token budget did with it."
+      },
+      "KnowledgeTagItem": {
+        "properties": {
+          "tag": {
+            "type": "string",
+            "title": "Tag"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "How many of the bank's documents carry this tag"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tag",
+          "count"
+        ],
+        "title": "KnowledgeTagItem"
+      },
+      "KnowledgeTagsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeTagItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Distinct tags matching `q`, past this page too"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "KnowledgeTagsResponse",
+        "description": "One page of a knowledge bank's document tags, most used first (as memory-bank `list_tags`)."
+      },
+      "KnowledgeTimeseriesBucket": {
+        "properties": {
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Time"
+          },
+          "documents": {
+            "type": "integer",
+            "title": "Documents",
+            "description": "Documents first written in this bucket."
+          },
+          "passages": {
+            "type": "integer",
+            "title": "Passages",
+            "description": "Passages those documents hold now."
+          }
+        },
+        "type": "object",
+        "required": [
+          "time",
+          "documents",
+          "passages"
+        ],
+        "title": "KnowledgeTimeseriesBucket"
+      },
+      "KnowledgeTimeseriesResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "period": {
+            "type": "string",
+            "enum": [
+              "1d",
+              "7d",
+              "30d",
+              "90d"
+            ],
+            "title": "Period"
+          },
+          "trunc": {
+            "type": "string",
+            "enum": [
+              "hour",
+              "day"
+            ],
+            "title": "Trunc"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeTimeseriesBucket"
+            },
+            "type": "array",
+            "title": "Buckets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "period",
+          "trunc",
+          "buckets"
+        ],
+        "title": "KnowledgeTimeseriesResponse"
+      },
+      "KnowledgeTraceArm": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "vector",
+              "extra_vectors",
+              "keyword"
+            ],
+            "title": "Name"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeTraceArmHit"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "results"
+        ],
+        "title": "KnowledgeTraceArm",
+        "description": "One candidate search, with its own list, best first."
+      },
+      "KnowledgeTraceArmHit": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score",
+            "description": "Its score in this search: cosine similarity, or ts_rank_cd for keywords"
+          }
+        },
+        "type": "object",
+        "required": [
+          "document_id",
+          "index",
+          "score"
+        ],
+        "title": "KnowledgeTraceArmHit"
+      },
+      "KnowledgeTraceBudgetStep": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "window",
+              "alone",
+              "media",
+              "merged",
+              "widened",
+              "skipped"
+            ],
+            "title": "Action",
+            "description": "window: a text hit with its free neighbours; alone: no room for its neighbours; media: an image, page or clip; merged: already inside a better hit's result; widened: leftover budget added a passage to a result (5 at most); skipped: nothing of it fit"
+          },
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "description": "The candidate's rank"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "first": {
+            "type": "integer",
+            "title": "First",
+            "description": "The window's first passage after this step"
+          },
+          "last": {
+            "type": "integer",
+            "title": "Last",
+            "description": "The window's last passage after this step"
+          },
+          "tokens": {
+            "type": "integer",
+            "title": "Tokens",
+            "description": "Tokens this step added"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Tokens used after this step"
+          },
+          "into_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Into Rank",
+            "description": "For merged: the rank of the hit whose result holds it"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action",
+          "rank",
+          "document_id",
+          "first",
+          "last",
+          "tokens",
+          "total"
+        ],
+        "title": "KnowledgeTraceBudgetStep",
+        "description": "One step of filling max_tokens, in order."
       },
       "LLMCallTrace": {
         "properties": {

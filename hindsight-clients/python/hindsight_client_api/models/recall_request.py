@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.budget import Budget
 from hindsight_client_api.models.include_options import IncludeOptions
-from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
+from hindsight_client_api.models.knowledge_search_request_tag_groups_inner import KnowledgeSearchRequestTagGroupsInner
 from hindsight_client_api.models.min_scores import MinScores
 from hindsight_client_api.models.rerank_options import RerankOptions
 from hindsight_client_api.models.temporal_window import TemporalWindow
@@ -43,7 +43,7 @@ class RecallRequest(BaseModel):
     include: Optional[IncludeOptions] = Field(default=None, description="Options for including additional data (entities are included by default)")
     tags: Optional[List[StrictStr]] = None
     tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality on the full scope, excludes untagged). With 'exact' and no tags (or []), the empty global scope is selected and only untagged memories match.")
-    tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
+    tag_groups: Optional[List[KnowledgeSearchRequestTagGroupsInner]] = None
     min_scores: Optional[MinScores] = None
     temporal_window: Optional[TemporalWindow] = None
     __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "rerank", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups", "min_scores", "temporal_window"]
@@ -179,7 +179,7 @@ class RecallRequest(BaseModel):
             "include": IncludeOptions.from_dict(obj["include"]) if obj.get("include") is not None else None,
             "tags": obj.get("tags"),
             "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any',
-            "tag_groups": [MentalModelTriggerInputTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None,
+            "tag_groups": [KnowledgeSearchRequestTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None,
             "min_scores": MinScores.from_dict(obj["min_scores"]) if obj.get("min_scores") is not None else None,
             "temporal_window": TemporalWindow.from_dict(obj["temporal_window"]) if obj.get("temporal_window") is not None else None
         })

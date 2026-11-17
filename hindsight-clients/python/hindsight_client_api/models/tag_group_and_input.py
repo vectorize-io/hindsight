@@ -26,7 +26,7 @@ class TagGroupAndInput(BaseModel):
     """
     Compound AND group: all child filters must match.
     """ # noqa: E501
-    var_and: List[MentalModelTriggerInputTagGroupsInner] = Field(alias="and")
+    var_and: List[KnowledgeSearchRequestTagGroupsInner] = Field(alias="and")
     __properties: ClassVar[List[str]] = ["and"]
 
     model_config = ConfigDict(
@@ -87,11 +87,11 @@ class TagGroupAndInput(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "and": [MentalModelTriggerInputTagGroupsInner.from_dict(_item) for _item in obj["and"]] if obj.get("and") is not None else None
+            "and": [KnowledgeSearchRequestTagGroupsInner.from_dict(_item) for _item in obj["and"]] if obj.get("and") is not None else None
         })
         return _obj
 
-from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
+from hindsight_client_api.models.knowledge_search_request_tag_groups_inner import KnowledgeSearchRequestTagGroupsInner
 # TODO: Rewrite to not use raise_errors
 TagGroupAndInput.model_rebuild(raise_errors=False)
 
