@@ -20,7 +20,11 @@ from hindsight_api.alembic._dialect import run_for_dialect
 revision: str = "kbtok1a2b3c4"
 down_revision: str | Sequence[str] | None = "z1u2v3w4x5y6"
 branch_labels: str | Sequence[str] | None = None
-depends_on: str | Sequence[str] | None = None
+# The KB tables are created by k7b1c2d3e4f5, which is on a different branch from
+# this migration's down_revision chain. Without this, a from-scratch multi-head
+# upgrade can run this ALTER before that CREATE ("relation kb_documents does not
+# exist"). depends_on forces the CREATE to apply first.
+depends_on: str | Sequence[str] | None = "k7b1c2d3e4f5"
 
 
 def _pg_schema_prefix() -> str:
