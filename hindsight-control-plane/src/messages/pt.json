@@ -478,6 +478,9 @@
     "clientsTitle": "Banco de memória",
     "clientsDescription": "Configurações do banco todo: seus aliases, seu fuso horário e o que apps e agentes podem acessar.",
     "mcpFailedToSave": "Falha ao salvar configurações MCP",
+    "knowledgeSectionTitle": "Bancos de conhecimento",
+    "knowledgeSectionDescription": "Os bancos de conhecimento que o reflect também busca neste banco, e como os busca.",
+    "knowledgeFailedToSave": "Falha ao salvar as configurações dos bancos de conhecimento",
     "auditEnabledLabel": "Ativar registo de auditoria",
     "auditEnabledDescription": "Registar as operações de retain, recall e reflect deste banco. Substitui a predefinição do servidor apenas para este banco.",
     "auditServerDefault": "Predefinição do servidor ({state})",
@@ -693,8 +696,17 @@
         "retain_optional_fact_dimensions": "Permitiria ao modelo deixar \"quando\", \"onde\", \"quem\" e \"por quê\" vazios em vez de escrever \"N/A\"."
       }
     },
-    "linkedKnowledgeBanksLabel": "Bancos de conhecimento",
-    "linkedKnowledgeBanksDescription": "O reflect deste banco também pesquisa os bancos de conhecimento vinculados, e seus documentos prevalecem sobre memórias conflitantes. O recall e os modelos mentais não os leem."
+    "linkedKnowledgeBanksLabel": "Bancos vinculados",
+    "linkedKnowledgeBanksDescription": "O reflect deste banco também pesquisa os bancos de conhecimento vinculados, e seus documentos prevalecem sobre memórias conflitantes. O recall e os modelos mentais não os leem.",
+    "kbSearchMediaTypesLabel": "Tipos de documento que o reflect lê",
+    "kbSearchMediaTypesDescription": "Os tipos de documentos vinculados que a busca do reflect pode retornar. Todos marcados significa sem limite.",
+    "kbSearchApplyTagsLabel": "Filtrar pelas tags do reflect",
+    "kbSearchApplyTagsDescription": "Um reflect com tags só lê os documentos vinculados que essas tags permitem, com as mesmas regras das suas memórias. Desligado: as tags filtram só memórias.",
+    "kbMediaType_document": "PDF e Office",
+    "kbMediaType_image": "Imagens",
+    "kbMediaType_audio": "Áudio",
+    "kbMediaType_video": "Vídeo",
+    "kbMediaType_text": "Texto"
   },
   "bankOperations": {
     "title": "Operações em Segundo Plano",
@@ -2561,8 +2573,9 @@
       "options": "Opções",
       "tags": "Tags",
       "tagsMatch": "Correspondência de tags",
-      "tagsAny": "Qualquer",
-      "tagsAll": "Todas",
+      "tagGroups": "Grupos de tags (JSON)",
+      "tagGroupsHelp": "Filtros booleanos de tags, combinados com E, como o recall de memórias os recebe. Uma folha pode definir \"resolve\": \"fuzzy\".",
+      "tagGroupsInvalid": "Os grupos de tags devem ser JSON válido.",
       "noResults": "Nenhum trecho corresponde a esta pesquisa.",
       "idle": "Pesquise neste banco com texto, uma imagem, um clipe de vídeo ou qualquer combinação.",
       "openPassage": "Abrir no documento",

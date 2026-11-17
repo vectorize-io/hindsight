@@ -9797,7 +9797,9 @@ class MemoryEngine(MemoryEngineInterface):
         await self._require_bank_exists(bank_id)
 
         # Resolve fuzzy tag tokens into real tags before anything builds SQL. Runs after
-        # the validator so a validator-supplied tag_groups is resolved too.
+        # the validator so a validator-supplied tag_groups is resolved too. The linked knowledge
+        # banks get the groups as asked: each resolves fuzzy leaves against its own tags.
+        requested_tag_groups = tag_groups
         _t0 = time.perf_counter()
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
         _d = time.perf_counter() - _t0
@@ -9871,7 +9873,13 @@ class MemoryEngine(MemoryEngineInterface):
             # the finally below when the recall fails before awaiting it.
             if include_documents:
                 from ..knowledge.service import documents_for_memory_bank
+                from ..knowledge.store import SearchFilters
 
+                documents_filters = SearchFilters(media_types=budget_config_dict.get("reflect_kb_search_media_types"))
+                if budget_config_dict.get("reflect_kb_search_apply_tags", True):
+                    documents_filters = replace(
+                        documents_filters, tags=tags, tags_match=tags_match, tag_groups=requested_tag_groups
+                    )
                 documents_task = asyncio.create_task(
                     documents_for_memory_bank(
                         self,
@@ -9879,6 +9887,7 @@ class MemoryEngine(MemoryEngineInterface):
                         list(budget_config_dict.get("knowledge_banks") or []),
                         query,
                         max_tokens,
+                        documents_filters,
                         request_context,
                     )
                 )
@@ -16273,7 +16282,10 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Resolve fuzzy tag tokens once, here: every tool the agentic loop runs
         # (recall, mental-model search, source-fact reads) filters on these same groups,
-        # and each must see the same resolved tags.
+        # and each must see the same resolved tags. Recall gets them as asked: it resolves
+        # them the same way for memories, and the linked knowledge banks resolve them
+        # against their own tags.
+        requested_tag_groups = tag_groups
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
 
         reflect_start = time.perf_counter()
@@ -16481,7 +16493,7 @@ class MemoryEngine(MemoryEngineInterface):
                 max_tokens=max_tokens,
                 tags=tags,
                 tags_match=tags_match,
-                tag_groups=tag_groups,
+                tag_groups=requested_tag_groups,
                 max_chunk_tokens=max_chunk_tokens,
                 fact_types=recall_fact_types if fact_types is not None else None,
                 include_chunks=effective_recall_include_chunks,
@@ -16490,6 +16502,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # Linked knowledge banks are read by an interactive reflect only: a mental model
                 # refresh would fold the documents into the bank's own knowledge.
                 include_documents=not is_refresh,
+                kb_images=kb_images,
             )
 
         async def expand_fn(memory_ids: list[str], depth: str) -> dict[str, Any]:
@@ -16544,6 +16557,14 @@ class MemoryEngine(MemoryEngineInterface):
         # closes it may raise, or the span is left open.
         reflect_llm = self._llm_for_reflect_operation(_operation_label).with_config(
             resolved_reflect_config, bank_id=bank_id, operation=_operation_label
+        )
+        # The pictures behind knowledge-bank hits go to a model known to read images, never to one
+        # that might not (None: a gateway that cannot tell), and never into a page refresh. Server
+        # settings, not per bank: what the model is shown costs the operator.
+        kb_images = (
+            config.reflect_kb_search_max_images
+            if not is_refresh and config.reflect_kb_search_images and reflect_llm.supports_vision() is True
+            else 0
         )
 
         # Run the agent with parent span for reflect operation (skip if called from another operation)

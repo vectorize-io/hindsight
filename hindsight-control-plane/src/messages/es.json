@@ -478,6 +478,9 @@
     "clientsTitle": "Banco de memoria",
     "clientsDescription": "Ajustes de todo el banco: sus alias, su zona horaria y a qué pueden acceder apps y agentes.",
     "mcpFailedToSave": "Error al guardar la configuración de MCP",
+    "knowledgeSectionTitle": "Bancos de conocimiento",
+    "knowledgeSectionDescription": "Los bancos de conocimiento que reflect también busca en este banco, y cómo los busca.",
+    "knowledgeFailedToSave": "No se pudo guardar la configuración de bancos de conocimiento",
     "auditEnabledLabel": "Activar registro de auditoría",
     "auditEnabledDescription": "Registrar las operaciones de retain, recall y reflect de este banco. Anula el valor predeterminado del servidor solo para este banco.",
     "auditServerDefault": "Valor predeterminado del servidor ({state})",
@@ -693,8 +696,17 @@
         "retain_optional_fact_dimensions": "Permitiría al modelo dejar vacíos «cuándo», «dónde», «quién» y «por qué» en lugar de escribir «N/A»."
       }
     },
-    "linkedKnowledgeBanksLabel": "Bancos de conocimiento",
-    "linkedKnowledgeBanksDescription": "El reflect de este banco también busca en los bancos de conocimiento vinculados, y sus documentos prevalecen sobre los recuerdos que los contradicen. El recall y los modelos mentales no los leen."
+    "linkedKnowledgeBanksLabel": "Bancos vinculados",
+    "linkedKnowledgeBanksDescription": "El reflect de este banco también busca en los bancos de conocimiento vinculados, y sus documentos prevalecen sobre los recuerdos que los contradicen. El recall y los modelos mentales no los leen.",
+    "kbSearchMediaTypesLabel": "Tipos de documento que lee reflect",
+    "kbSearchMediaTypesDescription": "Los tipos de documentos vinculados que puede devolver la búsqueda de reflect. Todos marcados significa sin límite.",
+    "kbSearchApplyTagsLabel": "Filtrar por las etiquetas de reflect",
+    "kbSearchApplyTagsDescription": "Un reflect con etiquetas solo lee los documentos vinculados que esas etiquetas permiten, con las mismas reglas que sus memorias. Desactivado: las etiquetas solo filtran memorias.",
+    "kbMediaType_document": "PDF y Office",
+    "kbMediaType_image": "Imágenes",
+    "kbMediaType_audio": "Audio",
+    "kbMediaType_video": "Vídeo",
+    "kbMediaType_text": "Texto"
   },
   "bankOperations": {
     "title": "Operaciones en segundo plano",
@@ -2561,8 +2573,9 @@
       "options": "Opciones",
       "tags": "Etiquetas",
       "tagsMatch": "Coincidencia de etiquetas",
-      "tagsAny": "Cualquiera",
-      "tagsAll": "Todas",
+      "tagGroups": "Grupos de etiquetas (JSON)",
+      "tagGroupsHelp": "Filtros booleanos de etiquetas, combinados con Y, como los toma recall de memorias. Una hoja puede usar \"resolve\": \"fuzzy\".",
+      "tagGroupsInvalid": "Los grupos de etiquetas deben ser JSON válido.",
       "noResults": "Ningún pasaje coincide con esta búsqueda.",
       "idle": "Busca en este banco con texto, una imagen, un clip de vídeo o cualquier combinación.",
       "openPassage": "Abrir en el documento",

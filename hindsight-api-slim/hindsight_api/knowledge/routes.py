@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import get_config
 from ..engine.aiohttp_session import UpstreamHTTPError
+from ..engine.search.tags import TagGroup, TagsMatch
 from ..extensions.operation_validator import OperationValidationError
 from ..models import RequestContext
 from .bank_config import KnowledgeBankOverrides, KnowledgeBankSettings
@@ -209,8 +210,21 @@ class KnowledgeSearchRequest(BaseModel):
         "text hit with the passages around it joined into its `text`, as many as fit; the rest of the budget widens the "
         "best hits' context. An image, page or clip costs a small fixed amount plus its text.",
     )
-    tags: list[str] | None = None
-    tags_match: Literal["any", "all"] = Field(default="any", title="Knowledge Tags Match")
+    tags: list[str] | None = Field(
+        default=None, description="Filter by document tags, matched as memory-bank recall matches memory tags."
+    )
+    tags_match: TagsMatch = Field(
+        default="any",
+        description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), "
+        "'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), "
+        "'exact' (set-equality, excludes untagged). With 'exact' and no tags (or []), only untagged documents match.",
+    )
+    tag_groups: list[TagGroup] | None = Field(
+        default=None,
+        description="Compound tag filter using boolean groups, as memory-bank recall takes it. Groups in the list "
+        "are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. A leaf "
+        "may set resolve='fuzzy' to match its tags against this bank's document tags by trigram similarity.",
+    )
     document_ids: list[str] | None = None
     media_types: list[Literal["document", "image", "audio", "video", "text"]] | None = Field(
         default=None, title="Knowledge Media Types"
@@ -220,6 +234,20 @@ class KnowledgeSearchRequest(BaseModel):
         description="Also return how the search ranked and what the token budget kept: every ranked "
         "candidate with its score step by step, the keyword words and their weights, and each phase's time.",
     )
+
+
+class KnowledgeTagItem(BaseModel):
+    tag: str
+    count: int = Field(description="How many of the bank's documents carry this tag")
+
+
+class KnowledgeTagsResponse(BaseModel):
+    """One page of a knowledge bank's document tags, most used first (as memory-bank `list_tags`)."""
+
+    items: list[KnowledgeTagItem]
+    total: int = Field(description="Distinct tags matching `q`, past this page too")
+    limit: int
+    offset: int
 
 
 class KnowledgeSearchResult(KnowledgePassageResponse):
@@ -825,6 +853,34 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
         return KnowledgeDeletedResponse()
 
     @router.get(
+        "/{bank_id}/tags",
+        response_model=KnowledgeTagsResponse,
+        summary="List a knowledge bank's document tags, with how many documents carry each",
+        operation_id="list_knowledge_bank_tags",
+    )
+    async def list_tags(
+        bank_id: str,
+        request: Request,
+        q: str | None = Query(
+            default=None,
+            description="Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.",
+        ),
+        limit: int = Query(default=100, ge=0, le=1000),
+        offset: int = Query(default=0, ge=0),
+        rc: RequestContext = Depends(get_request_context),
+    ) -> KnowledgeTagsResponse:
+        try:
+            page = await service(request).list_tags(bank_id, rc, pattern=q, limit=limit, offset=offset)
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return KnowledgeTagsResponse(
+            items=[KnowledgeTagItem(tag=t.tag, count=t.documents) for t in page.tags],
+            total=page.total,
+            limit=limit,
+            offset=offset,
+        )
+
+    @router.get(
         "/{bank_id}/documents/{document_id}/file",
         summary="Download a document's original file",
         operation_id="get_knowledge_document_file",
@@ -878,6 +934,7 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
         filters = SearchFilters(
             tags=body.tags,
             tags_match=body.tags_match,
+            tag_groups=body.tag_groups,
             document_ids=body.document_ids,
             media_types=list(body.media_types) if body.media_types else None,
         )

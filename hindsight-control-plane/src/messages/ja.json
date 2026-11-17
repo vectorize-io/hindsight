@@ -478,6 +478,9 @@
     "clientsTitle": "メモリバンク",
     "clientsDescription": "バンク全体の設定：エイリアス、タイムゾーン、アプリやエージェントがアクセスできる範囲。",
     "mcpFailedToSave": "MCP設定の保存に失敗しました",
+    "knowledgeSectionTitle": "ナレッジバンク",
+    "knowledgeSectionDescription": "このバンクの reflect が追加で検索するナレッジバンクと、その検索方法。",
+    "knowledgeFailedToSave": "ナレッジバンクの設定を保存できませんでした",
     "auditEnabledLabel": "監査ログを有効化",
     "auditEnabledDescription": "このバンクの retain、recall、reflect の各操作を記録します。このバンクに限りサーバーの既定値を上書きします。",
     "auditServerDefault": "サーバー既定値（{state}）",
@@ -693,8 +696,17 @@
         "retain_optional_fact_dimensions": "「いつ」「どこで」「誰が」「なぜ」を「N/A」と書かずに空のままにできるようにします。"
       }
     },
-    "linkedKnowledgeBanksLabel": "ナレッジバンク",
-    "linkedKnowledgeBanksDescription": "このバンクのリフレクトは、リンクしたナレッジバンクも検索し、そのドキュメントを矛盾する記憶より優先します。リコールとメンタルモデルはドキュメントを読みません。"
+    "linkedKnowledgeBanksLabel": "リンクされたバンク",
+    "linkedKnowledgeBanksDescription": "このバンクのリフレクトは、リンクしたナレッジバンクも検索し、そのドキュメントを矛盾する記憶より優先します。リコールとメンタルモデルはドキュメントを読みません。",
+    "kbSearchMediaTypesLabel": "reflect が読むドキュメントの種類",
+    "kbSearchMediaTypesDescription": "reflect の検索が返してよいリンク先ドキュメントの種類。すべてチェックすると制限なし。",
+    "kbSearchApplyTagsLabel": "reflect のタグで絞り込む",
+    "kbSearchApplyTagsDescription": "タグ付きの reflect は、メモリと同じルールで、そのタグが許すリンク先ドキュメントだけを読みます。オフ: タグはメモリだけを絞り込みます。",
+    "kbMediaType_document": "PDF・Office",
+    "kbMediaType_image": "画像",
+    "kbMediaType_audio": "音声",
+    "kbMediaType_video": "動画",
+    "kbMediaType_text": "テキスト"
   },
   "bankOperations": {
     "title": "バックグラウンド操作",
@@ -2561,8 +2573,9 @@
       "options": "オプション",
       "tags": "タグ",
       "tagsMatch": "タグの一致条件",
-      "tagsAny": "いずれか",
-      "tagsAll": "すべて",
+      "tagGroups": "タググループ (JSON)",
+      "tagGroupsHelp": "メモリの recall と同じブール型のタグフィルター。すべて AND で結合されます。リーフでは \"resolve\": \"fuzzy\" を指定できます。",
+      "tagGroupsInvalid": "タググループは有効な JSON である必要があります。",
       "noResults": "この検索に一致するパッセージはありません。",
       "idle": "テキスト、画像、動画クリップ、またはその組み合わせでこのバンクを検索します。",
       "openPassage": "ドキュメントで開く",

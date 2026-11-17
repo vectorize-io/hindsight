@@ -120,9 +120,19 @@ type MCPEdits = {
   // server default; read from the overrides so saving the tool list never
   // pins the bank to whatever zone the server happens to resolve today.
   default_timezone: string | null;
+};
+
+// The Knowledge Banks section: what this bank links, and how reflect searches it.
+type KnowledgeEdits = {
   // Knowledge banks reflect also searches; null = none linked.
   knowledge_banks: string[] | null;
+  // How reflect searches them. Read from the overrides: null = inherit the server default.
+  reflect_kb_search_media_types: string[] | null;
+  reflect_kb_search_apply_tags: boolean | null;
 };
+
+const KB_MEDIA_TYPES = ["document", "image", "audio", "video", "text"] as const;
+const KB_SEARCH_FIELDS = ["reflect_kb_search_media_types", "reflect_kb_search_apply_tags"] as const;
 
 type GeminiSafetySetting = {
   category: string;
@@ -381,7 +391,17 @@ function mcpSlice(config: Record<string, any>, overrides: Record<string, any>): 
   return {
     mcp_enabled_tools: normalizeMcpTools(config.mcp_enabled_tools),
     default_timezone: overrides.default_timezone ?? null,
+  };
+}
+
+function knowledgeSlice(
+  config: Record<string, any>,
+  overrides: Record<string, any>
+): KnowledgeEdits {
+  return {
     knowledge_banks: config.knowledge_banks?.length ? config.knowledge_banks : null,
+    reflect_kb_search_media_types: overrides.reflect_kb_search_media_types ?? null,
+    reflect_kb_search_apply_tags: overrides.reflect_kb_search_apply_tags ?? null,
   };
 }
 
@@ -495,6 +515,7 @@ export function BankConfigView() {
   const [reflectOptionsSaving, setReflectOptionsSaving] = useState(false);
   const [reflectOptionsError, setReflectOptionsError] = useState<string | null>(null);
   const [mcpEdits, setMcpEdits] = useState<MCPEdits>(mcpSlice({}, {}));
+  const [knowledgeEdits, setKnowledgeEdits] = useState<KnowledgeEdits>(knowledgeSlice({}, {}));
   const [geminiEdits, setGeminiEdits] = useState<GeminiEdits>(geminiSlice({}));
   const [auditEdits, setAuditEdits] = useState<AuditEdits>(auditSlice({}));
   const [docStorageEdits, setDocStorageEdits] = useState<DocStorageEdits>(docStorageSlice({}));
@@ -516,6 +537,7 @@ export function BankConfigView() {
   const [observationsSaving, setObservationsSaving] = useState(false);
   const [reflectSaving, setReflectSaving] = useState(false);
   const [mcpSaving, setMcpSaving] = useState(false);
+  const [knowledgeSaving, setKnowledgeSaving] = useState(false);
   const [geminiSaving, setGeminiSaving] = useState(false);
   const [securityPrivacySaving, setSecurityPrivacySaving] = useState(false);
   const [recallSaving, setRecallSaving] = useState(false);
@@ -524,6 +546,7 @@ export function BankConfigView() {
   const [observationsError, setObservationsError] = useState<string | null>(null);
   const [reflectError, setReflectError] = useState<string | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);
+  const [knowledgeError, setKnowledgeError] = useState<string | null>(null);
   const [geminiError, setGeminiError] = useState<string | null>(null);
   const [securityPrivacyError, setSecurityPrivacyError] = useState<string | null>(null);
   const [recallError, setRecallError] = useState<string | null>(null);
@@ -549,6 +572,11 @@ export function BankConfigView() {
   const mcpDirty = useMemo(
     () => JSON.stringify(mcpEdits) !== JSON.stringify(mcpSlice(baseConfig, baseOverrides)),
     [mcpEdits, baseConfig, baseOverrides]
+  );
+  const knowledgeDirty = useMemo(
+    () =>
+      JSON.stringify(knowledgeEdits) !== JSON.stringify(knowledgeSlice(baseConfig, baseOverrides)),
+    [knowledgeEdits, baseConfig, baseOverrides]
   );
   const geminiDirty = useMemo(
     () => JSON.stringify(geminiEdits) !== JSON.stringify(geminiSlice(baseConfig)),
@@ -598,6 +626,7 @@ export function BankConfigView() {
       setReflectEdits(prof);
       setReflectOptionsForm(reflectOptionsSlice(cfg));
       setMcpEdits(mcpSlice(cfg, overrides));
+      setKnowledgeEdits(knowledgeSlice(cfg, overrides));
       setGeminiEdits(geminiSlice(cfg));
       setAuditEdits(auditSlice(overrides));
       setDocStorageEdits(docStorageSlice(overrides));
@@ -700,19 +729,13 @@ export function BankConfigView() {
     setMcpSaving(true);
     setMcpError(null);
     try {
-      // knowledge_banks only when the feature is on: otherwise the field is not ours to touch.
-      const { knowledge_banks, ...rest } = mcpEdits;
-      const response = await client.updateBankConfig(
-        bankId,
-        features?.knowledge_banks ? mcpEdits : rest
-      );
+      const response = await client.updateBankConfig(bankId, mcpEdits);
       // The resolved zone comes back from the server: a cleared override falls
       // back to a server default this page does not otherwise know.
       setBaseConfig((prev) => ({
         ...prev,
         mcp_enabled_tools: mcpEdits.mcp_enabled_tools,
         default_timezone: response.config?.default_timezone,
-        knowledge_banks: features?.knowledge_banks ? knowledge_banks : prev.knowledge_banks,
       }));
       setBaseOverrides((prev) => {
         const next = { ...prev };
@@ -724,6 +747,28 @@ export function BankConfigView() {
       setMcpError(err.message || t("mcpFailedToSave"));
     } finally {
       setMcpSaving(false);
+    }
+  };
+
+  const saveKnowledge = async () => {
+    if (!bankId) return;
+    setKnowledgeSaving(true);
+    setKnowledgeError(null);
+    try {
+      await client.updateBankConfig(bankId, knowledgeEdits);
+      setBaseConfig((prev) => ({ ...prev, knowledge_banks: knowledgeEdits.knowledge_banks }));
+      setBaseOverrides((prev) => {
+        const next = { ...prev };
+        for (const field of KB_SEARCH_FIELDS) {
+          if (knowledgeEdits[field] === null) delete next[field];
+          else next[field] = knowledgeEdits[field];
+        }
+        return next;
+      });
+    } catch (err: any) {
+      setKnowledgeError(err.message || t("knowledgeFailedToSave"));
+    } finally {
+      setKnowledgeSaving(false);
     }
   };
 
@@ -1312,19 +1357,6 @@ export function BankConfigView() {
           onSave={saveMCP}
         >
           <BankAliasRows bankId={bankId} />
-          {features?.knowledge_banks && (
-            <FieldRow
-              label={t("linkedKnowledgeBanksLabel")}
-              description={t("linkedKnowledgeBanksDescription")}
-            >
-              <LinkedKnowledgeBanksPicker
-                value={mcpEdits.knowledge_banks ?? []}
-                onChange={(ids) =>
-                  setMcpEdits((prev) => ({ ...prev, knowledge_banks: ids.length ? ids : null }))
-                }
-              />
-            </FieldRow>
-          )}
           <FieldRow label={t("defaultTimezoneLabel")} description={t("defaultTimezoneDescription")}>
             <Input
               list="bank-config-timezones"
@@ -1366,6 +1398,41 @@ export function BankConfigView() {
             />
           )}
         </ConfigSection>
+
+        {/* Knowledge Banks Section — the knowledge banks reflect reads, and how it searches them.
+            Only when the feature is on: otherwise these fields are not ours to touch. */}
+        {features?.knowledge_banks && (
+          <ConfigSection
+            title={t("knowledgeSectionTitle")}
+            description={t("knowledgeSectionDescription")}
+            error={knowledgeError}
+            dirty={knowledgeDirty}
+            saving={knowledgeSaving}
+            onSave={saveKnowledge}
+          >
+            <FieldRow
+              label={t("linkedKnowledgeBanksLabel")}
+              description={t("linkedKnowledgeBanksDescription")}
+            >
+              <LinkedKnowledgeBanksPicker
+                value={knowledgeEdits.knowledge_banks ?? []}
+                onChange={(ids) =>
+                  setKnowledgeEdits((prev) => ({
+                    ...prev,
+                    knowledge_banks: ids.length ? ids : null,
+                  }))
+                }
+              />
+            </FieldRow>
+            {knowledgeEdits.knowledge_banks && (
+              <ReflectKbSearchRows
+                values={knowledgeEdits}
+                resolved={baseConfig}
+                onChange={(patch) => setKnowledgeEdits((prev) => ({ ...prev, ...patch }))}
+              />
+            )}
+          </ConfigSection>
+        )}
 
         {/* Security & Privacy Section — audit logging + document-text storage */}
         <ConfigSection
@@ -1557,6 +1624,73 @@ function getExtractionModes(t: (key: string) => string): { value: string; label:
   ];
 }
 const INHERIT_SENTINEL = "__inherit__";
+
+type KbSearchEdits = Pick<KnowledgeEdits, (typeof KB_SEARCH_FIELDS)[number]>;
+
+/** How reflect searches the linked knowledge banks: each row inherits the server default until set. */
+function ReflectKbSearchRows({
+  values,
+  resolved,
+  onChange,
+}: {
+  values: KbSearchEdits;
+  resolved: Record<string, any>;
+  onChange: (patch: Partial<KbSearchEdits>) => void;
+}) {
+  const t = useTranslations("bankConfig");
+  const mediaTypes: string[] = values.reflect_kb_search_media_types ??
+    resolved.reflect_kb_search_media_types ?? [...KB_MEDIA_TYPES];
+  const toggleMediaType = (type: string, on: boolean) => {
+    const next = KB_MEDIA_TYPES.filter((m) => (m === type ? on : mediaTypes.includes(m)));
+    // Every type ticked is the same as no limit: clear the override rather than pin the list.
+    onChange({
+      reflect_kb_search_media_types: next.length === KB_MEDIA_TYPES.length ? null : next,
+    });
+  };
+  const triState = (field: "reflect_kb_search_apply_tags") => (
+    <Select
+      value={values[field] === null ? INHERIT_SENTINEL : String(values[field])}
+      onValueChange={(v) => onChange({ [field]: v === INHERIT_SENTINEL ? null : v === "true" })}
+    >
+      <SelectTrigger>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={INHERIT_SENTINEL}>
+          {t("auditServerDefault", {
+            state: resolved[field] === false ? t("disabled") : t("enabled"),
+          })}
+        </SelectItem>
+        <SelectItem value="true">{t("enabled")}</SelectItem>
+        <SelectItem value="false">{t("disabled")}</SelectItem>
+      </SelectContent>
+    </Select>
+  );
+  return (
+    <>
+      <FieldRow
+        label={t("kbSearchMediaTypesLabel")}
+        description={t("kbSearchMediaTypesDescription")}
+      >
+        <div className="flex flex-wrap items-center gap-3 justify-end">
+          {KB_MEDIA_TYPES.map((type) => (
+            <label key={type} className="flex items-center gap-1.5 text-sm">
+              <Checkbox
+                checked={mediaTypes.includes(type)}
+                disabled={mediaTypes.length === 1 && mediaTypes.includes(type)}
+                onCheckedChange={(on) => toggleMediaType(type, on === true)}
+              />
+              {t(`kbMediaType_${type}`)}
+            </label>
+          ))}
+        </div>
+      </FieldRow>
+      <FieldRow label={t("kbSearchApplyTagsLabel")} description={t("kbSearchApplyTagsDescription")}>
+        {triState("reflect_kb_search_apply_tags")}
+      </FieldRow>
+    </>
+  );
+}
 
 function RetainStrategyForm({
   values,

@@ -7240,6 +7240,20 @@ components:
             type: string
           nullable: true
           type: array
+        reflect_kb_search_media_types:
+          items:
+            enum:
+            - document
+            - image
+            - audio
+            - video
+            - text
+            type: string
+          nullable: true
+          type: array
+        reflect_kb_search_apply_tags:
+          nullable: true
+          type: boolean
         consolidation_llm_batch_size:
           nullable: true
           type: integer

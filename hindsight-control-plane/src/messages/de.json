@@ -478,6 +478,9 @@
     "clientsTitle": "Speicherbank",
     "clientsDescription": "Bankweite Einstellungen: Aliase, Zeitzone und worauf Apps und Agenten zugreifen können.",
     "mcpFailedToSave": "MCP-Einstellungen konnten nicht gespeichert werden",
+    "knowledgeSectionTitle": "Wissensbanken",
+    "knowledgeSectionDescription": "Die Wissensbanken, die Reflect auf dieser Bank zusätzlich durchsucht, und wie es sie durchsucht.",
+    "knowledgeFailedToSave": "Einstellungen der Wissensbanken konnten nicht gespeichert werden",
     "auditEnabledLabel": "Audit-Protokollierung aktivieren",
     "auditEnabledDescription": "Retain-, Recall- und Reflect-Operationen für diesen Speicher aufzeichnen. Überschreibt die Server-Voreinstellung nur für diesen Speicher.",
     "auditServerDefault": "Server-Voreinstellung ({state})",
@@ -693,8 +696,17 @@
         "retain_optional_fact_dimensions": "Würde dem Modell erlauben, „wann“, „wo“, „wer“ und „warum“ leer zu lassen, statt „N/A“ zu schreiben."
       }
     },
-    "linkedKnowledgeBanksLabel": "Wissensbänke",
-    "linkedKnowledgeBanksDescription": "Reflect auf dieser Bank durchsucht auch die verknüpften Wissensbänke, und deren Dokumente haben Vorrang vor widersprechenden Erinnerungen. Recall und Mental Models lesen sie nicht."
+    "linkedKnowledgeBanksLabel": "Verknüpfte Banken",
+    "linkedKnowledgeBanksDescription": "Reflect auf dieser Bank durchsucht auch die verknüpften Wissensbänke, und deren Dokumente haben Vorrang vor widersprechenden Erinnerungen. Recall und Mental Models lesen sie nicht.",
+    "kbSearchMediaTypesLabel": "Dokumenttypen für Reflect",
+    "kbSearchMediaTypesDescription": "Welche Arten verknüpfter Dokumente die Suche von Reflect zurückgeben darf. Alle angehakt bedeutet keine Begrenzung.",
+    "kbSearchApplyTagsLabel": "Nach den Tags des Reflect filtern",
+    "kbSearchApplyTagsDescription": "Ein Reflect mit Tags liest nur verknüpfte Dokumente, die diese Tags erlauben, nach denselben Regeln wie seine Erinnerungen. Aus: Tags filtern nur Erinnerungen.",
+    "kbMediaType_document": "PDF & Office",
+    "kbMediaType_image": "Bilder",
+    "kbMediaType_audio": "Audio",
+    "kbMediaType_video": "Video",
+    "kbMediaType_text": "Text"
   },
   "bankOperations": {
     "title": "Hintergrundoperationen",
@@ -2561,8 +2573,9 @@
       "options": "Optionen",
       "tags": "Tags",
       "tagsMatch": "Tag-Abgleich",
-      "tagsAny": "Beliebig",
-      "tagsAll": "Alle",
+      "tagGroups": "Tag-Gruppen (JSON)",
+      "tagGroupsHelp": "Boolesche Tag-Filter, per UND verknüpft, wie bei der Memory-Recall-Suche. Ein Blatt kann \"resolve\": \"fuzzy\" setzen.",
+      "tagGroupsInvalid": "Tag-Gruppen müssen gültiges JSON sein.",
       "noResults": "Keine Abschnitte passen zu dieser Suche.",
       "idle": "Durchsuche diese Bank mit Text, einem Bild, einem Videoclip oder einer beliebigen Kombination.",
       "openPassage": "Im Dokument öffnen",

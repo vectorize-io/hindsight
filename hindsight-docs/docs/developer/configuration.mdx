@@ -2657,6 +2657,18 @@ export HINDSIGHT_API_OBSERVATIONS_MISSION="Observations are recurring patterns i
 | `HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS` | Token budget for source facts in `search_observations` during reflect. `-1` disables source facts (default), `0` enables with no limit, `>0` enables with a token budget. Hierarchical — can be overridden per bank via config API. | `-1` |
 | `HINDSIGHT_API_REFLECT_DEFAULT_OPTIONS` | Default reflect options as a JSON object, applied whenever a reflect request leaves the option unset. Mental-model refreshes do not read it — they take these settings from their own trigger, defaulted per bank by `page_default_trigger`, and always get only the best-ranked mental model in full. `reflect_search_observations_max_tokens` sets the budget for the `search_observations` tool (a smaller budget drops the lowest-ranked observations and shrinks the reflect context); `reflect_search_observations_include_entities` turns off the resolved entity names attached to each observation, which can be more than half the tool payload; `reflect_search_mental_models_max_tokens` sets the budget for the mental models `search_mental_models` returns in full (default 16000; the best match is always in full, the others that do not fit come back as a snippet the model can read). E.g. `{"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}`. Hierarchical — can be overridden per bank via config API. | - |
 
+#### Reflect and linked knowledge banks
+
+How an interactive reflect searches the knowledge banks a memory bank links (bank config `knowledge_banks`). A mental-model refresh never reads them. The media types and the tag filter are hierarchical (per bank); the picture settings and the budget are server-level only. The search's token budget is the one the reflect's recall call uses.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_MEDIA_TYPES` | Comma-separated media types the search may return: some of `document`, `image`, `audio`, `video`, `text`. Unset returns all. | - |
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_IMAGES` | Show the reflect model the picture behind an image or PDF-page hit, as an image. Only when the model is known to read images (see `HINDSIGHT_API_LLM_VISION`); otherwise the hit stays text. | `true` |
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_MAX_IMAGES` | The most pictures one search hands the model. Each one costs input tokens. `0` sends none. | `4` |
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_BUDGET` | How deep the search ranks before its token budget picks the results, as the knowledge search's `budget`: `low` is fastest, `high` reaches the most candidates. | `mid` |
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_APPLY_TAGS` | Filter the knowledge-bank search by the reflect's `tags`, `tags_match` and `tag_groups`, with the same rules as its memories (`any`/`all` keep untagged documents, the `_strict` modes drop them). `false` searches every document, whatever the reflect's tags. | `true` |
+
 #### Internal recall (used by reflect and mental model refresh)
 
 These knobs control the recall tool the reflect agent runs (including when refreshing a mental model). They set what a `recall` tool call gets when the model does not ask for a specific budget; an explicit ask from the model wins, within the bounds reflect applies to any model-supplied token argument. They are hierarchical — overridable per bank via the config API, and individually overridable per mental model via the `trigger.include_chunks`, `trigger.recall_max_tokens`, and `trigger.recall_chunks_max_tokens` fields.

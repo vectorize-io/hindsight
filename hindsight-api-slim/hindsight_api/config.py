@@ -1211,6 +1211,11 @@ ENV_REFLECT_WALL_TIMEOUT = "HINDSIGHT_API_REFLECT_WALL_TIMEOUT"
 ENV_REFLECT_MISSION = "HINDSIGHT_API_REFLECT_MISSION"
 ENV_REFLECT_SOURCE_FACTS_MAX_TOKENS = "HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS"
 ENV_REFLECT_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_REFLECT_MAX_COMPLETION_TOKENS"
+ENV_REFLECT_KB_SEARCH_MEDIA_TYPES = "HINDSIGHT_API_REFLECT_KB_SEARCH_MEDIA_TYPES"
+ENV_REFLECT_KB_SEARCH_IMAGES = "HINDSIGHT_API_REFLECT_KB_SEARCH_IMAGES"
+ENV_REFLECT_KB_SEARCH_MAX_IMAGES = "HINDSIGHT_API_REFLECT_KB_SEARCH_MAX_IMAGES"
+ENV_REFLECT_KB_SEARCH_APPLY_TAGS = "HINDSIGHT_API_REFLECT_KB_SEARCH_APPLY_TAGS"
+ENV_REFLECT_KB_SEARCH_BUDGET = "HINDSIGHT_API_REFLECT_KB_SEARCH_BUDGET"
 ENV_RECALL_INCLUDE_CHUNKS = "HINDSIGHT_API_RECALL_INCLUDE_CHUNKS"
 ENV_RECALL_PREFER_OBSERVATIONS = "HINDSIGHT_API_RECALL_PREFER_OBSERVATIONS"
 ENV_RECALL_MAX_TOKENS = "HINDSIGHT_API_RECALL_MAX_TOKENS"
@@ -1572,15 +1577,22 @@ DEFAULT_RECALL_BOOST_LEVEL = "medium"
 _KNOWLEDGE_MEDIA_TYPES = ("document", "image", "audio", "video", "text")
 
 
-def _parse_knowledge_media_types(raw: str | None) -> frozenset[str]:
+def _parse_knowledge_media_types(raw: str | None, env: str = ENV_KNOWLEDGE_DISABLED_MEDIA_TYPES) -> frozenset[str]:
     names = frozenset(n.strip().lower() for n in (raw or "").split(",") if n.strip())
     unknown = names - set(_KNOWLEDGE_MEDIA_TYPES)
     if unknown:
         raise ValueError(
-            f"{ENV_KNOWLEDGE_DISABLED_MEDIA_TYPES}: unknown media types {', '.join(sorted(unknown))} "
+            f"{env}: unknown media types {', '.join(sorted(unknown))} "
             f"(expected some of {', '.join(_KNOWLEDGE_MEDIA_TYPES)})"
         )
     return names
+
+
+def _parse_reflect_kb_search_budget(raw: str | None) -> str:
+    budget = (raw or DEFAULT_REFLECT_KB_SEARCH_BUDGET).strip().lower()
+    if budget not in ("low", "mid", "high"):
+        raise ValueError(f"{ENV_REFLECT_KB_SEARCH_BUDGET}: expected low, mid or high, got {raw!r}")
+    return budget
 
 
 def _parse_ingest_strategies(raw: str | None) -> dict | None:
@@ -2323,6 +2335,17 @@ DEFAULT_REFLECT_SOURCE_FACTS_MAX_TOKENS = -1  # Token budget for source facts in
 # reasoning tokens and would otherwise cut pages off mid-word (#3365). Set an integer
 # only if you want a hard cost ceiling on the synthesis call.
 DEFAULT_REFLECT_MAX_COMPLETION_TOKENS: int | None = None
+# Reflect's search of the knowledge banks a memory bank links (config `knowledge_banks`).
+# The media types it may return; None = all of them.
+DEFAULT_REFLECT_KB_SEARCH_MEDIA_TYPES: list[str] | None = None
+# Show the model the picture behind an image or PDF-page hit, when it can read images.
+DEFAULT_REFLECT_KB_SEARCH_IMAGES = True
+# The most pictures one search hands the model: each costs input tokens.
+DEFAULT_REFLECT_KB_SEARCH_MAX_IMAGES = 4
+# Filter the knowledge search by the reflect's tags, tags_match and tag_groups, as its memories are.
+DEFAULT_REFLECT_KB_SEARCH_APPLY_TAGS = True
+# How deep that search ranks before its token budget picks (the public search's `budget`): low, mid or high.
+DEFAULT_REFLECT_KB_SEARCH_BUDGET = "mid"
 DEFAULT_RECALL_INCLUDE_CHUNKS = True  # Whether internal recall (e.g. mental model refresh) returns raw chunks
 DEFAULT_RECALL_PREFER_OBSERVATIONS = False  # Default for recall prefer_observations when the request omits it
 DEFAULT_RECALL_MAX_TOKENS = 2048  # Token budget for facts returned by internal recall
@@ -4359,6 +4382,13 @@ class HindsightConfig:
     ingest_default_strategy: str | None = None
     # Per bank: the knowledge banks a memory bank's reflect reads, as the authority
     knowledge_banks: list[str] | None = None
+    # How reflect searches those knowledge banks (see DEFAULT_REFLECT_KB_SEARCH_*). Media types and
+    # tags are per bank; the pictures are the server's: what a model is shown costs the operator.
+    reflect_kb_search_media_types: list[str] | None = DEFAULT_REFLECT_KB_SEARCH_MEDIA_TYPES
+    reflect_kb_search_apply_tags: bool = DEFAULT_REFLECT_KB_SEARCH_APPLY_TAGS
+    reflect_kb_search_images: bool = DEFAULT_REFLECT_KB_SEARCH_IMAGES
+    reflect_kb_search_max_images: int = DEFAULT_REFLECT_KB_SEARCH_MAX_IMAGES
+    reflect_kb_search_budget: str = DEFAULT_REFLECT_KB_SEARCH_BUDGET
 
     # Class-level sets for configuration categorization
 
@@ -4531,6 +4561,8 @@ class HindsightConfig:
         "memory_defense",
         # Knowledge banks a memory bank reads as authoritative documents
         "knowledge_banks",
+        "reflect_kb_search_media_types",
+        "reflect_kb_search_apply_tags",
     }
 
     @property
@@ -5873,6 +5905,24 @@ class HindsightConfig:
             ingest_strategies=_parse_ingest_strategies(os.getenv(ENV_INGEST_STRATEGIES)),
             ingest_default_strategy=os.getenv(ENV_INGEST_DEFAULT_STRATEGY) or None,
             knowledge_banks=None,  # per bank only (bank config); no server-wide default
+            reflect_kb_search_media_types=sorted(
+                _parse_knowledge_media_types(
+                    os.getenv(ENV_REFLECT_KB_SEARCH_MEDIA_TYPES), ENV_REFLECT_KB_SEARCH_MEDIA_TYPES
+                )
+            )
+            or DEFAULT_REFLECT_KB_SEARCH_MEDIA_TYPES,
+            reflect_kb_search_images=os.getenv(
+                ENV_REFLECT_KB_SEARCH_IMAGES, str(DEFAULT_REFLECT_KB_SEARCH_IMAGES)
+            ).lower()
+            == "true",
+            reflect_kb_search_budget=_parse_reflect_kb_search_budget(os.getenv(ENV_REFLECT_KB_SEARCH_BUDGET)),
+            reflect_kb_search_max_images=int(
+                os.getenv(ENV_REFLECT_KB_SEARCH_MAX_IMAGES, str(DEFAULT_REFLECT_KB_SEARCH_MAX_IMAGES))
+            ),
+            reflect_kb_search_apply_tags=os.getenv(
+                ENV_REFLECT_KB_SEARCH_APPLY_TAGS, str(DEFAULT_REFLECT_KB_SEARCH_APPLY_TAGS)
+            ).lower()
+            == "true",
             enable_file_upload_api=os.getenv(ENV_ENABLE_FILE_UPLOAD_API, str(DEFAULT_ENABLE_FILE_UPLOAD_API)).lower()
             == "true",
             file_delete_after_retain=os.getenv(

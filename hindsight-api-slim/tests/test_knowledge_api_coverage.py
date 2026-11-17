@@ -387,3 +387,24 @@ async def test_a_query_image_must_be_base64(api_client, kb):
     assert r.status_code == 400 and r.json()["detail"] == "query_image must be base64"
     image = base64.b64encode(_png((255, 0, 0))).decode()
     assert (await api_client.post(f"{KB}/{kb}/search", json={"query_image": image})).status_code == 200
+
+
+async def test_tags_list_counts_documents_most_used_first_and_filters_by_wildcard(api_client, kb):
+    await _ingest(
+        api_client,
+        kb,
+        {"document_id": "a", "text": "red", "tags": ["team:a", "v2"]},
+        {"document_id": "b", "text": "blue", "tags": ["team:b", "v2"]},
+        {"document_id": "c", "text": "green"},
+    )
+
+    page = (await api_client.get(f"{KB}/{kb}/tags")).json()
+    assert page == {
+        "items": [{"tag": "v2", "count": 2}, {"tag": "team:a", "count": 1}, {"tag": "team:b", "count": 1}],
+        "total": 3,
+        "limit": 100,
+        "offset": 0,
+    }
+    teams = (await api_client.get(f"{KB}/{kb}/tags", params={"q": "TEAM:*", "limit": 1, "offset": 1})).json()
+    assert teams["items"] == [{"tag": "team:b", "count": 1}] and teams["total"] == 2
+    assert (await api_client.get(f"{KB}/kb-missing-{uuid.uuid4().hex[:8]}/tags")).status_code == 404

@@ -55,7 +55,7 @@ from .structured_doc import (
     split_markdown,
 )
 from .tokenization import count_prompt_tokens
-from .tools import returned_memories
+from .tools import KB_IMAGES_KEY, returned_memories
 from .tools_schema import get_reflect_tools
 
 #: Bounds on any token argument the model supplies to a retrieval tool. Below the
@@ -708,6 +708,9 @@ async def _run_reflect_agent_inner(
     tool_trace_summary: list[dict[str, Any]] = []
     llm_trace: list[dict[str, Any]] = []
     context_history: list[dict[str, Any]] = []  # For final prompt fallback
+    # Every knowledge-bank picture the run was shown: the standalone synthesis rebuilds its prompt
+    # from ``context_history``, which is text, so it gets them back from here.
+    knowledge_pictures: list[dict[str, Any]] = []
 
     def _record_llm(entry: dict[str, Any]) -> None:
         # Recorded as the call ends, so its start is now minus its duration.
@@ -791,21 +794,29 @@ async def _run_reflect_agent_inner(
         system_prompt: str,
         completion_cap: int | None,
         temperature: float | None = None,
+        pictures: list[dict[str, Any]] | None = None,
     ) -> str:
         """One tool-less LLM call with usage/trace accounting folded in.
 
         ``temperature`` defaults to the reflect temperature, which is tuned for
         writing an answer; callers that extract rather than write override it.
+        ``pictures`` (knowledge-bank image parts) follow the prompt in the same user turn.
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
         llm_start = time.perf_counter()
         queue_wait = LLMQueueWait()
         queue_token = set_queue_wait_sink(queue_wait)
+        # Any, as retain's multimodal turn is: the pictures make it a part list, not a string.
+        user_content: Any = (
+            [{"type": "text", "text": prompt}, {"type": "text", "text": _PICTURES_NOTE}, *pictures]
+            if pictures
+            else prompt
+        )
         try:
             call_result = await llm_config.call(
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": user_content},
                 ],
                 scope="reflect",
                 temperature=get_config().llm_temperature_reflect if temperature is None else temperature,
@@ -1017,7 +1028,9 @@ async def _run_reflect_agent_inner(
                 max_tokens=max_tokens,
                 llm_output_language=llm_output_language,
             )
-            answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
+            answer = await _tracked_llm_call(
+                prompt, "final", final_system, synthesis_max_completion_tokens, pictures=knowledge_pictures
+            )
         else:
             log = logger.warning if len(chunks) > _SPLIT_SYNTHESIS_WARN_CHUNKS else logger.info
             log(
@@ -1046,7 +1059,9 @@ async def _run_reflect_agent_inner(
                 max_tokens=max_tokens,
                 llm_output_language=llm_output_language,
             )
-            answer = await _tracked_llm_call(prompt, "final", final_system, synthesis_max_completion_tokens)
+            answer = await _tracked_llm_call(
+                prompt, "final", final_system, synthesis_max_completion_tokens, pictures=knowledge_pictures
+            )
 
         if not (answer or "").strip():
             # Tools were disabled for this call and the model still returned nothing.
@@ -1692,6 +1707,9 @@ async def _run_reflect_agent_inner(
             tools_started_at_ms = _now_ms()
             tool_results = await asyncio.gather(*tool_tasks, return_exceptions=True)
             total_tools_called += len(other_tools)
+            # Out before the pruning, the presenter and the trace read the outputs: none of them
+            # can use an image, and the trace would store every one of them as base64.
+            round_pictures = _pop_knowledge_pictures(tool_results)
 
             if (
                 decision_orchestrated
@@ -1868,6 +1886,12 @@ async def _run_reflect_agent_inner(
                         "content": tool_output,
                     }
                 )
+            if round_pictures:
+                knowledge_pictures.extend(round_pictures)
+                # Tool results reach the model as user turns (tools_via_schema), which this one joins.
+                messages.append(
+                    {"role": "user", "content": [{"type": "text", "text": _PICTURES_NOTE}, *round_pictures]}
+                )
 
     # Unreachable in practice: the last iteration returns the forced synthesis
     # above, so the loop cannot fall out of the bottom. Kept as a hard failure
@@ -1877,6 +1901,21 @@ async def _run_reflect_agent_inner(
         f"Reflect exhausted its {max_iterations} iteration(s) without producing an answer "
         f"({total_tools_called} tool call(s) made)."
     )
+
+
+_PICTURES_NOTE = (
+    "The pictures of the knowledge-bank passages in the results above, each after its label "
+    "(a result's `picture` field). Read them as part of those documents."
+)
+
+
+def _pop_knowledge_pictures(tool_results: list[Any]) -> list[dict[str, Any]]:
+    """The knowledge-bank pictures the round's recall calls returned, taken out of their outputs."""
+    parts: list[dict[str, Any]] = []
+    for result in tool_results:
+        if isinstance(result, tuple) and isinstance(result[0], dict):
+            parts.extend(result[0].pop(KB_IMAGES_KEY, None) or [])
+    return parts
 
 
 def _fresh_usable_pages(tool_calls: list["LLMToolCall"], tool_results: list[Any]) -> dict[str, Any] | None:

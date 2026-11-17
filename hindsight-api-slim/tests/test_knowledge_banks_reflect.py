@@ -59,3 +59,60 @@ async def test_reflect_answers_from_the_linked_docs_over_a_conflicting_memory(me
     finally:
         await service.delete_bank(kb, request_context)
         await memory_real_llm.delete_bank(mem_bank, request_context=request_context)
+
+
+def _picture_with_text(text: str) -> bytes:
+    import io
+
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.new("RGB", (900, 220), "white")
+    ImageDraw.Draw(image).text((30, 70), text, fill="black", font=ImageFont.load_default(size=56))
+    out = io.BytesIO()
+    image.save(out, format="PNG")
+    return out.getvalue()
+
+
+async def test_reflect_reads_a_fact_that_only_a_linked_image_holds(memory_real_llm, request_context):
+    if memory_real_llm._reflect_llm_config.supports_vision() is not True:
+        pytest.skip("the reflect model is not known to read images")
+    service: KnowledgeService = get_knowledge_service(memory_real_llm)
+    service._embedder = FakeEmbedder()
+    kb = f"kb-{uuid.uuid4().hex[:8]}"
+    mem_bank = f"mem-{uuid.uuid4().hex[:8]}"
+    await service.create_bank(kb, request_context)
+    try:
+        await service.ingest(
+            kb,
+            [
+                IngestItem(
+                    data=_picture_with_text("Office door code: 4817"),
+                    filename="door-sign.png",
+                    content_type="image/png",
+                    document_id="door-sign",
+                )
+            ],
+            request_context,
+        )
+        await memory_real_llm.retain_batch_async(
+            bank_id=mem_bank,
+            contents=[{"content": "The user works at the Bologna office and often arrives before reception opens."}],
+            request_context=request_context,
+        )
+        await memory_real_llm.wait_for_background_tasks()
+        await memory_real_llm.update_bank_config(mem_bank, {"knowledge_banks": [kb]}, request_context=request_context)
+
+        result = await memory_real_llm.reflect_async(
+            bank_id=mem_bank,
+            query="What is the office door code?",
+            request_context=request_context,
+        )
+        await assert_meets_criteria(
+            response=result.text,
+            criteria="The answer gives the office door code as 4817.",
+            context="The code appears only as text inside an image in the linked knowledge bank "
+            "(a picture of a sign reading 'Office door code: 4817'); no memory or text passage holds it.",
+        )
+    finally:
+        await service.delete_bank(kb, request_context)
+        await memory_real_llm.delete_bank(mem_bank, request_context=request_context)
