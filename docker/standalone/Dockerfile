@@ -58,7 +58,8 @@ COPY hindsight-embed/pyproject.toml ./hindsight-embed/
 RUN ln -s api hindsight-api-slim
 
 # Sync dependencies using appropriate extras based on INCLUDE_LOCAL_MODELS
-# local-ml: torch, sentence-transformers, transformers, einops, flashrank (mlx is macOS arm64 only)
+# local-ml: torch, sentence-transformers, transformers, einops, flashrank, av (PyAV: knowledge-bank
+# audio/video, with its own ffmpeg libraries) (mlx is macOS arm64 only)
 # embedded-db: pg0-embedded (always included for embedded PostgreSQL support)
 # ONNX Runtime embeddings are intentionally not bundled into the official
 # standalone image; install the local-onnx extra in custom images when needed.
@@ -185,7 +186,6 @@ WORKDIR /app
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
     procps \
-    ffmpeg \
     libssl3 \
     libgssapi-krb5-2 \
     libossp-uuid16 \
@@ -339,7 +339,6 @@ WORKDIR /app
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
     procps \
-    ffmpeg \
     libssl3 \
     libgssapi-krb5-2 \
     libossp-uuid16 \

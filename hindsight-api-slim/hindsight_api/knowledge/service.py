@@ -1098,7 +1098,6 @@ class KnowledgeService:
             return media.split_media(
                 data,
                 kind,
-                filename=document.filename,
                 window_seconds=window,
                 overlap_seconds=s.media_overlap_seconds,
                 max_seconds=s.max_media_seconds,
@@ -1533,7 +1532,7 @@ class KnowledgeService:
                 # file further in (a splitter's helper, a temp file) stays an ordinary, retried error.
                 raise _FileGone(str(exc)) from exc
         if w.handler is None:
-            # Splitting is blocking (pdfium, ffmpeg): it runs in a thread, one draft at a time.
+            # Splitting is blocking (pdfium, PyAV): it runs in a thread, one draft at a time.
             return await _split(self._drafts, document, data, settings)
         made = await ingest_strategy.load_extension(w.handler).ingest(
             ingest_strategy.IngestFile(

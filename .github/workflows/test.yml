@@ -1887,10 +1887,6 @@ jobs:
         print('Models downloaded successfully')
         "
 
-    - name: Install ffmpeg
-      # Knowledge-bank tests cut audio and video into windows with it; skipped without it.
-      run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg)
-
     - name: Run tests (shard ${{ matrix.shard }}/4)
       working-directory: ./hindsight-api-slim
       # `--with pytest-split` adds the plugin ad-hoc — no uv.lock churn.
