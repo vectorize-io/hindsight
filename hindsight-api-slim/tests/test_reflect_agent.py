@@ -2322,6 +2322,27 @@ class TestNoAnswerFailsHard:
         assert "no answer" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_a_done_without_answer_is_asked_for_once_more(self, mock_llm, mock_functions):
+        """gpt-oss answered done with answer_ready's lone ``answer_found`` (#6520): the model is
+        told the answer is missing and asked again, once; empty twice still raises (tests below)."""
+        script = self._recall_then({"answer_found": True})
+        script.append(
+            LLMToolCallResult(
+                tool_calls=[
+                    LLMToolCall(id="3", name="done", arguments={"answer": "Alice leads it.", "answer_found": True})
+                ],
+                finish_reason="tool_calls",
+            )
+        )
+        mock_llm.call_with_tools.side_effect = closing_echo(script)
+
+        result = await self._run(mock_llm, mock_functions)
+
+        assert result.text == "Alice leads it."
+        re_ask = mock_llm.call_with_tools.call_args.kwargs["messages"][-1]
+        assert re_ask["role"] == "tool" and "carried no answer" in re_ask["content"]
+
+    @pytest.mark.asyncio
     async def test_missing_done_answer_raises(self, mock_llm, mock_functions):
         """``answer`` absent entirely, not just blank."""
         mock_llm.call_with_tools.side_effect = closing_echo(self._recall_then({"memory_ids": ["mem-1"]}))

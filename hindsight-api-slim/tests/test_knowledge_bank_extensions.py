@@ -119,6 +119,11 @@ async def test_every_knowledge_bank_operation_goes_through_its_own_hook(api_clie
         r = await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"text_passage_tokens": 64}})
         assert r.status_code == 200, r.text
         assert (await api_client.delete(f"{KB}/{kb}/config")).status_code == 200
+        assert (await api_client.get(f"{KB}/{kb}/tags")).status_code == 200
+        r = await api_client.get(f"{KB}/{kb}/stats/timeseries", params={"period": "7d"})
+        assert r.status_code == 200, r.text
+        assert (await api_client.get(f"{KB}/{kb}/documents/red/file")).status_code == 200
+        assert (await api_client.get(f"{KB}/{kb}/documents/red/passages/0/media")).status_code == 200
         assert [op for bank, op in validator.seen if bank == kb] == [
             KnowledgeBankReadOperation.GET_KNOWLEDGE_BANK,
             KnowledgeBankReadOperation.LIST_KNOWLEDGE_BANK_DOCUMENTS,
@@ -129,6 +134,10 @@ async def test_every_knowledge_bank_operation_goes_through_its_own_hook(api_clie
             KnowledgeBankReadOperation.GET_KNOWLEDGE_BANK_CONFIG,
             KnowledgeBankWriteOperation.UPDATE_KNOWLEDGE_BANK_CONFIG,
             KnowledgeBankWriteOperation.RESET_KNOWLEDGE_BANK_CONFIG,
+            KnowledgeBankReadOperation.LIST_KNOWLEDGE_BANK_TAGS,
+            KnowledgeBankReadOperation.GET_KNOWLEDGE_BANK,
+            KnowledgeBankReadOperation.GET_KNOWLEDGE_BANK_DOCUMENT,
+            KnowledgeBankReadOperation.GET_KNOWLEDGE_BANK_DOCUMENT,
         ]
 
         # A rejected bank answers the validator's status, never a 404 that would say it exists.
@@ -137,7 +146,12 @@ async def test_every_knowledge_bank_operation_goes_through_its_own_hook(api_clie
             api_client.get(f"{KB}/{secret}/documents"),
             api_client.post(f"{KB}/{secret}/search", json={"query": "red"}),
             api_client.post(f"{KB}/{secret}/ingest", json={"items": [{"text": "x"}]}),
+            api_client.get(f"{KB}/{secret}/documents/nope"),
             api_client.get(f"{KB}/{secret}/documents/nope/file"),
+            api_client.get(f"{KB}/{secret}/documents/nope/passages/0/media"),
+            api_client.delete(f"{KB}/{secret}/documents/nope"),
+            api_client.get(f"{KB}/{secret}/tags"),
+            api_client.get(f"{KB}/{secret}/stats/timeseries", params={"period": "7d"}),
             api_client.get(f"{KB}/{secret}/config"),
             api_client.patch(f"{KB}/{secret}/config", json={"updates": {"text_passage_tokens": 64}}),
             api_client.delete(f"{KB}/{secret}/config"),
@@ -363,17 +377,17 @@ STRATEGIES = {
 @pytest.fixture
 def strategies(monkeypatch):
     def configure(default: str | None = None) -> None:
-        monkeypatch.setenv("HINDSIGHT_API_INGEST_STRATEGIES", json.dumps(STRATEGIES))
+        monkeypatch.setenv("HINDSIGHT_API_KB_INGEST_STRATEGIES", json.dumps(STRATEGIES))
         if default:
-            monkeypatch.setenv("HINDSIGHT_API_INGEST_DEFAULT_STRATEGY", default)
+            monkeypatch.setenv("HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY", default)
         else:
-            monkeypatch.delenv("HINDSIGHT_API_INGEST_DEFAULT_STRATEGY", raising=False)
+            monkeypatch.delenv("HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY", raising=False)
         clear_config_cache()
 
     configure()
     yield configure
-    monkeypatch.delenv("HINDSIGHT_API_INGEST_STRATEGIES")
-    monkeypatch.delenv("HINDSIGHT_API_INGEST_DEFAULT_STRATEGY", raising=False)
+    monkeypatch.delenv("HINDSIGHT_API_KB_INGEST_STRATEGIES")
+    monkeypatch.delenv("HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY", raising=False)
     clear_config_cache()
 
 

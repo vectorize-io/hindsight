@@ -246,6 +246,11 @@ def _is_unwritten_body(content: str | None) -> bool:
 PAGE_SNIPPET_CHARS = 280
 
 
+def _page_index_text(name: str | None, content: str | None) -> str:
+    """The document a page is indexed under: name + content, as BM25 sees it."""
+    return f"{name or ''} {content or ''}"
+
+
 def _page_snippet(content: str | None) -> str:
     """The snippet a search result shows, including when the page has no body.
 
@@ -3502,6 +3507,10 @@ class MemoryEngine(MemoryEngineInterface):
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
         self._reflect_decision_model_client: TypeSafeCrossEncoder | None = None
         self._reflect_decision_model_unsupported_logged = False
+
+        # Page-index writes a create hands off instead of waiting on; held so the loop does not
+        # collect a task mid-write, and so `wait_for_background_tasks` can drain them.
+        self._page_index_tasks: set[asyncio.Task] = set()
 
         # Initialize task backend.
         # All backends use BrokerTaskBackend + WorkerPoller for async background execution.
@@ -6984,6 +6993,12 @@ class MemoryEngine(MemoryEngineInterface):
         """
         if hasattr(self._task_backend, "wait_for_pending_tasks"):
             await self._task_backend.wait_for_pending_tasks()
+        # Only this loop's: a task belongs to the loop that created it, and gathering another
+        # loop's raises (tests run several loops against one engine).
+        loop = asyncio.get_running_loop()
+        mine = [t for t in tuple(self._page_index_tasks) if t.get_loop() is loop]
+        if mine:
+            await asyncio.gather(*mine, return_exceptions=True)
 
     # "Month Year" (e.g. "June 2024"), shared with every other path that embeds a fact's text.
     _format_readable_date = staticmethod(format_readable_date)
@@ -9797,7 +9812,9 @@ class MemoryEngine(MemoryEngineInterface):
         await self._require_bank_exists(bank_id)
 
         # Resolve fuzzy tag tokens into real tags before anything builds SQL. Runs after
-        # the validator so a validator-supplied tag_groups is resolved too.
+        # the validator so a validator-supplied tag_groups is resolved too. The linked knowledge
+        # banks get the groups as asked: each resolves fuzzy leaves against its own tags.
+        requested_tag_groups = tag_groups
         _t0 = time.perf_counter()
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
         _d = time.perf_counter() - _t0
@@ -9871,7 +9888,13 @@ class MemoryEngine(MemoryEngineInterface):
             # the finally below when the recall fails before awaiting it.
             if include_documents:
                 from ..knowledge.service import documents_for_memory_bank
+                from ..knowledge.store import SearchFilters
 
+                documents_filters = SearchFilters(media_types=budget_config_dict.get("reflect_kb_search_media_types"))
+                if budget_config_dict.get("reflect_kb_search_apply_tags", True):
+                    documents_filters = replace(
+                        documents_filters, tags=tags, tags_match=tags_match, tag_groups=requested_tag_groups
+                    )
                 documents_task = asyncio.create_task(
                     documents_for_memory_bank(
                         self,
@@ -9879,6 +9902,7 @@ class MemoryEngine(MemoryEngineInterface):
                         list(budget_config_dict.get("knowledge_banks") or []),
                         query,
                         max_tokens,
+                        documents_filters,
                         request_context,
                     )
                 )
@@ -16116,6 +16140,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # The floor guards the cut's coarse levels: on that count it kept five.
                 shortlist=25,
                 min_keep=15,
+                vision=setup.vision,
             )
             # Retried like the shared decision model (DecisionModel.ask): without it a single 429
             # dropped the cut (every item kept) or the "is this enough?" verdict (an agent turn)
@@ -16273,7 +16298,10 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Resolve fuzzy tag tokens once, here: every tool the agentic loop runs
         # (recall, mental-model search, source-fact reads) filters on these same groups,
-        # and each must see the same resolved tags.
+        # and each must see the same resolved tags. Recall gets them as asked: it resolves
+        # them the same way for memories, and the linked knowledge banks resolve them
+        # against their own tags.
+        requested_tag_groups = tag_groups
         tag_groups = await self._resolve_fuzzy_tag_groups(bank_id, tag_groups)
 
         reflect_start = time.perf_counter()
@@ -16481,7 +16509,7 @@ class MemoryEngine(MemoryEngineInterface):
                 max_tokens=max_tokens,
                 tags=tags,
                 tags_match=tags_match,
-                tag_groups=tag_groups,
+                tag_groups=requested_tag_groups,
                 max_chunk_tokens=max_chunk_tokens,
                 fact_types=recall_fact_types if fact_types is not None else None,
                 include_chunks=effective_recall_include_chunks,
@@ -16490,6 +16518,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # Linked knowledge banks are read by an interactive reflect only: a mental model
                 # refresh would fold the documents into the bank's own knowledge.
                 include_documents=not is_refresh,
+                kb_images=kb_images,
             )
 
         async def expand_fn(memory_ids: list[str], depth: str) -> dict[str, Any]:
@@ -16544,6 +16573,14 @@ class MemoryEngine(MemoryEngineInterface):
         # closes it may raise, or the span is left open.
         reflect_llm = self._llm_for_reflect_operation(_operation_label).with_config(
             resolved_reflect_config, bank_id=bank_id, operation=_operation_label
+        )
+        # The pictures behind knowledge-bank hits go to a model known to read images, never to one
+        # that might not (None: a gateway that cannot tell), and never into a page refresh. Server
+        # settings, not per bank: what the model is shown costs the operator.
+        kb_images = (
+            config.reflect_kb_search_max_images
+            if not is_refresh and config.reflect_kb_search_images and reflect_llm.supports_vision() is True
+            else 0
         )
 
         # Run the agent with parent span for reflect operation (skip if called from another operation)
@@ -17671,7 +17708,8 @@ class MemoryEngine(MemoryEngineInterface):
                 if tags_match == "all":
                     tag_filter = " AND tags @> $2::varchar[]"
                 elif tags_match == "exact":
-                    tag_filter = " AND tags = $2::varchar[]"
+                    # Set equality, as `build_tags_where_clause` does: `=` on arrays is order-sensitive.
+                    tag_filter = " AND (tags @> $2::varchar[] AND tags <@ $2::varchar[])"
                 else:  # any
                     tag_filter = " AND tags && $2::varchar[]"
                 filter_params.append(tags)
@@ -17949,8 +17987,13 @@ class MemoryEngine(MemoryEngineInterface):
         mental_model_id: str,
         *,
         embedding: list[float] | None,
+        unless_changed_from: str | None = None,
     ) -> None:
         """Push one page's searchable half into the store.
+
+        ``unless_changed_from`` is the index text the caller's write produced: the write is
+        skipped when the row no longer yields it, because ``embedding`` was computed from that text
+        and the write that changed the row has indexed it already.
 
         Reads the name, content and tags back from the row rather than taking them from the caller,
         so every write path indexes the same thing and one that forgets a field cannot leave the
@@ -17968,6 +18011,11 @@ class MemoryEngine(MemoryEngineInterface):
         )
         if row is None:
             return
+        # The same document the native tsvector column generates, so the two backends match on
+        # more than intent.
+        index_text = _page_index_text(row["name"], row["content"])
+        if unless_changed_from is not None and index_text != unless_changed_from:
+            return
         from .memories import PageEntry
 
         await store.index_pages(
@@ -17975,15 +18023,68 @@ class MemoryEngine(MemoryEngineInterface):
             [
                 PageEntry(
                     page_id=mental_model_id,
-                    # The same document the native tsvector column generates, so the two backends
-                    # match on more than intent.
-                    index_text=f"{row['name'] or ''} {row['content'] or ''}",
+                    index_text=index_text,
                     embedding=embedding,
                     tags=list(row["tags"] or []),
                     updated_at=row["last_refreshed_at"],
                 )
             ],
         )
+
+    def _index_created_page_soon(
+        self,
+        bank_id: str,
+        mental_model_id: str,
+        *,
+        index_text: str,
+        embedding: list[float] | None,
+    ) -> None:
+        """Index a just-created page after the create has answered, instead of before.
+
+        The store acks a page write only once it is durable in the bank's write log, and a store
+        may pace those writes per bank: a burst of creates on one bank then waits seconds each on
+        an index entry the queued refresh rewrites moments later anyway. So the create hands the
+        write off. The page is searchable once the write lands, not when the create returns.
+
+        Failure is no worse than waiting was. A create that waited and then failed here left a
+        committed row with no refresh queued (the caller queues it only after the create returns)
+        and a retry that hits 409 — an empty page nothing ever fills. Here the refresh is already
+        queued, and when it writes content `update_mental_model` re-indexes the page, so a lost
+        write heals. Only a page whose refresh never produces content stays out of the index until
+        `reconcile_page_index` runs.
+
+        Skipped once the row no longer holds what the create wrote: whatever changed it (a rename,
+        a refresh) indexed the page itself, and writing here could land after that write and
+        replace it with the create's older name and embedding.
+        """
+        if self._page_index_store(bank_id) is None:
+            return
+
+        async def _run() -> None:
+            for attempt in range(3):
+                try:
+                    backend = await self._get_backend()
+                    async with acquire_with_retry(backend) as conn:
+                        await self._index_page(
+                            conn,
+                            bank_id,
+                            mental_model_id,
+                            embedding=embedding,
+                            unless_changed_from=index_text,
+                        )
+                    return
+                except Exception as exc:
+                    if attempt == 2:
+                        logger.warning(
+                            f"[MENTAL_MODELS] indexing new page {mental_model_id} in bank {bank_id} failed; "
+                            f"it is searchable once its refresh writes content: {exc!r}"
+                        )
+                        return
+                    await asyncio.sleep(0.5 * 2**attempt)
+
+        task = asyncio.create_task(_run())
+        self._page_index_tasks.add(task)
+        task.add_done_callback(self._page_index_tasks.discard)
 
     async def _deindex_pages(self, bank_id: str, mental_model_ids: list[str]) -> None:
         """Drop pages from the store's index. Safe for ids the store never held."""
@@ -18045,7 +18146,7 @@ class MemoryEngine(MemoryEngineInterface):
                 [
                     PageEntry(
                         page_id=str(row["id"]),
-                        index_text=f"{row['name'] or ''} {row['content'] or ''}",
+                        index_text=_page_index_text(row["name"], row["content"]),
                         embedding=vec,
                         tags=list(row["tags"] or []),
                         updated_at=row["last_refreshed_at"],
@@ -18224,11 +18325,6 @@ class MemoryEngine(MemoryEngineInterface):
 
         try:
             row = await retry_with_backoff(_write)
-            # After the transaction commits: the index is derived from a row that must already
-            # exist, and indexing inside the transaction would publish a page a rollback then
-            # un-creates.
-            async with acquire_with_retry(backend) as conn:
-                await self._index_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
         except asyncpg.UniqueViolationError as exc:
             # mental_models_pkey is the table's only unique constraint, so a violation naming
             # this table is the caller's id colliding with a model that already exists. Anything
@@ -18241,6 +18337,11 @@ class MemoryEngine(MemoryEngineInterface):
                 f"Mental model '{mental_model_id}' already exists in bank '{bank_id}'",
                 status_code=409,
             ) from exc
+        # After the transaction commits: the index is derived from a row that must already exist,
+        # and indexing inside the transaction would publish a page a rollback then un-creates.
+        self._index_created_page_soon(
+            bank_id, mental_model_id, index_text=_page_index_text(row["name"], row["content"]), embedding=embedding_vec
+        )
 
         # Best-effort default-template hook runs after the bank-create commits
         # (it opens its own connections and can create pinned models).
@@ -19502,6 +19603,9 @@ class MemoryEngine(MemoryEngineInterface):
                         outcome="refresh_failed_error",
                         failure_reason=failure_reason,
                         error_message=detail,
+                        # A reranker or embedder that timed out inside a search answers
+                        # on the next trigger; only a failure that would repeat pauses (#6582).
+                        pause_automatic=not is_transient_remote_error(exc),
                     )
                     raise MentalModelRefreshError(
                         f"Refresh failed for mental_model_id={mental_model_id}: {detail} "
@@ -20762,14 +20866,18 @@ class MemoryEngine(MemoryEngineInterface):
 
         try:
             await retry_with_backoff(_write)
-            async with acquire_with_retry(backend) as conn:
-                await self._index_page(conn, bank_id, mental_model_id, embedding=embedding_vec)
         except asyncpg.UniqueViolationError as exc:
             if getattr(exc, "constraint_name", None) != "uq_kp_folder_pagename":
                 raise
             # The transaction already rolled the MM back; preserve the existing
             # API contract that a duplicate page is surfaced as HTTP 409.
             return None
+        self._index_created_page_soon(
+            bank_id,
+            mental_model_id,
+            index_text=_page_index_text(mm_row["name"], mm_row["content"]),
+            embedding=embedding_vec,
+        )
 
         # This hook opens its own connections and therefore must run after commit.
         if created:

@@ -478,6 +478,9 @@
     "clientsTitle": "메모리 뱅크",
     "clientsDescription": "뱅크 전체 설정: 별칭, 시간대, 앱과 에이전트가 접근할 수 있는 범위.",
     "mcpFailedToSave": "MCP 설정 저장에 실패했습니다",
+    "knowledgeSectionTitle": "지식 뱅크",
+    "knowledgeSectionDescription": "이 뱅크의 reflect가 함께 검색하는 지식 뱅크와 검색 방식입니다.",
+    "knowledgeFailedToSave": "지식 뱅크 설정을 저장하지 못했습니다",
     "auditEnabledLabel": "감사 로깅 활성화",
     "auditEnabledDescription": "이 뱅크의 retain, recall, reflect 작업을 기록합니다. 이 뱅크에만 서버 기본값을 재정의합니다.",
     "auditServerDefault": "서버 기본값({state})",
@@ -693,8 +696,17 @@
         "retain_optional_fact_dimensions": "모델이 \"N/A\"를 쓰는 대신 \"언제\", \"어디서\", \"누가\", \"왜\"를 비워 둘 수 있게 합니다."
       }
     },
-    "linkedKnowledgeBanksLabel": "지식 뱅크",
-    "linkedKnowledgeBanksDescription": "이 뱅크의 리플렉트는 연결된 지식 뱅크도 검색하며, 그 문서를 상충하는 기억보다 우선합니다. 리콜과 멘탈 모델은 문서를 읽지 않습니다."
+    "linkedKnowledgeBanksLabel": "연결된 뱅크",
+    "linkedKnowledgeBanksDescription": "이 뱅크의 리플렉트는 연결된 지식 뱅크도 검색하며, 그 문서를 상충하는 기억보다 우선합니다. 리콜과 멘탈 모델은 문서를 읽지 않습니다.",
+    "kbSearchMediaTypesLabel": "reflect가 읽는 문서 유형",
+    "kbSearchMediaTypesDescription": "reflect 검색이 반환할 수 있는 연결된 문서의 종류입니다. 모두 선택하면 제한이 없습니다.",
+    "kbSearchApplyTagsLabel": "reflect 태그로 필터링",
+    "kbSearchApplyTagsDescription": "태그가 있는 reflect는 메모리와 같은 규칙으로 그 태그가 허용하는 연결 문서만 읽습니다. 끄면 태그는 메모리만 필터링합니다.",
+    "kbMediaType_document": "PDF 및 Office",
+    "kbMediaType_image": "이미지",
+    "kbMediaType_audio": "오디오",
+    "kbMediaType_video": "동영상",
+    "kbMediaType_text": "텍스트"
   },
   "bankOperations": {
     "title": "백그라운드 작업",
@@ -2561,8 +2573,9 @@
       "options": "옵션",
       "tags": "태그",
       "tagsMatch": "태그 일치 방식",
-      "tagsAny": "하나라도",
-      "tagsAll": "모두",
+      "tagGroups": "태그 그룹 (JSON)",
+      "tagGroupsHelp": "메모리 recall과 같은 불리언 태그 필터이며 모두 AND로 결합됩니다. 리프에서 \"resolve\": \"fuzzy\"를 지정할 수 있습니다.",
+      "tagGroupsInvalid": "태그 그룹은 올바른 JSON이어야 합니다.",
       "noResults": "이 검색과 일치하는 구절이 없습니다.",
       "idle": "텍스트, 이미지, 동영상 클립 또는 그 조합으로 이 뱅크를 검색합니다.",
       "openPassage": "문서에서 열기",

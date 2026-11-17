@@ -135,7 +135,7 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
             )
 
         message, finish_reason = reply.message, reply.finish_reason
-        if turn is not None and message.get("tool_calls"):
+        if turn is not None and message.get("tool_calls") and not reply.native:
             message, finish_reason = turn.reply_for(message["tool_calls"][0]["function"]), "stop"
 
         return JSONResponse(
@@ -346,6 +346,9 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
     async def rerank(request: Request) -> JSONResponse:
         body = await request.json()
         validate_rerank(body)
+        if stubs.rerank.rerank_fail_with_status is not None:
+            status = stubs.rerank.rerank_fail_with_status
+            return _provider_error(f"stub provider error {status}", code="stub_error", status=status)
 
         query = body["query"]
         results = [

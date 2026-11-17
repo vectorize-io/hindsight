@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::api::{ApiClient, MemoryItem, RecallRequest, ReflectRequest, RetainRequest};
+use crate::api::{ApiClient, FileUpload, MemoryItem, RecallRequest, ReflectRequest, RetainRequest};
 use crate::config;
 use crate::output::{self, OutputFormat};
 use crate::ui;
@@ -563,6 +563,29 @@ pub fn retain(
     }
 }
 
+/// Document id for a file: its path relative to the current dir (as given when
+/// outside it), with every character that is not a letter, digit, `.`, `-` or
+/// `_` replaced by `_`. `notes/a/README.md` -> `notes_a_README.md`.
+fn document_id_for_path(path: &Path) -> String {
+    let full = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let cwd = std::env::current_dir()
+        .and_then(fs::canonicalize)
+        .unwrap_or_default();
+    let rel = full.strip_prefix(&cwd).unwrap_or(path);
+    let id: String = rel
+        .to_string_lossy()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    id.trim_start_matches('_').to_string()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn retain_files(
     client: &ApiClient,
@@ -621,7 +644,7 @@ pub fn retain_files(
     let pb = ui::create_progress_bar(file_paths.len() as u64, "Uploading files");
 
     for batch in &batches {
-        let mut file_data: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut file_data: Vec<FileUpload> = Vec::new();
         for file_path in *batch {
             let filename = file_path
                 .file_name()
@@ -630,7 +653,11 @@ pub fn retain_files(
                 .unwrap_or_else(|| "file".to_string());
             let content = fs::read(file_path)
                 .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
-            file_data.push((filename, content));
+            file_data.push(FileUpload {
+                filename,
+                document_id: document_id_for_path(file_path),
+                content,
+            });
             pb.inc(1);
         }
 
@@ -886,7 +913,25 @@ pub fn clear_observations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+
+    #[test]
+    fn test_document_id_for_path_keeps_folders_and_extension_apart() {
+        // Same-named files in different folders, or with different
+        // extensions, must not share a document id (issue #6521).
+        let a = document_id_for_path(Path::new("notes/a/README.md"));
+        let b = document_id_for_path(Path::new("notes/b/README.md"));
+        let c = document_id_for_path(Path::new("notes/a/README.pdf"));
+        assert_eq!(a, "notes_a_README.md");
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(
+            document_id_for_path(Path::new("/my notes/caffè?.md")),
+            "my_notes_caffè_.md"
+        );
+        // An absolute path inside the current dir is made relative to it.
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(document_id_for_path(&cwd.join("Cargo.toml")), "Cargo.toml");
+    }
 
     fn some(value: &str) -> Option<String> {
         Some(value.to_string())

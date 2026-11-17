@@ -36,6 +36,7 @@ from hindsight_api.engine.providers.openai_compatible_llm import (
     record_retried_attempt,
     visible_token_usage,
 )
+from hindsight_api.engine.providers.tools_via_schema import native_call_reply
 from hindsight_api.engine.remote_retry import is_transient_remote_error, jittered_backoff
 from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema, strict_json_schema
@@ -364,6 +365,7 @@ class LiteLLMLLM(LLMInterface):
         finish_reason = None
 
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.{self._stage_label}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
@@ -379,7 +381,7 @@ class LiteLLMLLM(LLMInterface):
                 choice = response.choices[0]
                 _raise_if_generation_failed(response, choice, provider=self.provider, model=self.model, scope=scope)
                 message = choice.message
-                content = message.content or ""
+                content = message.content or native_call_reply(response_format, message.tool_calls) or ""
                 finish_reason = choice.finish_reason
                 model_name = self._resolve_completion_model(response)
 
@@ -497,6 +499,14 @@ class LiteLLMLLM(LLMInterface):
                     logger.warning(
                         f"LiteLLM call exceeded timeout={self.timeout}s ({exc_name}, scope={scope}), retrying..."
                     )
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
+                    )
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue
@@ -525,7 +535,7 @@ class LiteLLMLLM(LLMInterface):
                             scope=scope,
                             messages=messages,
                             error=e,
-                            started=start_time,
+                            started=attempt_started,
                         )
                     await asyncio.sleep(jittered_backoff(attempt, initial_backoff, max_backoff))
                     continue

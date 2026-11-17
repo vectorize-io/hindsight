@@ -334,7 +334,8 @@ async def relabel_document_memories(
     for row in prior:
         final = new_tags_by_id[row["id"]]
         if (
-            list(row["tags"] or []) != final
+            # As sets: rows already stored in another order are unchanged, not edited (#6591).
+            set(row["tags"] or []) != set(final)
             or (conn.parse_json(row["metadata"]) or {}) != new_metadata
             or conn.parse_json(row["observation_scopes"]) != observation_scopes
         ):

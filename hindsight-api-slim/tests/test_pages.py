@@ -220,6 +220,8 @@ async def kb_bank(memory: MemoryEngine, request_context):
         tags=[],
         request_context=request_context,
     )
+    # A create hands its page-index write off; searches below must see all three pages.
+    await memory.wait_for_background_tasks()
 
     yield (
         bank_id,

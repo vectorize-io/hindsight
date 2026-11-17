@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from hindsight_api.api.http import ObservationTreeFolder, _observation_tree_json
 from hindsight_api.engine.observation_tree import (
     LEAF_MAX,
+    LEAF_MIN,
+    SMALL_TOPIC_MIN,
     OKF_VERSION,
     TreeObservation,
     build_observation_tree,
@@ -188,6 +190,62 @@ def test_a_month_too_big_for_one_file_is_split_by_week():
     ]
     names = sorted(f.path for f in iter_files(build_observation_tree(obs)) if f.kind == "topic")
     assert names == ["misc-2026-w45.md", "misc-2026-w46.md"]
+
+
+def _leftovers(n: int) -> list[TreeObservation]:
+    """``n`` one-off facts, each about its own thing, over two months."""
+    return [
+        TreeObservation(
+            id=f"stray-{i}",
+            text=f"stray {i}",
+            proof_count=1,
+            entities=[f"oneoff-{i}"],
+            mentioned_at=datetime(2026, 9 + i % 2, 1 + i % 28, tzinfo=timezone.utc),
+        )
+        for i in range(n)
+    ]
+
+
+def test_a_small_subject_among_the_leftovers_gets_its_own_file():
+    """Too small to stand beside the big topics, a subject is still the only named thing among
+    the leftovers: it gets a file, not a line in a misc file cut by date."""
+    small = [
+        TreeObservation(
+            id=f"retry-{i}",
+            text=f"retry fact {i}",
+            proof_count=1,
+            entities=["retryx", "MAX_ATTEMPTS"],
+            mentioned_at=datetime(2026, 9, 3, tzinfo=timezone.utc),
+        )
+        for i in range(SMALL_TOPIC_MIN)
+    ]
+    assert SMALL_TOPIC_MIN < LEAF_MIN
+    tree = build_observation_tree(_bank() + _leftovers(LEAF_MAX) + small)
+    where = {o.id: f.path for f in iter_files(tree) if f.kind == "topic" for o in f.observations}
+    assert len({where[o.id] for o in small}) == 1
+    assert {where[o.id] for o in small} <= {"retryx.md", "max-attempts.md"}
+    root = next(f for f in iter_files(tree) if f.path == "index.md")
+    assert "retryx" in root.content
+
+
+def test_each_misc_file_is_titled_after_its_own_rows():
+    """Calendar files of one misc used to share the folder's misc title, so an index listed every
+    month under one name; each is now titled after what sets it apart."""
+    themed = [
+        TreeObservation(
+            id=f"{tag}-{i}",
+            text=f"{tag} {i}",
+            proof_count=1,
+            entities=[tag, f"oneoff-{tag}-{i}"],
+            mentioned_at=datetime(2026, month, 1 + i % 28, tzinfo=timezone.utc),
+        )
+        for tag, month in (("alpha", 9), ("beta", 10))
+        for i in range(SMALL_TOPIC_MIN - 1)
+    ]
+    tree = build_observation_tree(_bank() + _leftovers(LEAF_MAX) + themed)
+    about = {f.path: f.about for f in iter_files(tree) if f.path.startswith("misc-")}
+    assert "alpha" in about["misc-2026-09.md"] and "alpha" not in about["misc-2026-10.md"]
+    assert "beta" in about["misc-2026-10.md"]
 
 
 def _frontmatter(content: str) -> dict[str, str] | None:

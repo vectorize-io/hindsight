@@ -24,7 +24,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from ..config import get_config
 from ..engine import bank_aliases
@@ -34,6 +34,7 @@ from ..engine.response_models import KnowledgeDocumentHit
 from ..engine.retain import bank_utils
 from ..engine.retain import timing as _timing
 from ..engine.schema import fq_table
+from ..engine.search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_resolution, resolve_tag_groups
 from ..engine.storage import bank_storage_prefix, key_segment
 from ..engine.token_encoding import count_tokens
 from ..extensions.operation_validator import (
@@ -72,6 +73,7 @@ from .store import (
     SearchHit,
     StatusUpdate,
     StoreSearchTrace,
+    TagPage,
     TimeBucket,
     load_knowledge_store,
 )
@@ -549,7 +551,7 @@ class KnowledgeService:
     @property
     def store(self) -> KnowledgeStore:
         if self._store is None:
-            self._store = load_knowledge_store(self._engine._get_backend, get_config().knowledge_store_extension)
+            self._store = load_knowledge_store(self._engine._get_backend, get_config().kb_store_extension)
         return self._store
 
     async def _ready(self, request_context: RequestContext | None) -> None:
@@ -814,10 +816,10 @@ class KnowledgeService:
     def _strategy(self, name: str | None) -> ingest_strategy.IngestStrategy | None:
         """The ingestion strategy named for an item, else the server's default; None when neither is set."""
         config = get_config()
-        name = name or config.ingest_default_strategy
+        name = name or config.kb_ingest_default_strategy
         if name is None:
             return None
-        strategies = ingest_strategy.parse_strategies(config.ingest_strategies)
+        strategies = ingest_strategy.parse_strategies(config.kb_ingest_strategies)
         if name not in strategies:
             raise KnowledgeBankError(
                 f"unknown ingestion strategy '{name}' (this server has: {', '.join(sorted(strategies)) or 'none'})"
@@ -826,11 +828,11 @@ class KnowledgeService:
 
     def _check_item(self, item: IngestItem, settings: KnowledgeBankSettings, *, depth: int = 0) -> _Plan:
         """How the file will be split; refuses what cannot be ingested."""
-        limit = get_config().knowledge_max_file_mb * 1024 * 1024
+        limit = get_config().kb_max_file_mb * 1024 * 1024
         if len(item.data) > limit:
             raise KnowledgeBankError(
                 f"'{item.filename}' is {len(item.data) / 1048576:.1f}MB; the limit is "
-                f"{get_config().knowledge_max_file_mb}MB (HINDSIGHT_API_KNOWLEDGE_MAX_FILE_MB)",
+                f"{get_config().kb_max_file_mb}MB (HINDSIGHT_API_KB_MAX_FILE_MB)",
                 413,
             )
         if not item.data:
@@ -864,10 +866,10 @@ class KnowledgeService:
                 415,
             )
         media_type = media.media_type_of(kind, item.filename)
-        if media_type in get_config().knowledge_disabled_media_types:
+        if media_type in get_config().kb_disabled_media_types:
             raise KnowledgeBankError(
                 f"'{item.filename}' is {media_type}, which this server does not ingest "
-                "(HINDSIGHT_API_KNOWLEDGE_DISABLED_MEDIA_TYPES)",
+                "(HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES)",
                 415,
             )
         if media_type in settings.disabled_media_types:
@@ -878,7 +880,7 @@ class KnowledgeService:
         if not _NEEDS[kind] & self.embedder.modalities:
             raise KnowledgeBankError(
                 f"'{item.filename}' is {media_type}, but the knowledge embedder only embeds "
-                f"{', '.join(sorted(self.embedder.modalities))}. Configure HINDSIGHT_API_KNOWLEDGE_EMBEDDINGS_PROVIDER "
+                f"{', '.join(sorted(self.embedder.modalities))}. Configure HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER "
                 "with a model that embeds it.",
                 415,
             )
@@ -902,7 +904,7 @@ class KnowledgeService:
         settings = (
             f"v{_PIPELINE_VERSION}|{how}|{self.embedder.provider}:{self.embedder.model}:{self.embedder.dimension}|{s.pdf_page_pixels}"
             f"|{s.image_tokens}|{s.audio_window_seconds}|{s.video_window_seconds}"
-            f"|{s.media_overlap_seconds}|{c.knowledge_pdf_text_weight}|{s.pdf_bands}|{s.text_passage_tokens}"
+            f"|{s.media_overlap_seconds}|{c.kb_pdf_text_weight}|{s.pdf_bands}|{s.text_passage_tokens}"
         )
         return hashlib.sha256(item.data + settings.encode()).hexdigest()
 
@@ -950,7 +952,7 @@ class KnowledgeService:
         task of its own and completes (or fails) once every child has, like a batch retain's. Each child
         is a worker task over a slice of the documents (see ``_children``), so a big upload spreads across
         free slots, and a retry redoes one child, not the whole upload."""
-        children = _children(work, get_config().knowledge_ingest_child_bytes)
+        children = _children(work, get_config().kb_ingest_child_bytes)
         parent_id = uuid.uuid4()
         payloads: list[dict[str, Any]] = []
         backend = await self._engine._get_backend()
@@ -1033,7 +1035,8 @@ class KnowledgeService:
                 before
                 and before.content_hash == content_hash
                 and before.status == "ready"
-                and before.tags == item.tags
+                # As sets: the same tags sent in another order are not a change worth re-indexing.
+                and set(before.tags or []) == set(item.tags or [])
                 # The name is embedded as each passage's title, and the type decides how it is served.
                 and before.filename == item.filename
                 and before.content_type == item.content_type
@@ -1113,7 +1116,6 @@ class KnowledgeService:
             return media.split_media(
                 data,
                 kind,
-                filename=document.filename,
                 window_seconds=window,
                 overlap_seconds=s.media_overlap_seconds,
                 max_seconds=s.max_media_seconds,
@@ -1236,7 +1238,7 @@ class KnowledgeService:
         settings = await self._bank_settings(bank_id)
         # An image's vision tokens, sent only when the bank overrides the server's: None keeps each
         # embedder's own default, which for a remote one is not necessarily the server setting.
-        image_tokens = settings.image_tokens if settings.image_tokens != get_config().knowledge_image_tokens else None
+        image_tokens = settings.image_tokens if settings.image_tokens != get_config().kb_image_tokens else None
         async with _timing.timed("store.read"):
             rows = await self.store.get_documents(bank_id, [w.document_id for w in work])
         docs: list[_InFlight] = []
@@ -1257,7 +1259,7 @@ class KnowledgeService:
         committed: set[str] = set()
         rounds: list[asyncio.Task[None]] = []
         slots = asyncio.Semaphore(_EMBED_ROUNDS_IN_FLIGHT)
-        budget = _MemoryBudget(get_config().knowledge_ingest_memory_budget_mb * 1024 * 1024)
+        budget = _MemoryBudget(get_config().kb_ingest_memory_budget_mb * 1024 * 1024)
 
         async def run_round(batch: list[_Waiting]) -> None:
             try:
@@ -1550,7 +1552,7 @@ class KnowledgeService:
                 # file further in (a splitter's helper, a temp file) stays an ordinary, retried error.
                 raise _FileGone(str(exc)) from exc
         if w.handler is None:
-            # Splitting is blocking (pdfium, ffmpeg): it runs in a thread, one draft at a time.
+            # Splitting is blocking (pdfium, PyAV): it runs in a thread, one draft at a time.
             return await _split(self._drafts, document, data, settings)
         made = await ingest_strategy.load_extension(w.handler).ingest(
             ingest_strategy.IngestFile(
@@ -1755,6 +1757,12 @@ class KnowledgeService:
             stream=self._engine._file_storage.retrieve_stream(passage.media_key), content_type=content_type
         )
 
+    async def list_tags(
+        self, bank_id: str, request_context: RequestContext, *, pattern: str | None, limit: int, offset: int
+    ) -> TagPage:
+        await self._open_bank(bank_id, KnowledgeBankReadOperation.LIST_KNOWLEDGE_BANK_TAGS, request_context)
+        return await self.store.list_tags(bank_id, pattern=pattern, limit=limit, offset=offset)
+
     async def timeseries(
         self,
         bank_id: str,
@@ -1802,6 +1810,7 @@ class KnowledgeService:
                 embedding.cancel()
                 raise
             vector = await embedding
+            request = await self._with_exact_tag_groups(bank_id, request)
             async with _timing.timed("store.search"):
                 hits = await self._search(bank_id, request, vector, trace)
             async with _timing.timed("context"):
@@ -1821,6 +1830,26 @@ class KnowledgeService:
                 )
             )
             return budgeted.items
+
+    async def _with_exact_tag_groups(self, bank_id: str, request: SearchRequest) -> SearchRequest:
+        """``request`` with its fuzzy tag leaves resolved against this bank's own tags, as memory-bank
+        recall resolves them (``MemoryEngine._resolve_fuzzy_tag_groups``), so the store only sees exact ones."""
+        groups = request.filters.tag_groups
+        if not needs_resolution(groups):
+            return request
+        page = await self.store.list_tags(bank_id, pattern=None, limit=MAX_VOCABULARY, offset=0)
+        vocabulary = [t.tag for t in page.tags]
+        if page.total > MAX_VOCABULARY:
+            raise KnowledgeBankError(
+                f"Bank has more than {MAX_VOCABULARY} distinct tags, above what fuzzy tag matching can "
+                "resolve against. Use resolve='exact'.",
+                422,
+            )
+        try:
+            resolved = resolve_tag_groups(groups or [], vocabulary)
+        except TagResolutionError as exc:
+            raise KnowledgeBankError(str(exc), 422) from exc
+        return replace(request, filters=replace(request.filters, tag_groups=resolved))
 
     async def _fire_completion_hook(self, make_coro: Callable[[OperationValidatorExtension], Awaitable[None]]) -> None:
         """Fire a post-operation metering hook in isolation. Metering is best-effort: an extension
@@ -1868,9 +1897,9 @@ class KnowledgeService:
             vector,
             top_k=SEARCH_CANDIDATES[request.budget],
             filters=request.filters,
-            text_weight=get_config().knowledge_pdf_text_weight,
+            text_weight=get_config().kb_pdf_text_weight,
             query_text=request.query,
-            keyword_weight=get_config().knowledge_keyword_weight,
+            keyword_weight=get_config().kb_keyword_weight,
             trace=trace.store if trace is not None else None,
         )
 
@@ -2007,19 +2036,27 @@ def _traced(hit: SearchHit, items: list[SearchResultItem], windows: list[_Window
 
 
 async def documents_for_memory_bank(
-    engine: MemoryEngine, bank_id: str, linked: list[str], query: str, max_tokens: int, request_context: RequestContext
+    engine: MemoryEngine,
+    bank_id: str,
+    linked: list[str],
+    query: str,
+    max_tokens: int,
+    filters: SearchFilters,
+    request_context: RequestContext,
 ) -> list[KnowledgeDocumentHit] | None:
     """The linked knowledge banks' hits for reflect's recall tool, or None when none are linked.
 
     The same search as ``POST /knowledge-banks/{id}/search``, keywords and meaning, each text hit with
-    the passages around it, within ``max_tokens``; the banks are searched at once and their hits taken in
-    turn, best of each first (fused scores are per bank, so they cannot be ranked against each other).
+    the passages around it, within ``max_tokens`` and ``filters`` (the memory bank's
+    ``reflect_kb_search_*`` settings: the media types, and the reflect's tags); the banks are
+    searched at once and their hits taken in turn, best of each first (fused scores are per bank, so
+    they cannot be ranked against each other).
     It used to be its own search: meaning only, the 5 best passages across banks, no text around them,
     so reflect read less than the same question showed in the UI.
 
     A failure here never fails the reflect: the memories are still the answer, without the docs.
     """
-    if not get_config().enable_knowledge_banks:
+    if not get_config().enable_kb:
         return None
     linked = [b for b in linked if b != bank_id]
     if not linked or not (query or "").strip():
@@ -2030,17 +2067,25 @@ async def documents_for_memory_bank(
     # for, so a metering extension does not charge these linked searches a second time.
     caller = replace(request_context, internal=False, sub_operation=True)
     try:
-        return await _linked_documents(engine, bank_id, linked, query, max_tokens, caller)
+        return await _linked_documents(engine, bank_id, linked, query, max_tokens, filters, caller)
     except Exception as exc:
         logger.warning(f"Knowledge search for memory bank '{bank_id}' failed: {exc!r}")
         return []
 
 
 async def _linked_documents(
-    engine: MemoryEngine, bank_id: str, linked: list[str], query: str, max_tokens: int, caller: RequestContext
+    engine: MemoryEngine,
+    bank_id: str,
+    linked: list[str],
+    query: str,
+    max_tokens: int,
+    filters: SearchFilters,
+    caller: RequestContext,
 ) -> list[KnowledgeDocumentHit]:
     service = get_knowledge_service(engine)
-    request = SearchRequest(query=query, query_image=None, filters=SearchFilters(), max_tokens=max_tokens)
+    # The server's depth for this search (HINDSIGHT_API_REFLECT_KB_SEARCH_BUDGET); it was always "mid".
+    budget = cast(SearchBudget, get_config().reflect_kb_search_budget)
+    request = SearchRequest(query=query, query_image=None, filters=filters, max_tokens=max_tokens, budget=budget)
     found = await asyncio.gather(*(service.search(b, request, caller) for b in linked), return_exceptions=True)
     ranked: list[list[tuple[str, SearchResultItem]]] = []
     for linked_bank, items in zip(linked, found, strict=True):

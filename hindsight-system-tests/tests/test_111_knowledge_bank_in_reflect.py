@@ -127,3 +127,54 @@ async def test_reflect_reads_each_hit_with_its_neighbours_from_every_linked_bank
     finally:
         for bank in (manual, credit):
             await kb.delete(bank)
+
+
+TEAM_A = "Team A ships on Tuesdays."
+TEAM_B = "Team B ships on Fridays."
+SHIP_QUERY = "When does the team ship?"
+
+
+@pytest.fixture
+async def team_bank(client) -> AsyncIterator[str]:
+    kb = KnowledgeBanks(client)
+    bank_id = f"systest-kb-{uuid.uuid4().hex[:12]}"
+    assert (await kb.create(bank_id)).status == 200
+    r = await kb.ingest(
+        bank_id,
+        [
+            {"document_id": "team-a", "text": TEAM_A, "tags": ["team:a"]},
+            {"document_id": "team-b", "text": TEAM_B, "tags": ["team:b"]},
+        ],
+    )
+    assert r.status == 200, r.body
+    yield bank_id
+    await kb.delete(bank_id)
+
+
+async def test_a_tagged_reflect_reads_only_the_linked_documents_its_tags_allow(client, llm, memory_bank, team_bank):
+    # The reflect's tags scope the documents as they scope the memories; a bank can turn that off.
+    await client.aupdate_bank_config(memory_bank, knowledge_banks=[team_bank])
+    reflect_loop(llm, answer="Tuesdays.", query=SHIP_QUERY)
+
+    await client.areflect(bank_id=memory_bank, query=SHIP_QUERY, tags=["team:a"], tags_match="any_strict")
+
+    assert _reflect_turns_with(llm, TEAM_A), "the document the tags allow was not read"
+    assert not _reflect_turns_with(llm, TEAM_B), "a document outside the reflect's tags reached the model"
+
+    await client.aupdate_bank_config(memory_bank, reflect_kb_search_apply_tags=False)
+    reflect_loop(llm, answer="Tuesdays or Fridays.", query=SHIP_QUERY)
+
+    await client.areflect(bank_id=memory_bank, query=SHIP_QUERY, tags=["team:a"], tags_match="any_strict")
+
+    assert _reflect_turns_with(llm, TEAM_B), "with apply_tags off the tags still filtered the documents"
+
+
+async def test_the_banks_media_types_limit_what_reflect_reads(client, llm, memory_bank, knowledge_bank):
+    await client.aupdate_bank_config(
+        memory_bank, knowledge_banks=[knowledge_bank], reflect_kb_search_media_types=["image", "document"]
+    )
+    reflect_loop(llm, answer="30 days.", query=QUERY)
+
+    await client.areflect(bank_id=memory_bank, query=QUERY)
+
+    assert not _reflect_turns_with(llm, POLICY), "a text passage reached reflect though only images were allowed"

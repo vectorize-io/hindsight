@@ -19,7 +19,6 @@ import {
   MEDIA_TYPES,
   SEARCH_BUDGETS,
   fileToBase64,
-  parseTags,
   type KnowledgeSearchRequest,
   type KnowledgeSearchResponse,
   type MediaType,
@@ -34,6 +33,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import JsonView from "react18-json-view";
 import "react18-json-view/src/style.css";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
+import { TagFilterInput } from "@/components/tag-filter-input";
+import type { TagGroup } from "@/lib/api";
+import type { TagsMatch } from "@/lib/tag-filter-params";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
@@ -71,8 +74,9 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
   const [maxTokens, setMaxTokens] = React.useState(DEFAULT_MAX_TOKENS);
   const [budget, setBudget] = React.useState<SearchBudget>("mid");
   const [showOptions, setShowOptions] = React.useState(false);
-  const [tags, setTags] = React.useState("");
-  const [tagsMatch, setTagsMatch] = React.useState<"any" | "all">("any");
+  const [tags, setTags] = React.useState<string[]>([]);
+  const [tagsMatch, setTagsMatch] = React.useState<TagsMatch>("any");
+  const [tagGroups, setTagGroups] = React.useState("");
   const [mediaTypes, setMediaTypes] = React.useState<MediaType[]>([]);
   const [searching, setSearching] = React.useState(false);
   const [response, setResponse] = React.useState<KnowledgeSearchResponse | null>(null);
@@ -109,18 +113,28 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
 
   const hasQuery = query.trim() !== "" || image !== null || video !== null;
   const canSearch = hasQuery && !searching;
-  const activeOptions = parseTags(tags).length + mediaTypes.length;
+  const activeOptions = tags.length + mediaTypes.length + (tagGroups.trim() ? 1 : 0);
 
   const search = async () => {
     if (!canSearch) return;
-    const parsedTags = parseTags(tags);
+    let parsedGroups: TagGroup[] | undefined;
+    if (tagGroups.trim()) {
+      try {
+        parsedGroups = JSON.parse(tagGroups);
+      } catch {
+        setError(t("tagGroupsInvalid"));
+        return;
+      }
+    }
     const body: KnowledgeSearchRequest = {
       max_tokens: Math.min(MAX_MAX_TOKENS, Math.max(1, maxTokens || DEFAULT_MAX_TOKENS)),
       ...(budget !== "mid" ? { budget } : {}),
       ...(query.trim() ? { query: query.trim() } : {}),
       ...(image ? { query_image: image.base64 } : {}),
       ...(video ? { query_video: video.base64 } : {}),
-      ...(parsedTags.length ? { tags: parsedTags, tags_match: tagsMatch } : {}),
+      // exact with no tags still filters: it selects the untagged documents, as memory recall does.
+      ...(tags.length || tagsMatch === "exact" ? { tags, tags_match: tagsMatch } : {}),
+      ...(parsedGroups ? { tag_groups: parsedGroups } : {}),
       ...(mediaTypes.length ? { media_types: mediaTypes } : {}),
       // Always traced, as the Recall view is: the Trace tab and each result's score read it.
       trace: true,
@@ -300,25 +314,45 @@ export function KnowledgeSearchPanel({ bankId }: { bankId: string }) {
           {showOptions && (
             <div className="mt-3 grid gap-4 md:grid-cols-2">
               <div className="min-w-0 space-y-1.5">
-                <Label htmlFor="kb-search-tags">{t("tags")}</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="kb-search-tags"
-                    value={tags}
-                    onChange={(e) => setTags(e.target.value)}
-                    placeholder="v2, onboarding"
-                    className="min-w-0 flex-1"
-                  />
-                  <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as "any" | "all")}>
-                    <SelectTrigger className="w-24" aria-label={t("tagsMatch")}>
+                <Label>{t("tags")}</Label>
+                <div className="flex flex-wrap items-start gap-2">
+                  <Select value={tagsMatch} onValueChange={(v) => setTagsMatch(v as TagsMatch)}>
+                    <SelectTrigger className="w-44 shrink-0" aria-label={t("tagsMatch")}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="any">{t("tagsAny")}</SelectItem>
-                      <SelectItem value="all">{t("tagsAll")}</SelectItem>
+                      <SelectItem value="any">{tRecall("tagsMatchAny")}</SelectItem>
+                      <SelectItem value="all">{tRecall("tagsMatchAll")}</SelectItem>
+                      <SelectItem value="any_strict">{tRecall("tagsMatchAnyStrict")}</SelectItem>
+                      <SelectItem value="all_strict">{tRecall("tagsMatchAllStrict")}</SelectItem>
+                      <SelectItem value="exact">{tRecall("tagsMatchExact")}</SelectItem>
                     </SelectContent>
                   </Select>
+                  {/* The tag picker the memory bank views use, fed by this bank's own document tags. */}
+                  <TagFilterInput
+                    value={tags}
+                    onChange={setTags}
+                    fetchSuggestions={async (q) =>
+                      (
+                        await client.listKnowledgeBankTags(bankId, q ? `${q}*` : undefined, 20)
+                      ).items.map((i) => i.tag)
+                    }
+                    inline
+                    className="min-w-0 flex-1"
+                  />
                 </div>
+                <Label htmlFor="kb-search-tag-groups" className="pt-2 block">
+                  {t("tagGroups")}
+                </Label>
+                <Textarea
+                  id="kb-search-tag-groups"
+                  value={tagGroups}
+                  onChange={(e) => setTagGroups(e.target.value)}
+                  placeholder='[{"or": [{"tags": ["v2"], "match": "any_strict"}, {"tags": ["oss"], "match": "any_strict"}]}]'
+                  rows={2}
+                  className="font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground">{t("tagGroupsHelp")}</p>
               </div>
               <div className="min-w-0 space-y-1.5">
                 <span className="text-sm font-medium leading-none">{t("mediaTypes")}</span>

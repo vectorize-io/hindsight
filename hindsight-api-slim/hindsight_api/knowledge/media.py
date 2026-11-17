@@ -7,18 +7,17 @@
 * video -> fixed windows (mp4, picture + soundtrack), with a small overlap
 * text  -> token-sized text passages; Office/HTML files are read for their text layer first
 
-Audio and video go through the ``ffmpeg`` binary, which must be on PATH.
+Audio and video go through PyAV, whose wheel carries its own ffmpeg libraries. This used to shell out to
+the ``ffmpeg``/``ffprobe`` binaries, which every install then had to provide on PATH (an apt package in
+the Docker image, a CI step); PyAV keeps the work in-process and needs nothing on the system.
 """
 
 from __future__ import annotations
 
 import collections
 import io
-import json
 import math
 import re
-import shutil
-import subprocess
 import tempfile
 import threading
 from collections import Counter
@@ -383,20 +382,19 @@ def split_text(text: str, *, tokens: int) -> list[PassageDraft]:
 
 
 # --- audio / video -----------------------------------------------------------------------------
+# PyAV carries its own ffmpeg libraries inside the wheel: nothing runs as a separate program and
+# nothing is needed on the system.
 
 
-def _ffmpeg() -> str:
-    path = shutil.which("ffmpeg")
-    if not path:
-        raise MediaError("audio and video need ffmpeg on the server's PATH")
-    return path
-
-
-def _run(args: list[str], *, stdin: bytes | None = None) -> bytes:
-    proc = subprocess.run(args, input=stdin, capture_output=True, check=False)
-    if proc.returncode != 0:
-        raise MediaError(f"ffmpeg failed: {proc.stderr.decode(errors='replace')[-400:]}")
-    return proc.stdout
+def _open(data: bytes) -> Any:
+    try:
+        import av
+    except ImportError as exc:
+        raise MediaError("audio and video need the local-ml extra (PyAV)") from exc
+    try:
+        return av.open(io.BytesIO(data))
+    except av.FFmpegError as exc:
+        raise MediaError(f"unreadable media: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -412,17 +410,18 @@ class Window:
     end: float
 
 
-def probe(path: str) -> MediaInfo:
+def probe(data: bytes) -> MediaInfo:
     """Duration and tracks of a media file."""
-    ffprobe = shutil.which("ffprobe") or _ffmpeg().replace("ffmpeg", "ffprobe")
-    out = _run([ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_type", "-of", "json", path])
-    info = json.loads(out or b"{}")
-    kinds = {s.get("codec_type") for s in info.get("streams", [])}
-    try:
-        duration = float(info.get("format", {}).get("duration") or 0)
-    except ValueError:
-        duration = 0.0
-    return MediaInfo(duration=duration, has_video="video" in kinds, has_audio="audio" in kinds)
+    with _open(data) as container:
+        duration = container.duration / 1_000_000 if container.duration else 0.0
+        if not duration:
+            duration = max(
+                (float(s.duration * s.time_base) for s in container.streams if s.duration and s.time_base),
+                default=0.0,
+            )
+        return MediaInfo(
+            duration=duration, has_video=bool(container.streams.video), has_audio=bool(container.streams.audio)
+        )
 
 
 def windows(duration: float, window: float, overlap: float) -> list[Window]:
@@ -445,73 +444,129 @@ def split_media(
     data: bytes,
     kind: Literal["audio", "video"],
     *,
-    filename: str | None,
     window_seconds: int,
     overlap_seconds: int,
     max_seconds: int,
 ) -> Iterator[PassageDraft]:
     """Cut audio into m4a windows and video into mp4 windows (480p, with sound)."""
-    ffmpeg = _ffmpeg()
+    info = probe(data)
+    if info.duration <= 0:
+        raise MediaError("could not read the media duration")
+    if info.duration > max_seconds:
+        raise MediaError(f"media is {info.duration:.0f}s long; the limit is {max_seconds}s")
+    if kind == "video" and not info.has_video:
+        kind = "audio"
+    if kind == "audio" and not info.has_audio:
+        raise MediaError("the file has no audio track")
+    for w in windows(info.duration, window_seconds, min(overlap_seconds, window_seconds - 1)):
+        yield PassageDraft(
+            modality=kind,
+            data=_cut(data, w, video=kind == "video", audio=info.has_audio),
+            mime="video/mp4" if kind == "video" else "audio/mp4",
+            start_ms=int(w.start * 1000),
+            end_ms=int(w.end * 1000),
+        )
+
+
+def _cut(data: bytes, w: Window, *, video: bool, audio: bool) -> bytes:
+    """One window re-encoded as mp4: H.264 at most 480p high, and/or mono 64 kb/s AAC."""
+    # A temp file, not a buffer: "+faststart" moves the index to the front by re-reading the file by name.
     with tempfile.TemporaryDirectory(prefix="hs-kb-") as tmp:
-        source = str(Path(tmp) / f"source{Path(filename or '').suffix.lower() or '.bin'}")
-        Path(source).write_bytes(data)
-        info = probe(source)
-        duration, has_video, has_audio = info.duration, info.has_video, info.has_audio
-        if duration <= 0:
-            raise MediaError("could not read the media duration")
-        if duration > max_seconds:
-            raise MediaError(f"media is {duration:.0f}s long; the limit is {max_seconds}s")
-        if kind == "video" and not has_video:
-            kind = "audio"
-        if kind == "audio" and not has_audio:
-            raise MediaError("the file has no audio track")
-        for w in windows(duration, window_seconds, min(overlap_seconds, window_seconds - 1)):
-            start, end = w.start, w.end
-            out = str(Path(tmp) / f"w.{'mp4' if kind == 'video' else 'm4a'}")
-            args = [ffmpeg, "-loglevel", "error", "-y", "-ss", f"{start:.3f}", "-t", f"{end - start:.3f}", "-i", source]
-            if kind == "video":
-                args += ["-vf", "scale=-2:'min(480,ih)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28"]
-                args += ["-pix_fmt", "yuv420p"]
-                args += ["-c:a", "aac", "-b:a", "64k", "-ac", "1"] if has_audio else ["-an"]
-            else:
-                args += ["-vn", "-c:a", "aac", "-b:a", "64k", "-ac", "1"]
-            _run([*args, "-movflags", "+faststart", out])
-            yield PassageDraft(
-                modality=kind,
-                data=Path(out).read_bytes(),
-                mime="video/mp4" if kind == "video" else "audio/mp4",
-                start_ms=int(start * 1000),
-                end_ms=int(end * 1000),
-            )
+        out = str(Path(tmp) / "clip.mp4")
+        _encode_window(data, w, out, video=video, audio=audio)
+        return Path(out).read_bytes()
 
 
-def _with_temp_file(data: bytes, suffix: str, args_for: list[str]) -> bytes:
-    with tempfile.NamedTemporaryFile(suffix=suffix) as f:
-        f.write(data)
-        f.flush()
-        return _run([_ffmpeg(), "-loglevel", "error", "-i", f.name, *args_for, "-"])
+def _encode_window(data: bytes, w: Window, out: str, *, video: bool, audio: bool) -> None:
+    from fractions import Fraction
+
+    import av
+
+    with _open(data) as src, av.open(out, "w", format="mp4", options={"movflags": "+faststart"}) as dst:
+        streams: list[Any] = []
+        v_out = a_out = None
+        if video:
+            v_in = src.streams.video[0]
+            height = min(480, v_in.codec_context.height)
+            rate = Fraction(v_in.average_rate or 25)
+            v_out = dst.add_stream("libx264", rate=rate)
+            v_out.codec_context.time_base = 1 / rate
+            v_out.height = height
+            v_out.width = round(v_in.codec_context.width * height / v_in.codec_context.height / 2) * 2
+            v_out.pix_fmt = "yuv420p"
+            v_out.options = {"preset": "veryfast", "crf": "28"}
+            streams.append(v_in)
+        if audio:
+            a_in = src.streams.audio[0]
+            a_out = dst.add_stream("aac", rate=a_in.codec_context.sample_rate or 44100, layout="mono")
+            a_out.bit_rate = 64_000
+            streams.append(a_in)
+        resampler = (
+            av.AudioResampler(format="fltp", layout="mono", rate=a_out.rate, frame_size=1024)  # AAC frame size
+            if a_out
+            else None
+        )
+        audio_samples, video_frames, finished = 0, 0, set()
+        src.seek(int(w.start * 1_000_000), any_frame=False)
+        for frame in src.decode(*streams):
+            t = frame.time
+            if t is None or t < w.start:
+                continue
+            if t >= w.end:
+                finished.add(type(frame))
+                if len(finished) == len(streams):
+                    break
+                continue
+            if isinstance(frame, av.VideoFrame) and v_out is not None:
+                scaled = frame.reformat(width=v_out.width, height=v_out.height, format="yuv420p")
+                # Numbered at the output frame rate: source timestamps can repeat or jump.
+                scaled.pts, scaled.time_base, video_frames = video_frames, 1 / rate, video_frames + 1
+                dst.mux(v_out.encode(scaled))
+            elif isinstance(frame, av.AudioFrame) and a_out is not None and resampler is not None:
+                frame.pts = None
+                for chunk in resampler.resample(frame):
+                    chunk.pts, audio_samples = audio_samples, audio_samples + chunk.samples
+                    dst.mux(a_out.encode(chunk))
+        if a_out is not None and resampler is not None:
+            for chunk in resampler.resample(None):
+                chunk.pts, audio_samples = audio_samples, audio_samples + chunk.samples
+                dst.mux(a_out.encode(chunk))
+        for s in (v_out, a_out):
+            if s is not None:
+                dst.mux(s.encode(None))
 
 
 def decode_audio_pcm(data: bytes, *, required: bool = True) -> np.ndarray | None:
     """Mono 16 kHz float32 samples of a clip's soundtrack."""
-    try:
-        raw = _with_temp_file(data, ".mp4", ["-vn", "-ac", "1", "-ar", str(PCM_RATE), "-f", "f32le"])
-    except MediaError:
-        if required:
-            raise
-        return None
-    return np.frombuffer(raw, np.float32).copy()
+    import av
+
+    with _open(data) as container:
+        if not container.streams.audio:
+            if required:
+                raise MediaError("the file has no audio track")
+            return None
+        resampler = av.AudioResampler(format="flt", layout="mono", rate=PCM_RATE)
+        chunks = [
+            out.to_ndarray().reshape(-1) for frame in container.decode(audio=0) for out in resampler.resample(frame)
+        ]
+        chunks += [out.to_ndarray().reshape(-1) for out in resampler.resample(None)]
+    return np.concatenate(chunks) if chunks else np.zeros(0, np.float32)
 
 
 def decode_video_frames(data: bytes, *, fps: int = 1, side: int = 448) -> np.ndarray:
     """(T, H, W, 3) uint8 frames at ``fps``, scaled to a ``side`` x ``side`` square."""
-    raw = _with_temp_file(
-        data, ".mp4", ["-vf", f"fps={fps},scale={side}:{side}", "-f", "rawvideo", "-pix_fmt", "rgb24"]
-    )
-    frames = np.frombuffer(raw, np.uint8)
-    if frames.size == 0:
+    frames, next_time = [], 0.0
+    with _open(data) as container:
+        if not container.streams.video:
+            raise MediaError("the video has no frames")
+        for frame in container.decode(video=0):
+            if frame.time is not None and frame.time + 1e-6 < next_time:
+                continue
+            frames.append(frame.reformat(width=side, height=side, format="rgb24").to_ndarray())
+            next_time = (frame.time or next_time) + 1 / fps
+    if not frames:
         raise MediaError("the video has no frames")
-    return frames.reshape(-1, side, side, 3)
+    return np.stack(frames)
 
 
 def l2_normalize(vector: list[float]) -> list[float]:

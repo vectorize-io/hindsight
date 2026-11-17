@@ -27,7 +27,7 @@ from hindsight_api.engine.llm_interface import (
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
-from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences
+from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences, record_retried_attempt
 from hindsight_api.engine.response_models import TokenUsage
 from hindsight_api.engine.structured_output import provider_json_schema
 from hindsight_api.metrics import get_metrics_collector
@@ -425,6 +425,7 @@ class ClaudeCodeLLM(LLMInterface):
         # Call Claude Agent SDK
         last_exception = None
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 # Collect streaming response
                 full_text = ""
@@ -557,6 +558,14 @@ class ClaudeCodeLLM(LLMInterface):
                 if attempt < max_retries:
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     logger.warning(f"Claude Code error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
+                    )
                     await asyncio.sleep(backoff)
                     continue
                 else:

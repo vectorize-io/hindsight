@@ -1676,7 +1676,8 @@ export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-key
 | `HINDSIGHT_API_DECISION_MODEL_TIMEOUT` | Request timeout in seconds. | `60` |
 | `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` | Most requests in flight at once, for each operation using the decision model. | `24` |
 | `HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS` | Most tokens one request may carry, counted on the whole request body. Larger asks are split across requests. Set it to the served model's context window less a margin. Only for endpoints that do not fit requests themselves: on Hindsight Inference's own URL, `hindsight` fits each request to its model's window, so the whole ask goes in one request (split only to stay under the 2 MB body limit). With a custom `HINDSIGHT_API_DECISION_MODEL_BASE_URL` (the model on your own vLLM), requests are split again. | `26000`; `54000` for `hindsight` on a custom URL; unset on Hindsight Inference |
-| `HINDSIGHT_API_DECISION_MODEL_TOKENIZER` | The vocabulary the request ceiling and recall's caps (on the query, the shared context and each memory) are counted in: the served model's own, since it is the model that refuses a request past its window. `jev` (an estimate of Jev's count) and `qwen3.5` are available besides the `HINDSIGHT_API_TOKENIZER_ENCODING` ones. Set it when the endpoint serves another model than the provider's default. | `jev` for `typesafe`; else `HINDSIGHT_API_TOKENIZER_ENCODING` |
+| `HINDSIGHT_API_DECISION_MODEL_VISION` | Show the decision model pictures. Today that is reflect's knowledge-bank pictures, when it asks whether the evidence already answers the question; without them an answer only a picture holds reads as "not enough" and costs another round. System One providers only (`typesafe`, `hindsight`), on a model that reads images (Jev 1.13+). Only PNG and JPEG pictures 280–1568 px on each side are sent; others stay text. Off by default: images on System One are a preview. Server-level only. | `false` |
+| `HINDSIGHT_API_DECISION_MODEL_TOKENIZER` | The vocabulary the request ceiling and recall's caps (on the query, the shared context and each memory) are counted in: the served model's own, since it is the model that refuses a request past its window. `jev` (an estimate of Jev's count), `qwen3.5` and `hs-decide-1-flash` are available besides the `HINDSIGHT_API_TOKENIZER_ENCODING` ones. Set it when the endpoint serves another model than the provider's default. | `jev` for `typesafe`; else `HINDSIGHT_API_TOKENIZER_ENCODING` |
 
 Every request is retried on its own when it is rate-limited (429) or fails transiently.
 
@@ -2657,6 +2658,18 @@ export HINDSIGHT_API_OBSERVATIONS_MISSION="Observations are recurring patterns i
 | `HINDSIGHT_API_REFLECT_SOURCE_FACTS_MAX_TOKENS` | Token budget for source facts in `search_observations` during reflect. `-1` disables source facts (default), `0` enables with no limit, `>0` enables with a token budget. Hierarchical — can be overridden per bank via config API. | `-1` |
 | `HINDSIGHT_API_REFLECT_DEFAULT_OPTIONS` | Default reflect options as a JSON object, applied whenever a reflect request leaves the option unset. Mental-model refreshes do not read it — they take these settings from their own trigger, defaulted per bank by `page_default_trigger`, and always get only the best-ranked mental model in full. `reflect_search_observations_max_tokens` sets the budget for the `search_observations` tool (a smaller budget drops the lowest-ranked observations and shrinks the reflect context); `reflect_search_observations_include_entities` turns off the resolved entity names attached to each observation, which can be more than half the tool payload; `reflect_search_mental_models_max_tokens` sets the budget for the mental models `search_mental_models` returns in full (default 16000; the best match is always in full, the others that do not fit come back as a snippet the model can read). E.g. `{"reflect_search_observations_max_tokens": 3000, "reflect_search_observations_include_entities": false}`. Hierarchical — can be overridden per bank via config API. | - |
 
+#### Reflect and linked knowledge banks
+
+How an interactive reflect searches the knowledge banks a memory bank links (bank config `knowledge_banks`). A mental-model refresh never reads them. The media types and the tag filter are hierarchical (per bank); the picture settings and the budget are server-level only. The search's token budget is the one the reflect's recall call uses.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_MEDIA_TYPES` | Comma-separated media types the search may return: some of `document`, `image`, `audio`, `video`, `text`. Unset returns all. | - |
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_IMAGES` | Show the reflect model the picture behind an image or PDF-page hit, as an image. Only when the model is known to read images (see `HINDSIGHT_API_LLM_VISION`); otherwise the hit stays text. | `true` |
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_MAX_IMAGES` | The most pictures one search hands the model. Each one costs input tokens. `0` sends none. | `4` |
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_BUDGET` | How deep the search ranks before its token budget picks the results, as the knowledge search's `budget`: `low` is fastest, `high` reaches the most candidates. | `mid` |
+| `HINDSIGHT_API_REFLECT_KB_SEARCH_APPLY_TAGS` | Filter the knowledge-bank search by the reflect's `tags`, `tags_match` and `tag_groups`, with the same rules as its memories (`any`/`all` keep untagged documents, the `_strict` modes drop them). `false` searches every document, whatever the reflect's tags. | `true` |
+
 #### Internal recall (used by reflect and mental model refresh)
 
 These knobs control the recall tool the reflect agent runs (including when refreshing a mental model). They set what a `recall` tool call gets when the model does not ask for a specific budget; an explicit ask from the model wins, within the bounds reflect applies to any model-supplied token argument. They are hierarchical — overridable per bank via the config API, and individually overridable per mental model via the `trigger.include_chunks`, `trigger.recall_max_tokens`, and `trigger.recall_chunks_max_tokens` fields.
@@ -2676,6 +2689,42 @@ Disposition traits control how the bank reasons during reflect operations. Each 
 | `HINDSIGHT_API_DISPOSITION_SKEPTICISM` | How skeptical vs trusting (1=trusting, 5=skeptical) | `3` |
 | `HINDSIGHT_API_DISPOSITION_LITERALISM` | How literally to interpret information (1=flexible, 5=literal) | `3` |
 | `HINDSIGHT_API_DISPOSITION_EMPATHY` | How much to consider emotional context (1=detached, 5=empathetic) | `3` |
+
+### Knowledge banks
+
+Knowledge banks hold documents (PDF, Office, images, audio, video, text) for search by meaning and keywords; a memory bank links them in its `knowledge_banks` config, and reflect reads them (see [Reflect](#reflect)). They are off by default while the feature is being built. The settings marked *per bank* can be overridden for one knowledge bank through `PATCH /v1/default/knowledge-banks/{bank_id}/config`; a bank can only narrow the server's limits, never widen them.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `HINDSIGHT_API_ENABLE_KB` | Turn knowledge banks on. Off, their HTTP routes answer 404, reflect ignores linked knowledge banks and the control plane hides them. | `false` |
+| `HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER` | The one embedder for every knowledge bank; what it embeds decides which media types can be ingested. `local` (EmbeddingGemma 2 in-process: text, image, audio, video), `gemini` / `vertex` (Gemini Embedding 2), `voyage` (text, image, video), `cohere` (text, image), `openai` (any OpenAI-compatible `/v1/embeddings` server), `text` (a memory-bank embeddings provider, text only). | `local` |
+| `HINDSIGHT_API_KB_EMBEDDINGS_MODEL` | The model. Unset uses the provider's: `google/embeddinggemma-2`, `gemini-embedding-2`, `voyage-multimodal-3.5`, `embed-v4.0`. Required for `openai`. | - |
+| `HINDSIGHT_API_KB_EMBEDDINGS_API_KEY` | API key for the remote providers. | - |
+| `HINDSIGHT_API_KB_EMBEDDINGS_BASE_URL` | Server URL: the `/v1` URL for `openai` (required), or a proxy for `voyage` / `cohere`. | - |
+| `HINDSIGHT_API_KB_EMBEDDINGS_DIMENSIONS` | Vector size, for a model that can shorten its vectors. Unset keeps the model's own. | - |
+| `HINDSIGHT_API_KB_EMBEDDINGS_MODALITIES` | For `openai`: what the remote model embeds, comma-separated (`text`, `image`, `audio`, `video`). | `text,image` |
+| `HINDSIGHT_API_KB_EMBEDDINGS_DEVICE` | For `local`: the torch device (`cpu`, `cuda`, `mps`). Unset picks one. | - |
+| `HINDSIGHT_API_KB_EMBEDDINGS_BATCH_SIZE` | Passages per embedder request. | `32` |
+| `HINDSIGHT_API_KB_EMBEDDINGS_MAX_IN_FLIGHT` | Requests to a remote embedder in flight at once from this process, across every ingest and search. `0` removes the cap. | `16` |
+| `HINDSIGHT_API_KB_TEXT_EMBEDDINGS_*` | For the `text` provider: its own embeddings setup, any `HINDSIGHT_API_EMBEDDINGS_*` setting with this prefix (e.g. `HINDSIGHT_API_KB_TEXT_EMBEDDINGS_PROVIDER`). Unset uses the memory banks' embedder. | - |
+| `HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES` | Media types refused at ingest, comma-separated (`document`, `image`, `audio`, `video`, `text`). *Per bank* (a bank can only add to it). | - |
+| `HINDSIGHT_API_KB_MAX_FILE_MB` | Largest file accepted. | `500` |
+| `HINDSIGHT_API_KB_MAX_MEDIA_SECONDS` | Longest audio or video file. *Per bank*. | `7200` |
+| `HINDSIGHT_API_KB_MAX_PDF_PAGES` | Most pages in one PDF. *Per bank*. | `2000` |
+| `HINDSIGHT_API_KB_TEXT_PASSAGE_TOKENS` | Size of a text passage, in tokens; passages follow the document's structure. *Per bank*. | `256` |
+| `HINDSIGHT_API_KB_IMAGE_TOKENS` | Vision tokens per image for the `local` embedder (70–1120). *Per bank*. | `280` |
+| `HINDSIGHT_API_KB_PDF_PAGE_PIXELS` | Longest side of a rendered PDF page, in pixels. *Per bank*. | `1536` |
+| `HINDSIGHT_API_KB_PDF_BANDS` | Also embed three horizontal bands of each PDF page: better search, half the ingest speed. *Per bank*. | `false` |
+| `HINDSIGHT_API_KB_AUDIO_WINDOW_SECONDS` | Length of one audio passage. *Per bank*. | `60` |
+| `HINDSIGHT_API_KB_VIDEO_WINDOW_SECONDS` | Length of one video passage. *Per bank*. | `30` |
+| `HINDSIGHT_API_KB_MEDIA_OVERLAP_SECONDS` | Overlap between consecutive audio or video passages. *Per bank*. | `5` |
+| `HINDSIGHT_API_KB_PDF_TEXT_WEIGHT` | Search: a PDF page's score is `(1 - w)` × its image score + `w` × its best text score. | `0.7` |
+| `HINDSIGHT_API_KB_KEYWORD_WEIGHT` | Search: weight of the keyword match, fused in for a query with a word rare enough in the bank. | `0.2` |
+| `HINDSIGHT_API_KB_INGEST_CHILD_BYTES` | An async ingest is split into worker tasks of about this many bytes of files, so a big upload spreads across workers. | `1048576` |
+| `HINDSIGHT_API_KB_INGEST_MEMORY_BUDGET_MB` | Memory one ingest batch may hold before it commits what it has. `0` turns it off. | `128` |
+| `HINDSIGHT_API_KB_INGEST_STRATEGIES` | Named ingest strategies, as JSON: `{name: {file_type: {"extension": "module:Class", "settings": {...}}}}`, the extension that pre-processes each file type. | - |
+| `HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY` | The strategy an ingest uses unless its item names another. | - |
+| `HINDSIGHT_API_KB_STORE_EXTENSION` | Where documents and passages live: `module.path:ClassName` of a `KnowledgeStore`. Unset uses PostgreSQL. | - |
 
 ### MCP Server
 

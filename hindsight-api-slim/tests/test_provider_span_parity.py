@@ -42,3 +42,39 @@ def test_every_successful_metric_has_a_matching_span():
         )
         checked += successes
     assert checked > 0, "no provider records successful calls — the scan is broken"
+
+
+# A handler catching one of these and looping back is retrying a failed attempt.
+# JSON-parse retries are left out: the reply is in hand there and the wrapper traces it.
+_RETRIED_FAILURES = {"TimeoutError", "ClientError", "APIConnectionError", "Exception"}
+
+
+def _caught_names(handler: ast.ExceptHandler) -> set[str]:
+    types = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return {t.attr if isinstance(t, ast.Attribute) else getattr(t, "id", "") for t in types if t is not None}
+
+
+def _calls_named(node: ast.AST, name: str) -> bool:
+    return any(
+        isinstance(n, ast.Call) and getattr(n.func, "id", getattr(n.func, "attr", None)) == name for n in ast.walk(node)
+    )
+
+
+def test_every_retried_timeout_leaves_a_span():
+    """A timed-out attempt that is retried must be traced before the retry (#6624).
+
+    Only the final failure reaches the wrapper's error span, so an attempt a provider
+    retries on its own was a gap in the trace with only a log line to explain it.
+    """
+    checked = 0
+    for path in sorted(_PROVIDERS_DIR.glob("*.py")):
+        for handler in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(handler, ast.ExceptHandler) or not (_caught_names(handler) & _RETRIED_FAILURES):
+                continue
+            if not any(isinstance(n, ast.Continue) for n in ast.walk(handler)):
+                continue
+            assert _calls_named(handler, "record_retried_attempt"), (
+                f"{path.name}:{handler.lineno} retries a failed attempt without record_retried_attempt"
+            )
+            checked += 1
+    assert checked > 0, "no provider retries a failed attempt — the scan is broken"

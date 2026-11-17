@@ -640,6 +640,7 @@ class ConfigResolver:
 
         # Validate disposition trait fields (1-5 integer scale)
         _validate_disposition_updates(normalized_updates)
+        _validate_reflect_kb_search_updates(normalized_updates)
 
         # Constraints spanning several fields need the whole projected
         # configuration, not just the update. This check is the early one, so a
@@ -1029,6 +1030,19 @@ def _validate_disposition_updates(updates: dict[str, Any]) -> None:
                 continue
             if not isinstance(value, int) or isinstance(value, bool) or not (1 <= value <= 5):
                 raise ValueError(f"{key} must be an integer between 1 and 5, got {value!r}")
+
+
+def _validate_reflect_kb_search_updates(updates: dict[str, Any]) -> None:
+    """Values the type check cannot catch: an unknown media type."""
+    from .knowledge.media import MEDIA_TYPES
+
+    media_types = updates.get("reflect_kb_search_media_types")
+    if media_types is not None:
+        unknown = sorted(set(media_types) - set(MEDIA_TYPES))
+        if unknown:
+            raise ValueError(
+                f"reflect_kb_search_media_types: unknown media types {unknown} (expected some of {list(MEDIA_TYPES)})"
+            )
 
 
 def apply_strategy(config: HindsightConfig, strategy_name: str) -> HindsightConfig:

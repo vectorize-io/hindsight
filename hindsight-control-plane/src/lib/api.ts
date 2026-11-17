@@ -2597,6 +2597,20 @@ export class ControlPlaneClient {
     );
   }
 
+  /** The bank's document tags, most used first; `q` is a `*` wildcard pattern, as `listTags`. */
+  async listKnowledgeBankTags(bankId: string, q?: string, limit?: number) {
+    const search = new URLSearchParams();
+    if (q) search.set("q", q);
+    if (limit != null) search.set("limit", String(limit));
+    const query = search.toString();
+    return this.fetchApi<{
+      items: Array<{ tag: string; count: number }>;
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`${knowledgeApi(bankId, "tags")}${query ? `?${query}` : ""}`);
+  }
+
   /** `mediaType` counts only documents of that kind. */
   async getKnowledgeTimeseries(bankId: string, period: ActivityPeriod, mediaType?: MediaType) {
     const search = new URLSearchParams({ period });

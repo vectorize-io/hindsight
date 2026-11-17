@@ -59,6 +59,7 @@ from hindsight_api.engine.llm_transport import (
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
 from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
+from hindsight_api.engine.providers.tools_via_schema import native_call_reply
 from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import (
     BatchRequest,
@@ -400,10 +401,10 @@ def record_retried_attempt(
     model: str,
     scope: str,
     messages: list[dict[str, Any]],
-    error: ProviderResponseError,
+    error: BaseException,
     started: float,
 ) -> None:
-    """Trace an attempt that came back unusable and is about to be retried.
+    """Trace an attempt that failed (an unusable reply, a timeout, a dropped connection) and is about to be retried.
 
     The final failure is traced by the wrapper, but a retried attempt otherwise leaves
     only a log line: it was still billed (often for reasoning tokens), and counting
@@ -412,6 +413,9 @@ def record_retried_attempt(
     from hindsight_api.tracing import get_span_recorder
 
     usage = current_response_usage()
+    # Consumed here: a later attempt that dies before any reply (a timeout) would
+    # otherwise attach this attempt's tokens again and count them twice.
+    stash_response_usage(None)
     duration = time.perf_counter() - started
     get_metrics_collector().record_llm_call(
         provider=provider,
@@ -436,7 +440,7 @@ def record_retried_attempt(
         thoughts_tokens=usage.thoughts_tokens if usage else 0,
         duration=duration,
         error=error,
-        served_by=error.served_by,
+        served_by=getattr(error, "served_by", None),
     )
 
 
@@ -445,7 +449,9 @@ def _is_openrouter(provider: str, base_url: str | None) -> bool:
     return provider == "openrouter" or urlparse(base_url or "").hostname == "openrouter.ai"
 
 
-def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -> tuple[str, Any]:
+def _content_or_error(
+    response: Any, *, provider: str, model: str, scope: str, response_format: Any = None
+) -> tuple[str, Any]:
     """Extract message.content, turning provider shape issues into useful errors.
 
     Raises ``OutputTooLongError`` on a token-limit truncation and
@@ -485,6 +491,9 @@ def _content_or_error(response: Any, *, provider: str, model: str, scope: str) -
     content = _message_content(message)
     if content is None or content == "":
         tool_calls = _message_tool_calls(message)
+        native = native_call_reply(response_format, tool_calls)
+        if native is not None:
+            return native, choice
         refusal = _message_refusal(message)
         retryable = finish_reason not in {"content_filter"}
         raise ProviderResponseError(
@@ -1395,6 +1404,7 @@ class OpenAICompatibleLLM(LLMInterface):
         last_exception = None
 
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             # Surface attempt count in worker stage so JSON-schema retry loops
             # are visible from logs (small models on strict structured output
             # often loop here). Cheap no-op outside worker context.
@@ -1417,6 +1427,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         provider=self.provider,
                         model=self.model,
                         scope=scope,
+                        response_format=response_format,
                     )
 
                     # Strip reasoning model thinking tags (closed and unclosed).
@@ -1496,6 +1507,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         provider=self.provider,
                         model=self.model,
                         scope=scope,
+                        response_format=response_format,
                     )
 
                     # Free-form (non-structured) output also leaks reasoning tags:
@@ -1584,6 +1596,14 @@ class OpenAICompatibleLLM(LLMInterface):
                 )
                 logger.warning(f"Connection error (HTTP {status_code}), attempt {attempt + 1}: {describe_llm_error(e)}")
                 if attempt < max_retries:
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
+                    )
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue
@@ -1683,7 +1703,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         scope=scope,
                         messages=messages,
                         error=e,
-                        started=start_time,
+                        started=attempt_started,
                     )
                     logger.warning(
                         f"Provider response error ({self.provider}/{self.model}, scope={scope}, "
@@ -1786,6 +1806,7 @@ class OpenAICompatibleLLM(LLMInterface):
 
         session = self._ollama_http.get()
         for attempt in range(max_retries + 1):
+            attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
                     set_stage(f"llm.ollama_native.{scope}.attempt={attempt + 1}/{max_retries + 1}")
@@ -1807,6 +1828,8 @@ class OpenAICompatibleLLM(LLMInterface):
                     )
                 )
                 content = result.get("message", {}).get("content", "")
+                if not content:
+                    content = native_call_reply(response_format, result.get("message", {}).get("tool_calls")) or ""
 
                 # Same case as the OpenAI-compatible path, different key: Ollama
                 # reports a token cap as done_reason "length". Raised ahead of the
@@ -1945,7 +1968,7 @@ class OpenAICompatibleLLM(LLMInterface):
                         scope=scope,
                         messages=messages,
                         error=e,
-                        started=start_time,
+                        started=attempt_started,
                     )
                     logger.warning(f"Ollama response error (attempt {attempt + 1}/{max_retries + 1}): {e}")
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
@@ -1971,6 +1994,14 @@ class OpenAICompatibleLLM(LLMInterface):
                 last_exception = e
                 if attempt < max_retries:
                     logger.warning(f"Ollama connection error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                    record_retried_attempt(
+                        provider=self.provider,
+                        model=self.model,
+                        scope=scope,
+                        messages=messages,
+                        error=e,
+                        started=attempt_started,
+                    )
                     backoff = min(initial_backoff * (2**attempt), max_backoff)
                     await asyncio.sleep(backoff)
                     continue

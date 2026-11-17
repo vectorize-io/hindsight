@@ -19,7 +19,6 @@ from tests.test_knowledge_banks import (  # noqa: F401  (fixtures)
     _upload,
     fake_embedder,
     kb,
-    needs_ffmpeg,
 )
 
 
@@ -187,7 +186,7 @@ async def test_an_untyped_upload_is_typed_from_its_filename(api_client, kb):
 async def test_an_empty_or_too_big_file_is_refused(api_client, kb, monkeypatch):
     r = await _upload(api_client, kb, [("empty.md", b"", "text/markdown")])
     assert r.status_code == 400 and "is empty" in r.json()["detail"]
-    monkeypatch.setenv("HINDSIGHT_API_KNOWLEDGE_MAX_FILE_MB", "1")
+    monkeypatch.setenv("HINDSIGHT_API_KB_MAX_FILE_MB", "1")
     clear_config_cache()
     try:
         r = await _upload(api_client, kb, [("big.md", b"x" * (1024 * 1024 + 1), "text/markdown")])
@@ -343,7 +342,6 @@ async def test_each_media_type_filter_keeps_only_that_type(api_client, mixed_ban
     assert await found("audio") == [] and await found("video") == []
 
 
-@needs_ffmpeg
 async def test_audio_and_video_media_type_filters_keep_only_that_type(api_client, kb):
     await _ingest(api_client, kb, {"document_id": "notes", "text": "audio video notes"})
     await _upload(
@@ -387,3 +385,24 @@ async def test_a_query_image_must_be_base64(api_client, kb):
     assert r.status_code == 400 and r.json()["detail"] == "query_image must be base64"
     image = base64.b64encode(_png((255, 0, 0))).decode()
     assert (await api_client.post(f"{KB}/{kb}/search", json={"query_image": image})).status_code == 200
+
+
+async def test_tags_list_counts_documents_most_used_first_and_filters_by_wildcard(api_client, kb):
+    await _ingest(
+        api_client,
+        kb,
+        {"document_id": "a", "text": "red", "tags": ["team:a", "v2"]},
+        {"document_id": "b", "text": "blue", "tags": ["team:b", "v2"]},
+        {"document_id": "c", "text": "green"},
+    )
+
+    page = (await api_client.get(f"{KB}/{kb}/tags")).json()
+    assert page == {
+        "items": [{"tag": "v2", "count": 2}, {"tag": "team:a", "count": 1}, {"tag": "team:b", "count": 1}],
+        "total": 3,
+        "limit": 100,
+        "offset": 0,
+    }
+    teams = (await api_client.get(f"{KB}/{kb}/tags", params={"q": "TEAM:*", "limit": 1, "offset": 1})).json()
+    assert teams["items"] == [{"tag": "team:b", "count": 1}] and teams["total"] == 2
+    assert (await api_client.get(f"{KB}/kb-missing-{uuid.uuid4().hex[:8]}/tags")).status_code == 404

@@ -2,19 +2,21 @@
 Test to analyze fact extraction token usage and identify optimization opportunities.
 """
 
-import asyncio
 import logging
 import time
 from datetime import datetime
 
 import pytest
 
-from hindsight_api.config import get_config, clear_config_cache, _get_raw_config
+from hindsight_api.config import _get_raw_config, clear_config_cache, get_config
 from hindsight_api.engine.llm_wrapper import LLMConfig
 from hindsight_api.engine.retain.fact_extraction import extract_facts_from_text
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Calls the live provider: run in the core-LLM job, not the deterministic test-api shards.
+pytestmark = pytest.mark.hs_llm_core
 
 
 @pytest.fixture
@@ -72,7 +74,7 @@ async def test_fact_extraction_basic_analysis(llm_config):
     duration = time.time() - start_time
 
     logger.info(f"\n{'=' * 60}")
-    logger.info(f"EXTRACTION RESULTS")
+    logger.info("EXTRACTION RESULTS")
     logger.info(f"{'=' * 60}")
     logger.info(f"Duration: {duration:.2f}s")
     logger.info(f"Chunks: {len(chunks)}")
@@ -87,19 +89,19 @@ async def test_fact_extraction_basic_analysis(llm_config):
         ft = fact.fact_type
         fact_types[ft] = fact_types.get(ft, 0) + 1
 
-    logger.info(f"\nFacts by type:")
+    logger.info("\nFacts by type:")
     for ft, count in sorted(fact_types.items()):
         logger.info(f"  {ft}: {count}")
 
     # Show sample facts
-    logger.info(f"\nSample facts (first 10):")
+    logger.info("\nSample facts (first 10):")
     for i, fact in enumerate(facts[:10]):
         logger.info(f"\n  [{i + 1}] {fact.fact_type}: {fact.fact[:150]}...")
 
     # Show facts containing key terms
     key_terms = ["kubernetes", "k8s", "CKA", "certification", "Alice"]
     logger.info(f"\n{'=' * 60}")
-    logger.info(f"FACTS CONTAINING KEY TERMS")
+    logger.info("FACTS CONTAINING KEY TERMS")
     logger.info(f"{'=' * 60}")
 
     for term in key_terms:

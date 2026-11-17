@@ -616,6 +616,15 @@ class TestOracleQueryRewriter:
         assert "::uuid" not in query
         assert "::varchar[]" not in query
 
+    def test_array_contained_by(self):
+        # #6585: the exact tag match emits `tags <@ $N`, which Oracle cannot parse (ORA-00936).
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+
+        query, _, _ = _rewrite_pg_to_oracle("WHERE bank_id = $1 AND (tags @> $2 AND tags <@ $2)")
+        assert "<@" not in query
+        assert "NOT EXISTS (SELECT 1 FROM JSON_TABLE(tags," in query
+        assert "JSON_TABLE(:2," in query
+
     def test_jsonb_merge_returns_clob(self):
         # Without RETURNING CLOB, JSON_MERGEPATCH returns VARCHAR2(4000) with
         # NULL ON ERROR, so large merged documents silently become NULL.

@@ -802,6 +802,8 @@ class KnowledgeBankReadOperation(StrEnum):
     SEARCH_KNOWLEDGE_BANK = "search_knowledge_bank"
     #: The bank's ingest settings (``GET /knowledge-banks/{bank_id}/config``).
     GET_KNOWLEDGE_BANK_CONFIG = "get_knowledge_bank_config"
+    #: The bank's document tags with their counts (``GET /knowledge-banks/{bank_id}/tags``).
+    LIST_KNOWLEDGE_BANK_TAGS = "list_knowledge_bank_tags"
 
 
 class KnowledgeBankWriteOperation(StrEnum):

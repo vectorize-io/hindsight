@@ -12,9 +12,11 @@ vi.mock("next-intl", () => ({
 vi.mock("sonner", () => ({ toast: { warning: vi.fn(), error: vi.fn(), success: vi.fn() } }));
 
 const searchKnowledgeBank = vi.fn();
+const listKnowledgeBankTags = vi.fn();
 vi.mock("@/lib/api", () => ({
   client: {
     searchKnowledgeBank: (...a: unknown[]) => searchKnowledgeBank(...a),
+    listKnowledgeBankTags: (...a: unknown[]) => listKnowledgeBankTags(...a),
   },
 }));
 
@@ -49,6 +51,46 @@ describe("KnowledgeSearchPanel", () => {
     const body = searchKnowledgeBank.mock.calls[1][1];
     expect(body).toMatchObject({ query: "key rotation", max_tokens: 4096 });
     expect(typeof body.query_video).toBe("string");
+  });
+
+  it("suggests the bank's own tags and searches with the picked one", async () => {
+    searchKnowledgeBank.mockResolvedValue({ results: [] });
+    listKnowledgeBankTags.mockResolvedValue({
+      items: [{ tag: "team:a", count: 3 }],
+      total: 1,
+      limit: 20,
+      offset: 0,
+    });
+    render(<KnowledgeSearchPanel bankId="docs" />);
+    fireEvent.change(screen.getByLabelText("placeholder"), { target: { value: "ship" } });
+    fireEvent.click(screen.getByText("options"));
+
+    const tagInput = screen.getByPlaceholderText("filterByTagPlaceholder");
+    fireEvent.focus(tagInput);
+    fireEvent.change(tagInput, { target: { value: "te" } });
+    await waitFor(() => expect(listKnowledgeBankTags).toHaveBeenCalledWith("docs", "te*", 20));
+    fireEvent.mouseDown(await screen.findByText("team:a"));
+    fireEvent.click(screen.getByText("submit"));
+    await waitFor(() => expect(searchKnowledgeBank).toHaveBeenCalledTimes(1));
+    expect(searchKnowledgeBank.mock.calls[0][1]).toMatchObject({ tags: ["team:a"], tags_match: "any" });
+  });
+
+  it("sends tag groups as JSON and refuses ones that do not parse", async () => {
+    searchKnowledgeBank.mockResolvedValue({ results: [] });
+    render(<KnowledgeSearchPanel bankId="docs" />);
+    fireEvent.change(screen.getByLabelText("placeholder"), { target: { value: "red" } });
+    fireEvent.click(screen.getByText("options"));
+
+    fireEvent.change(screen.getByLabelText("tagGroups"), { target: { value: "[{not json" } });
+    fireEvent.click(screen.getByText("submit"));
+    expect(await screen.findByText("tagGroupsInvalid")).toBeTruthy();
+    expect(searchKnowledgeBank).not.toHaveBeenCalled();
+
+    const groups = [{ not: { tags: ["oss"], match: "any_strict" } }];
+    fireEvent.change(screen.getByLabelText("tagGroups"), { target: { value: JSON.stringify(groups) } });
+    fireEvent.click(screen.getByText("submit"));
+    await waitFor(() => expect(searchKnowledgeBank).toHaveBeenCalledTimes(1));
+    expect(searchKnowledgeBank.mock.calls[0][1]).toMatchObject({ query: "red", tag_groups: groups });
   });
 
   it("shows results as one ranked list, in the server's order", async () => {

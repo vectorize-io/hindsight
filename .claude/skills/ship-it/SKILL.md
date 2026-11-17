@@ -114,7 +114,7 @@ gh run list --branch <headRefName> --workflow CI --json databaseId,status,conclu
 ```
 
 No run yet → keep waiting (give up and report after ~15 min with no run). Once `completed`, judge
-**per job** (`gh run view <id> --json jobs`): zero `failure`. If the PR touches the API/engine, `test-api (1..3/3)`,
+**per job** (`gh run view <id> --json jobs`): zero `failure`. If the PR touches the API/engine, `test-api (1..4/4)`,
 `Core LLM tests`, and the LLM acceptance matrix must be `success`, not `skipped`; for changes outside
 those paths the change filter skips them legitimately. The oracle-client jobs are known-flaky and may
 be `cancelled` — ignore those.
