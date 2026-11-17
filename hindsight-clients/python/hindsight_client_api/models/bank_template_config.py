@@ -62,7 +62,7 @@ class BankTemplateConfig(BaseModel):
     consolidation_source_facts_max_tokens: Optional[StrictInt] = None
     consolidation_source_facts_max_tokens_per_observation: Optional[StrictInt] = None
     max_observations_per_scope: Optional[StrictInt] = None
-    observation_scope_limits: Optional[List[Dict[str, Any]]] = None
+    observation_scope_limits: Optional[List[Optional[Dict[str, Any]]]] = None
     default_observation_scopes: Optional[DefaultObservationScopes] = None
     consolidation_strategies: Optional[List[ConsolidationStrategySpec]] = None
     reflect_source_facts_max_tokens: Optional[StrictInt] = None

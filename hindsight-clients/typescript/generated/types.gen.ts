@@ -1238,6 +1238,20 @@ export type BodyImportDocuments = {
 };
 
 /**
+ * Body_ingest_knowledge_files
+ */
+export type BodyIngestKnowledgeFiles = {
+  /**
+   * Files
+   */
+  files: Array<Blob | File>;
+  /**
+   * Request
+   */
+  request?: string | null;
+};
+
+/**
  * Budget
  *
  * Budget levels for recall/reflect operations.
@@ -1796,6 +1810,18 @@ export type CreateFolderRequest = {
    * Parent Id
    */
   parent_id?: string | null;
+};
+
+/**
+ * CreateKnowledgeBankRequest
+ */
+export type CreateKnowledgeBankRequest = {
+  /**
+   * Bank Id
+   *
+   * Id of the new knowledge bank. It shares the id space of memory banks.
+   */
+  bank_id: string;
 };
 
 /**
@@ -3116,6 +3142,971 @@ export type IncludeOptions = {
    * Include source facts for observation-type results. Set to {} to enable, null to disable (default: disabled).
    */
   source_facts?: SourceFactsIncludeOptions | null;
+};
+
+/**
+ * KnowledgeBankConfigResponse
+ */
+export type KnowledgeBankConfigResponse = {
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Every per-bank ingest setting as the bank splits files with it: its override, else the server's default.
+   */
+  config: KnowledgeBankSettings;
+  /**
+   * Only the settings this bank overrides.
+   */
+  overrides: KnowledgeBankOverrides;
+};
+
+/**
+ * KnowledgeBankConfigUpdate
+ */
+export type KnowledgeBankConfigUpdate = {
+  /**
+   * Updates
+   *
+   * Settings to override (named as in `config`); a null value clears that override. Each change applies to files ingested after it: re-uploading an unchanged file re-splits it.
+   */
+  updates: {
+    [key: string]: unknown;
+  };
+};
+
+/**
+ * KnowledgeBankListResponse
+ */
+export type KnowledgeBankListResponse = {
+  /**
+   * Banks
+   */
+  banks: Array<KnowledgeBankResponse>;
+  /**
+   * Total
+   *
+   * Knowledge banks matching `q`, before paging
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+};
+
+/**
+ * KnowledgeBankOverrides
+ *
+ * What a bank overrides; a field left None follows the server. Strict, so ``"5"`` or ``true``
+ * is not taken for a number.
+ */
+export type KnowledgeBankOverrides = {
+  /**
+   * Text Passage Tokens
+   */
+  text_passage_tokens?: number | null;
+  /**
+   * Pdf Page Pixels
+   */
+  pdf_page_pixels?: number | null;
+  /**
+   * Pdf Bands
+   */
+  pdf_bands?: boolean | null;
+  /**
+   * Image Tokens
+   */
+  image_tokens?: number | null;
+  /**
+   * Audio Window Seconds
+   */
+  audio_window_seconds?: number | null;
+  /**
+   * Video Window Seconds
+   */
+  video_window_seconds?: number | null;
+  /**
+   * Media Overlap Seconds
+   */
+  media_overlap_seconds?: number | null;
+  /**
+   * Max Media Seconds
+   */
+  max_media_seconds?: number | null;
+  /**
+   * Max Pdf Pages
+   */
+  max_pdf_pages?: number | null;
+  /**
+   * Disabled Media Types
+   */
+  disabled_media_types?: Array<"document" | "image" | "audio" | "video" | "text"> | null;
+};
+
+/**
+ * KnowledgeBankResponse
+ */
+export type KnowledgeBankResponse = {
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Created At
+   */
+  created_at: string | null;
+  /**
+   * Document Count
+   */
+  document_count: number;
+  /**
+   * Passage Count
+   */
+  passage_count: number;
+  /**
+   * Ready Count
+   */
+  ready_count: number;
+  /**
+   * Pending Count
+   */
+  pending_count: number;
+  /**
+   * Failed Count
+   */
+  failed_count: number;
+  /**
+   * Documents By Media Type
+   */
+  documents_by_media_type: {
+    [key: string]: number;
+  };
+  /**
+   * Last Document At
+   *
+   * When a document was last added or changed; null for an empty bank
+   */
+  last_document_at?: string | null;
+};
+
+/**
+ * KnowledgeBankSettings
+ *
+ * The ingest settings a knowledge bank splits its files with: its overrides, else the server's.
+ */
+export type KnowledgeBankSettings = {
+  /**
+   * Text Passage Tokens
+   */
+  text_passage_tokens: number;
+  /**
+   * Pdf Page Pixels
+   */
+  pdf_page_pixels: number;
+  /**
+   * Pdf Bands
+   */
+  pdf_bands: boolean;
+  /**
+   * Image Tokens
+   */
+  image_tokens: number;
+  /**
+   * Audio Window Seconds
+   */
+  audio_window_seconds: number;
+  /**
+   * Video Window Seconds
+   */
+  video_window_seconds: number;
+  /**
+   * Media Overlap Seconds
+   */
+  media_overlap_seconds: number;
+  /**
+   * Max Media Seconds
+   */
+  max_media_seconds: number;
+  /**
+   * Max Pdf Pages
+   */
+  max_pdf_pages: number;
+  /**
+   * Disabled Media Types
+   */
+  disabled_media_types: Array<"document" | "image" | "audio" | "video" | "text">;
+};
+
+/**
+ * KnowledgeDeletedResponse
+ */
+export type KnowledgeDeletedResponse = {
+  /**
+   * Deleted
+   */
+  deleted?: boolean;
+};
+
+/**
+ * KnowledgeDocumentDetailResponse
+ */
+export type KnowledgeDocumentDetailResponse = {
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Filename
+   */
+  filename: string | null;
+  /**
+   * Content Type
+   */
+  content_type: string;
+  /**
+   * Knowledge Media Type
+   */
+  media_type: "document" | "image" | "audio" | "video" | "text";
+  /**
+   * Size Bytes
+   */
+  size_bytes: number;
+  /**
+   * Knowledge Document Status
+   */
+  status: "pending" | "processing" | "ready" | "failed";
+  /**
+   * Error
+   */
+  error: string | null;
+  /**
+   * Passage Count
+   */
+  passage_count: number;
+  /**
+   * Tags
+   */
+  tags: Array<string>;
+  /**
+   * Created At
+   */
+  created_at: string | null;
+  /**
+   * Updated At
+   */
+  updated_at: string | null;
+  /**
+   * Document Url
+   *
+   * API path that streams the original file.
+   */
+  document_url: string;
+  /**
+   * Source Document Id
+   *
+   * The document a pre-processing strategy split this one out of.
+   */
+  source_document_id?: string | null;
+  /**
+   * Passages
+   */
+  passages: Array<KnowledgePassageResponse>;
+};
+
+/**
+ * KnowledgeDocumentListResponse
+ */
+export type KnowledgeDocumentListResponse = {
+  /**
+   * Documents
+   */
+  documents: Array<KnowledgeDocumentResponse>;
+  /**
+   * Total
+   */
+  total: number;
+};
+
+/**
+ * KnowledgeDocumentResponse
+ */
+export type KnowledgeDocumentResponse = {
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Filename
+   */
+  filename: string | null;
+  /**
+   * Content Type
+   */
+  content_type: string;
+  /**
+   * Knowledge Media Type
+   */
+  media_type: "document" | "image" | "audio" | "video" | "text";
+  /**
+   * Size Bytes
+   */
+  size_bytes: number;
+  /**
+   * Knowledge Document Status
+   */
+  status: "pending" | "processing" | "ready" | "failed";
+  /**
+   * Error
+   */
+  error: string | null;
+  /**
+   * Passage Count
+   */
+  passage_count: number;
+  /**
+   * Tags
+   */
+  tags: Array<string>;
+  /**
+   * Created At
+   */
+  created_at: string | null;
+  /**
+   * Updated At
+   */
+  updated_at: string | null;
+  /**
+   * Document Url
+   *
+   * API path that streams the original file.
+   */
+  document_url: string;
+  /**
+   * Source Document Id
+   *
+   * The document a pre-processing strategy split this one out of.
+   */
+  source_document_id?: string | null;
+};
+
+/**
+ * KnowledgeIngestRequest
+ */
+export type KnowledgeIngestRequest = {
+  /**
+   * Items
+   */
+  items: Array<KnowledgeIngestTextItem>;
+  /**
+   * Async
+   *
+   * If true, queue each document and return at once (202), as the file ingest always does. If false, return once every document is searchable (default: false).
+   */
+  async?: boolean;
+};
+
+/**
+ * KnowledgeIngestResponse
+ */
+export type KnowledgeIngestResponse = {
+  /**
+   * Document Ids
+   *
+   * Every document ingested, in request order.
+   */
+  document_ids: Array<string>;
+  /**
+   * Operation Ids
+   *
+   * For each document that was queued, the one background operation that processes the whole ingest (the same id for all of them). Empty for a sync ingest.
+   */
+  operation_ids: Array<string>;
+  /**
+   * Unchanged Document Ids
+   *
+   * Documents identical to what is stored: nothing was queued for them.
+   */
+  unchanged_document_ids?: Array<string>;
+};
+
+/**
+ * KnowledgeIngestTextItem
+ */
+export type KnowledgeIngestTextItem = {
+  /**
+   * Document Id
+   *
+   * Stable id; ingesting it again replaces the document.
+   */
+  document_id?: string | null;
+  /**
+   * Text
+   */
+  text: string;
+  /**
+   * Filename
+   *
+   * Defaults to <document_id>.md.
+   */
+  filename?: string | null;
+  /**
+   * Tags
+   */
+  tags?: Array<string>;
+  /**
+   * Strategy
+   *
+   * Ingestion strategy for this item (one of the server's `HINDSIGHT_API_INGEST_STRATEGIES`). Omit it and the server's default applies. A file whose type the strategy does not map is chunked as it is.
+   */
+  strategy?: string | null;
+};
+
+/**
+ * KnowledgePassageResponse
+ */
+export type KnowledgePassageResponse = {
+  /**
+   * Index
+   */
+  index: number;
+  /**
+   * Knowledge Media Type
+   */
+  media_type: "document" | "image" | "audio" | "video" | "text";
+  /**
+   * Text
+   */
+  text?: string | null;
+  /**
+   * Page
+   *
+   * 1-based page number (PDF pages and images).
+   */
+  page?: number | null;
+  /**
+   * Start Ms
+   *
+   * Window start, for audio and video.
+   */
+  start_ms?: number | null;
+  /**
+   * End Ms
+   */
+  end_ms?: number | null;
+  /**
+   * Passage Url
+   *
+   * API path that streams this passage's page image or audio/video clip.
+   */
+  passage_url?: string | null;
+};
+
+/**
+ * KnowledgeSearchRequest
+ */
+export type KnowledgeSearchRequest = {
+  /**
+   * Query
+   *
+   * Text query.
+   */
+  query?: string | null;
+  /**
+   * Query Image
+   *
+   * Base64 image to search with (alone or with text).
+   */
+  query_image?: string | null;
+  /**
+   * Query Video
+   *
+   * Base64 MP4 clip to search with. Text, image and video can be combined: they are embedded together as one query.
+   */
+  query_video?: string | null;
+  /**
+   * Budget
+   *
+   * How deep the search ranks before `max_tokens` picks from it: low is fastest, high reaches the most candidates (as memory-bank recall's budget).
+   */
+  budget?: "low" | "mid" | "high";
+  /**
+   * Max Tokens
+   *
+   * What the results may weigh in all, as the tokens of their text. Hits come best first, each text hit with the passages around it joined into its `text`, as many as fit; the rest of the budget widens the best hits' context. An image, page or clip costs a small fixed amount plus its text.
+   */
+  max_tokens?: number;
+  /**
+   * Tags
+   *
+   * Filter by document tags, matched as memory-bank recall matches memory tags.
+   */
+  tags?: Array<string> | null;
+  /**
+   * Tags Match
+   *
+   * How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), 'exact' (set-equality, excludes untagged). With 'exact' and no tags (or []), only untagged documents match.
+   */
+  tags_match?: "any" | "all" | "any_strict" | "all_strict" | "exact";
+  /**
+   * Tag Groups
+   *
+   * Compound tag filter using boolean groups, as memory-bank recall takes it. Groups in the list are AND-ed. Each group is a leaf {tags, match} or compound {and: [...]}, {or: [...]}, {not: ...}. A leaf may set resolve='fuzzy' to match its tags against this bank's document tags by trigram similarity.
+   */
+  tag_groups?: Array<TagGroupLeaf | TagGroupAndInput | TagGroupOrInput | TagGroupNotInput> | null;
+  /**
+   * Document Ids
+   */
+  document_ids?: Array<string> | null;
+  /**
+   * Knowledge Media Types
+   */
+  media_types?: Array<"document" | "image" | "audio" | "video" | "text"> | null;
+  /**
+   * Trace
+   *
+   * Also return how the search ranked and what the token budget kept: every ranked candidate with its score step by step, the keyword words and their weights, and each phase's time.
+   */
+  trace?: boolean;
+};
+
+/**
+ * KnowledgeSearchResponse
+ *
+ * Results best first. Ranks are what a caller compares: scores are fused per query and mean nothing
+ * across responses, so a result does not carry one; ``trace: true`` returns them, step by step.
+ */
+export type KnowledgeSearchResponse = {
+  /**
+   * Results
+   */
+  results: Array<KnowledgeSearchResult>;
+  trace?: KnowledgeSearchTrace | null;
+};
+
+/**
+ * KnowledgeSearchResult
+ */
+export type KnowledgeSearchResult = {
+  /**
+   * Index
+   */
+  index: number;
+  /**
+   * Knowledge Media Type
+   */
+  media_type: "document" | "image" | "audio" | "video" | "text";
+  /**
+   * Text
+   */
+  text?: string | null;
+  /**
+   * Page
+   *
+   * 1-based page number (PDF pages and images).
+   */
+  page?: number | null;
+  /**
+   * Start Ms
+   *
+   * Window start, for audio and video.
+   */
+  start_ms?: number | null;
+  /**
+   * End Ms
+   */
+  end_ms?: number | null;
+  /**
+   * Passage Url
+   *
+   * API path that streams this passage's page image or audio/video clip.
+   */
+  passage_url?: string | null;
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Filename
+   */
+  filename: string | null;
+  /**
+   * Tags
+   */
+  tags: Array<string>;
+  /**
+   * Document Url
+   */
+  document_url: string;
+};
+
+/**
+ * KnowledgeSearchTrace
+ */
+export type KnowledgeSearchTrace = {
+  /**
+   * Budget
+   */
+  budget: "low" | "mid" | "high";
+  /**
+   * Depth
+   *
+   * How many of the scored candidates the budget level keeps for max_tokens
+   */
+  depth: number;
+  /**
+   * Max Tokens
+   */
+  max_tokens: number;
+  /**
+   * Tokens Used
+   *
+   * What the results weigh, in tokens of their text
+   */
+  tokens_used: number;
+  /**
+   * Candidates
+   *
+   * Passages the candidate searches found, before scoring
+   */
+  candidates: number;
+  /**
+   * Keyword Weight
+   *
+   * The keyword score's share of the final score
+   */
+  keyword_weight: number;
+  /**
+   * Keyword Terms
+   *
+   * Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) as the query's rarest word is left out
+   */
+  keyword_terms: {
+    [key: string]: number;
+  };
+  /**
+   * Timings Ms
+   *
+   * Each phase's time: open_bank, embed, store.search, context
+   */
+  timings_ms: {
+    [key: string]: number;
+  };
+  /**
+   * Candidate Searches
+   *
+   * Step 1: each candidate search's own list
+   */
+  candidate_searches: Array<KnowledgeTraceArm>;
+  /**
+   * Hits
+   *
+   * Steps 2-3: every candidate scored, best first
+   */
+  hits: Array<KnowledgeSearchTraceHit>;
+  /**
+   * Budget Steps
+   *
+   * Step 4: how max_tokens was filled, in order
+   */
+  budget_steps: Array<KnowledgeTraceBudgetStep>;
+};
+
+/**
+ * KnowledgeSearchTraceHit
+ *
+ * One ranked candidate: its score step by step, and what the token budget did with it.
+ */
+export type KnowledgeSearchTraceHit = {
+  /**
+   * Rank
+   *
+   * Its place among all scored candidates, from 1
+   */
+  rank: number;
+  /**
+   * Outcome
+   *
+   * returned: a result of its own; merged: inside a better hit's text (merged_into_rank); over_budget: nothing of it fit in max_tokens; below_depth: ranked past what the budget level keeps
+   */
+  outcome: "returned" | "merged" | "over_budget" | "below_depth";
+  /**
+   * Result Rank
+   *
+   * Its place in `results`, from 1, when returned
+   */
+  result_rank?: number | null;
+  /**
+   * Merged Into Rank
+   *
+   * The rank of the hit whose text holds it
+   */
+  merged_into_rank?: number | null;
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Filename
+   */
+  filename: string | null;
+  /**
+   * Index
+   */
+  index: number;
+  /**
+   * Media Type
+   */
+  media_type: string;
+  /**
+   * Page
+   */
+  page?: number | null;
+  /**
+   * Start Ms
+   */
+  start_ms?: number | null;
+  /**
+   * End Ms
+   */
+  end_ms?: number | null;
+  /**
+   * Snippet
+   *
+   * The start of the passage's own text
+   */
+  snippet?: string | null;
+  /**
+   * Score
+   *
+   * The final score it was ranked by; comparable within this search only
+   */
+  score: number;
+  /**
+   * Found By
+   *
+   * The candidate searches that found it: vector, extra_vectors, keyword
+   */
+  found_by: Array<string>;
+  /**
+   * Similarity
+   *
+   * Cosine similarity of the query and the passage's main vector
+   */
+  similarity: number;
+  /**
+   * Roles
+   *
+   * Best similarity of each extra vector (band, page_text, unit, sentence)
+   */
+  roles: {
+    [key: string]: number;
+  };
+  /**
+   * Passage Score
+   *
+   * The similarity with the extra vectors mixed in
+   */
+  passage_score: number;
+  /**
+   * With Document
+   *
+   * Averaged with its document's best passage score
+   */
+  with_document: number;
+  /**
+   * Keyword
+   *
+   * Keyword score: the summed IDF of the query words it contains
+   */
+  keyword: number;
+  /**
+   * Reference Page
+   *
+   * Read as a reference list, and pushed down
+   */
+  reference_page: boolean;
+};
+
+/**
+ * KnowledgeTagItem
+ */
+export type KnowledgeTagItem = {
+  /**
+   * Tag
+   */
+  tag: string;
+  /**
+   * Count
+   *
+   * How many of the bank's documents carry this tag
+   */
+  count: number;
+};
+
+/**
+ * KnowledgeTagsResponse
+ *
+ * One page of a knowledge bank's document tags, most used first (as memory-bank `list_tags`).
+ */
+export type KnowledgeTagsResponse = {
+  /**
+   * Items
+   */
+  items: Array<KnowledgeTagItem>;
+  /**
+   * Total
+   *
+   * Distinct tags matching `q`, past this page too
+   */
+  total: number;
+  /**
+   * Limit
+   */
+  limit: number;
+  /**
+   * Offset
+   */
+  offset: number;
+};
+
+/**
+ * KnowledgeTimeseriesBucket
+ */
+export type KnowledgeTimeseriesBucket = {
+  /**
+   * Time
+   */
+  time: string;
+  /**
+   * Documents
+   *
+   * Documents first written in this bucket.
+   */
+  documents: number;
+  /**
+   * Passages
+   *
+   * Passages those documents hold now.
+   */
+  passages: number;
+};
+
+/**
+ * KnowledgeTimeseriesResponse
+ */
+export type KnowledgeTimeseriesResponse = {
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Period
+   */
+  period: "1d" | "7d" | "30d" | "90d";
+  /**
+   * Trunc
+   */
+  trunc: "hour" | "day";
+  /**
+   * Buckets
+   */
+  buckets: Array<KnowledgeTimeseriesBucket>;
+};
+
+/**
+ * KnowledgeTraceArm
+ *
+ * One candidate search, with its own list, best first.
+ */
+export type KnowledgeTraceArm = {
+  /**
+   * Name
+   */
+  name: "vector" | "extra_vectors" | "keyword";
+  /**
+   * Results
+   */
+  results: Array<KnowledgeTraceArmHit>;
+};
+
+/**
+ * KnowledgeTraceArmHit
+ */
+export type KnowledgeTraceArmHit = {
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * Index
+   */
+  index: number;
+  /**
+   * Score
+   *
+   * Its score in this search: cosine similarity, or ts_rank_cd for keywords
+   */
+  score: number;
+};
+
+/**
+ * KnowledgeTraceBudgetStep
+ *
+ * One step of filling max_tokens, in order.
+ */
+export type KnowledgeTraceBudgetStep = {
+  /**
+   * Action
+   *
+   * window: a text hit with its free neighbours; alone: no room for its neighbours; media: an image, page or clip; merged: already inside a better hit's result; widened: leftover budget added a passage to a result (5 at most); skipped: nothing of it fit
+   */
+  action: "window" | "alone" | "media" | "merged" | "widened" | "skipped";
+  /**
+   * Rank
+   *
+   * The candidate's rank
+   */
+  rank: number;
+  /**
+   * Document Id
+   */
+  document_id: string;
+  /**
+   * First
+   *
+   * The window's first passage after this step
+   */
+  first: number;
+  /**
+   * Last
+   *
+   * The window's last passage after this step
+   */
+  last: number;
+  /**
+   * Tokens
+   *
+   * Tokens this step added
+   */
+  tokens: number;
+  /**
+   * Total
+   *
+   * Tokens used after this step
+   */
+  total: number;
+  /**
+   * Into Rank
+   *
+   * For merged: the rank of the hit whose result holds it
+   */
+  into_rank?: number | null;
 };
 
 /**
@@ -7676,6 +8667,722 @@ export type WebhookResponse = {
    */
   updated_at?: string | null;
 };
+
+export type ListKnowledgeBanksData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path?: never;
+  query?: {
+    /**
+     * Limit
+     */
+    limit?: number;
+    /**
+     * Offset
+     */
+    offset?: number;
+    /**
+     * Q
+     *
+     * Part of the bank id, case-insensitive
+     */
+    q?: string | null;
+  };
+  url: "/v1/default/knowledge-banks";
+};
+
+export type ListKnowledgeBanksErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListKnowledgeBanksError = ListKnowledgeBanksErrors[keyof ListKnowledgeBanksErrors];
+
+export type ListKnowledgeBanksResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeBankListResponse;
+};
+
+export type ListKnowledgeBanksResponse =
+  ListKnowledgeBanksResponses[keyof ListKnowledgeBanksResponses];
+
+export type CreateKnowledgeBankData = {
+  body: CreateKnowledgeBankRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/default/knowledge-banks";
+};
+
+export type CreateKnowledgeBankErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type CreateKnowledgeBankError = CreateKnowledgeBankErrors[keyof CreateKnowledgeBankErrors];
+
+export type CreateKnowledgeBankResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeBankResponse;
+};
+
+export type CreateKnowledgeBankResponse =
+  CreateKnowledgeBankResponses[keyof CreateKnowledgeBankResponses];
+
+export type DeleteKnowledgeBankData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}";
+};
+
+export type DeleteKnowledgeBankErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteKnowledgeBankError = DeleteKnowledgeBankErrors[keyof DeleteKnowledgeBankErrors];
+
+export type DeleteKnowledgeBankResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeDeletedResponse;
+};
+
+export type DeleteKnowledgeBankResponse =
+  DeleteKnowledgeBankResponses[keyof DeleteKnowledgeBankResponses];
+
+export type GetKnowledgeBankData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}";
+};
+
+export type GetKnowledgeBankErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgeBankError = GetKnowledgeBankErrors[keyof GetKnowledgeBankErrors];
+
+export type GetKnowledgeBankResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeBankResponse;
+};
+
+export type GetKnowledgeBankResponse = GetKnowledgeBankResponses[keyof GetKnowledgeBankResponses];
+
+export type ResetKnowledgeBankConfigData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/config";
+};
+
+export type ResetKnowledgeBankConfigErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ResetKnowledgeBankConfigError =
+  ResetKnowledgeBankConfigErrors[keyof ResetKnowledgeBankConfigErrors];
+
+export type ResetKnowledgeBankConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeBankConfigResponse;
+};
+
+export type ResetKnowledgeBankConfigResponse =
+  ResetKnowledgeBankConfigResponses[keyof ResetKnowledgeBankConfigResponses];
+
+export type GetKnowledgeBankConfigData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/config";
+};
+
+export type GetKnowledgeBankConfigErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgeBankConfigError =
+  GetKnowledgeBankConfigErrors[keyof GetKnowledgeBankConfigErrors];
+
+export type GetKnowledgeBankConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeBankConfigResponse;
+};
+
+export type GetKnowledgeBankConfigResponse =
+  GetKnowledgeBankConfigResponses[keyof GetKnowledgeBankConfigResponses];
+
+export type UpdateKnowledgeBankConfigData = {
+  body: KnowledgeBankConfigUpdate;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/config";
+};
+
+export type UpdateKnowledgeBankConfigErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type UpdateKnowledgeBankConfigError =
+  UpdateKnowledgeBankConfigErrors[keyof UpdateKnowledgeBankConfigErrors];
+
+export type UpdateKnowledgeBankConfigResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeBankConfigResponse;
+};
+
+export type UpdateKnowledgeBankConfigResponse =
+  UpdateKnowledgeBankConfigResponses[keyof UpdateKnowledgeBankConfigResponses];
+
+export type GetKnowledgeBankTimeseriesData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Period
+     */
+    period?: "1d" | "7d" | "30d" | "90d";
+    /**
+     * Media Type
+     *
+     * Only documents of this media type.
+     */
+    media_type?: "document" | "image" | "audio" | "video" | "text" | null;
+  };
+  url: "/v1/default/knowledge-banks/{bank_id}/stats/timeseries";
+};
+
+export type GetKnowledgeBankTimeseriesErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgeBankTimeseriesError =
+  GetKnowledgeBankTimeseriesErrors[keyof GetKnowledgeBankTimeseriesErrors];
+
+export type GetKnowledgeBankTimeseriesResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeTimeseriesResponse;
+};
+
+export type GetKnowledgeBankTimeseriesResponse =
+  GetKnowledgeBankTimeseriesResponses[keyof GetKnowledgeBankTimeseriesResponses];
+
+export type IngestKnowledgeFilesData = {
+  body: BodyIngestKnowledgeFiles;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/files/ingest";
+};
+
+export type IngestKnowledgeFilesErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type IngestKnowledgeFilesError =
+  IngestKnowledgeFilesErrors[keyof IngestKnowledgeFilesErrors];
+
+export type IngestKnowledgeFilesResponses = {
+  /**
+   * Successful Response
+   */
+  202: KnowledgeIngestResponse;
+};
+
+export type IngestKnowledgeFilesResponse =
+  IngestKnowledgeFilesResponses[keyof IngestKnowledgeFilesResponses];
+
+export type IngestKnowledgeTextsData = {
+  body: KnowledgeIngestRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/ingest";
+};
+
+export type IngestKnowledgeTextsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type IngestKnowledgeTextsError =
+  IngestKnowledgeTextsErrors[keyof IngestKnowledgeTextsErrors];
+
+export type IngestKnowledgeTextsResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeIngestResponse;
+  /**
+   * Queued (`async: true`)
+   */
+  202: KnowledgeIngestResponse;
+};
+
+export type IngestKnowledgeTextsResponse =
+  IngestKnowledgeTextsResponses[keyof IngestKnowledgeTextsResponses];
+
+export type ListKnowledgeDocumentsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Limit
+     */
+    limit?: number;
+    /**
+     * Offset
+     */
+    offset?: number;
+    /**
+     * Q
+     *
+     * Substring of the id or filename.
+     */
+    q?: string | null;
+    /**
+     * Status
+     */
+    status?: string | null;
+    /**
+     * Media Type
+     */
+    media_type?: string | null;
+    /**
+     * Tags
+     */
+    tags?: Array<string> | null;
+  };
+  url: "/v1/default/knowledge-banks/{bank_id}/documents";
+};
+
+export type ListKnowledgeDocumentsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListKnowledgeDocumentsError =
+  ListKnowledgeDocumentsErrors[keyof ListKnowledgeDocumentsErrors];
+
+export type ListKnowledgeDocumentsResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeDocumentListResponse;
+};
+
+export type ListKnowledgeDocumentsResponse =
+  ListKnowledgeDocumentsResponses[keyof ListKnowledgeDocumentsResponses];
+
+export type DeleteKnowledgeDocumentData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Document Id
+     */
+    document_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/documents/{document_id}";
+};
+
+export type DeleteKnowledgeDocumentErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteKnowledgeDocumentError =
+  DeleteKnowledgeDocumentErrors[keyof DeleteKnowledgeDocumentErrors];
+
+export type DeleteKnowledgeDocumentResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeDeletedResponse;
+};
+
+export type DeleteKnowledgeDocumentResponse =
+  DeleteKnowledgeDocumentResponses[keyof DeleteKnowledgeDocumentResponses];
+
+export type GetKnowledgeDocumentData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Document Id
+     */
+    document_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/documents/{document_id}";
+};
+
+export type GetKnowledgeDocumentErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgeDocumentError =
+  GetKnowledgeDocumentErrors[keyof GetKnowledgeDocumentErrors];
+
+export type GetKnowledgeDocumentResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeDocumentDetailResponse;
+};
+
+export type GetKnowledgeDocumentResponse =
+  GetKnowledgeDocumentResponses[keyof GetKnowledgeDocumentResponses];
+
+export type ListKnowledgeBankTagsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Q
+     *
+     * Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.
+     */
+    q?: string | null;
+    /**
+     * Limit
+     */
+    limit?: number;
+    /**
+     * Offset
+     */
+    offset?: number;
+  };
+  url: "/v1/default/knowledge-banks/{bank_id}/tags";
+};
+
+export type ListKnowledgeBankTagsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListKnowledgeBankTagsError =
+  ListKnowledgeBankTagsErrors[keyof ListKnowledgeBankTagsErrors];
+
+export type ListKnowledgeBankTagsResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeTagsResponse;
+};
+
+export type ListKnowledgeBankTagsResponse =
+  ListKnowledgeBankTagsResponses[keyof ListKnowledgeBankTagsResponses];
+
+export type GetKnowledgeDocumentFileData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Document Id
+     */
+    document_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/documents/{document_id}/file";
+};
+
+export type GetKnowledgeDocumentFileErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgeDocumentFileError =
+  GetKnowledgeDocumentFileErrors[keyof GetKnowledgeDocumentFileErrors];
+
+export type GetKnowledgeDocumentFileResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
+
+export type GetKnowledgePassageMediaData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Document Id
+     */
+    document_id: string;
+    /**
+     * Index
+     */
+    index: number;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/documents/{document_id}/passages/{index}/media";
+};
+
+export type GetKnowledgePassageMediaErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgePassageMediaError =
+  GetKnowledgePassageMediaErrors[keyof GetKnowledgePassageMediaErrors];
+
+export type GetKnowledgePassageMediaResponses = {
+  /**
+   * Successful Response
+   */
+  200: unknown;
+};
+
+export type SearchKnowledgeBankData = {
+  body: KnowledgeSearchRequest;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/search";
+};
+
+export type SearchKnowledgeBankErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type SearchKnowledgeBankError = SearchKnowledgeBankErrors[keyof SearchKnowledgeBankErrors];
+
+export type SearchKnowledgeBankResponses = {
+  /**
+   * Successful Response
+   */
+  200: KnowledgeSearchResponse;
+};
+
+export type SearchKnowledgeBankResponse =
+  SearchKnowledgeBankResponses[keyof SearchKnowledgeBankResponses];
 
 export type HealthEndpointHealthGetData = {
   body?: never;

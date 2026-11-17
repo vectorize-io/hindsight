@@ -2327,6 +2327,7 @@ Configuration for the file upload and conversion pipeline (used by `POST /v1/def
 | `HINDSIGHT_API_ENABLE_FILE_UPLOAD_API` | Enable the file upload API endpoint | `true` |
 | `HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API` | Enable the [document export](./api/memory-banks.md#document-export--import-superseded) endpoint (`GET /document-transfer`) | `true` |
 | `HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API` | Enable the [document import](./api/memory-banks.md#document-export--import-superseded) endpoint (`POST /document-transfer`) | `true` |
+| `HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS` | Enable [knowledge banks](./knowledge-banks.md). Off, their endpoints answer `404`, reflect ignores linked knowledge banks and the control plane hides them | `true` |
 | `HINDSIGHT_API_FILE_PARSER` | Server-side default parser or fallback chain (comma-separated, e.g. `iris,markitdown`) | `markitdown` |
 | `HINDSIGHT_API_FILE_PARSER_ALLOWLIST` | Comma-separated list of parsers clients are allowed to request. If not set, all registered parsers are allowed. | — |
 | `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE` | Max files per upload request | `10` |

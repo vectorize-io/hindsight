@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.budget import Budget
-from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
+from hindsight_client_api.models.knowledge_search_request_tag_groups_inner import KnowledgeSearchRequestTagGroupsInner
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
 from typing import Optional, Set
 from typing_extensions import Self
@@ -41,7 +41,7 @@ class ReflectRequest(BaseModel):
     response_schema: Optional[Dict[str, Any]] = None
     tags: Optional[List[StrictStr]] = None
     tags_match: Optional[StrictStr] = Field(default='any', description="How to match tags: 'any' (OR, includes untagged), 'all' (AND, includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict' (AND, excludes untagged), or 'exact' (set equality). Untagged directives remain global in every mode.")
-    tag_groups: Optional[List[MentalModelTriggerInputTagGroupsInner]] = None
+    tag_groups: Optional[List[KnowledgeSearchRequestTagGroupsInner]] = None
     apply_all_directives: Optional[StrictBool] = Field(default=False, description="Apply every active directive regardless of tags. By default directives are scoped like memories: untagged directives always apply, and tagged directives apply only when the request's tags match them. Set true to apply all active directives, ignoring tag scope.")
     fact_types: Optional[List[StrictStr]] = None
     exclude_mental_models: Optional[StrictBool] = Field(default=False, description="If true, exclude all mental models from the reflect loop (skip search_mental_models tool).")
@@ -186,7 +186,7 @@ class ReflectRequest(BaseModel):
             "response_schema": obj.get("response_schema"),
             "tags": obj.get("tags"),
             "tags_match": obj.get("tags_match") if obj.get("tags_match") is not None else 'any',
-            "tag_groups": [MentalModelTriggerInputTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None,
+            "tag_groups": [KnowledgeSearchRequestTagGroupsInner.from_dict(_item) for _item in obj["tag_groups"]] if obj.get("tag_groups") is not None else None,
             "apply_all_directives": obj.get("apply_all_directives") if obj.get("apply_all_directives") is not None else False,
             "fact_types": obj.get("fact_types"),
             "exclude_mental_models": obj.get("exclude_mental_models") if obj.get("exclude_mental_models") is not None else False,

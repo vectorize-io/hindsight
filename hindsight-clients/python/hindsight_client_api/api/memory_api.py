@@ -1251,7 +1251,7 @@ class MemoryApi:
         type: Optional[StrictStr] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
-        tags: Optional[List[Optional[StrictStr]]] = None,
+        tags: Optional[List[StrictStr]] = None,
         tags_match: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
         chunk_id: Optional[StrictStr] = None,
@@ -1282,7 +1282,7 @@ class MemoryApi:
         :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param tags:
-        :type tags: List[Optional[str]]
+        :type tags: List[str]
         :param tags_match:
         :type tags_match: str
         :param document_id:
@@ -1352,7 +1352,7 @@ class MemoryApi:
         type: Optional[StrictStr] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
-        tags: Optional[List[Optional[StrictStr]]] = None,
+        tags: Optional[List[StrictStr]] = None,
         tags_match: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
         chunk_id: Optional[StrictStr] = None,
@@ -1383,7 +1383,7 @@ class MemoryApi:
         :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param tags:
-        :type tags: List[Optional[str]]
+        :type tags: List[str]
         :param tags_match:
         :type tags_match: str
         :param document_id:
@@ -1453,7 +1453,7 @@ class MemoryApi:
         type: Optional[StrictStr] = None,
         limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
-        tags: Optional[List[Optional[StrictStr]]] = None,
+        tags: Optional[List[StrictStr]] = None,
         tags_match: Optional[StrictStr] = None,
         document_id: Optional[StrictStr] = None,
         chunk_id: Optional[StrictStr] = None,
@@ -1484,7 +1484,7 @@ class MemoryApi:
         :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
         :param tags:
-        :type tags: List[Optional[str]]
+        :type tags: List[str]
         :param tags_match:
         :type tags_match: str
         :param document_id:

@@ -11,6 +11,820 @@ info:
 servers:
 - url: /
 paths:
+  /v1/default/knowledge-banks:
+    get:
+      operationId: list_knowledge_banks
+      parameters:
+      - explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
+      - description: "Part of the bank id, case-insensitive"
+        explode: true
+        in: query
+        name: q
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBankListResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List knowledge banks
+      tags:
+      - Knowledge Banks
+    post:
+      operationId: create_knowledge_bank
+      parameters:
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateKnowledgeBankRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBankResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Create a knowledge bank
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}:
+    delete:
+      operationId: delete_knowledge_bank
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeDeletedResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete a knowledge bank and everything in it
+      tags:
+      - Knowledge Banks
+    get:
+      operationId: get_knowledge_bank
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBankResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get a knowledge bank
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/config:
+    delete:
+      operationId: reset_knowledge_bank_config
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBankConfigResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Reset a knowledge bank's ingest settings to the server's
+      tags:
+      - Knowledge Banks
+    get:
+      operationId: get_knowledge_bank_config
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBankConfigResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get a knowledge bank's ingest settings
+      tags:
+      - Knowledge Banks
+    patch:
+      operationId: update_knowledge_bank_config
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeBankConfigUpdate'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeBankConfigResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Override a knowledge bank's ingest settings
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/stats/timeseries:
+    get:
+      operationId: get_knowledge_bank_timeseries
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: true
+        in: query
+        name: period
+        required: false
+        schema:
+          default: 7d
+          enum:
+          - 1d
+          - 7d
+          - 30d
+          - 90d
+          title: Period
+          type: string
+        style: form
+      - description: Only documents of this media type.
+        explode: true
+        in: query
+        name: media_type
+        required: false
+        schema:
+          enum:
+          - document
+          - image
+          - audio
+          - video
+          - text
+          nullable: true
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeTimeseriesResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Documents and passages added over time
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/files/ingest:
+    post:
+      description: "Each file becomes one document, chunked into passages (or pre-processed\
+        \ first by the extension its ingestion strategy maps its type to) and embedded\
+        \ in the background. Poll the operation, or the document's status, to know\
+        \ when it is searchable."
+      operationId: ingest_knowledge_files
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_ingest_knowledge_files'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeIngestResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: "Ingest files (PDF, images, audio, video, text, Office)"
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/ingest:
+    post:
+      description: "Synchronous by default: returns once every document is searchable.\
+        \ With `async: true` each document is queued instead (202) and its operation\
+        \ returned."
+      operationId: ingest_knowledge_texts
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeIngestRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeIngestResponse'
+          description: Successful Response
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeIngestResponse'
+          description: "Queued (`async: true`)"
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Ingest text documents
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/documents:
+    get:
+      operationId: list_knowledge_documents
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 50
+          maximum: 500
+          minimum: 1
+          title: Limit
+          type: integer
+        style: form
+      - explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
+      - description: Substring of the id or filename.
+        explode: true
+        in: query
+        name: q
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: status
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: media_type
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: tags
+        required: false
+        schema:
+          items:
+            nullable: true
+            type: string
+          nullable: true
+          type: array
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeDocumentListResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: List documents
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/documents/{document_id}:
+    delete:
+      operationId: delete_knowledge_document
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: document_id
+        required: true
+        schema:
+          title: Document Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeDeletedResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete a document
+      tags:
+      - Knowledge Banks
+    get:
+      operationId: get_knowledge_document
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: document_id
+        required: true
+        schema:
+          title: Document Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeDocumentDetailResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get a document and its passages
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/tags:
+    get:
+      operationId: list_knowledge_bank_tags
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard.
+          Case-insensitive.
+        explode: true
+        in: query
+        name: q
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 100
+          maximum: 1000
+          minimum: 0
+          title: Limit
+          type: integer
+        style: form
+      - explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeTagsResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: "List a knowledge bank's document tags, with how many documents carry\
+        \ each"
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/documents/{document_id}/file:
+    get:
+      operationId: get_knowledge_document_file
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: document_id
+        required: true
+        schema:
+          title: Document Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Download a document's original file
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/documents/{document_id}/passages/{index}/media:
+    get:
+      operationId: get_knowledge_passage_media
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: document_id
+        required: true
+        schema:
+          title: Document Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: index
+        required: true
+        schema:
+          title: Index
+          type: integer
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: "Stream a passage's media (page image, image, audio or video window)"
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/search:
+    post:
+      operationId: search_knowledge_bank
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KnowledgeSearchRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KnowledgeSearchResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: "Search passages by meaning: a text, image or video query, alone or\
+        \ combined"
+      tags:
+      - Knowledge Banks
   /health:
     get:
       description: "Readiness check: verifies the API can reach the database. Alias\
@@ -135,7 +949,6 @@ paths:
         required: false
         schema:
           items:
-            nullable: true
             type: string
           nullable: true
           type: array
@@ -6552,13 +7365,10 @@ components:
       description: A single audit log entry with its full request/response bodies.
       example:
         duration_ms: 0
-        request:
-          key: ""
-        metadata:
-          key: ""
+        request: "{}"
+        metadata: "{}"
         bank_id: bank_id
-        response:
-          key: ""
+        response: "{}"
         action: action
         started_at: started_at
         id: id
@@ -6587,14 +7397,17 @@ components:
           nullable: true
           type: integer
         metadata:
-          additionalProperties: {}
+          additionalProperties: false
           title: Metadata
+          type: object
         request:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         response:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
       required:
       - action
       - bank_id
@@ -6615,8 +7428,7 @@ components:
         limit: 6
         items:
         - duration_ms: 5
-          metadata:
-            key: ""
+          metadata: "{}"
           bank_id: bank_id
           action: action
           started_at: started_at
@@ -6624,8 +7436,7 @@ components:
           transport: transport
           ended_at: ended_at
         - duration_ms: 5
-          metadata:
-            key: ""
+          metadata: "{}"
           bank_id: bank_id
           action: action
           started_at: started_at
@@ -6726,8 +7537,7 @@ components:
         \ list returns it."
       example:
         duration_ms: 5
-        metadata:
-          key: ""
+        metadata: "{}"
         bank_id: bank_id
         action: action
         started_at: started_at
@@ -6757,8 +7567,9 @@ components:
           nullable: true
           type: integer
         metadata:
-          additionalProperties: {}
+          additionalProperties: false
           title: Metadata
+          type: object
       required:
       - action
       - bank_id
@@ -6841,14 +7652,16 @@ components:
           title: Bank Id
           type: string
         config:
-          additionalProperties: {}
+          additionalProperties: false
           description: Fully resolved configuration with all hierarchical overrides
             applied (Python field names)
           title: Config
+          type: object
         overrides:
-          additionalProperties: {}
+          additionalProperties: false
           description: Bank-specific configuration overrides only (Python field names)
           title: Overrides
+          type: object
       required:
       - bank_id
       - config
@@ -6862,11 +7675,12 @@ components:
           retain_extraction_mode: custom
       properties:
         updates:
-          additionalProperties: {}
+          additionalProperties: false
           description: Configuration overrides. Keys can be in Python field format
             (retain_extraction_mode) or environment variable format (HINDSIGHT_API_RETAIN_EXTRACTION_MODE).
             Only hierarchical fields can be overridden per-bank.
           title: Updates
+          type: object
       required:
       - updates
       title: BankConfigUpdate
@@ -7222,8 +8036,9 @@ components:
           nullable: true
           type: string
         retain_strategies:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         retain_chunk_batch_size:
           nullable: true
           type: integer
@@ -7268,7 +8083,9 @@ components:
           type: integer
         observation_scope_limits:
           items:
-            additionalProperties: {}
+            additionalProperties: false
+            nullable: true
+            type: object
           nullable: true
           type: array
         default_observation_scopes:
@@ -7282,14 +8099,17 @@ components:
           nullable: true
           type: integer
         page_default_trigger:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         knowledge_page_default_trigger:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         reflect_default_options:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         mental_model_min_refresh_interval_seconds:
           minimum: 0.0
           nullable: true
@@ -7365,8 +8185,9 @@ components:
           nullable: true
           type: integer
         memory_defense:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
       title: BankTemplateConfig
     BankTemplateDirective:
       description: |-
@@ -7641,6 +8462,19 @@ components:
       required:
       - file
       title: Body_import_documents
+    Body_ingest_knowledge_files:
+      properties:
+        files:
+          items:
+            format: binary
+            type: string
+          type: array
+        request:
+          nullable: true
+          type: string
+      required:
+      - files
+      title: Body_ingest_knowledge_files
     Budget:
       description: Budget levels for recall/reflect operations.
       enum:
@@ -8237,6 +9071,18 @@ components:
       required:
       - name
       title: CreateFolderRequest
+    CreateKnowledgeBankRequest:
+      example:
+        bank_id: bank_id
+      properties:
+        bank_id:
+          description: Id of the new knowledge bank. It shares the id space of memory
+            banks.
+          title: Bank Id
+          type: string
+      required:
+      - bank_id
+      title: CreateKnowledgeBankRequest
     CreateMentalModelRequest:
       description: Request model for creating a mental model.
       example:
@@ -8325,8 +9171,7 @@ components:
           fact_types:
           - world
           - world
-          response_schema:
-            key: ""
+          response_schema: "{}"
           exclude_mental_model_ids:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
@@ -8901,11 +9746,13 @@ components:
           title: Memory Unit Count
           type: integer
         retain_params:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         document_metadata:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         tags:
           default: []
           description: Tags associated with this document
@@ -8977,11 +9824,13 @@ components:
             type: string
           type: array
         document_metadata:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         retain_params:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         observation_scopes:
           $ref: '#/components/schemas/Observation_Scopes'
         attachments:
@@ -9197,8 +10046,9 @@ components:
           nullable: true
           type: string
         metadata:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         observations:
           items:
             $ref: '#/components/schemas/EntityObservationResponse'
@@ -9392,8 +10242,9 @@ components:
           nullable: true
           type: string
         metadata:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
       required:
       - canonical_name
       - id
@@ -9774,6 +10625,1523 @@ components:
         source_facts:
           $ref: '#/components/schemas/SourceFactsIncludeOptions'
       title: IncludeOptions
+    KnowledgeBankConfigResponse:
+      example:
+        bank_id: bank_id
+        overrides:
+          pdf_bands: true
+          pdf_page_pixels: 1864
+          audio_window_seconds: 2659
+          media_overlap_seconds: 368
+          max_pdf_pages: 1
+          video_window_seconds: 444
+          max_media_seconds: 1
+          disabled_media_types:
+          - document
+          - document
+          image_tokens: 505
+          text_passage_tokens: 2972
+        config:
+          pdf_bands: true
+          pdf_page_pixels: 6
+          audio_window_seconds: 5
+          media_overlap_seconds: 2
+          max_pdf_pages: 9
+          video_window_seconds: 5
+          max_media_seconds: 7
+          disabled_media_types:
+          - document
+          - document
+          image_tokens: 1
+          text_passage_tokens: 0
+      properties:
+        bank_id:
+          title: Bank Id
+          type: string
+        config:
+          $ref: '#/components/schemas/KnowledgeBankSettings'
+        overrides:
+          $ref: '#/components/schemas/KnowledgeBankOverrides'
+      required:
+      - bank_id
+      - config
+      - overrides
+      title: KnowledgeBankConfigResponse
+    KnowledgeBankConfigUpdate:
+      example:
+        updates: "{}"
+      properties:
+        updates:
+          additionalProperties: false
+          description: "Settings to override (named as in `config`); a null value\
+            \ clears that override. Each change applies to files ingested after it:\
+            \ re-uploading an unchanged file re-splits it."
+          title: Updates
+          type: object
+      required:
+      - updates
+      title: KnowledgeBankConfigUpdate
+    KnowledgeBankListResponse:
+      example:
+        total: 7
+        offset: 3
+        banks:
+        - documents_by_media_type:
+            key: 2
+          pending_count: 5
+          passage_count: 6
+          document_count: 0
+          last_document_at: 2000-01-23T04:56:07.000+00:00
+          bank_id: bank_id
+          created_at: 2000-01-23T04:56:07.000+00:00
+          ready_count: 1
+          failed_count: 5
+        - documents_by_media_type:
+            key: 2
+          pending_count: 5
+          passage_count: 6
+          document_count: 0
+          last_document_at: 2000-01-23T04:56:07.000+00:00
+          bank_id: bank_id
+          created_at: 2000-01-23T04:56:07.000+00:00
+          ready_count: 1
+          failed_count: 5
+        limit: 9
+      properties:
+        banks:
+          items:
+            $ref: '#/components/schemas/KnowledgeBankResponse'
+          type: array
+        total:
+          description: "Knowledge banks matching `q`, before paging"
+          title: Total
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+        offset:
+          title: Offset
+          type: integer
+      required:
+      - banks
+      - limit
+      - offset
+      - total
+      title: KnowledgeBankListResponse
+    KnowledgeBankOverrides:
+      additionalProperties: false
+      description: |-
+        What a bank overrides; a field left None follows the server. Strict, so ``"5"`` or ``true``
+        is not taken for a number.
+      example:
+        pdf_bands: true
+        pdf_page_pixels: 1864
+        audio_window_seconds: 2659
+        media_overlap_seconds: 368
+        max_pdf_pages: 1
+        video_window_seconds: 444
+        max_media_seconds: 1
+        disabled_media_types:
+        - document
+        - document
+        image_tokens: 505
+        text_passage_tokens: 2972
+      properties:
+        text_passage_tokens:
+          maximum: 8192.0
+          minimum: 16.0
+          nullable: true
+          type: integer
+        pdf_page_pixels:
+          maximum: 8192.0
+          minimum: 256.0
+          nullable: true
+          type: integer
+        pdf_bands:
+          nullable: true
+          type: boolean
+        image_tokens:
+          maximum: 1120.0
+          minimum: 70.0
+          nullable: true
+          type: integer
+        audio_window_seconds:
+          maximum: 3600.0
+          minimum: 1.0
+          nullable: true
+          type: integer
+        video_window_seconds:
+          maximum: 3600.0
+          minimum: 1.0
+          nullable: true
+          type: integer
+        media_overlap_seconds:
+          maximum: 3599.0
+          minimum: 0.0
+          nullable: true
+          type: integer
+        max_media_seconds:
+          minimum: 1.0
+          nullable: true
+          type: integer
+        max_pdf_pages:
+          minimum: 1.0
+          nullable: true
+          type: integer
+        disabled_media_types:
+          items:
+            enum:
+            - document
+            - image
+            - audio
+            - video
+            - text
+            type: string
+          nullable: true
+          type: array
+      title: KnowledgeBankOverrides
+    KnowledgeBankResponse:
+      example:
+        documents_by_media_type:
+          key: 2
+        pending_count: 5
+        passage_count: 6
+        document_count: 0
+        last_document_at: 2000-01-23T04:56:07.000+00:00
+        bank_id: bank_id
+        created_at: 2000-01-23T04:56:07.000+00:00
+        ready_count: 1
+        failed_count: 5
+      properties:
+        bank_id:
+          title: Bank Id
+          type: string
+        created_at:
+          format: date-time
+          nullable: true
+          type: string
+        document_count:
+          title: Document Count
+          type: integer
+        passage_count:
+          title: Passage Count
+          type: integer
+        ready_count:
+          title: Ready Count
+          type: integer
+        pending_count:
+          title: Pending Count
+          type: integer
+        failed_count:
+          title: Failed Count
+          type: integer
+        documents_by_media_type:
+          additionalProperties:
+            type: integer
+          title: Documents By Media Type
+        last_document_at:
+          format: date-time
+          nullable: true
+          type: string
+      required:
+      - bank_id
+      - created_at
+      - document_count
+      - documents_by_media_type
+      - failed_count
+      - passage_count
+      - pending_count
+      - ready_count
+      title: KnowledgeBankResponse
+    KnowledgeBankSettings:
+      description: "The ingest settings a knowledge bank splits its files with: its\
+        \ overrides, else the server's."
+      example:
+        pdf_bands: true
+        pdf_page_pixels: 6
+        audio_window_seconds: 5
+        media_overlap_seconds: 2
+        max_pdf_pages: 9
+        video_window_seconds: 5
+        max_media_seconds: 7
+        disabled_media_types:
+        - document
+        - document
+        image_tokens: 1
+        text_passage_tokens: 0
+      properties:
+        text_passage_tokens:
+          title: Text Passage Tokens
+          type: integer
+        pdf_page_pixels:
+          title: Pdf Page Pixels
+          type: integer
+        pdf_bands:
+          title: Pdf Bands
+          type: boolean
+        image_tokens:
+          title: Image Tokens
+          type: integer
+        audio_window_seconds:
+          title: Audio Window Seconds
+          type: integer
+        video_window_seconds:
+          title: Video Window Seconds
+          type: integer
+        media_overlap_seconds:
+          title: Media Overlap Seconds
+          type: integer
+        max_media_seconds:
+          title: Max Media Seconds
+          type: integer
+        max_pdf_pages:
+          title: Max Pdf Pages
+          type: integer
+        disabled_media_types:
+          items:
+            enum:
+            - document
+            - image
+            - audio
+            - video
+            - text
+            type: string
+          type: array
+      required:
+      - audio_window_seconds
+      - disabled_media_types
+      - image_tokens
+      - max_media_seconds
+      - max_pdf_pages
+      - media_overlap_seconds
+      - pdf_bands
+      - pdf_page_pixels
+      - text_passage_tokens
+      - video_window_seconds
+      title: KnowledgeBankSettings
+    KnowledgeDeletedResponse:
+      example:
+        deleted: true
+      properties:
+        deleted:
+          default: true
+          title: Deleted
+          type: boolean
+      title: KnowledgeDeletedResponse
+    KnowledgeDocumentDetailResponse:
+      example:
+        passage_count: 6
+        size_bytes: 0
+        created_at: 2000-01-23T04:56:07.000+00:00
+        document_id: document_id
+        error: error
+        tags:
+        - tags
+        - tags
+        filename: filename
+        content_type: content_type
+        updated_at: 2000-01-23T04:56:07.000+00:00
+        media_type: document
+        passages:
+        - media_type: document
+          index: 1
+          text: text
+          page: 5
+          end_ms: 2
+          passage_url: passage_url
+          start_ms: 5
+        - media_type: document
+          index: 1
+          text: text
+          page: 5
+          end_ms: 2
+          passage_url: passage_url
+          start_ms: 5
+        document_url: document_url
+        source_document_id: source_document_id
+        status: pending
+      properties:
+        document_id:
+          title: Document Id
+          type: string
+        filename:
+          nullable: true
+          type: string
+        content_type:
+          title: Content Type
+          type: string
+        media_type:
+          enum:
+          - document
+          - image
+          - audio
+          - video
+          - text
+          title: Knowledge Media Type
+          type: string
+        size_bytes:
+          title: Size Bytes
+          type: integer
+        status:
+          enum:
+          - pending
+          - processing
+          - ready
+          - failed
+          title: Knowledge Document Status
+          type: string
+        error:
+          nullable: true
+          type: string
+        passage_count:
+          title: Passage Count
+          type: integer
+        tags:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          nullable: true
+          type: string
+        updated_at:
+          format: date-time
+          nullable: true
+          type: string
+        document_url:
+          description: API path that streams the original file.
+          title: Document Url
+          type: string
+        source_document_id:
+          nullable: true
+          type: string
+        passages:
+          items:
+            $ref: '#/components/schemas/KnowledgePassageResponse'
+          type: array
+      required:
+      - content_type
+      - created_at
+      - document_id
+      - document_url
+      - error
+      - filename
+      - media_type
+      - passage_count
+      - passages
+      - size_bytes
+      - status
+      - tags
+      - updated_at
+      title: KnowledgeDocumentDetailResponse
+    KnowledgeDocumentListResponse:
+      example:
+        total: 1
+        documents:
+        - passage_count: 6
+          size_bytes: 0
+          created_at: 2000-01-23T04:56:07.000+00:00
+          document_id: document_id
+          error: error
+          tags:
+          - tags
+          - tags
+          filename: filename
+          content_type: content_type
+          updated_at: 2000-01-23T04:56:07.000+00:00
+          media_type: document
+          document_url: document_url
+          source_document_id: source_document_id
+          status: pending
+        - passage_count: 6
+          size_bytes: 0
+          created_at: 2000-01-23T04:56:07.000+00:00
+          document_id: document_id
+          error: error
+          tags:
+          - tags
+          - tags
+          filename: filename
+          content_type: content_type
+          updated_at: 2000-01-23T04:56:07.000+00:00
+          media_type: document
+          document_url: document_url
+          source_document_id: source_document_id
+          status: pending
+      properties:
+        documents:
+          items:
+            $ref: '#/components/schemas/KnowledgeDocumentResponse'
+          type: array
+        total:
+          title: Total
+          type: integer
+      required:
+      - documents
+      - total
+      title: KnowledgeDocumentListResponse
+    KnowledgeDocumentResponse:
+      example:
+        passage_count: 6
+        size_bytes: 0
+        created_at: 2000-01-23T04:56:07.000+00:00
+        document_id: document_id
+        error: error
+        tags:
+        - tags
+        - tags
+        filename: filename
+        content_type: content_type
+        updated_at: 2000-01-23T04:56:07.000+00:00
+        media_type: document
+        document_url: document_url
+        source_document_id: source_document_id
+        status: pending
+      properties:
+        document_id:
+          title: Document Id
+          type: string
+        filename:
+          nullable: true
+          type: string
+        content_type:
+          title: Content Type
+          type: string
+        media_type:
+          enum:
+          - document
+          - image
+          - audio
+          - video
+          - text
+          title: Knowledge Media Type
+          type: string
+        size_bytes:
+          title: Size Bytes
+          type: integer
+        status:
+          enum:
+          - pending
+          - processing
+          - ready
+          - failed
+          title: Knowledge Document Status
+          type: string
+        error:
+          nullable: true
+          type: string
+        passage_count:
+          title: Passage Count
+          type: integer
+        tags:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          nullable: true
+          type: string
+        updated_at:
+          format: date-time
+          nullable: true
+          type: string
+        document_url:
+          description: API path that streams the original file.
+          title: Document Url
+          type: string
+        source_document_id:
+          nullable: true
+          type: string
+      required:
+      - content_type
+      - created_at
+      - document_id
+      - document_url
+      - error
+      - filename
+      - media_type
+      - passage_count
+      - size_bytes
+      - status
+      - tags
+      - updated_at
+      title: KnowledgeDocumentResponse
+    KnowledgeIngestRequest:
+      example:
+        async: false
+        items:
+        - filename: filename
+          text: text
+          document_id: document_id
+          strategy: strategy
+          tags:
+          - tags
+          - tags
+        - filename: filename
+          text: text
+          document_id: document_id
+          strategy: strategy
+          tags:
+          - tags
+          - tags
+        - filename: filename
+          text: text
+          document_id: document_id
+          strategy: strategy
+          tags:
+          - tags
+          - tags
+        - filename: filename
+          text: text
+          document_id: document_id
+          strategy: strategy
+          tags:
+          - tags
+          - tags
+        - filename: filename
+          text: text
+          document_id: document_id
+          strategy: strategy
+          tags:
+          - tags
+          - tags
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/KnowledgeIngestTextItem'
+          maxItems: 100
+          minItems: 1
+          type: array
+        async:
+          default: false
+          description: "If true, queue each document and return at once (202), as\
+            \ the file ingest always does. If false, return once every document is\
+            \ searchable (default: false)."
+          title: Async
+          type: boolean
+      required:
+      - items
+      title: KnowledgeIngestRequest
+    KnowledgeIngestResponse:
+      example:
+        operation_ids:
+        - operation_ids
+        - operation_ids
+        document_ids:
+        - document_ids
+        - document_ids
+        unchanged_document_ids:
+        - unchanged_document_ids
+        - unchanged_document_ids
+      properties:
+        document_ids:
+          description: "Every document ingested, in request order."
+          items:
+            type: string
+          type: array
+        operation_ids:
+          description: "For each document that was queued, the one background operation\
+            \ that processes the whole ingest (the same id for all of them). Empty\
+            \ for a sync ingest."
+          items:
+            type: string
+          type: array
+        unchanged_document_ids:
+          description: "Documents identical to what is stored: nothing was queued\
+            \ for them."
+          items:
+            type: string
+          type: array
+      required:
+      - document_ids
+      - operation_ids
+      title: KnowledgeIngestResponse
+    KnowledgeIngestTextItem:
+      example:
+        filename: filename
+        text: text
+        document_id: document_id
+        strategy: strategy
+        tags:
+        - tags
+        - tags
+      properties:
+        document_id:
+          nullable: true
+          type: string
+        text:
+          minLength: 1
+          title: Text
+          type: string
+        filename:
+          nullable: true
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+        strategy:
+          nullable: true
+          type: string
+      required:
+      - text
+      title: KnowledgeIngestTextItem
+    KnowledgePassageResponse:
+      example:
+        media_type: document
+        index: 1
+        text: text
+        page: 5
+        end_ms: 2
+        passage_url: passage_url
+        start_ms: 5
+      properties:
+        index:
+          title: Index
+          type: integer
+        media_type:
+          enum:
+          - document
+          - image
+          - audio
+          - video
+          - text
+          title: Knowledge Media Type
+          type: string
+        text:
+          nullable: true
+          type: string
+        page:
+          nullable: true
+          type: integer
+        start_ms:
+          nullable: true
+          type: integer
+        end_ms:
+          nullable: true
+          type: integer
+        passage_url:
+          nullable: true
+          type: string
+      required:
+      - index
+      - media_type
+      title: KnowledgePassageResponse
+    KnowledgeSearchRequest:
+      example:
+        document_ids:
+        - document_ids
+        - document_ids
+        trace: false
+        query_video: query_video
+        max_tokens: 80083
+        tag_groups:
+        - resolve: exact
+          match: any_strict
+          tags:
+          - tags
+          - tags
+        - resolve: exact
+          match: any_strict
+          tags:
+          - tags
+          - tags
+        query_image: query_image
+        query: query
+        tags_match: any
+        media_types:
+        - document
+        - document
+        budget: mid
+        tags:
+        - tags
+        - tags
+      properties:
+        query:
+          nullable: true
+          type: string
+        query_image:
+          nullable: true
+          type: string
+        query_video:
+          nullable: true
+          type: string
+        budget:
+          default: mid
+          description: "How deep the search ranks before `max_tokens` picks from it:\
+            \ low is fastest, high reaches the most candidates (as memory-bank recall's\
+            \ budget)."
+          enum:
+          - low
+          - mid
+          - high
+          title: Budget
+          type: string
+        max_tokens:
+          default: 4096
+          description: "What the results may weigh in all, as the tokens of their\
+            \ text. Hits come best first, each text hit with the passages around it\
+            \ joined into its `text`, as many as fit; the rest of the budget widens\
+            \ the best hits' context. An image, page or clip costs a small fixed amount\
+            \ plus its text."
+          maximum: 1000000.0
+          minimum: 1.0
+          title: Max Tokens
+          type: integer
+        tags:
+          items:
+            type: string
+          nullable: true
+          type: array
+        tags_match:
+          default: any
+          description: "How to match tags: 'any' (OR, includes untagged), 'all' (AND,\
+            \ includes untagged), 'any_strict' (OR, excludes untagged), 'all_strict'\
+            \ (AND, excludes untagged), 'exact' (set-equality, excludes untagged).\
+            \ With 'exact' and no tags (or []), only untagged documents match."
+          enum:
+          - any
+          - all
+          - any_strict
+          - all_strict
+          - exact
+          title: Tags Match
+          type: string
+        tag_groups:
+          items:
+            $ref: '#/components/schemas/KnowledgeSearchRequest_tag_groups_inner'
+          nullable: true
+          type: array
+        document_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+        media_types:
+          items:
+            enum:
+            - document
+            - image
+            - audio
+            - video
+            - text
+            type: string
+          nullable: true
+          type: array
+        trace:
+          default: false
+          description: "Also return how the search ranked and what the token budget\
+            \ kept: every ranked candidate with its score step by step, the keyword\
+            \ words and their weights, and each phase's time."
+          title: Trace
+          type: boolean
+      title: KnowledgeSearchRequest
+    KnowledgeSearchResponse:
+      description: |-
+        Results best first. Ranks are what a caller compares: scores are fused per query and mean nothing
+        across responses, so a result does not carry one; ``trace: true`` returns them, step by step.
+      example:
+        trace:
+          hits:
+          - snippet: snippet
+            roles:
+              key: 6.683562403749608
+            index: 7
+            with_document: 9.018348186070783
+            merged_into_rank: 6
+            document_id: document_id
+            score: 9.965781217890562
+            filename: filename
+            result_rank: 1
+            media_type: media_type
+            similarity: 9.369310271410669
+            rank: 1
+            passage_score: 8.762042012749001
+            page: 1
+            found_by:
+            - found_by
+            - found_by
+            end_ms: 5
+            keyword: 6.438423552598547
+            reference_page: true
+            outcome: returned
+            start_ms: 4
+          - snippet: snippet
+            roles:
+              key: 6.683562403749608
+            index: 7
+            with_document: 9.018348186070783
+            merged_into_rank: 6
+            document_id: document_id
+            score: 9.965781217890562
+            filename: filename
+            result_rank: 1
+            media_type: media_type
+            similarity: 9.369310271410669
+            rank: 1
+            passage_score: 8.762042012749001
+            page: 1
+            found_by:
+            - found_by
+            - found_by
+            end_ms: 5
+            keyword: 6.438423552598547
+            reference_page: true
+            outcome: returned
+            start_ms: 4
+          candidates: 9
+          timings_ms:
+            key: 4.145608029883936
+          depth: 5
+          tokens_used: 7
+          keyword_terms:
+            key: 2.027123023002322
+          max_tokens: 2
+          candidate_searches:
+          - name: vector
+            results:
+            - score: 1.2315135367772556
+              index: 7
+              document_id: document_id
+            - score: 1.2315135367772556
+              index: 7
+              document_id: document_id
+          - name: vector
+            results:
+            - score: 1.2315135367772556
+              index: 7
+              document_id: document_id
+            - score: 1.2315135367772556
+              index: 7
+              document_id: document_id
+          keyword_weight: 3.616076749251911
+          budget_steps:
+          - total: 6
+            last: 1
+            into_rank: 6
+            action: window
+            rank: 3
+            tokens: 2
+            document_id: document_id
+            first: 6
+          - total: 6
+            last: 1
+            into_rank: 6
+            action: window
+            rank: 3
+            tokens: 2
+            document_id: document_id
+            first: 6
+          budget: low
+        results:
+        - filename: filename
+          media_type: document
+          index: 0
+          text: text
+          page: 6
+          end_ms: 5
+          passage_url: passage_url
+          document_id: document_id
+          document_url: document_url
+          start_ms: 1
+          tags:
+          - tags
+          - tags
+        - filename: filename
+          media_type: document
+          index: 0
+          text: text
+          page: 6
+          end_ms: 5
+          passage_url: passage_url
+          document_id: document_id
+          document_url: document_url
+          start_ms: 1
+          tags:
+          - tags
+          - tags
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/KnowledgeSearchResult'
+          type: array
+        trace:
+          $ref: '#/components/schemas/KnowledgeSearchTrace'
+      required:
+      - results
+      title: KnowledgeSearchResponse
+    KnowledgeSearchResult:
+      example:
+        filename: filename
+        media_type: document
+        index: 0
+        text: text
+        page: 6
+        end_ms: 5
+        passage_url: passage_url
+        document_id: document_id
+        document_url: document_url
+        start_ms: 1
+        tags:
+        - tags
+        - tags
+      properties:
+        index:
+          title: Index
+          type: integer
+        media_type:
+          enum:
+          - document
+          - image
+          - audio
+          - video
+          - text
+          title: Knowledge Media Type
+          type: string
+        text:
+          nullable: true
+          type: string
+        page:
+          nullable: true
+          type: integer
+        start_ms:
+          nullable: true
+          type: integer
+        end_ms:
+          nullable: true
+          type: integer
+        passage_url:
+          nullable: true
+          type: string
+        document_id:
+          title: Document Id
+          type: string
+        filename:
+          nullable: true
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+        document_url:
+          title: Document Url
+          type: string
+      required:
+      - document_id
+      - document_url
+      - filename
+      - index
+      - media_type
+      - tags
+      title: KnowledgeSearchResult
+    KnowledgeSearchTrace:
+      example:
+        hits:
+        - snippet: snippet
+          roles:
+            key: 6.683562403749608
+          index: 7
+          with_document: 9.018348186070783
+          merged_into_rank: 6
+          document_id: document_id
+          score: 9.965781217890562
+          filename: filename
+          result_rank: 1
+          media_type: media_type
+          similarity: 9.369310271410669
+          rank: 1
+          passage_score: 8.762042012749001
+          page: 1
+          found_by:
+          - found_by
+          - found_by
+          end_ms: 5
+          keyword: 6.438423552598547
+          reference_page: true
+          outcome: returned
+          start_ms: 4
+        - snippet: snippet
+          roles:
+            key: 6.683562403749608
+          index: 7
+          with_document: 9.018348186070783
+          merged_into_rank: 6
+          document_id: document_id
+          score: 9.965781217890562
+          filename: filename
+          result_rank: 1
+          media_type: media_type
+          similarity: 9.369310271410669
+          rank: 1
+          passage_score: 8.762042012749001
+          page: 1
+          found_by:
+          - found_by
+          - found_by
+          end_ms: 5
+          keyword: 6.438423552598547
+          reference_page: true
+          outcome: returned
+          start_ms: 4
+        candidates: 9
+        timings_ms:
+          key: 4.145608029883936
+        depth: 5
+        tokens_used: 7
+        keyword_terms:
+          key: 2.027123023002322
+        max_tokens: 2
+        candidate_searches:
+        - name: vector
+          results:
+          - score: 1.2315135367772556
+            index: 7
+            document_id: document_id
+          - score: 1.2315135367772556
+            index: 7
+            document_id: document_id
+        - name: vector
+          results:
+          - score: 1.2315135367772556
+            index: 7
+            document_id: document_id
+          - score: 1.2315135367772556
+            index: 7
+            document_id: document_id
+        keyword_weight: 3.616076749251911
+        budget_steps:
+        - total: 6
+          last: 1
+          into_rank: 6
+          action: window
+          rank: 3
+          tokens: 2
+          document_id: document_id
+          first: 6
+        - total: 6
+          last: 1
+          into_rank: 6
+          action: window
+          rank: 3
+          tokens: 2
+          document_id: document_id
+          first: 6
+        budget: low
+      properties:
+        budget:
+          enum:
+          - low
+          - mid
+          - high
+          title: Budget
+          type: string
+        depth:
+          description: How many of the scored candidates the budget level keeps for
+            max_tokens
+          title: Depth
+          type: integer
+        max_tokens:
+          title: Max Tokens
+          type: integer
+        tokens_used:
+          description: "What the results weigh, in tokens of their text"
+          title: Tokens Used
+          type: integer
+        candidates:
+          description: "Passages the candidate searches found, before scoring"
+          title: Candidates
+          type: integer
+        keyword_weight:
+          description: The keyword score's share of the final score
+          title: Keyword Weight
+          type: number
+        keyword_terms:
+          additionalProperties:
+            type: number
+          description: "Each query word the keyword search used, with its IDF; a word\
+            \ less than half as rare (IDF) as the query's rarest word is left out"
+          title: Keyword Terms
+        timings_ms:
+          additionalProperties:
+            type: number
+          description: "Each phase's time: open_bank, embed, store.search, context"
+          title: Timings Ms
+        candidate_searches:
+          description: "Step 1: each candidate search's own list"
+          items:
+            $ref: '#/components/schemas/KnowledgeTraceArm'
+          type: array
+        hits:
+          description: "Steps 2-3: every candidate scored, best first"
+          items:
+            $ref: '#/components/schemas/KnowledgeSearchTraceHit'
+          type: array
+        budget_steps:
+          description: "Step 4: how max_tokens was filled, in order"
+          items:
+            $ref: '#/components/schemas/KnowledgeTraceBudgetStep'
+          type: array
+      required:
+      - budget
+      - budget_steps
+      - candidate_searches
+      - candidates
+      - depth
+      - hits
+      - keyword_terms
+      - keyword_weight
+      - max_tokens
+      - timings_ms
+      - tokens_used
+      title: KnowledgeSearchTrace
+    KnowledgeSearchTraceHit:
+      description: "One ranked candidate: its score step by step, and what the token\
+        \ budget did with it."
+      example:
+        snippet: snippet
+        roles:
+          key: 6.683562403749608
+        index: 7
+        with_document: 9.018348186070783
+        merged_into_rank: 6
+        document_id: document_id
+        score: 9.965781217890562
+        filename: filename
+        result_rank: 1
+        media_type: media_type
+        similarity: 9.369310271410669
+        rank: 1
+        passage_score: 8.762042012749001
+        page: 1
+        found_by:
+        - found_by
+        - found_by
+        end_ms: 5
+        keyword: 6.438423552598547
+        reference_page: true
+        outcome: returned
+        start_ms: 4
+      properties:
+        rank:
+          description: "Its place among all scored candidates, from 1"
+          title: Rank
+          type: integer
+        outcome:
+          description: "returned: a result of its own; merged: inside a better hit's\
+            \ text (merged_into_rank); over_budget: nothing of it fit in max_tokens;\
+            \ below_depth: ranked past what the budget level keeps"
+          enum:
+          - returned
+          - merged
+          - over_budget
+          - below_depth
+          title: Outcome
+          type: string
+        result_rank:
+          nullable: true
+          type: integer
+        merged_into_rank:
+          nullable: true
+          type: integer
+        document_id:
+          title: Document Id
+          type: string
+        filename:
+          nullable: true
+          type: string
+        index:
+          title: Index
+          type: integer
+        media_type:
+          title: Media Type
+          type: string
+        page:
+          nullable: true
+          type: integer
+        start_ms:
+          nullable: true
+          type: integer
+        end_ms:
+          nullable: true
+          type: integer
+        snippet:
+          nullable: true
+          type: string
+        score:
+          description: The final score it was ranked by; comparable within this search
+            only
+          title: Score
+          type: number
+        found_by:
+          description: "The candidate searches that found it: vector, extra_vectors,\
+            \ keyword"
+          items:
+            type: string
+          type: array
+        similarity:
+          description: Cosine similarity of the query and the passage's main vector
+          title: Similarity
+          type: number
+        roles:
+          additionalProperties:
+            type: number
+          description: "Best similarity of each extra vector (band, page_text, unit,\
+            \ sentence)"
+          title: Roles
+        passage_score:
+          description: The similarity with the extra vectors mixed in
+          title: Passage Score
+          type: number
+        with_document:
+          description: Averaged with its document's best passage score
+          title: With Document
+          type: number
+        keyword:
+          description: "Keyword score: the summed IDF of the query words it contains"
+          title: Keyword
+          type: number
+        reference_page:
+          description: "Read as a reference list, and pushed down"
+          title: Reference Page
+          type: boolean
+      required:
+      - document_id
+      - filename
+      - found_by
+      - index
+      - keyword
+      - media_type
+      - outcome
+      - passage_score
+      - rank
+      - reference_page
+      - roles
+      - score
+      - similarity
+      - with_document
+      title: KnowledgeSearchTraceHit
+    KnowledgeTagItem:
+      example:
+        count: 0
+        tag: tag
+      properties:
+        tag:
+          title: Tag
+          type: string
+        count:
+          description: How many of the bank's documents carry this tag
+          title: Count
+          type: integer
+      required:
+      - count
+      - tag
+      title: KnowledgeTagItem
+    KnowledgeTagsResponse:
+      description: "One page of a knowledge bank's document tags, most used first\
+        \ (as memory-bank `list_tags`)."
+      example:
+        total: 6
+        offset: 5
+        limit: 1
+        items:
+        - count: 0
+          tag: tag
+        - count: 0
+          tag: tag
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/KnowledgeTagItem'
+          type: array
+        total:
+          description: "Distinct tags matching `q`, past this page too"
+          title: Total
+          type: integer
+        limit:
+          title: Limit
+          type: integer
+        offset:
+          title: Offset
+          type: integer
+      required:
+      - items
+      - limit
+      - offset
+      - total
+      title: KnowledgeTagsResponse
+    KnowledgeTimeseriesBucket:
+      example:
+        documents: 0
+        passages: 6
+        time: 2000-01-23T04:56:07.000+00:00
+      properties:
+        time:
+          format: date-time
+          title: Time
+          type: string
+        documents:
+          description: Documents first written in this bucket.
+          title: Documents
+          type: integer
+        passages:
+          description: Passages those documents hold now.
+          title: Passages
+          type: integer
+      required:
+      - documents
+      - passages
+      - time
+      title: KnowledgeTimeseriesBucket
+    KnowledgeTimeseriesResponse:
+      example:
+        period: 1d
+        trunc: hour
+        bank_id: bank_id
+        buckets:
+        - documents: 0
+          passages: 6
+          time: 2000-01-23T04:56:07.000+00:00
+        - documents: 0
+          passages: 6
+          time: 2000-01-23T04:56:07.000+00:00
+      properties:
+        bank_id:
+          title: Bank Id
+          type: string
+        period:
+          enum:
+          - 1d
+          - 7d
+          - 30d
+          - 90d
+          title: Period
+          type: string
+        trunc:
+          enum:
+          - hour
+          - day
+          title: Trunc
+          type: string
+        buckets:
+          items:
+            $ref: '#/components/schemas/KnowledgeTimeseriesBucket'
+          type: array
+      required:
+      - bank_id
+      - buckets
+      - period
+      - trunc
+      title: KnowledgeTimeseriesResponse
+    KnowledgeTraceArm:
+      description: "One candidate search, with its own list, best first."
+      example:
+        name: vector
+        results:
+        - score: 1.2315135367772556
+          index: 7
+          document_id: document_id
+        - score: 1.2315135367772556
+          index: 7
+          document_id: document_id
+      properties:
+        name:
+          enum:
+          - vector
+          - extra_vectors
+          - keyword
+          title: Name
+          type: string
+        results:
+          items:
+            $ref: '#/components/schemas/KnowledgeTraceArmHit'
+          type: array
+      required:
+      - name
+      - results
+      title: KnowledgeTraceArm
+    KnowledgeTraceArmHit:
+      example:
+        score: 1.2315135367772556
+        index: 7
+        document_id: document_id
+      properties:
+        document_id:
+          title: Document Id
+          type: string
+        index:
+          title: Index
+          type: integer
+        score:
+          description: "Its score in this search: cosine similarity, or ts_rank_cd\
+            \ for keywords"
+          title: Score
+          type: number
+      required:
+      - document_id
+      - index
+      - score
+      title: KnowledgeTraceArmHit
+    KnowledgeTraceBudgetStep:
+      description: "One step of filling max_tokens, in order."
+      example:
+        total: 6
+        last: 1
+        into_rank: 6
+        action: window
+        rank: 3
+        tokens: 2
+        document_id: document_id
+        first: 6
+      properties:
+        action:
+          description: "window: a text hit with its free neighbours; alone: no room\
+            \ for its neighbours; media: an image, page or clip; merged: already inside\
+            \ a better hit's result; widened: leftover budget added a passage to a\
+            \ result (5 at most); skipped: nothing of it fit"
+          enum:
+          - window
+          - alone
+          - media
+          - merged
+          - widened
+          - skipped
+          title: Action
+          type: string
+        rank:
+          description: The candidate's rank
+          title: Rank
+          type: integer
+        document_id:
+          title: Document Id
+          type: string
+        first:
+          description: The window's first passage after this step
+          title: First
+          type: integer
+        last:
+          description: The window's last passage after this step
+          title: Last
+          type: integer
+        tokens:
+          description: Tokens this step added
+          title: Tokens
+          type: integer
+        total:
+          description: Tokens used after this step
+          title: Total
+          type: integer
+        into_rank:
+          nullable: true
+          type: integer
+      required:
+      - action
+      - document_id
+      - first
+      - last
+      - rank
+      - tokens
+      - total
+      title: KnowledgeTraceBudgetStep
     LLMCallTrace:
       description: A single LLM call made during reflect.
       properties:
@@ -9800,13 +12168,11 @@ components:
       example:
         parent_span_id: parent_span_id
         trace_id: trace_id
-        metadata:
-          key: ""
+        metadata: "{}"
         span_id: span_id
         thoughts_tokens: 9
         error: error
-        llm_info:
-          key: ""
+        llm_info: "{}"
         input_tokens: 5
         duration_ms: 5
         output: ""
@@ -9884,11 +12250,13 @@ components:
           nullable: true
           type: string
         llm_info:
-          additionalProperties: {}
+          additionalProperties: false
           title: Llm Info
+          type: object
         metadata:
-          additionalProperties: {}
+          additionalProperties: false
           title: Metadata
+          type: object
       required:
       - bank_id
       - cached_tokens
@@ -9923,13 +12291,11 @@ components:
         items:
         - parent_span_id: parent_span_id
           trace_id: trace_id
-          metadata:
-            key: ""
+          metadata: "{}"
           span_id: span_id
           thoughts_tokens: 9
           error: error
-          llm_info:
-            key: ""
+          llm_info: "{}"
           input_tokens: 5
           duration_ms: 5
           output: ""
@@ -9948,13 +12314,11 @@ components:
           cached_tokens: 7
         - parent_span_id: parent_span_id
           trace_id: trace_id
-          metadata:
-            key: ""
+          metadata: "{}"
           span_id: span_id
           thoughts_tokens: 9
           error: error
-          llm_info:
-            key: ""
+          llm_info: "{}"
           input_tokens: 5
           duration_ms: 5
           output: ""
@@ -10920,10 +13284,11 @@ components:
             type: string
           type: array
         metadata:
-          additionalProperties: {}
+          additionalProperties: false
           default: {}
           description: Arbitrary metadata stored with the memory
           title: Metadata
+          type: object
         consolidated_at:
           nullable: true
           type: string
@@ -10951,6 +13316,7 @@ components:
           default: []
           description: An observation's source facts; empty for a source fact
           items:
+            nullable: true
             type: string
           type: array
       required:
@@ -10963,12 +13329,16 @@ components:
         applied:
           description: "Operations applied to the document, in order."
           items:
-            additionalProperties: {}
+            additionalProperties: false
+            nullable: true
+            type: object
           type: array
         skipped:
           description: "Operations dropped as invalid, each with a reason."
           items:
-            additionalProperties: {}
+            additionalProperties: false
+            nullable: true
+            type: object
           type: array
       title: MentalModelDeltaOperations
     MentalModelDryRunRefreshResult:
@@ -11049,7 +13419,8 @@ components:
         based_on:
           additionalProperties:
             items:
-              additionalProperties: {}
+              additionalProperties: false
+              type: object
           description: "The evidence this run would ground the document on, keyed\
             \ by fact type — the same shape a refresh persists under reflect_response.based_on.\
             \ Returned so a preview can show its sources without having to write them\
@@ -11159,8 +13530,7 @@ components:
             fact_types:
             - world
             - world
-            response_schema:
-              key: ""
+            response_schema: "{}"
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
@@ -11182,8 +13552,7 @@ components:
           source_query: source_query
           is_knowledge_page: true
           bank_id: bank_id
-          reflect_response:
-            key: ""
+          reflect_response: "{}"
           name: name
           id: id
           is_page: true
@@ -11212,8 +13581,7 @@ components:
             fact_types:
             - world
             - world
-            response_schema:
-              key: ""
+            response_schema: "{}"
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
@@ -11235,8 +13603,7 @@ components:
           source_query: source_query
           is_knowledge_page: true
           bank_id: bank_id
-          reflect_response:
-            key: ""
+          reflect_response: "{}"
           name: name
           id: id
           is_page: true
@@ -11431,8 +13798,7 @@ components:
           fact_types:
           - world
           - world
-          response_schema:
-            key: ""
+          response_schema: "{}"
           exclude_mental_model_ids:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
@@ -11454,8 +13820,7 @@ components:
         source_query: source_query
         is_knowledge_page: true
         bank_id: bank_id
-        reflect_response:
-          key: ""
+        reflect_response: "{}"
         name: name
         id: id
         is_page: true
@@ -11507,8 +13872,9 @@ components:
           nullable: true
           type: boolean
         reflect_response:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         is_stale:
           nullable: true
           type: boolean
@@ -11569,12 +13935,14 @@ components:
           nullable: true
           type: string
         input:
-          additionalProperties: {}
+          additionalProperties: false
           description: Tool input parameters.
           title: Input
+          type: object
         output:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         updated_at:
           format: date-time
           nullable: true
@@ -11633,8 +14001,7 @@ components:
         fact_types:
         - world
         - world
-        response_schema:
-          key: ""
+        response_schema: "{}"
         exclude_mental_model_ids:
         - exclude_mental_model_ids
         - exclude_mental_model_ids
@@ -11708,7 +14075,7 @@ components:
           type: string
         tag_groups:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/KnowledgeSearchRequest_tag_groups_inner'
           nullable: true
           type: array
         include_chunks:
@@ -11728,8 +14095,9 @@ components:
           nullable: true
           type: boolean
         response_schema:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         keep_trace:
           default: false
           description: "If true, every refresh of this mental model records how it\
@@ -11776,8 +14144,7 @@ components:
         fact_types:
         - world
         - world
-        response_schema:
-          key: ""
+        response_schema: "{}"
         exclude_mental_model_ids:
         - exclude_mental_model_ids
         - exclude_mental_model_ids
@@ -11871,8 +14238,9 @@ components:
           nullable: true
           type: boolean
         response_schema:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         keep_trace:
           default: false
           description: "If true, every refresh of this mental model records how it\
@@ -12410,8 +14778,9 @@ components:
         progress:
           $ref: '#/components/schemas/OperationProgress'
         result_metadata:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         details:
           $ref: '#/components/schemas/RefreshMentalModelOperationDetails'
         child_operations:
@@ -12420,8 +14789,9 @@ components:
           nullable: true
           type: array
         task_payload:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
       required:
       - operation_id
       - status
@@ -12530,8 +14900,7 @@ components:
           fact_types:
           - world
           - world
-          response_schema:
-            key: ""
+          response_schema: "{}"
           exclude_mental_model_ids:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
@@ -12767,8 +15136,7 @@ components:
             fact_types:
             - world
             - world
-            response_schema:
-              key: ""
+            response_schema: "{}"
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
@@ -12817,8 +15185,7 @@ components:
             fact_types:
             - world
             - world
-            response_schema:
-              key: ""
+            response_schema: "{}"
             exclude_mental_model_ids:
             - exclude_mental_model_ids
             - exclude_mental_model_ids
@@ -13035,8 +15402,7 @@ components:
         strategies:
         - strategies
         - strategies
-        response_schema:
-          key: ""
+        response_schema: "{}"
         messages:
         - role: system
           blocks:
@@ -13115,8 +15481,9 @@ components:
             $ref: '#/components/schemas/RunSettingModel'
           type: array
         response_schema:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         skipped_reason:
           nullable: true
           type: string
@@ -13192,7 +15559,7 @@ components:
           type: string
         tag_groups:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/KnowledgeSearchRequest_tag_groups_inner'
           nullable: true
           type: array
         min_scores:
@@ -13238,8 +15605,9 @@ components:
             $ref: '#/components/schemas/RecallResult'
           type: array
         trace:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         entities:
           additionalProperties:
             $ref: '#/components/schemas/EntityStateResponse'
@@ -13574,8 +15942,9 @@ components:
         include:
           $ref: '#/components/schemas/ReflectIncludeOptions'
         response_schema:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         tags:
           items:
             type: string
@@ -13597,7 +15966,7 @@ components:
           type: string
         tag_groups:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/KnowledgeSearchRequest_tag_groups_inner'
           nullable: true
           type: array
         apply_all_directives:
@@ -13682,8 +16051,9 @@ components:
         based_on:
           $ref: '#/components/schemas/ReflectBasedOn'
         structured_output:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         structured_output_error:
           nullable: true
           type: string
@@ -13702,12 +16072,14 @@ components:
           title: Tool
           type: string
         input:
-          additionalProperties: {}
+          additionalProperties: false
           description: Tool input parameters
           title: Input
+          type: object
         output:
-          additionalProperties: {}
+          additionalProperties: false
           nullable: true
+          type: object
         duration_ms:
           description: Execution time in milliseconds
           title: Duration Ms
@@ -14131,7 +16503,7 @@ components:
       properties:
         and:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/KnowledgeSearchRequest_tag_groups_inner'
           type: array
       required:
       - and
@@ -14200,7 +16572,7 @@ components:
       properties:
         or:
           items:
-            $ref: '#/components/schemas/MentalModelTrigger_Input_tag_groups_inner'
+            $ref: '#/components/schemas/KnowledgeSearchRequest_tag_groups_inner'
           type: array
       required:
       - or
@@ -14524,8 +16896,7 @@ components:
           fact_types:
           - world
           - world
-          response_schema:
-            key: ""
+          response_schema: "{}"
           exclude_mental_model_ids:
           - exclude_mental_model_ids
           - exclude_mental_model_ids
@@ -14959,6 +17330,12 @@ components:
         \ before this was captured."
       nullable: true
       title: Observation Scopes
+    KnowledgeSearchRequest_tag_groups_inner:
+      anyOf:
+      - $ref: '#/components/schemas/TagGroupLeaf'
+      - $ref: '#/components/schemas/TagGroupAnd-Input'
+      - $ref: '#/components/schemas/TagGroupOr-Input'
+      - $ref: '#/components/schemas/TagGroupNot-Input'
     Timestamp:
       anyOf:
       - format: date-time
@@ -15004,12 +17381,6 @@ components:
       - $ref: '#/components/schemas/TagGroupAnd-Output'
       - $ref: '#/components/schemas/TagGroupOr-Output'
       - $ref: '#/components/schemas/TagGroupNot-Output'
-    MentalModelTrigger_Input_tag_groups_inner:
-      anyOf:
-      - $ref: '#/components/schemas/TagGroupLeaf'
-      - $ref: '#/components/schemas/TagGroupAnd-Input'
-      - $ref: '#/components/schemas/TagGroupOr-Input'
-      - $ref: '#/components/schemas/TagGroupNot-Input'
     Not:
       anyOf:
       - $ref: '#/components/schemas/TagGroupLeaf'

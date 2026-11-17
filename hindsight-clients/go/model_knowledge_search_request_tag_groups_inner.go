@@ -16,8 +16,8 @@ import (
 )
 
 
-// MentalModelTriggerInputTagGroupsInner struct for MentalModelTriggerInputTagGroupsInner
-type MentalModelTriggerInputTagGroupsInner struct {
+// KnowledgeSearchRequestTagGroupsInner struct for KnowledgeSearchRequestTagGroupsInner
+type KnowledgeSearchRequestTagGroupsInner struct {
 	TagGroupAndInput *TagGroupAndInput
 	TagGroupLeaf *TagGroupLeaf
 	TagGroupNotInput *TagGroupNotInput
@@ -25,7 +25,7 @@ type MentalModelTriggerInputTagGroupsInner struct {
 }
 
 // Unmarshal JSON data into any of the pointers in the struct
-func (dst *MentalModelTriggerInputTagGroupsInner) UnmarshalJSON(data []byte) error {
+func (dst *KnowledgeSearchRequestTagGroupsInner) UnmarshalJSON(data []byte) error {
 	var err error
 	// try to unmarshal JSON data into TagGroupAndInput
 	err = json.Unmarshal(data, &dst.TagGroupAndInput);
@@ -79,11 +79,11 @@ func (dst *MentalModelTriggerInputTagGroupsInner) UnmarshalJSON(data []byte) err
 		dst.TagGroupOrInput = nil
 	}
 
-	return fmt.Errorf("data failed to match schemas in anyOf(MentalModelTriggerInputTagGroupsInner)")
+	return fmt.Errorf("data failed to match schemas in anyOf(KnowledgeSearchRequestTagGroupsInner)")
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
-func (src MentalModelTriggerInputTagGroupsInner) MarshalJSON() ([]byte, error) {
+func (src KnowledgeSearchRequestTagGroupsInner) MarshalJSON() ([]byte, error) {
 	if src.TagGroupAndInput != nil {
 		return json.Marshal(&src.TagGroupAndInput)
 	}
@@ -104,38 +104,38 @@ func (src MentalModelTriggerInputTagGroupsInner) MarshalJSON() ([]byte, error) {
 }
 
 
-type NullableMentalModelTriggerInputTagGroupsInner struct {
-	value *MentalModelTriggerInputTagGroupsInner
+type NullableKnowledgeSearchRequestTagGroupsInner struct {
+	value *KnowledgeSearchRequestTagGroupsInner
 	isSet bool
 }
 
-func (v NullableMentalModelTriggerInputTagGroupsInner) Get() *MentalModelTriggerInputTagGroupsInner {
+func (v NullableKnowledgeSearchRequestTagGroupsInner) Get() *KnowledgeSearchRequestTagGroupsInner {
 	return v.value
 }
 
-func (v *NullableMentalModelTriggerInputTagGroupsInner) Set(val *MentalModelTriggerInputTagGroupsInner) {
+func (v *NullableKnowledgeSearchRequestTagGroupsInner) Set(val *KnowledgeSearchRequestTagGroupsInner) {
 	v.value = val
 	v.isSet = true
 }
 
-func (v NullableMentalModelTriggerInputTagGroupsInner) IsSet() bool {
+func (v NullableKnowledgeSearchRequestTagGroupsInner) IsSet() bool {
 	return v.isSet
 }
 
-func (v *NullableMentalModelTriggerInputTagGroupsInner) Unset() {
+func (v *NullableKnowledgeSearchRequestTagGroupsInner) Unset() {
 	v.value = nil
 	v.isSet = false
 }
 
-func NewNullableMentalModelTriggerInputTagGroupsInner(val *MentalModelTriggerInputTagGroupsInner) *NullableMentalModelTriggerInputTagGroupsInner {
-	return &NullableMentalModelTriggerInputTagGroupsInner{value: val, isSet: true}
+func NewNullableKnowledgeSearchRequestTagGroupsInner(val *KnowledgeSearchRequestTagGroupsInner) *NullableKnowledgeSearchRequestTagGroupsInner {
+	return &NullableKnowledgeSearchRequestTagGroupsInner{value: val, isSet: true}
 }
 
-func (v NullableMentalModelTriggerInputTagGroupsInner) MarshalJSON() ([]byte, error) {
+func (v NullableKnowledgeSearchRequestTagGroupsInner) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.value)
 }
 
-func (v *NullableMentalModelTriggerInputTagGroupsInner) UnmarshalJSON(src []byte) error {
+func (v *NullableKnowledgeSearchRequestTagGroupsInner) UnmarshalJSON(src []byte) error {
 	v.isSet = true
 	return json.Unmarshal(src, &v.value)
 }

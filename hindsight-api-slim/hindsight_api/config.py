@@ -2128,9 +2128,9 @@ DEFAULT_DEFAULT_TIMEZONE = "UTC"  # IANA zone a retain timestamp with no UTC off
 # Document transfer defaults (export/import enabled by default; gated independently)
 DEFAULT_ENABLE_DOCUMENT_EXPORT_API = True
 DEFAULT_ENABLE_DOCUMENT_IMPORT_API = True
-# Knowledge banks ship hidden while they are being built: off, their HTTP routes answer 404, their
-# reflect ignores linked knowledge banks and the UI hides them.
-DEFAULT_ENABLE_KB = False
+# Off, the knowledge bank HTTP routes answer 404, reflect ignores linked knowledge banks and the UI
+# hides them.
+DEFAULT_ENABLE_KB = True
 
 # Observations defaults (consolidated knowledge from facts)
 DEFAULT_ENABLE_OBSERVATIONS = True  # Observations enabled by default

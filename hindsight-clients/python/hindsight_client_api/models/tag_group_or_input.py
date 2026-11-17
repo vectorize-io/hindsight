@@ -26,7 +26,7 @@ class TagGroupOrInput(BaseModel):
     """
     Compound OR group: at least one child filter must match.
     """ # noqa: E501
-    var_or: List[MentalModelTriggerInputTagGroupsInner] = Field(alias="or")
+    var_or: List[KnowledgeSearchRequestTagGroupsInner] = Field(alias="or")
     __properties: ClassVar[List[str]] = ["or"]
 
     model_config = ConfigDict(
@@ -87,11 +87,11 @@ class TagGroupOrInput(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "or": [MentalModelTriggerInputTagGroupsInner.from_dict(_item) for _item in obj["or"]] if obj.get("or") is not None else None
+            "or": [KnowledgeSearchRequestTagGroupsInner.from_dict(_item) for _item in obj["or"]] if obj.get("or") is not None else None
         })
         return _obj
 
-from hindsight_client_api.models.mental_model_trigger_input_tag_groups_inner import MentalModelTriggerInputTagGroupsInner
+from hindsight_client_api.models.knowledge_search_request_tag_groups_inner import KnowledgeSearchRequestTagGroupsInner
 # TODO: Rewrite to not use raise_errors
 TagGroupOrInput.model_rebuild(raise_errors=False)
 
