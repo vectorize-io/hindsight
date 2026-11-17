@@ -1789,10 +1789,9 @@ jobs:
       needs.detect-changes.outputs.core == 'true' ||
       needs.detect-changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 45  # TEMP: measuring durations
-    # Sharded with pytest-split, 4 ways. Shards are cut by
-    # hindsight-api-slim/.test_durations when present, by test count otherwise.
-    # Was 3 shards x 8 workers: a shard sat at ~14.5 of the runner's 16 GB, and
+    timeout-minutes: 30
+    # Sharded with pytest-split, 4 ways (by test count: no durations file).
+    # Was 3 shards x 8 workers: a shard sat at ~14.5 GB of the runner's 16 GB, and
     # shard 1 (the heaviest tests) ran out, killing the VM mid-run ("runner has
     # received a shutdown signal", or a silent stall to the timeout). Shard 1 of 3
     # failed this way in ~34 of 80 runs (#6593). 6 workers (see the run step)
@@ -1904,15 +1903,7 @@ jobs:
       # shrinking `available` column right before it points at memory.
       run: |
         (while sleep 60; do echo "[mem] $(free -m | awk '/Mem:/ {print "used=" $3 "MB available=" $7 "MB"}')"; done) &
-        uv run --with pytest-split pytest tests -v -m "not hs_llm_mat and not hs_llm_core" -n 6 --splits 4 --group ${{ matrix.shard }} --store-durations  # TEMP
-
-    - name: Upload test durations  # TEMP
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: test-durations-shard-${{ matrix.shard }}
-        path: hindsight-api-slim/.test_durations
-        include-hidden-files: true
+        uv run --with pytest-split pytest tests -v -m "not hs_llm_mat and not hs_llm_core" -n 6 --splits 4 --group ${{ matrix.shard }}
 
     # The workers share one embedded Postgres, so this job's two recurring
     # red shapes are both lock contention: `deadlock detected`, whose own message
