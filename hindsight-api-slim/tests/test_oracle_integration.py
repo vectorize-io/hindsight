@@ -1241,7 +1241,7 @@ class TestAdvancedFeatures:
     @pytest.mark.asyncio
     async def test_observation_scope_counts(self, oracle_memory: MemoryEngine, request_context: RequestContext):
         """#6585: the scope histogram and the exact tag match (`<@`) run on Oracle."""
-        from hindsight_api.engine.memories.pg.counts import observation_scope_counts
+        from hindsight_api.engine.memories import get_memories
         from hindsight_api.engine.schema import fq_table
         from hindsight_api.engine.search.tags import TagGroupLeaf
 
@@ -1271,6 +1271,7 @@ class TestAdvancedFeatures:
                     tags_list=[json.dumps(t) for t in tag_sets],
                     observation_scopes_list=[None] * n,
                     text_signals_list=[None] * n,
+                    attachment_ids_list=[None] * n,
                 )
 
             page = await oracle_memory.list_observation_scopes(bank_id, request_context=request_context)
@@ -1287,9 +1288,9 @@ class TestAdvancedFeatures:
             assert past_end["scopes"] == [] and past_end["total"] == 3
 
             # The engine passes only the caller's forced tag scope, so drive an exact
-            # match through the store function directly.
+            # match through the store directly.
             async with backend.acquire() as conn:
-                exact = await observation_scope_counts(
+                exact = await get_memories().observation_scope_counts(
                     conn=conn,
                     fq_table=fq_table,
                     bank_id=bank_id,
