@@ -124,6 +124,12 @@ class BankTemplateConfig(BaseModel):
     knowledge_banks: list[str] | None = Field(
         default=None, description="Knowledge banks whose passages this bank's reflect reads"
     )
+    reflect_kb_search_media_types: list[Literal["document", "image", "audio", "video", "text"]] | None = Field(
+        default=None, description="Media types reflect's knowledge-bank search may return (None = all)"
+    )
+    reflect_kb_search_apply_tags: bool | None = Field(
+        default=None, description="Filter the knowledge-bank search by the reflect's tags, as its memories are"
+    )
     consolidation_llm_batch_size: int | None = Field(
         default=None, description="LLM batch size for observation consolidation"
     )

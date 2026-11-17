@@ -727,6 +727,18 @@ export type BankTemplateConfig = {
    */
   knowledge_banks?: Array<string> | null;
   /**
+   * Reflect Kb Search Media Types
+   *
+   * Media types reflect's knowledge-bank search may return (None = all)
+   */
+  reflect_kb_search_media_types?: Array<"document" | "image" | "audio" | "video" | "text"> | null;
+  /**
+   * Reflect Kb Search Apply Tags
+   *
+   * Filter the knowledge-bank search by the reflect's tags, as its memories are
+   */
+  reflect_kb_search_apply_tags?: boolean | null;
+  /**
    * Consolidation Llm Batch Size
    *
    * LLM batch size for observation consolidation

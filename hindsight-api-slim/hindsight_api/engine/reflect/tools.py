@@ -7,6 +7,7 @@ Implements hierarchical retrieval:
 3. recall - Raw facts as ground truth
 """
 
+import base64
 import json
 import logging
 import uuid
@@ -496,6 +497,7 @@ async def tool_recall(
     created_after: datetime | None = None,
     created_before: datetime | None = None,
     include_documents: bool = False,
+    kb_images: int = 0,
 ) -> dict[str, Any]:
     """
     Search memories using TEMPR retrieval.
@@ -515,6 +517,8 @@ async def tool_recall(
         max_chunk_tokens: Maximum tokens for raw source chunk text (default 1000)
         fact_types: Optional filter for fact types to retrieve. Defaults to ["experience", "world"].
         include_chunks: Whether to fetch raw chunk text alongside facts (default True).
+        kb_images: The most knowledge-bank pictures (an image, a PDF page) to hand the model, under
+            ``KB_IMAGES_KEY``; 0 hands none (the model cannot read images, or the bank said no).
 
     Returns:
         Dict with list of matching memories including raw chunk text (when include_chunks)
@@ -547,8 +551,11 @@ async def tool_recall(
     # A chunk is raw source text: "I signed up yesterday" means nothing without the date it was
     # said on. Its facts carry that date, so the chunk borrows it from the first one.
     chunk_dates = {m.chunk_id: m.mentioned_at for m in reversed(result.results) if m.chunk_id and m.mentioned_at}
-    documents = _knowledge_documents(result.documents)
+    pictures = await _knowledge_pictures(memory_engine, result.documents, kb_images, request_context)
+    documents = _knowledge_documents(result.documents, pictures)
+    image_parts = [part for picture in pictures.values() for part in picture]
     return {
+        **({KB_IMAGES_KEY: image_parts} if image_parts else {}),
         **documents,
         "query": query,
         "memories": [_drop_unread_fields(_prune_nulls(m.model_dump())) for m in result.results],
@@ -570,7 +577,62 @@ _DOCUMENTS_NOTE = (
 )
 
 
-def _knowledge_documents(hits: list[KnowledgeDocumentHit] | None) -> dict[str, Any]:
+#: Where ``tool_recall`` puts the knowledge-bank pictures: OpenAI-shaped content parts (a label, then
+#: the image) that the agent pops before anything else reads the output, and sends as a user turn.
+KB_IMAGES_KEY = "_kb_images"
+#: A picture bigger than this is not sent: the strictest provider (Anthropic) refuses one over 5 MB.
+_MAX_PICTURE_BYTES = 5 * 1024 * 1024
+
+
+def _picture_label(hit: KnowledgeDocumentHit) -> str:
+    source = hit.filename or hit.document_id
+    return f"Picture of {source}, page {hit.page}" if hit.page is not None else f"Picture of {source}"
+
+
+async def _knowledge_pictures(
+    engine: "MemoryEngine",
+    hits: list[KnowledgeDocumentHit] | None,
+    limit: int,
+    request_context: "RequestContext",
+) -> dict[int, list[dict[str, Any]]]:
+    """The pictures behind the first ``limit`` image and PDF-page hits, by the hit's place in ``hits``.
+
+    Read on the caller's behalf, as the search was. A picture that cannot be read, or is too big,
+    is left out: its hit still reaches the agent as text.
+    """
+    if limit <= 0 or not hits:
+        return {}
+    from ...knowledge.service import get_knowledge_service
+
+    service = get_knowledge_service(engine)
+    caller = replace(request_context, internal=False)
+    pictures: dict[int, list[dict[str, Any]]] = {}
+    for position, hit in enumerate(hits):
+        if len(pictures) >= limit:
+            break
+        if hit.passage_url is None or hit.media_type not in ("image", "document"):
+            continue
+        try:
+            opened = await service.open_passage_media(hit.bank_id, hit.document_id, hit.passage_index, caller)
+            if not opened.content_type.startswith("image/"):
+                continue
+            data = b"".join([chunk async for chunk in opened.stream])
+        except Exception as exc:
+            logger.warning(f"Knowledge picture {hit.bank_id}/{hit.document_id}#{hit.passage_index} not read: {exc!r}")
+            continue
+        if len(data) > _MAX_PICTURE_BYTES:
+            continue
+        uri = f"data:{opened.content_type};base64,{base64.b64encode(data).decode()}"
+        pictures[position] = [
+            {"type": "text", "text": _picture_label(hit)},
+            {"type": "image_url", "image_url": {"url": uri}},
+        ]
+    return pictures
+
+
+def _knowledge_documents(
+    hits: list[KnowledgeDocumentHit] | None, pictures: dict[int, list[dict[str, Any]]]
+) -> dict[str, Any]:
     """The linked knowledge banks' passages, for the agent: what it can read of them, plus who wins."""
     if not hits:
         return {}
@@ -585,9 +647,11 @@ def _knowledge_documents(hits: list[KnowledgeDocumentHit] | None) -> dict[str, A
                 "media_type": h.media_type,
                 # A page image or a clip has no text the agent can read; it still learns the doc matched.
                 "text": h.text or f"[{h.media_type} passage: no text]",
+                # Its picture follows the results, under this label.
+                "picture": _picture_label(h) if position in pictures else None,
             }
         )
-        for h in hits
+        for position, h in enumerate(hits)
     ]
     return {"documents_note": _DOCUMENTS_NOTE, "documents": docs}
 

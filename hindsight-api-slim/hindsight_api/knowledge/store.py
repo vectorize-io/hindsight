@@ -21,6 +21,7 @@ from typing import Any, Literal, cast
 
 from ..engine.db_utils import acquire_with_retry
 from ..engine.schema import fq_table
+from ..engine.search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
 from ..schema_context import get_current_schema
 
 logger = logging.getLogger(__name__)
@@ -179,8 +180,12 @@ class ArmHit:
 
 @dataclass
 class SearchFilters:
+    # Same rules as a memory bank's recall (engine/search/tags.py): ``any``/``all`` keep untagged
+    # documents, the ``_strict`` modes drop them. ``tag_groups`` must hold exact leaves only: the
+    # service resolves fuzzy ones against the bank's tags before the store sees them.
     tags: list[str] | None = None
-    tags_match: str = "any"  # any | all
+    tags_match: TagsMatch = "any"
+    tag_groups: list[TagGroup] | None = None
     document_ids: list[str] | None = None
     media_types: list[str] | None = None
 
@@ -188,6 +193,20 @@ class SearchFilters:
 @dataclass
 class DocumentPage:
     documents: list[KnowledgeDocument]
+    total: int
+
+
+@dataclass
+class TagCount:
+    tag: str
+    #: How many of the bank's documents carry it.
+    documents: int
+
+
+@dataclass
+class TagPage:
+    tags: list[TagCount]
+    #: Distinct tags matching the pattern, past this page too.
     total: int
 
 
@@ -296,6 +315,12 @@ class KnowledgeStore(ABC):
         trace: StoreSearchTrace | None = None,
     ) -> list[SearchHit]:
         """Best passages, each scored from all its vectors (``page_score``), keyword matches fused in."""
+
+    @abstractmethod
+    async def list_tags(self, bank_id: str, *, pattern: str | None, limit: int, offset: int) -> TagPage:
+        """One page of the distinct tags of the bank's documents, most used first, each with how many
+        documents carry it. ``pattern`` matches case-insensitively, ``*`` as the wildcard, as memory-bank
+        tag listing does. Also what a fuzzy tag leaf resolves against."""
 
     @abstractmethod
     async def bank_stats(self, bank_ids: list[str]) -> dict[str, BankStats]: ...
@@ -880,10 +905,12 @@ class PostgresKnowledgeStore(KnowledgeStore):
         if filters.media_types:
             params.append(filters.media_types)
             where += f" AND d.media_type = ANY(${len(params)}::text[])"
-        if filters.tags:
-            params.append(filters.tags)
-            op = "@>" if filters.tags_match == "all" else "&&"
-            where += f" AND d.tags {op} ${len(params)}::text[]"
+        plain = build_tags_where_clause(filters.tags, len(params) + 1, "d.", filters.tags_match)
+        groups = build_tag_groups_where_clause(filters.tag_groups, plain.next_param_offset, "d.")
+        for clause in (plain, groups):
+            if clause.sql:
+                params.extend(clause.params)
+                where += f" {clause.sql}"
         # ponytail: fixed candidate pool; widen it (or move stage 1 to a token-level index) at 10M+ rows.
         # Capped: past the HNSW scan width a bigger LIMIT makes the iterative scan walk on, and at 1000 per
         # arm (top_k 100) stage 1 took 266 ms of a 410 ms ViDoRe hr search; at 300 it takes 10 ms.
@@ -1085,6 +1112,23 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 media_type,
             )
         return [TimeBucket(time=r["t"], documents=int(r["documents"]), passages=int(r["passages"])) for r in rows]
+
+    async def list_tags(self, bank_id: str, *, pattern: str | None, limit: int, offset: int) -> TagPage:
+        # The same anchored ILIKE as memory-bank tag listing (engine/memories/pg/reads.py list_tags).
+        like = pattern.replace("*", "%") if pattern else None
+        tags = f"SELECT unnest(tags) AS tag FROM {fq_table('kb_documents')} WHERE bank_id = $1"
+        match = "($2::text IS NULL OR tag ILIKE $2)"
+        async with acquire_with_retry(await self._pool()) as conn:
+            total = await conn.fetchval(f"SELECT COUNT(DISTINCT tag) FROM ({tags}) t WHERE {match}", bank_id, like)
+            rows = await conn.fetch(
+                f"SELECT tag, COUNT(*) AS documents FROM ({tags}) t WHERE {match} "
+                "GROUP BY tag ORDER BY documents DESC, tag ASC LIMIT $3 OFFSET $4",
+                bank_id,
+                like,
+                limit,
+                offset,
+            )
+        return TagPage(tags=[TagCount(tag=r["tag"], documents=int(r["documents"])) for r in rows], total=int(total))
 
     async def bank_stats(self, bank_ids: list[str]) -> dict[str, BankStats]:
         if not bank_ids:

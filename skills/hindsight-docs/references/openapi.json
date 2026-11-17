@@ -10565,6 +10565,40 @@
             "title": "Knowledge Banks",
             "description": "Knowledge banks whose passages this bank's reflect reads"
           },
+          "reflect_kb_search_media_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "document",
+                    "image",
+                    "audio",
+                    "video",
+                    "text"
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Kb Search Media Types",
+            "description": "Media types reflect's knowledge-bank search may return (None = all)"
+          },
+          "reflect_kb_search_apply_tags": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflect Kb Search Apply Tags",
+            "description": "Filter the knowledge-bank search by the reflect's tags, as its memories are"
+          },
           "consolidation_llm_batch_size": {
             "anyOf": [
               {

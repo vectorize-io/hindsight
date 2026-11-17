@@ -478,6 +478,9 @@
     "clientsTitle": "記憶庫",
     "clientsDescription": "整個記憶庫的設定：別名、時區，以及應用程式和代理可以存取的內容。",
     "mcpFailedToSave": "無法儲存 MCP 設定",
+    "knowledgeSectionTitle": "知識庫",
+    "knowledgeSectionDescription": "此庫的 reflect 還會搜尋的知識庫，以及搜尋方式。",
+    "knowledgeFailedToSave": "儲存知識庫設定失敗",
     "auditEnabledLabel": "啟用稽核日誌",
     "auditEnabledDescription": "記錄此記憶庫的 retain、recall 與 reflect 操作。僅針對此記憶庫覆寫伺服器預設值。",
     "auditServerDefault": "伺服器預設值（{state}）",
@@ -693,8 +696,17 @@
         "retain_optional_fact_dimensions": "允許模型將「何時」、「何地」、「何人」和「為何」留空，而不是寫「N/A」。"
       }
     },
-    "linkedKnowledgeBanksLabel": "文件庫",
-    "linkedKnowledgeBanksDescription": "在此庫上反思時,也會搜尋連結的文件庫,文件優先於與之衝突的記憶。召回和心智模型不會讀取這些文件。"
+    "linkedKnowledgeBanksLabel": "已連結的庫",
+    "linkedKnowledgeBanksDescription": "在此庫上反思時,也會搜尋連結的文件庫,文件優先於與之衝突的記憶。召回和心智模型不會讀取這些文件。",
+    "kbSearchMediaTypesLabel": "reflect 讀取的文件類型",
+    "kbSearchMediaTypesDescription": "reflect 搜尋可以傳回的連結文件類型。全部勾選表示不限制。",
+    "kbSearchApplyTagsLabel": "依 reflect 的標籤篩選",
+    "kbSearchApplyTagsDescription": "帶標籤的 reflect 只讀取這些標籤允許的連結文件，規則與其記憶相同。關閉：標籤只篩選記憶。",
+    "kbMediaType_document": "PDF 與 Office",
+    "kbMediaType_image": "圖片",
+    "kbMediaType_audio": "音訊",
+    "kbMediaType_video": "影片",
+    "kbMediaType_text": "文字"
   },
   "bankOperations": {
     "title": "背景作業",
@@ -2561,8 +2573,9 @@
       "options": "選項",
       "tags": "標籤",
       "tagsMatch": "標籤比對",
-      "tagsAny": "任一",
-      "tagsAll": "全部",
+      "tagGroups": "標籤組 (JSON)",
+      "tagGroupsHelp": "布林標籤篩選，全部以 AND 組合，與記憶 recall 相同。葉節點可以設定 \"resolve\": \"fuzzy\"。",
+      "tagGroupsInvalid": "標籤組必須是有效的 JSON。",
       "noResults": "沒有符合此搜尋的段落。",
       "idle": "用文字、圖片、影片片段或它們的任意組合搜尋此庫。",
       "openPassage": "在文件中開啟",

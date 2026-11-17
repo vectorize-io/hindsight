@@ -1,7 +1,7 @@
 """Which reflects read the knowledge banks a memory bank links: an interactive one, never a refresh.
 
 A mental model refresh that read the documents would fold them into the bank's own knowledge, so
-its recall tool must leave them out.
+its recall tool must leave them out, and with them their pictures.
 """
 
 from types import SimpleNamespace
@@ -31,10 +31,10 @@ async def test_only_an_interactive_reflect_reads_linked_documents(engine, monkey
         ),
         get_bank_config=AsyncMock(return_value={}),
     )
-    recalled: list[bool] = []
+    recalled: list[tuple[bool, int]] = []
 
-    async def fake_tool_recall(*args, include_documents: bool = False, **kwargs):
-        recalled.append(include_documents)
+    async def fake_tool_recall(*args, include_documents: bool = False, kb_images: int = 0, **kwargs):
+        recalled.append((include_documents, kb_images))
         return {}
 
     async def fake_run_reflect_agent(**kwargs):
@@ -50,4 +50,7 @@ async def test_only_an_interactive_reflect_reads_linked_documents(engine, monkey
         exclude_mental_models=True,
         _operation_label=label,
     )
-    assert recalled == [reads_documents]
+    # The engine fixture's mock LLM reads images, so an interactive reflect asks for the server's cap.
+    from hindsight_api.config import get_config
+
+    assert recalled == [(reads_documents, get_config().reflect_kb_search_max_images if reads_documents else 0)]

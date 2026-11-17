@@ -478,6 +478,9 @@
     "clientsTitle": "記憶庫",
     "clientsDescription": "成個記憶庫嘅設定：別名、時區，同埋應用程式同代理可以用到乜嘢。",
     "mcpFailedToSave": "未能儲存 MCP 設定",
+    "knowledgeSectionTitle": "知識庫",
+    "knowledgeSectionDescription": "呢個庫嘅 reflect 會一齊搜尋嘅知識庫，同埋點樣搜尋佢哋。",
+    "knowledgeFailedToSave": "儲存知識庫設定失敗",
     "auditEnabledLabel": "啟用審計日誌",
     "auditEnabledDescription": "記錄呢個記憶庫嘅 retain、recall 同 reflect 操作。淨係就呢個記憶庫覆寫伺服器預設值。",
     "auditServerDefault": "伺服器預設值（{state}）",
@@ -693,8 +696,17 @@
         "retain_optional_fact_dimensions": "會畀模型將「幾時」、「喺邊」、「邊個」同「點解」留空，而唔係寫「N/A」。"
       }
     },
-    "linkedKnowledgeBanksLabel": "文件庫",
-    "linkedKnowledgeBanksDescription": "喺呢個庫反思嗰陣,都會搜尋連結咗嘅文件庫,文件優先過同佢有衝突嘅記憶。召回同心智模型唔會讀呢啲文件。"
+    "linkedKnowledgeBanksLabel": "已連結嘅庫",
+    "linkedKnowledgeBanksDescription": "喺呢個庫反思嗰陣,都會搜尋連結咗嘅文件庫,文件優先過同佢有衝突嘅記憶。召回同心智模型唔會讀呢啲文件。",
+    "kbSearchMediaTypesLabel": "reflect 讀取嘅文件類型",
+    "kbSearchMediaTypesDescription": "reflect 搜尋可以返回嘅連結文件類型。全部剔選即係冇限制。",
+    "kbSearchApplyTagsLabel": "按 reflect 嘅標籤篩選",
+    "kbSearchApplyTagsDescription": "有標籤嘅 reflect 只會讀嗰啲標籤容許嘅連結文件，規則同佢嘅記憶一樣。關閉：標籤只篩選記憶。",
+    "kbMediaType_document": "PDF 同 Office",
+    "kbMediaType_image": "圖片",
+    "kbMediaType_audio": "音訊",
+    "kbMediaType_video": "影片",
+    "kbMediaType_text": "文字"
   },
   "bankOperations": {
     "title": "背景作業",
@@ -2561,8 +2573,9 @@
       "options": "選項",
       "tags": "標籤",
       "tagsMatch": "標籤配對",
-      "tagsAny": "任何一個",
-      "tagsAll": "全部",
+      "tagGroups": "標籤組 (JSON)",
+      "tagGroupsHelp": "布林標籤篩選，全部用 AND 合埋，同記憶 recall 一樣。葉節點可以設 \"resolve\": \"fuzzy\"。",
+      "tagGroupsInvalid": "標籤組一定要係有效嘅 JSON。",
       "noResults": "冇段落符合呢個搜尋。",
       "idle": "用文字、圖片、影片片段或者佢哋嘅任何組合搜尋呢個庫。",
       "openPassage": "喺文件入面打開",

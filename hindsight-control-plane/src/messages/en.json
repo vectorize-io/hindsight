@@ -478,6 +478,9 @@
     "clientsTitle": "Memory Bank",
     "clientsDescription": "Bank-wide settings: its aliases, its timezone, and what apps and agents can reach.",
     "mcpFailedToSave": "Failed to save MCP settings",
+    "knowledgeSectionTitle": "Knowledge Banks",
+    "knowledgeSectionDescription": "The knowledge banks reflect on this bank also searches, and how it searches them.",
+    "knowledgeFailedToSave": "Failed to save knowledge bank settings",
     "auditEnabledLabel": "Enable Audit Logging",
     "auditEnabledDescription": "Record retain, recall and reflect operations for this bank. Overrides the server default for this bank only.",
     "auditServerDefault": "Server Default ({state})",
@@ -693,8 +696,17 @@
         "retain_optional_fact_dimensions": "Would let the model leave \"when\", \"where\", \"who\" and \"why\" empty instead of writing \"N/A\"."
       }
     },
-    "linkedKnowledgeBanksLabel": "Knowledge banks",
-    "linkedKnowledgeBanksDescription": "Reflect on this bank also searches the linked knowledge banks, and treats their documents as the authority over conflicting memories. Recall and mental models don't read them."
+    "linkedKnowledgeBanksLabel": "Linked banks",
+    "linkedKnowledgeBanksDescription": "Reflect on this bank also searches the linked knowledge banks, and treats their documents as the authority over conflicting memories. Recall and mental models don't read them.",
+    "kbSearchMediaTypesLabel": "Document types reflect reads",
+    "kbSearchMediaTypesDescription": "The kinds of linked documents reflect's search may return. All ticked means no limit.",
+    "kbSearchApplyTagsLabel": "Filter by the reflect's tags",
+    "kbSearchApplyTagsDescription": "A reflect with tags only reads linked documents those tags allow, with the same rules as its memories. Off: tags filter memories only.",
+    "kbMediaType_document": "PDF & Office",
+    "kbMediaType_image": "Images",
+    "kbMediaType_audio": "Audio",
+    "kbMediaType_video": "Video",
+    "kbMediaType_text": "Text"
   },
   "bankOperations": {
     "title": "Background Operations",
@@ -2561,8 +2573,9 @@
       "options": "Options",
       "tags": "Tags",
       "tagsMatch": "Tag match",
-      "tagsAny": "Any",
-      "tagsAll": "All",
+      "tagGroups": "Tag groups (JSON)",
+      "tagGroupsHelp": "Boolean tag filters, AND-ed together, as memory recall takes them. A leaf can set \"resolve\": \"fuzzy\".",
+      "tagGroupsInvalid": "Tag groups must be valid JSON.",
       "noResults": "No passages match this search.",
       "idle": "Search this bank by text, an image, a video clip, or any mix of them.",
       "openPassage": "Open in document",

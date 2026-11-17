@@ -212,7 +212,18 @@ async def test_files_are_ingested_and_served_back(kb, knowledge_bank):
     assert exits["passages"][0]["page"] == 1
     # The text-only embedder found the page by its text layer.
     assert (await _hits(kb, knowledge_bank, query="where are the emergency exits", first=1)) == ["exits"]
-    assert (await _hits(kb, knowledge_bank, query="emergency exits", tags=["safety"])) == ["exits"]
+    # Tags match as memory recall's do: `any` keeps the untagged FAQ, `any_strict` drops it.
+    assert (await _hits(kb, knowledge_bank, query="emergency exits", tags=["safety"])) == ["exits", "faq"]
+    strict = await _hits(kb, knowledge_bank, query="emergency exits", tags=["safety"], tags_match="any_strict")
+    assert strict == ["exits"]
+    groups = [{"not": {"tags": ["safety"], "match": "any_strict"}}]
+    assert (await _hits(kb, knowledge_bank, query="emergency exits", tag_groups=groups)) == ["faq"]
+    assert (await kb.tags(knowledge_bank, q="saf*")).body == {
+        "items": [{"tag": "safety", "count": 1}],
+        "total": 1,
+        "limit": 100,
+        "offset": 0,
+    }
     assert (await kb.file(knowledge_bank, "exits")).raw == pdf
 
 

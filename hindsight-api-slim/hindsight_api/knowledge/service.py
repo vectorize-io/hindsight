@@ -24,7 +24,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from ..config import get_config
 from ..engine import bank_aliases
@@ -34,6 +34,7 @@ from ..engine.response_models import KnowledgeDocumentHit
 from ..engine.retain import bank_utils
 from ..engine.retain import timing as _timing
 from ..engine.schema import fq_table
+from ..engine.search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_resolution, resolve_tag_groups
 from ..engine.storage import bank_storage_prefix, key_segment
 from ..engine.token_encoding import count_tokens
 from ..extensions.operation_validator import (
@@ -72,6 +73,7 @@ from .store import (
     SearchHit,
     StatusUpdate,
     StoreSearchTrace,
+    TagPage,
     TimeBucket,
     load_knowledge_store,
 )
@@ -1730,6 +1732,12 @@ class KnowledgeService:
             stream=self._engine._file_storage.retrieve_stream(passage.media_key), content_type=content_type
         )
 
+    async def list_tags(
+        self, bank_id: str, request_context: RequestContext, *, pattern: str | None, limit: int, offset: int
+    ) -> TagPage:
+        await self._open_bank(bank_id, KnowledgeBankReadOperation.LIST_KNOWLEDGE_BANK_TAGS, request_context)
+        return await self.store.list_tags(bank_id, pattern=pattern, limit=limit, offset=offset)
+
     async def timeseries(
         self,
         bank_id: str,
@@ -1777,6 +1785,7 @@ class KnowledgeService:
                 embedding.cancel()
                 raise
             vector = await embedding
+            request = await self._with_exact_tag_groups(bank_id, request)
             async with _timing.timed("store.search"):
                 hits = await self._search(bank_id, request, vector, trace)
             async with _timing.timed("context"):
@@ -1796,6 +1805,26 @@ class KnowledgeService:
                 )
             )
             return budgeted.items
+
+    async def _with_exact_tag_groups(self, bank_id: str, request: SearchRequest) -> SearchRequest:
+        """``request`` with its fuzzy tag leaves resolved against this bank's own tags, as memory-bank
+        recall resolves them (``MemoryEngine._resolve_fuzzy_tag_groups``), so the store only sees exact ones."""
+        groups = request.filters.tag_groups
+        if not needs_resolution(groups):
+            return request
+        page = await self.store.list_tags(bank_id, pattern=None, limit=MAX_VOCABULARY, offset=0)
+        vocabulary = [t.tag for t in page.tags]
+        if page.total > MAX_VOCABULARY:
+            raise KnowledgeBankError(
+                f"Bank has more than {MAX_VOCABULARY} distinct tags, above what fuzzy tag matching can "
+                "resolve against. Use resolve='exact'.",
+                422,
+            )
+        try:
+            resolved = resolve_tag_groups(groups or [], vocabulary)
+        except TagResolutionError as exc:
+            raise KnowledgeBankError(str(exc), 422) from exc
+        return replace(request, filters=replace(request.filters, tag_groups=resolved))
 
     async def _fire_completion_hook(self, make_coro: Callable[[OperationValidatorExtension], Awaitable[None]]) -> None:
         """Fire a post-operation metering hook in isolation. Metering is best-effort: an extension
@@ -1975,13 +2004,21 @@ def _traced(hit: SearchHit, items: list[SearchResultItem], windows: list[_Window
 
 
 async def documents_for_memory_bank(
-    engine: MemoryEngine, bank_id: str, linked: list[str], query: str, max_tokens: int, request_context: RequestContext
+    engine: MemoryEngine,
+    bank_id: str,
+    linked: list[str],
+    query: str,
+    max_tokens: int,
+    filters: SearchFilters,
+    request_context: RequestContext,
 ) -> list[KnowledgeDocumentHit] | None:
     """The linked knowledge banks' hits for reflect's recall tool, or None when none are linked.
 
     The same search as ``POST /knowledge-banks/{id}/search``, keywords and meaning, each text hit with
-    the passages around it, within ``max_tokens``; the banks are searched at once and their hits taken in
-    turn, best of each first (fused scores are per bank, so they cannot be ranked against each other).
+    the passages around it, within ``max_tokens`` and ``filters`` (the memory bank's
+    ``reflect_kb_search_*`` settings: the media types, and the reflect's tags); the banks are
+    searched at once and their hits taken in turn, best of each first (fused scores are per bank, so
+    they cannot be ranked against each other).
     It used to be its own search: meaning only, the 5 best passages across banks, no text around them,
     so reflect read less than the same question showed in the UI.
 
@@ -1996,17 +2033,25 @@ async def documents_for_memory_bank(
     # behalf: the validator must see the caller, not a background job it would let through.
     caller = replace(request_context, internal=False)
     try:
-        return await _linked_documents(engine, bank_id, linked, query, max_tokens, caller)
+        return await _linked_documents(engine, bank_id, linked, query, max_tokens, filters, caller)
     except Exception as exc:
         logger.warning(f"Knowledge search for memory bank '{bank_id}' failed: {exc!r}")
         return []
 
 
 async def _linked_documents(
-    engine: MemoryEngine, bank_id: str, linked: list[str], query: str, max_tokens: int, caller: RequestContext
+    engine: MemoryEngine,
+    bank_id: str,
+    linked: list[str],
+    query: str,
+    max_tokens: int,
+    filters: SearchFilters,
+    caller: RequestContext,
 ) -> list[KnowledgeDocumentHit]:
     service = get_knowledge_service(engine)
-    request = SearchRequest(query=query, query_image=None, filters=SearchFilters(), max_tokens=max_tokens)
+    # The server's depth for this search (HINDSIGHT_API_REFLECT_KB_SEARCH_BUDGET); it was always "mid".
+    budget = cast(SearchBudget, get_config().reflect_kb_search_budget)
+    request = SearchRequest(query=query, query_image=None, filters=filters, max_tokens=max_tokens, budget=budget)
     found = await asyncio.gather(*(service.search(b, request, caller) for b in linked), return_exceptions=True)
     ranked: list[list[tuple[str, SearchResultItem]]] = []
     for linked_bank, items in zip(linked, found, strict=True):

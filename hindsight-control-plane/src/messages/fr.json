@@ -478,6 +478,9 @@
     "clientsTitle": "Banque de mémoire",
     "clientsDescription": "Réglages de toute la banque : ses alias, son fuseau horaire et ce que les apps et agents peuvent atteindre.",
     "mcpFailedToSave": "Échec de l'enregistrement des paramètres MCP",
+    "knowledgeSectionTitle": "Banques de connaissances",
+    "knowledgeSectionDescription": "Les banques de connaissances que reflect consulte aussi pour cette banque, et comment il les cherche.",
+    "knowledgeFailedToSave": "Échec de l'enregistrement des paramètres des banques de connaissances",
     "auditEnabledLabel": "Activer la journalisation d'audit",
     "auditEnabledDescription": "Enregistrer les opérations retain, recall et reflect de cette banque. Remplace la valeur par défaut du serveur pour cette banque uniquement.",
     "auditServerDefault": "Valeur par défaut du serveur ({state})",
@@ -693,8 +696,17 @@
         "retain_optional_fact_dimensions": "Permettrait au modèle de laisser « quand », « où », « qui » et « pourquoi » vides au lieu d'écrire « N/A »."
       }
     },
-    "linkedKnowledgeBanksLabel": "Banques de connaissances",
-    "linkedKnowledgeBanksDescription": "Le reflect de cette banque interroge aussi les banques de connaissances liées, et leurs documents l’emportent sur les mémoires contradictoires. Le recall et les modèles mentaux ne les lisent pas."
+    "linkedKnowledgeBanksLabel": "Banques liées",
+    "linkedKnowledgeBanksDescription": "Le reflect de cette banque interroge aussi les banques de connaissances liées, et leurs documents l’emportent sur les mémoires contradictoires. Le recall et les modèles mentaux ne les lisent pas.",
+    "kbSearchMediaTypesLabel": "Types de documents lus par reflect",
+    "kbSearchMediaTypesDescription": "Les types de documents liés que la recherche de reflect peut renvoyer. Tout coché signifie aucune limite.",
+    "kbSearchApplyTagsLabel": "Filtrer par les tags du reflect",
+    "kbSearchApplyTagsDescription": "Un reflect avec des tags ne lit que les documents liés que ces tags autorisent, avec les mêmes règles que ses souvenirs. Désactivé : les tags filtrent seulement les souvenirs.",
+    "kbMediaType_document": "PDF et Office",
+    "kbMediaType_image": "Images",
+    "kbMediaType_audio": "Audio",
+    "kbMediaType_video": "Vidéo",
+    "kbMediaType_text": "Texte"
   },
   "bankOperations": {
     "title": "Opérations en arrière-plan",
@@ -2561,8 +2573,9 @@
       "options": "Options",
       "tags": "Tags",
       "tagsMatch": "Correspondance des tags",
-      "tagsAny": "Au moins un",
-      "tagsAll": "Tous",
+      "tagGroups": "Groupes de tags (JSON)",
+      "tagGroupsHelp": "Filtres de tags booléens, combinés par ET, comme les prend le recall des souvenirs. Une feuille peut définir \"resolve\": \"fuzzy\".",
+      "tagGroupsInvalid": "Les groupes de tags doivent être du JSON valide.",
       "noResults": "Aucun passage ne correspond à cette recherche.",
       "idle": "Recherchez dans cette banque par texte, image, clip vidéo, ou n’importe quel mélange.",
       "openPassage": "Ouvrir dans le document",

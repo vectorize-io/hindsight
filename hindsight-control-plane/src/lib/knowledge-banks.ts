@@ -4,7 +4,9 @@
  * `lib/api.ts`; uploads live here because they need XHR for progress events.
  */
 
+import type { TagGroup } from "./api";
 import { withBasePath } from "./base-path";
+import type { TagsMatch } from "./tag-filter-params";
 
 /** What a document or passage is. "document" covers PDF, Office and HTML files. */
 export type MediaType = "document" | "image" | "audio" | "video" | "text";
@@ -106,7 +108,10 @@ export interface KnowledgeSearchRequest {
   /** How deep the search ranks before `max_tokens` picks from it (server default "mid"). */
   budget?: SearchBudget;
   tags?: string[];
-  tags_match?: "any" | "all";
+  /** Same rules as memory recall: any/all keep untagged documents, the _strict modes and exact drop them. */
+  tags_match?: TagsMatch;
+  /** Compound boolean tag filter, as memory recall takes it. */
+  tag_groups?: TagGroup[];
   document_ids?: string[];
   media_types?: MediaType[];
   /** Also return how the search ranked and what the token budget kept. */

@@ -45,6 +45,8 @@ type BankTemplateConfig struct {
 	RetainMaxAttachmentsPerChunk NullableInt32 `json:"retain_max_attachments_per_chunk,omitempty"`
 	McpEnabledTools []string `json:"mcp_enabled_tools,omitempty"`
 	KnowledgeBanks []string `json:"knowledge_banks,omitempty"`
+	ReflectKbSearchMediaTypes []string `json:"reflect_kb_search_media_types,omitempty"`
+	ReflectKbSearchApplyTags NullableBool `json:"reflect_kb_search_apply_tags,omitempty"`
 	ConsolidationLlmBatchSize NullableInt32 `json:"consolidation_llm_batch_size,omitempty"`
 	ConsolidationSourceFactsMaxTokens NullableInt32 `json:"consolidation_source_facts_max_tokens,omitempty"`
 	ConsolidationSourceFactsMaxTokensPerObservation NullableInt32 `json:"consolidation_source_facts_max_tokens_per_observation,omitempty"`
@@ -1154,6 +1156,81 @@ func (o *BankTemplateConfig) HasKnowledgeBanks() bool {
 // SetKnowledgeBanks gets a reference to the given []string and assigns it to the KnowledgeBanks field.
 func (o *BankTemplateConfig) SetKnowledgeBanks(v []string) {
 	o.KnowledgeBanks = v
+}
+
+// GetReflectKbSearchMediaTypes returns the ReflectKbSearchMediaTypes field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetReflectKbSearchMediaTypes() []string {
+	if o == nil {
+		var ret []string
+		return ret
+	}
+	return o.ReflectKbSearchMediaTypes
+}
+
+// GetReflectKbSearchMediaTypesOk returns a tuple with the ReflectKbSearchMediaTypes field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetReflectKbSearchMediaTypesOk() ([]string, bool) {
+	if o == nil || IsNil(o.ReflectKbSearchMediaTypes) {
+		return nil, false
+	}
+	return o.ReflectKbSearchMediaTypes, true
+}
+
+// HasReflectKbSearchMediaTypes returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasReflectKbSearchMediaTypes() bool {
+	if o != nil && !IsNil(o.ReflectKbSearchMediaTypes) {
+		return true
+	}
+
+	return false
+}
+
+// SetReflectKbSearchMediaTypes gets a reference to the given []string and assigns it to the ReflectKbSearchMediaTypes field.
+func (o *BankTemplateConfig) SetReflectKbSearchMediaTypes(v []string) {
+	o.ReflectKbSearchMediaTypes = v
+}
+
+// GetReflectKbSearchApplyTags returns the ReflectKbSearchApplyTags field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetReflectKbSearchApplyTags() bool {
+	if o == nil || IsNil(o.ReflectKbSearchApplyTags.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.ReflectKbSearchApplyTags.Get()
+}
+
+// GetReflectKbSearchApplyTagsOk returns a tuple with the ReflectKbSearchApplyTags field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetReflectKbSearchApplyTagsOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ReflectKbSearchApplyTags.Get(), o.ReflectKbSearchApplyTags.IsSet()
+}
+
+// HasReflectKbSearchApplyTags returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasReflectKbSearchApplyTags() bool {
+	if o != nil && o.ReflectKbSearchApplyTags.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetReflectKbSearchApplyTags gets a reference to the given NullableBool and assigns it to the ReflectKbSearchApplyTags field.
+func (o *BankTemplateConfig) SetReflectKbSearchApplyTags(v bool) {
+	o.ReflectKbSearchApplyTags.Set(&v)
+}
+// SetReflectKbSearchApplyTagsNil sets the value for ReflectKbSearchApplyTags to be an explicit nil
+func (o *BankTemplateConfig) SetReflectKbSearchApplyTagsNil() {
+	o.ReflectKbSearchApplyTags.Set(nil)
+}
+
+// UnsetReflectKbSearchApplyTags ensures that no value is present for ReflectKbSearchApplyTags, not even an explicit nil
+func (o *BankTemplateConfig) UnsetReflectKbSearchApplyTags() {
+	o.ReflectKbSearchApplyTags.Unset()
 }
 
 // GetConsolidationLlmBatchSize returns the ConsolidationLlmBatchSize field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2692,6 +2769,12 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.KnowledgeBanks != nil {
 		toSerialize["knowledge_banks"] = o.KnowledgeBanks
+	}
+	if o.ReflectKbSearchMediaTypes != nil {
+		toSerialize["reflect_kb_search_media_types"] = o.ReflectKbSearchMediaTypes
+	}
+	if o.ReflectKbSearchApplyTags.IsSet() {
+		toSerialize["reflect_kb_search_apply_tags"] = o.ReflectKbSearchApplyTags.Get()
 	}
 	if o.ConsolidationLlmBatchSize.IsSet() {
 		toSerialize["consolidation_llm_batch_size"] = o.ConsolidationLlmBatchSize.Get()
