@@ -11,10 +11,14 @@ import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
  * browser has no dataplane credentials: the API key lives server-side in
  * `getDataplaneHeaders()`, so the bytes are fetched here and streamed on.
  *
- * The Content-Type the dataplane returns is passed through, which is the
- * caller's own declared type — see the retain docs for what that implies about
- * storing active content.
+ * The Content-Type the dataplane returns is the caller's own declared type, and
+ * this route answers from the UI's own origin. So only types a browser shows
+ * without running anything (raster images, audio, video) are served inline; any
+ * other type — HTML, SVG, PDF, anything unknown — is sent as a download, and every
+ * response is sandboxed so nothing in it can run script.
  */
+const INLINE_TYPE = /^(?:image\/(?:png|jpeg|gif|webp|avif)|audio\/[\w.+-]+|video\/[\w.+-]+)$/;
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ bankId: string; attachmentId: string }> }
@@ -43,10 +47,14 @@ export async function GET(
     }
 
     const body = await response.arrayBuffer();
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    const mediaType = contentType.split(";")[0].trim().toLowerCase();
     return new NextResponse(body, {
       status: 200,
       headers: {
-        "Content-Type": response.headers.get("content-type") || "application/octet-stream",
+        "Content-Type": contentType,
+        "Content-Disposition": INLINE_TYPE.test(mediaType) ? "inline" : "attachment",
+        "Content-Security-Policy": "sandbox; default-src 'none'; img-src 'self'; media-src 'self'",
         // Content-addressed, so the bytes behind this URL can never change.
         "Cache-Control": "private, max-age=31536000, immutable",
         "X-Content-Type-Options": "nosniff",

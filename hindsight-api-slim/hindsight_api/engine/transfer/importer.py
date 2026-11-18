@@ -216,7 +216,15 @@ def _open_archive(archive: Archive, *, produced_by: str) -> zipfile.ZipFile:
     return zf
 
 
+#: A manifest is a handful of ids and counts; nothing real comes near this.
+_MAX_MANIFEST_BYTES = 1024 * 1024
+
+
 def _read_manifest(zf: zipfile.ZipFile) -> TransferManifest:
+    # The declared size bounds what ``zf.read`` decompresses, so checking it first
+    # keeps a tiny upload from expanding into memory.
+    if zf.getinfo("manifest.json").file_size > _MAX_MANIFEST_BYTES:
+        raise ValueError(f"Invalid transfer archive: manifest.json is larger than {_MAX_MANIFEST_BYTES} bytes")
     manifest = TransferManifest.model_validate_json(zf.read("manifest.json"))
     if manifest.schema_version != SCHEMA_VERSION:
         raise ValueError(
@@ -939,11 +947,21 @@ def _drop_ids(rows: list[dict], column: str = "id") -> None:
         row.pop(column, None)
 
 
+def _pinned(rows: Iterable[dict], bank_id: str) -> Iterator[dict]:
+    """``rows`` with ``bank_id`` set to the bank being restored.
+
+    Every row of a restore belongs to that one bank, so the value is always set here
+    rather than carried from the archive. Tables without a ``bank_id`` column ignore the
+    key (:func:`_restore_rows` writes only the table's columns).
+    """
+    for row in rows:
+        row["bank_id"] = bank_id
+        yield row
+
+
 def _retargeted_history(rows: Iterable[dict], bank_id: str) -> Iterator[dict]:
     """History rows moved to ``bank_id``, their schema-wide ids dropped (see :func:`_drop_ids`)."""
-    for row in rows:
-        if "bank_id" in row:
-            row["bank_id"] = bank_id
+    for row in _pinned(rows, bank_id):
         row.pop("id", None)
         yield row
 
@@ -954,10 +972,7 @@ def _iter_data_rows(zf: zipfile.ZipFile, table: str, bank_id: str) -> Iterator[d
     These tables grow with the bank — the operation log holds a row per operation —
     so they are never read whole (#5737). Absent on pre-scope archives: empty.
     """
-    for row in _iter_json_array(zf, f"data/{table}.json"):
-        if "bank_id" in row:
-            row["bank_id"] = bank_id
-        yield row
+    return _pinned(_iter_json_array(zf, f"data/{table}.json"), bank_id)
 
 
 def _without(rows: Iterable[dict], column: str) -> Iterator[dict]:
@@ -1260,15 +1275,13 @@ async def _restore_bank(
     source_bank_id = parsed.manifest.source_bank_id
     bank_id = target_bank_id or source_bank_id
 
-    # Remapping to a different id: rewrite the carried bank_id on every row so FKs
-    # and PKs line up with the (also-remapped) documents/facts.
+    # Every row lands in the bank being restored. This used to run only when the
+    # restore changed the bank id; setting it always gives every row one rule.
+    # History and data rows get the same treatment as they stream in (_pinned).
+    for rows in parsed.bank_rows.values():
+        for row in rows:
+            row["bank_id"] = bank_id
     if bank_id != source_bank_id:
-        # History and data rows get the same treatment as they stream in (_retargeted_history,
-        # _iter_data_rows).
-        for rows in parsed.bank_rows.values():
-            for row in rows:
-                if "bank_id" in row:
-                    row["bank_id"] = bank_id
         # Ids that are unique across the whole schema rather than within the bank.
         # Their source rows are still present on a same-instance transfer, where
         # ON CONFLICT DO NOTHING would silently skip the copy (see _drop_ids).
@@ -1491,8 +1504,7 @@ async def _restore_bank(
         if restoring.history:
             for table in HISTORY_TABLES:
                 rows: Iterable[dict] = _iter_json_array(zf, f"history/{table}.json")
-                if bank_id != source_bank_id:
-                    rows = _retargeted_history(rows, bank_id)
+                rows = _retargeted_history(rows, bank_id) if bank_id != source_bank_id else _pinned(rows, bank_id)
                 result.history_rows_imported += await _restore_rows(
                     conn,
                     table,
