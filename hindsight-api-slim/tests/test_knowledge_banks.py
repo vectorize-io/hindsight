@@ -2117,11 +2117,12 @@ async def test_media_hits_cost_a_fixed_amount_of_the_budget(api_client, kb):
 
 
 async def test_a_small_bank_finds_its_passages_next_to_a_big_one(api_client, memory, kb, monkeypatch):
-    """A small bank is searched exactly, not through the HNSW index shared by every bank (#6607).
+    """A small bank's search walks its own vectors, not a big bank's (#6607).
 
-    Statistics taken while one big bank filled the table make a generic plan scan that index;
-    filtered to a small bank, among thousands of equal vectors, it found none of the bank's own
-    passages. Every acquire here forces generic plans, as asyncpg's cached statements reach.
+    With one HNSW index shared by every bank, a generic plan (statistics taken while one big bank
+    filled the table) scanned it filtered to the small bank and, among thousands of equal vectors,
+    found none of its passages. Every acquire here forces generic plans, the worst case: the
+    per-bank index cannot serve one, so the small bank is scanned exactly.
     """
     from contextlib import asynccontextmanager
 
@@ -2379,3 +2380,48 @@ async def test_re_ingesting_with_reordered_tags_is_unchanged(api_client, kb):
         f"{KB}/{kb}/ingest", json={"items": [{"document_id": "a", "text": "red", "tags": ["y", "x"]}]}
     )
     assert r.json()["unchanged_document_ids"] == ["a"]
+
+
+async def test_each_bank_has_its_own_vector_index_that_its_search_uses(api_client, memory, kb, fake_embedder):
+    """A bank's search walks only its own vectors, not every bank's (one shared index returned short
+    once other banks' vectors crowded out the filtered ones)."""
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.engine.schema import fq_table
+
+    other = f"kb-{uuid.uuid4().hex[:8]}"
+    assert (await api_client.post(KB, json={"bank_id": other})).status_code == 200
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "a", "text": "red key"}]})
+    assert r.status_code == 200, r.text
+
+    # The catalog, directly: which indexes exist is a storage fact no API reports.
+    async def indexes(bank_id: str) -> list[str]:
+        async with acquire_with_retry(await memory._get_backend()) as conn:
+            rows = await conn.fetch(
+                "SELECT indexname FROM pg_indexes WHERE tablename IN ('kb_passages', 'kb_passage_vectors') "
+                "AND indexdef LIKE '%hnsw%' AND indexdef LIKE $1",
+                f"%bank_id = '{bank_id}'%",
+            )
+            return sorted(r["indexname"] for r in rows)
+
+    names = await indexes(kb)
+    assert len(names) == 2 and len(await indexes(other)) == 2 and set(names).isdisjoint(await indexes(other))
+
+    async with acquire_with_retry(await memory._get_backend()) as conn, conn.transaction():
+        # A one-row bank is cheaper by its B-tree and a sort; with both off only a usable vector index is left.
+        await conn.execute("SET LOCAL enable_seqscan = off")
+        await conn.execute("SET LOCAL enable_sort = off")
+        vector = str(fake_embedder._norm([1.0] * fake_embedder.dimension))
+        plan = "\n".join(
+            r[0]
+            for r in await conn.fetch(
+                f"EXPLAIN SELECT idx FROM {fq_table('kb_passages')} x WHERE x.bank_id = $2 "
+                "ORDER BY x.embedding <=> $1::vector LIMIT 10",
+                vector,
+                kb,
+            )
+        )
+    assert any(n in plan for n in names), plan
+
+    assert (await api_client.delete(f"{KB}/{kb}")).status_code == 200
+    assert await indexes(kb) == [] and len(await indexes(other)) == 2
+    await api_client.delete(f"{KB}/{other}")
