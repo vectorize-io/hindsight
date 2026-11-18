@@ -3562,7 +3562,7 @@ export type KnowledgeIngestTextItem = {
   /**
    * Strategy
    *
-   * Ingestion strategy for this item (one of the server's `HINDSIGHT_API_INGEST_STRATEGIES`). Omit it and the server's default applies. A file whose type the strategy does not map is chunked as it is.
+   * Ingestion strategy for this item (one of the server's `HINDSIGHT_API_KB_INGEST_STRATEGIES`). Omit it and the server's default applies. A file whose type the strategy does not map is chunked as it is.
    */
   strategy?: string | null;
 };

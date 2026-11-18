@@ -28,7 +28,6 @@ The response, like `GET /v1/default/knowledge-banks/{bank_id}`, describes the ba
   "ready_count": 0,
   "pending_count": 0,
   "failed_count": 0,
-  "total_bytes": 0,
   "documents_by_media_type": {},
   "last_document_at": null
 }
@@ -122,7 +121,8 @@ curl -X POST http://localhost:8888/v1/default/knowledge-banks/product-manuals/se
 | `budget` | `low`, `mid` or `high`: how many scored candidates stay in the running (50, 200, 500). | `mid` |
 | `max_tokens` | How much text the results can add up to. | `4096` |
 | `tags` | Only documents with these tags. | - |
-| `tags_match` | `any` or `all` of `tags`. | `any` |
+| `tags_match` | How `tags` match, as in memory recall: `any`, `all` (both keep untagged documents), `any_strict`, `all_strict`, `exact`. | `any` |
+| `tag_groups` | And/or/not groups of tag filters, as in memory recall. A leaf with `resolve: "fuzzy"` matches its tags against the bank's own. | - |
 | `document_ids` | Only these documents. | - |
 | `media_types` | Only these kinds: `document`, `image`, `audio`, `video`, `text`. | - |
 | `trace` | Also return how the search ranked, step by step. | `false` |
@@ -159,7 +159,7 @@ Text, image and video can be sent together: they are embedded as one query. At l
 }
 ```
 
-- Results come **best first**. They carry no score: scores are only comparable within one search.
+- Results come **best first**. They carry no score: scores are only comparable within one search. With a decision model set for knowledge banks, the order is the [reranked](../knowledge-banks.md#searching) one.
 - A text hit's `text` holds the matched passage together with the passages around it that fit the budget. `index` is the matched one.
 - `page` is set for PDF pages and images, `start_ms` and `end_ms` for audio and video.
 - `passage_url` streams the passage's page image or clip. `document_url` streams the original file.
@@ -176,7 +176,17 @@ With `"trace": true`, the response also has a `trace`:
 | `keyword_terms` | The query words the keyword search used, with their weight. A word much more common than the query's rarest word is left out. |
 | `keyword_weight` | The keyword score's share of the final score. |
 | `depth`, `candidates`, `tokens_used` | Candidates kept, candidates found, and tokens returned. |
-| `timings_ms` | Time spent in each step. |
+| `timings_ms` | Time spent in each step, the rerank included. |
+
+---
+
+## Tags
+
+```bash
+curl "http://localhost:8888/v1/default/knowledge-banks/product-manuals/tags?q=x2*"
+```
+
+Lists the tags on a bank's documents, with how many documents carry each. `q` is a wildcard pattern (`*`), case-insensitive. Paging: `limit` (default 100, up to 1000), `offset`.
 
 ---
 
@@ -251,6 +261,6 @@ Cancels the bank's ingests, then deletes every document, passage and file in it.
 | `400` | A bad request: no query, a query image that isn't base64, an empty file, an unknown ingestion strategy. |
 | `404` | No such bank or document, or knowledge banks are off. |
 | `409` | The bank id is already a memory bank. |
-| `413` | A file over `HINDSIGHT_API_KNOWLEDGE_MAX_FILE_MB`. |
+| `413` | A file over `HINDSIGHT_API_KB_MAX_FILE_MB`. |
 | `415` | A file type the server, the bank or the embedder doesn't take, or a query the embedder can't embed (a video query on a model without video). |
 | `503` | The embedder or the database can't be reached, or timed out. Try again later. |

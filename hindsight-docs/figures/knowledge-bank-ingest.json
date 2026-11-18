@@ -193,7 +193,7 @@
                 "mark": "✓"
               },
               {
-                "text": "text → passages of ~256 tokens",
+                "text": "text → ~256-token passages, each with its window",
                 "mark": "✓"
               }
             ]

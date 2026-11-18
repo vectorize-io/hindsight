@@ -31,6 +31,23 @@
       "width": 300
     },
     {
+      "id": "rerank",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Rerank (optional)"
+        },
+        {
+          "type": "subtitle",
+          "text": "a decision model judges the best 100"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 300,
+      "strokeStyle": "dashed"
+    },
+    {
       "id": "fit",
       "type": "rectangle",
       "content": [
@@ -51,6 +68,7 @@
       "type": "group",
       "children": [
         "find",
+        "rerank",
         "fit"
       ],
       "layout": {
@@ -125,7 +143,7 @@
         "id": "find"
       },
       "end": {
-        "id": "fit"
+        "id": "rerank"
       },
       "label": {
         "text": "scored"
@@ -143,6 +161,20 @@
       },
       "label": {
         "text": "passages"
+      }
+    },
+    {
+      "id": "judged",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "rerank"
+      },
+      "end": {
+        "id": "fit"
+      },
+      "label": {
+        "text": "reordered"
       }
     }
   ],
@@ -214,6 +246,35 @@
             "data": "scored candidates"
           },
           "show": {
+            "rerank": [
+              {
+                "tag": "p.31",
+                "tone": "blue",
+                "text": "judged with its page around it",
+                "mark": "✓"
+              },
+              {
+                "tag": "p.4",
+                "tone": "gray",
+                "text": "judged by its picture and its text",
+                "mark": "✓"
+              },
+              {
+                "tag": "2:40",
+                "tone": "gray",
+                "text": "a video keeps its place"
+              }
+            ]
+          },
+          "say": "Each candidate is scored from all its vectors, with keyword matches mixed in. With a decision model set, it judges the best 100: a text hit with the page around it, a page by its picture and its text. Its order is fused with the search's.",
+          "ms": 3800
+        },
+        {
+          "edges": {
+            "edge": "judged",
+            "data": "reranked"
+          },
+          "show": {
             "fit": [
               {
                 "tag": "1",
@@ -232,8 +293,8 @@
               }
             ]
           },
-          "say": "Each candidate is scored from all its vectors, with keyword matches mixed in. The best hits come first, each with the text around it, until max_tokens is full.",
-          "ms": 3400
+          "say": "The best hits come first, each with the text around it, until max_tokens is full.",
+          "ms": 3000
         },
         {
           "edges": {
