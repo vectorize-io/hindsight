@@ -5,6 +5,8 @@ be pinned to the reflect LLM. `HINDSIGHT_API_MENTAL_MODEL_REFRESH_LLM_*` lets it
 diverge; unset, it must stay *literally* the reflect config so nothing changes.
 """
 
+import os
+
 import pytest
 
 from hindsight_api import MemoryEngine
@@ -23,7 +25,15 @@ BASE_ENV = {
 
 @pytest.fixture
 def engine_env(monkeypatch):
-    """Apply BASE_ENV plus any extra vars, then build an engine."""
+    """Apply BASE_ENV plus any extra vars, then build an engine.
+
+    Every other LLM variable is removed first. These tests assert defaults (the 30s
+    reflect timeout, the 120s global one), so an ``HINDSIGHT_API_*LLM*`` value from
+    the ambient environment, a ``.env`` or another test changed the answer (#6620).
+    """
+    for key in list(os.environ):
+        if key.startswith("HINDSIGHT_API_") and "LLM" in key:
+            monkeypatch.delenv(key)
 
     def _build(**extra: str) -> MemoryEngine:
         for key, value in {**BASE_ENV, **extra}.items():
