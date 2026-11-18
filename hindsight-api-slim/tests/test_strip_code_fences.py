@@ -130,8 +130,7 @@ class TestStripCodeFences:
 # carried their own copy (#4817, #4819). This guard walks the whole provider family
 # so the next provider can't quietly add a sixth.
 _HAND_ROLLED_FENCE = re.compile(r"""split\(\s*["']```|re\.\w+\(\s*r?["']```""")
-# anthropic_llm.py is fixed by #4821; drop it from here when that lands.
-_KNOWN_HAND_ROLLED = {"anthropic_llm.py"}
+_KNOWN_HAND_ROLLED: set[str] = set()
 
 
 def test_no_provider_hand_rolls_fence_stripping():
