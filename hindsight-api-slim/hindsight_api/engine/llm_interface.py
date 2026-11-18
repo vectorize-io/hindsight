@@ -19,6 +19,25 @@ from .response_models import BatchRequest, BatchResult, BatchStatus, BatchSubmis
 logger = logging.getLogger(__name__)
 
 
+def merge_extra_body(params: dict[str, Any], extra_body: dict[str, Any]) -> dict[str, Any]:
+    """Return ``extra_body`` with each key that is a dict on both sides deep-merged into ``params``' value.
+
+    Operator extra-body params override the request, but only key by key: a configured
+    ``{"output_config": {"effort": "low"}}`` must add ``effort`` next to the
+    ``output_config.format`` schema Hindsight set, not replace the whole object and drop the
+    schema (#6640). On a conflicting leaf the operator's value still wins. The result can be
+    sent as the SDK's ``extra_body`` (which replaces top-level keys) or ``update``-ed into a raw body.
+    """
+    merged: dict[str, Any] = {}
+    for key, value in extra_body.items():
+        base = params.get(key)
+        if isinstance(base, dict) and isinstance(value, dict):
+            merged[key] = {**base, **merge_extra_body(base, value)}
+        else:
+            merged[key] = value
+    return merged
+
+
 class LLMToolChoiceMode(StrEnum):
     """What a tool-calling turn may call: one function of the model's choosing (``auto`` and
     ``required`` both mean exactly one, see ``LLMProvider.call_with_tools``), or a named one."""
