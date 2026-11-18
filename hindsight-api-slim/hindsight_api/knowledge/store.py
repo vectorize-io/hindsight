@@ -937,9 +937,11 @@ class PostgresKnowledgeStore(KnowledgeStore):
             bank_passages = int(
                 await conn.fetchval(f"SELECT coalesce(sum(passage_count), 0) FROM {docs} WHERE bank_id = $1", bank_id)
             )
-        terms = (
-            await self._keyword_terms(bank_id, query_text, bank_passages) if query_text and keyword_weight > 0 else {}
-        )
+            terms = (
+                await self._keyword_terms(conn, bank_id, query_text, bank_passages)
+                if query_text and keyword_weight > 0
+                else {}
+            )
         if trace is not None:
             trace.keyword_terms = terms
         if terms:
@@ -1086,7 +1088,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
             trace.scored = hits
         return hits[:top_k]
 
-    async def _keyword_terms(self, bank_id: str, query_text: str, bank_passages: int) -> dict[str, float]:
+    async def _keyword_terms(self, conn: Any, bank_id: str, query_text: str, bank_passages: int) -> dict[str, float]:
         """The query's words that take part in keyword search, each with its BM25 IDF in this bank:
         ln(1 + (N - df + 0.5) / (df + 0.5)) over the bank's passages, so rare words (names, codes) count
         and common ones barely. A word less than half as rare as the query's rarest one (IDF under
@@ -1094,20 +1096,20 @@ class PostgresKnowledgeStore(KnowledgeStore):
         nothing about which passage answers, and matching them would pull in most of the bank. That
         drops them in any language and at any bank size, where a stopword list knew 6 languages.
         N (``bank_passages``) comes from the documents' passage counts, not from counting passages: that
-        count grew with the bank. Each df stops at ``_DF_CAP`` matches, so the GIN count of a common word stays bounded too."""
-        async with acquire_with_retry(await self._pool()) as conn:
-            rows = await conn.fetch(
-                f"""
-                WITH w AS (SELECT DISTINCT unnest(tsvector_to_array(to_tsvector('simple', $2))) AS w)
-                SELECT w.w, df.df FROM w,
-                  LATERAL (SELECT count(*)::float8 AS df FROM (
-                           SELECT 1 FROM {fq_table("kb_passages")} x
-                           WHERE x.bank_id = $1 AND x.search_vector @@ to_tsquery('simple', quote_literal(w.w))
-                           LIMIT {_DF_CAP}) m) df
-                """,
-                bank_id,
-                query_text,
-            )
+        count grew with the bank. Each df stops at ``_DF_CAP`` matches, so the GIN count of a common word
+        stays bounded too."""
+        rows = await conn.fetch(
+            f"""
+            WITH w AS (SELECT DISTINCT unnest(tsvector_to_array(to_tsvector('simple', $2))) AS w)
+            SELECT w.w, df.df FROM w,
+              LATERAL (SELECT count(*)::float8 AS df FROM (
+                       SELECT 1 FROM {fq_table("kb_passages")} x
+                       WHERE x.bank_id = $1 AND x.search_vector @@ to_tsquery('simple', quote_literal(w.w))
+                       LIMIT {_DF_CAP}) m) df
+            """,
+            bank_id,
+            query_text,
+        )
         idf = {
             r["w"]: math.log(
                 1 + max(bank_passages - float(r["df"]), 0) / (float(r["df"]) + 0.5) + 0.5 / (float(r["df"]) + 0.5)

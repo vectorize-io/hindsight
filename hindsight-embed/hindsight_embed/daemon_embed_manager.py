@@ -252,13 +252,17 @@ def _kill_process_tree(pid: int) -> None:
     Like `_signal_startup_process`: the pid may be the ``uvx`` launcher, and
     killing only it would leave the real API holding the embedded Postgres.
     """
+    if platform.system() == "Windows":
+        DaemonEmbedManager._run_probe(["taskkill", "/T", "/F", "/PID", str(pid)])
+        return
     try:
-        if platform.system() == "Windows":
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, check=False)
-        else:
-            os.killpg(pid, signal.SIGKILL)
+        os.killpg(pid, signal.SIGKILL)
     except OSError:
-        pass
+        # Not a group leader after all: kill what there is.
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def _terminate_startup_process(process: subprocess.Popen) -> None:
