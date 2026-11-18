@@ -196,16 +196,17 @@ describe("ZCode write-back", () => {
  * `journalPrompt` but never reaches that line retains assistant-only sessions with no error.
  */
 describe("ZCode prompt hook", () => {
-  const promptEvent = (prompt: string) =>
+  const promptEvent = (prompt: string, extra: Record<string, unknown> = {}) =>
     JSON.stringify({
       prompt,
       cwd: root,
       session_id: sessionId,
       hook_event_name: "UserPromptSubmit",
+      ...extra,
     });
 
-  const runPrompt = async (prompt: string) => {
-    stdin = promptEvent(prompt);
+  const runPrompt = async (prompt: string, extra: Record<string, unknown> = {}) => {
+    stdin = promptEvent(prompt, extra);
     const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
     try {
       await runHook(zcode.prompt, () => ({
@@ -230,6 +231,13 @@ describe("ZCode prompt hook", () => {
     expect(readJournalTranscript(journalPath("zcode", sessionId))).toEqual([
       expect.objectContaining({ role: "user", content: "we use zod for validation" }),
     ]);
+  });
+
+  it("writes nothing for code output delivered as a prompt (Claude Code's Code Mode)", async () => {
+    await runPrompt('<event kind="repl-eval"><result>{ ls: [ "docs" ] }</result></event>', {
+      source: "poll_event",
+    });
+    expect(readJournalTranscript(journalPath("zcode", sessionId))).toEqual([]);
   });
 
   it("writes nothing when the kill switch is set", async () => {

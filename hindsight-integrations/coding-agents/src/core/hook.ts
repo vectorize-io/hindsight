@@ -438,6 +438,10 @@ export async function runHook(
   const ev = readHookEvent(spec.harness);
   if (!ev) return;
   if (spec.accept && !spec.accept(ev)) return;
+  // Claude Code's Code Mode fires the prompt hook again when background code settles, with the
+  // code's output as `prompt` and `source: "poll_event"`. Nobody typed it: recalling on it costs
+  // a turn, and syncing it stored command output as something the user said.
+  if (ev.source === "poll_event") return;
   const { prompt: rawPrompt, cwd: rawCwd, sessionId } = spec.parse(ev);
   if (spec.toolHook?.accept(ev)) {
     // Runs on every tool call, so it does nothing but hand over what a prompt hook stashed.
