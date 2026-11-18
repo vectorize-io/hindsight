@@ -384,7 +384,9 @@ RESCORE_POOL = 50
 #: 300 kept ViDoRe hr nDCG@10 (65.68 vs 65.59 uncapped) and halved its search time (Gemini Embedding 2).
 CANDIDATE_POOL_CAP = 300
 #: A bank with at most this many passages is searched exactly, not through the shared HNSW index.
-EXACT_SEARCH_MAX_PASSAGES = 10_000
+#: Kept low because the exact scan also reads every extra vector (bands, text units, sentences) of
+#: each passage, several per passage.
+EXACT_SEARCH_MAX_PASSAGES = 2_000
 CANDIDATE_ROLES_SQL = "role NOT IN (" + ", ".join(f"'{r}'" for r in RESCORE_ONLY_ROLES) + ")"
 
 
@@ -930,13 +932,19 @@ class PostgresKnowledgeStore(KnowledgeStore):
         # language, no stemming), in every document. It was gated on a detected language (stopwords
         # of 6 languages, stemming per language): any other language never got keywords, and a name
         # or code never matched a document in another language than its query.
-        terms = await self._keyword_terms(bank_id, query_text) if query_text and keyword_weight > 0 else {}
+        docs = fq_table("kb_documents")
+        async with acquire_with_retry(await self._pool()) as conn:
+            bank_passages = int(
+                await conn.fetchval(f"SELECT coalesce(sum(passage_count), 0) FROM {docs} WHERE bank_id = $1", bank_id)
+            )
+        terms = (
+            await self._keyword_terms(bank_id, query_text, bank_passages) if query_text and keyword_weight > 0 else {}
+        )
         if trace is not None:
             trace.keyword_terms = terms
         if terms:
             params.append(list(terms))
             tsquery = f"(SELECT to_tsquery('simple', string_agg(quote_literal(w), ' | ')) FROM unnest(${len(params)}::text[]) w)"
-        docs = fq_table("kb_documents")
 
         def nearest(table: str, exact: str) -> str:
             roles = f" AND {CANDIDATE_ROLES_SQL.replace('role', 'x.role')}" if table == "kb_passage_vectors" else ""
@@ -959,9 +967,6 @@ class PostgresKnowledgeStore(KnowledgeStore):
             """
 
         async with acquire_with_retry(await self._pool()) as conn:
-            bank_passages = await conn.fetchval(
-                f"SELECT coalesce(sum(passage_count), 0) FROM {docs} WHERE bank_id = $1", bank_id
-            )
             # The HNSW index spans every bank. Filtered to one bank, its scan gives up after
             # hnsw.max_scan_tuples, or on a graph region of equal vectors, and a small bank in a
             # big table found none of its own passages (#6607). A small bank is cheap to scan
@@ -1081,22 +1086,20 @@ class PostgresKnowledgeStore(KnowledgeStore):
             trace.scored = hits
         return hits[:top_k]
 
-    async def _keyword_terms(self, bank_id: str, query_text: str) -> dict[str, float]:
+    async def _keyword_terms(self, bank_id: str, query_text: str, bank_passages: int) -> dict[str, float]:
         """The query's words that take part in keyword search, each with its BM25 IDF in this bank:
         ln(1 + (N - df + 0.5) / (df + 0.5)) over the bank's passages, so rare words (names, codes) count
         and common ones barely. A word less than half as rare as the query's rarest one (IDF under
         ``KEYWORD_IDF_SHARE`` of the best) is left out: next to a name or a code, "the" and "of" say
         nothing about which passage answers, and matching them would pull in most of the bank. That
         drops them in any language and at any bank size, where a stopword list knew 6 languages.
-        N comes from the documents' passage counts, not from counting passages: that count grew with the
-        bank. Each df stops at ``_DF_CAP`` matches, so the GIN count of a common word stays bounded too."""
-        docs = fq_table("kb_documents")
+        N (``bank_passages``) comes from the documents' passage counts, not from counting passages: that
+        count grew with the bank. Each df stops at ``_DF_CAP`` matches, so the GIN count of a common word stays bounded too."""
         async with acquire_with_retry(await self._pool()) as conn:
             rows = await conn.fetch(
                 f"""
-                WITH w AS (SELECT DISTINCT unnest(tsvector_to_array(to_tsvector('simple', $2))) AS w),
-                     n AS (SELECT coalesce(sum(passage_count), 0)::float8 AS n FROM {docs} WHERE bank_id = $1)
-                SELECT w.w, df.df, n.n FROM w, n,
+                WITH w AS (SELECT DISTINCT unnest(tsvector_to_array(to_tsvector('simple', $2))) AS w)
+                SELECT w.w, df.df FROM w,
                   LATERAL (SELECT count(*)::float8 AS df FROM (
                            SELECT 1 FROM {fq_table("kb_passages")} x
                            WHERE x.bank_id = $1 AND x.search_vector @@ to_tsquery('simple', quote_literal(w.w))
@@ -1107,7 +1110,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
             )
         idf = {
             r["w"]: math.log(
-                1 + max(float(r["n"]) - float(r["df"]), 0) / (float(r["df"]) + 0.5) + 0.5 / (float(r["df"]) + 0.5)
+                1 + max(bank_passages - float(r["df"]), 0) / (float(r["df"]) + 0.5) + 0.5 / (float(r["df"]) + 0.5)
             )
             for r in rows
             if r["df"] > 0

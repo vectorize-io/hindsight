@@ -487,6 +487,8 @@ class ProfileManager:
                 stale_log.unlink(missing_ok=True)
             except OSError as exc:
                 logger.warning("Could not remove log %s while deleting profile '%s': %s", stale_log, name, exc)
+        # The PID the start path recorded for the profile's daemon.
+        log_path.with_suffix(".pid").unlink(missing_ok=True)
 
         # Update metadata
         metadata = self._load_metadata()

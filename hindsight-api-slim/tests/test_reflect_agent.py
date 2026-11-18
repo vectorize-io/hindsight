@@ -2666,8 +2666,8 @@ class TestMentalModelShortCircuitRealLLM:
         }
 
     @pytest.mark.asyncio
-    async def test_real_fresh_mental_model_answers_without_lower_retrieval(self, llm_config, mock_functions):
-        """A fresh, sufficient mental model lets the real agent answer without obs/recall."""
+    async def test_real_fresh_mental_model_answers_from_the_page(self, llm_config, mock_functions):
+        """A fresh, sufficient mental model lets the real agent answer from the page itself."""
         functions = self._stub_functions(
             mock_functions,
             mental_models=[
@@ -2841,13 +2841,14 @@ class TestMentalModelShortCircuitRealLLM:
 
         assert result.text, "agent must return a non-empty answer"
         # No hard assert on recall being called (#6619): which tools a free turn picks
-        # is the model's choice. The status lives only in the recall layer, so an
-        # answer that reports it is the evidence the agent dug deeper; the judge checks it.
+        # is the model's choice. The close date and the flag removal live only in the
+        # recall layer, so the judge requires one of them: that is the evidence the agent
+        # dug deeper rather than guessed.
         await assert_meets_criteria(
             response=result.text,
             criteria=(
-                "The answer reports that AURORA-412 was closed/fixed (on 12 March, and/or that its feature flag "
-                "was removed). It does NOT claim the bank holds nothing, no record, no status or no history for "
+                "The answer reports that AURORA-412 was closed on 12 March, or that its feature flag was removed "
+                "(a bare 'it was closed' without either detail does not count). It does NOT claim the bank holds nothing, no record, no status or no history for "
                 "AURORA-412. Saying that the release-process page itself records no status is fine, as long as "
                 "the answer goes on to report the closed/fixed status."
             ),
@@ -2920,8 +2921,8 @@ class TestMentalModelShortCircuitRealLLM:
         await assert_meets_criteria(
             response=result.text,
             criteria=(
-                "The answer reports that AURORA-412 was closed/fixed (on 12 March, and/or that its feature flag "
-                "was removed). It does NOT claim the bank holds nothing about AURORA-412."
+                "The answer reports that AURORA-412 was closed on 12 March, or that its feature flag was removed "
+                "(a bare 'it was closed' without either detail does not count). It does NOT claim the bank holds nothing about AURORA-412."
             ),
             context=(
                 "The page layer held only the release process. The raw-fact layer holds that AURORA-412 was "

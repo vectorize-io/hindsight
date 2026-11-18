@@ -246,6 +246,21 @@ def _signal_startup_process(process: subprocess.Popen, *, force: bool) -> None:
         os.killpg(process.pid, signal.SIGKILL if force else signal.SIGTERM)
 
 
+def _kill_process_tree(pid: int) -> None:
+    """Force-kill a daemon we launched and everything it started.
+
+    Like `_signal_startup_process`: the pid may be the ``uvx`` launcher, and
+    killing only it would leave the real API holding the embedded Postgres.
+    """
+    try:
+        if platform.system() == "Windows":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, check=False)
+        else:
+            os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
 def _terminate_startup_process(process: subprocess.Popen) -> None:
     """Stop the daemon child owned by a failed startup attempt, escalating to kill."""
     if process.poll() is not None:
@@ -843,7 +858,9 @@ class DaemonEmbedManager(EmbedManager):
         if cmdline is None:
             return False
         lowered = cmdline.lower()
-        return any(marker in lowered for marker in DAEMON_PROCESS_MARKERS) and f"--port {port}" in lowered
+        return any(marker in lowered for marker in DAEMON_PROCESS_MARKERS) and (
+            re.search(rf"--port[ =]{port}(\s|$)", lowered) is not None
+        )
 
     def _wait_for_previous_daemon_exit(self, paths: ProfilePaths) -> None:
         """Block until the daemon this profile last launched has exited.
@@ -871,10 +888,7 @@ class DaemonEmbedManager(EmbedManager):
             logger.info(f"Waiting for the previous daemon (PID {pid}) to finish shutting down")
             if not _exited_within(PREVIOUS_DAEMON_EXIT_TIMEOUT):
                 logger.warning(f"Previous daemon (PID {pid}) did not exit in time; killing it")
-                try:
-                    os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
-                except OSError:
-                    pass
+                _kill_process_tree(pid)
                 _exited_within(DAEMON_STARTUP_TERMINATE_TIMEOUT)
         pid_file.unlink(missing_ok=True)
 
