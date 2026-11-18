@@ -38,6 +38,7 @@ from hindsight_api.engine.llm_interface import (
     LLMInterface,
     ProviderRateLimitResetError,
     ProviderUnavailableError,
+    merge_extra_body,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
@@ -630,8 +631,6 @@ class CodexLLM(LLMInterface):
             "stream": True,  # SSE streaming
             "prompt_cache_key": _prompt_cache_key(messages),
         }
-        payload.update(self._extra_body)
-
         if strict_schema and schema is not None:
             payload["text"] = {
                 "format": {
@@ -641,6 +640,9 @@ class CodexLLM(LLMInterface):
                     "strict": True,
                 }
             }
+        # Merged, not replaced: a configured {"text": {"verbosity": ...}} or
+        # {"reasoning": {"summary": ...}} keeps the schema and effort Hindsight set (#6640).
+        payload.update(merge_extra_body(payload, self._extra_body))
 
         headers = self._build_request_headers()
         # The ChatGPT backend routes Responses cache affinity on ``session-id``, not on

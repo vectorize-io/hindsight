@@ -44,6 +44,7 @@ from hindsight_api.engine.cache_affinity import apply_opencode_session
 from hindsight_api.engine.llm_interface import (
     LLMInterface,
     OutputTooLongError,
+    merge_extra_body,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_sdk_timeout, describe_llm_error
@@ -490,9 +491,6 @@ class OpenAIResponsesLLM(LLMInterface):
             params["reasoning"] = {"effort": self.reasoning_effort}
         if self.openai_service_tier:
             params["service_tier"] = self.openai_service_tier
-        if self._config_extra_body:
-            params["extra_body"] = {**self._config_extra_body}
-
         # Structured output: strict grammar-enforced schema, or the soft
         # schema-in-prompt + json_object fallback.
         if response_format is not None and hasattr(response_format, "model_json_schema"):
@@ -509,6 +507,11 @@ class OpenAIResponsesLLM(LLMInterface):
                 schema = provider_json_schema(response_format)
                 params["input"] = _ensure_json_word_in_user_message(_inject_schema_into_input(input_items, schema))
                 params["text"] = {"format": {"type": "json_object"}}
+
+        # After the schema is set: a configured {"text": {"verbosity": ...}} or
+        # {"reasoning": {"summary": ...}} adds to Hindsight's object instead of replacing it (#6640).
+        if self._config_extra_body:
+            params["extra_body"] = merge_extra_body(params, self._config_extra_body)
 
         apply_bank_attribution(params)
         # opencode-go's /v1/responses requires x-opencode-session the same way
