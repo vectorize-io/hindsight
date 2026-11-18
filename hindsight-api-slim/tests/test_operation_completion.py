@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.webhooks.models import MentalModelRefreshedEventData
 
 
 class _FakeTx:
@@ -134,7 +135,9 @@ class TestMarkOperationCompletedAndFireWebhook:
         engine, conn = _make_engine({"operation_id": op_id}, webhook_raises=True)
         engine._fire_webhook_event = AsyncMock()
         event = engine._mental_model_refreshed_event(
-            {"bank_id": "bank-1", "operation_id": op_id, "mental_model_id": "mm-1"}, status="completed"
+            {"bank_id": "bank-1", "operation_id": op_id, "mental_model_id": "mm-1"},
+            "completed",
+            MentalModelRefreshedEventData(mental_model_id="mm-1"),
         )
 
         await engine._mark_operation_completed_and_fire_webhook(

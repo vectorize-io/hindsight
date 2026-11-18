@@ -8,6 +8,7 @@ run through ``execute_task`` the way the worker runs it.
 
 import json
 import uuid
+from dataclasses import dataclass
 
 import pytest
 import pytest_asyncio
@@ -15,7 +16,7 @@ import pytest_asyncio
 from hindsight_api.engine.llm_interface import ProviderContentPolicyError
 from hindsight_api.engine.memory_engine import MemoryEngine, MentalModelRefreshError
 from hindsight_api.webhooks.manager import WebhookManager
-from hindsight_api.webhooks.models import MentalModelRefreshedEventData, WebhookEventType
+from hindsight_api.webhooks.models import WebhookHttpConfig
 from hindsight_api.worker.exceptions import RetryTaskAt
 
 
@@ -30,11 +31,29 @@ async def webhook_manager(memory: MemoryEngine):
         memory._webhook_manager = original
 
 
-async def _bank_with_model(memory: MemoryEngine, request_context, event_types: list[str]) -> tuple[str, str]:
+@dataclass
+class _BankWithModel:
+    bank_id: str
+    mm_id: str
+
+
+async def _bank_with_model(memory: MemoryEngine, request_context, event_types: list[str]) -> _BankWithModel:
     """A bank holding one pinned mental model and a webhook subscribed to ``event_types``."""
     bank_id = f"mmwh-{uuid.uuid4().hex[:8]}"
     await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
     mm_id = f"mm-{uuid.uuid4().hex}"
+    await memory.create_webhook(
+        bank_id,
+        webhook_id=uuid.uuid4(),
+        url="https://example.com/mm-hook",
+        secret=None,
+        event_types=event_types,
+        enabled=True,
+        http_config_json=WebhookHttpConfig().model_dump_json(),
+        request_context=request_context,
+    )
+    # Inserted directly: creating it through the API queues its first refresh, and
+    # each test here runs exactly one refresh of its own.
     async with memory._pool.acquire() as conn:
         await conn.execute(
             """
@@ -45,16 +64,7 @@ async def _bank_with_model(memory: MemoryEngine, request_context, event_types: l
             mm_id,
             bank_id,
         )
-        await conn.execute(
-            """
-            INSERT INTO webhooks (id, bank_id, url, secret, event_types, enabled, created_at, updated_at)
-            VALUES ($1, $2, 'https://example.com/mm-hook', NULL, $3, true, NOW(), NOW())
-            """,
-            uuid.uuid4(),
-            bank_id,
-            event_types,
-        )
-    return bank_id, mm_id
+    return _BankWithModel(bank_id=bank_id, mm_id=mm_id)
 
 
 async def _queued_refresh(memory: MemoryEngine, bank_id: str, mm_id: str, request_context, monkeypatch) -> dict:
@@ -96,16 +106,12 @@ async def _deliveries(memory: MemoryEngine, bank_id: str) -> list[dict]:
     return events
 
 
-def test_event_type_value():
-    assert WebhookEventType.MENTAL_MODEL_REFRESHED == "mental_model.refreshed"
-    assert MentalModelRefreshedEventData(mental_model_id="mm").outcome is None
-
-
 @pytest.mark.asyncio
 async def test_a_completed_refresh_sends_its_outcome(
     memory: MemoryEngine, webhook_manager, request_context, monkeypatch
 ):
-    bank_id, mm_id = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    setup = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    bank_id, mm_id = setup.bank_id, setup.mm_id
     task = await _queued_refresh(memory, bank_id, mm_id, request_context, monkeypatch)
 
     async def _refreshed(**kwargs):
@@ -133,7 +139,8 @@ async def test_a_completed_refresh_sends_its_outcome(
 async def test_a_webhook_not_subscribed_to_the_event_gets_nothing(
     memory: MemoryEngine, webhook_manager, request_context, monkeypatch
 ):
-    bank_id, mm_id = await _bank_with_model(memory, request_context, ["consolidation.completed"])
+    setup = await _bank_with_model(memory, request_context, ["consolidation.completed"])
+    bank_id, mm_id = setup.bank_id, setup.mm_id
     task = await _queued_refresh(memory, bank_id, mm_id, request_context, monkeypatch)
 
     async def _refreshed(**kwargs):
@@ -149,7 +156,8 @@ async def test_a_webhook_not_subscribed_to_the_event_gets_nothing(
 async def test_a_refusal_sends_failed_with_its_outcome_and_reason(
     memory: MemoryEngine, webhook_manager, request_context, monkeypatch
 ):
-    bank_id, mm_id = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    setup = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    bank_id, mm_id = setup.bank_id, setup.mm_id
     task = await _queued_refresh(memory, bank_id, mm_id, request_context, monkeypatch)
 
     async def _refused(**kwargs):
@@ -175,7 +183,8 @@ async def test_a_refusal_sends_failed_with_its_outcome_and_reason(
 
 @pytest.mark.asyncio
 async def test_a_deterministic_error_sends_failed(memory: MemoryEngine, webhook_manager, request_context, monkeypatch):
-    bank_id, mm_id = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    setup = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    bank_id, mm_id = setup.bank_id, setup.mm_id
     task = await _queued_refresh(memory, bank_id, mm_id, request_context, monkeypatch)
 
     async def _declined(**kwargs):
@@ -196,7 +205,8 @@ async def test_a_refresh_that_will_be_retried_sends_nothing_until_its_last_attem
 ):
     from hindsight_api.config import get_config
 
-    bank_id, mm_id = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    setup = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    bank_id, mm_id = setup.bank_id, setup.mm_id
     task = await _queued_refresh(memory, bank_id, mm_id, request_context, monkeypatch)
 
     async def _flaky(**kwargs):
@@ -218,7 +228,8 @@ async def test_a_refresh_that_will_be_retried_sends_nothing_until_its_last_attem
 async def test_a_refresh_cut_off_by_the_wall_timeout_sends_failed(
     memory: MemoryEngine, webhook_manager, request_context, monkeypatch
 ):
-    bank_id, mm_id = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    setup = await _bank_with_model(memory, request_context, ["mental_model.refreshed"])
+    bank_id, mm_id = setup.bank_id, setup.mm_id
     task = await _queued_refresh(memory, bank_id, mm_id, request_context, monkeypatch)
 
     await memory.on_task_wall_timeout(task, None, "timed out", "llm.tools.attempt=1/2")

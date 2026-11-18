@@ -707,7 +707,7 @@ if TYPE_CHECKING:
     from hindsight_api.models import RequestContext
 
     from ..knowledge.service import KnowledgeService
-    from ..webhooks.models import WebhookEvent
+    from ..webhooks.models import MentalModelRefreshedEventData, WebhookEvent
     from ..webhooks.url_guard import GuardedWebhookClient
     from . import bank_aliases as bank_aliases_mod
     from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse, AuditLogSummary
@@ -5006,7 +5006,7 @@ class MemoryEngine(MemoryEngineInterface):
             f"last refreshed at {last_refreshed_at.isoformat()}, next refresh due at {due_at.isoformat()}",
         )
 
-    async def _handle_refresh_mental_model(self, task_dict: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_refresh_mental_model(self, task_dict: dict[str, Any]) -> "MentalModelRefreshedEventData":
         """
         Handler for refresh_mental_model tasks.
 
@@ -5022,7 +5022,7 @@ class MemoryEngine(MemoryEngineInterface):
             task_dict: Dict with 'bank_id', 'mental_model_id', 'operation_id'
 
         Returns:
-            The refreshed mental model, for the mental_model.refreshed webhook.
+            The mental_model.refreshed payload, queued with the operation's completion.
 
         Raises:
             ValueError: If required fields are missing
@@ -5157,7 +5157,11 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.warning(f"Post-mental-model-refresh hook error (non-fatal): {hook_err}")
 
         logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
-        return refreshed
+        from ..webhooks.models import MentalModelRefreshedEventData
+
+        return MentalModelRefreshedEventData(
+            mental_model_id=mental_model_id, name=refreshed.get("name"), outcome=rr.get("outcome")
+        )
 
     @_bind_bank_id("task_dict", key="bank_id")
     async def execute_task(self, task_dict: dict[str, Any]) -> None:
@@ -5234,7 +5238,7 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> None:
         """Run a task's handler and record its outcome. See :meth:`execute_task`."""
         consolidation_result: dict | None = None
-        refreshed_mental_model: dict | None = None
+        refresh_event: "WebhookEvent | None" = None
         bank_id = task_dict.get("bank_id")
         async with audit_context(
             self._audit_logger, task_type or "unknown", "system", bank_id, request=task_dict
@@ -5264,7 +5268,9 @@ class MemoryEngine(MemoryEngineInterface):
                 elif task_type == "vector_index_maintenance":
                     await self._handle_vector_index_maintenance(task_dict)
                 elif task_type == "refresh_mental_model":
-                    refreshed_mental_model = await self._handle_refresh_mental_model(task_dict)
+                    refresh_event = self._mental_model_refreshed_event(
+                        task_dict, "completed", await self._handle_refresh_mental_model(task_dict)
+                    )
                 elif task_type == "knowledge_ingest":
                     from ..knowledge.service import run_ingest_task
 
@@ -5290,19 +5296,14 @@ class MemoryEngine(MemoryEngineInterface):
                             result=consolidation_result,
                             schema=schema,
                         )
-                    elif task_type == "refresh_mental_model":
+                    elif refresh_event is not None:
                         await self._mark_operation_completed_and_fire_webhook(
                             operation_id=operation_id,
                             bank_id=task_dict.get("bank_id", ""),
                             status="completed",
                             result=None,
                             schema=schema,
-                            event=self._mental_model_refreshed_event(
-                                task_dict,
-                                status="completed",
-                                name=(refreshed_mental_model or {}).get("name"),
-                                outcome=((refreshed_mental_model or {}).get("reflect_response") or {}).get("outcome"),
-                            ),
+                            event=refresh_event,
                         )
                     else:
                         await self._mark_operation_completed(operation_id)
@@ -5497,16 +5498,7 @@ class MemoryEngine(MemoryEngineInterface):
             finally:
                 _current_schema.reset(token)
             if task_dict.get("operation_id"):
-                await self._fire_webhook_event(
-                    self._mental_model_refreshed_event(
-                        task_dict,
-                        status="failed",
-                        outcome="refresh_failed_error",
-                        failure_reason="unexpected_error",
-                        error_message=error_message,
-                    ),
-                    schema=schema,
-                )
+                await self._fire_mental_model_refresh_failed_webhook(task_dict, None, error_message, schema)
             return
         if task_dict.get("type") != "consolidation":
             return
@@ -5558,17 +5550,10 @@ class MemoryEngine(MemoryEngineInterface):
             logger.error(f"Failed to fire consolidation webhook for operation {operation_id}: {e}")
 
     def _mental_model_refreshed_event(
-        self,
-        task_dict: dict[str, Any],
-        *,
-        status: str,
-        name: str | None = None,
-        outcome: str | None = None,
-        failure_reason: str | None = None,
-        error_message: str | None = None,
+        self, task_dict: dict[str, Any], status: str, data: "MentalModelRefreshedEventData"
     ) -> "WebhookEvent":
         """Build the mental_model.refreshed event for a refresh operation that finished."""
-        from ..webhooks.models import MentalModelRefreshedEventData, WebhookEvent, WebhookEventType
+        from ..webhooks.models import WebhookEvent, WebhookEventType
 
         return WebhookEvent(
             event=WebhookEventType.MENTAL_MODEL_REFRESHED,
@@ -5576,37 +5561,28 @@ class MemoryEngine(MemoryEngineInterface):
             operation_id=task_dict.get("operation_id", ""),
             status=status,
             timestamp=datetime.now(UTC),
-            data=MentalModelRefreshedEventData(
-                mental_model_id=task_dict.get("mental_model_id", ""),
-                name=name,
-                outcome=outcome,
-                failure_reason=failure_reason,
-                error_message=error_message,
-            ),
+            data=data,
         )
 
     async def _fire_mental_model_refresh_failed_webhook(
-        self, task_dict: dict[str, Any], error: Exception, error_message: str, schema: str | None
+        self, task_dict: dict[str, Any], error: Exception | None, error_message: str, schema: str | None
     ) -> None:
         """Fire mental_model.refreshed with status ``failed`` for a refresh that failed for good.
 
         A refusal carries its own outcome and reason; anything else that escaped the
-        refresh is recorded the way ``_handle_refresh_mental_model`` records it.
+        refresh (or a wall-clock cut-off, ``error=None``) is recorded the way
+        ``_handle_refresh_mental_model`` records it.
         """
-        if isinstance(error, MentalModelRefreshError):
-            outcome, failure_reason = error.outcome, error.reason
-        else:
-            outcome, failure_reason = "refresh_failed_error", "unexpected_error"
-        await self._fire_webhook_event(
-            self._mental_model_refreshed_event(
-                task_dict,
-                status="failed",
-                outcome=outcome,
-                failure_reason=failure_reason,
-                error_message=error_message,
-            ),
-            schema=schema,
+        from ..webhooks.models import MentalModelRefreshedEventData
+
+        refusal = error if isinstance(error, MentalModelRefreshError) else None
+        data = MentalModelRefreshedEventData(
+            mental_model_id=task_dict.get("mental_model_id", ""),
+            outcome=refusal.outcome if refusal else "refresh_failed_error",
+            failure_reason=refusal.reason if refusal else "unexpected_error",
+            error_message=error_message,
         )
+        await self._fire_webhook_event(self._mental_model_refreshed_event(task_dict, "failed", data), schema=schema)
 
     async def _fire_webhook_event(self, event: "WebhookEvent", schema: str | None = None) -> None:
         """Queue a webhook event outside any transaction. Non-fatal - logs errors but does not raise."""
