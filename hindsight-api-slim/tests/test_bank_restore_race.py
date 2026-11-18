@@ -46,11 +46,20 @@ async def test_a_second_restore_into_the_same_fresh_bank_is_refused(memory, requ
             second = asyncio.create_task(
                 memory.import_bank_async(archive, request_context, target_bank_id=dst, scope=scope)
             )
+            # Wait on the first one's transaction id, not on anything first_pid blocks: the
+            # first restore also builds the bank's vector indexes, whose lock on memory_units
+            # blocks other xdist workers' writers. That ended the wait before the second
+            # restore had even started, so it found the committed bank and was refused by the
+            # "already exists" check instead (#6530). Only a writer of this bank's row waits
+            # on this transaction id.
             first_pid = await conn.fetchval("SELECT pg_backend_pid()")
             async with acquire_with_retry(backend) as probe:
-                for _ in range(200):
+                for _ in range(600):
                     if await probe.fetchval(
-                        "SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))", first_pid
+                        "SELECT 1 FROM pg_locks w JOIN pg_locks h ON h.locktype = 'transactionid' "
+                        "AND h.transactionid = w.transactionid AND h.granted AND h.pid = $1 "
+                        "WHERE w.locktype = 'transactionid' AND NOT w.granted",
+                        first_pid,
                     ):
                         return
                     await asyncio.sleep(0.05)
