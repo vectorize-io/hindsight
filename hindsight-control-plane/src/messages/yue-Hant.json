@@ -2593,7 +2593,6 @@
       "missing": "已經唔存在"
     },
     "selector": {
-      "select": "揀一個文件庫...",
       "search": "搵文件庫...",
       "empty": "暫時未有文件庫。",
       "noSearchResults": "冇文件庫啱你嘅搜尋。",

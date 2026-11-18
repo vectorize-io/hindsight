@@ -2593,7 +2593,6 @@
       "missing": "Ya no existe"
     },
     "selector": {
-      "select": "Selecciona un banco de conocimiento...",
       "search": "Buscar bancos de conocimiento...",
       "empty": "Aún no hay bancos de conocimiento.",
       "noSearchResults": "Ningún banco de conocimiento coincide con tu búsqueda.",

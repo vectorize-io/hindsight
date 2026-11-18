@@ -2593,7 +2593,6 @@
       "missing": "Existiert nicht mehr"
     },
     "selector": {
-      "select": "Wissensbank auswählen...",
       "search": "Wissensbänke durchsuchen...",
       "empty": "Noch keine Wissensbänke.",
       "noSearchResults": "Keine Wissensbank passt zu deiner Suche.",
