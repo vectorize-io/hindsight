@@ -1,5 +1,10 @@
 """What recall's decision reranker sends to a decision model, and how it reads the answers.
 
+Two ways to ask. **Pointwise** (:meth:`DecisionRerank.questions`, recall's): one Noul per
+candidate, each with its candidate alone in the question. **Listwise**
+(:meth:`DecisionRerank.requests`): the candidates side by side in the state, one Noul each,
+judged against the others, and the answers weighed with the input order (``ORDER_PRIOR``).
+
 This file is a public interface, meant to be used outside hindsight-api too: a service
 that reranks for Hindsight over the System One API can load it and send exactly the
 questions recall's :class:`~hindsight_api.engine.search.decision_reranker.DecisionModelReranker`
@@ -23,22 +28,48 @@ so treat it as an API: keep it backwards compatible, or say so in the release no
 """
 
 import json
+import math
 import re
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 
-# The question asked of each candidate. Four wordings were tried on the same pool; this
-# one is the best calibrated, lifting the wanted candidate to 0.74 against 0.59 for
-# "contains information needed to answer" while holding the pool median at 0.08. Framing it
-# as help-versus-distract asks the question a keep/drop decision actually turns on.
+# The pointwise question, asked of each candidate alone. Four wordings were tried on the same pool;
+# this one is the best calibrated, lifting the wanted candidate to 0.74 against 0.59 for "contains
+# information needed to answer" while holding the pool median at 0.08. Framing it as
+# help-versus-distract asks the question a keep/drop decision actually turns on.
 KEEP_INSTRUCTIONS = "Showing this memory to someone answering the question would help them, rather than distract them."
+
+# The listwise question, asked of each candidate with every candidate of the request side by side in
+# the state: each is judged against the others, so a cover page or a contents list loses to the page
+# holding the answer, which the pointwise question could not tell apart. For knowledge-bank pages, on
+# ViDoRe V3 markdown (nDCG@10, own-language queries) one side-by-side request over the search's best
+# pages, against the pointwise question over up to 100, lifted hr 70.47 -> 73.12, industrial
+# 60.67 -> 63.55 and the 8-subset mean 67.29 -> 67.90; on PDF pages, each shown as its picture and its
+# text, the mean fell 0.7 (68.90 -> 68.18, all on the French subsets), and the text-and-photo set
+# ATM-Bench rose (R@10 90.68 -> 92.81). Same System One model throughout.
+# Rewording it ("Does candidate ... hold what the question asks for?", or the old help-versus-distract
+# wording over the side-by-side state) moved PDF by less than half a point either way.
+COMPARE_INSTRUCTIONS = (
+    "Compared with the other candidates, does candidate `candidates.{key}` hold what the question asks for?"
+)
+COMPARE_CRITERIA = {
+    "true": "Yes: it holds facts, figures or passages the question asks for.",
+    "false": "No: it is off-topic, only loosely related, or only names the topic (a title, a contents list) "
+    "without the facts asked for.",
+}
+
+# Listwise answers order the candidates weighed with the caller's own order (its retrieval's): each by
+# its answer plus ``ORDER_PRIOR / log2(slot + 2)`` (``scores(answers, ORDER_PRIOR)``), so a candidate
+# the model is unsure of keeps its place rather than a coin toss moving it. 0.2-0.3 was best on every ViDoRe V3 markdown subset; 0 (the answer
+# alone) lost up to 1.2 nDCG@10 points (hr 70.54 -> 71.77 at 0.3).
+ORDER_PRIOR = 0.3
 
 # Defensive ceilings on the query and the shared context, which every request carries:
 # past the request ceiling, every request would fail. Each also stays within a quarter of
 # that ceiling, so a low one still leaves half of each request for the questions.
 MAX_QUERY_TOKENS = 2_000
 MAX_SHARED_CONTEXT_TOKENS = 4_000
-# The same for each candidate's text, which one question carries alone.
+# The same for each candidate's text, which a pointwise question carries alone.
 MAX_MEMORY_TOKENS = 4_000
 
 # Most questions in one request. Measured on System One, ~750 single-candidate questions
@@ -123,7 +154,7 @@ class EvidenceImage:
 
 @dataclass(frozen=True)
 class RerankQuestion:
-    """One candidate's question: would showing ``memory`` help someone answer, or distract?
+    """One candidate's pointwise question: would showing ``memory`` help someone answer, or distract?
 
     ``key`` names it in the request and in the answers; ``memory`` is the candidate's text,
     already capped.
@@ -135,6 +166,29 @@ class RerankQuestion:
     def system_one(self) -> dict[str, object]:
         """The question as System One takes it: a Noul with the task and the memory."""
         return {"type": "noul", "instructions": {"task": KEEP_INSTRUCTIONS, "memory": self.memory}}
+
+
+# A listwise candidate: its text, or ``{"picture": name, "text": text}`` for one shown by a picture too, ``name``
+# being the request's System One asset that holds it.
+Candidate = str | Mapping[str, str]
+
+
+def compare_question(key: str) -> dict[str, object]:
+    """The question about candidate ``key`` as System One takes it: a Noul, the candidates in the state."""
+    return {"type": "noul", "instructions": COMPARE_INSTRUCTIONS.format(key=key), "criteria": COMPARE_CRITERIA}
+
+
+@dataclass(frozen=True)
+class RerankRequest:
+    """One request of a rerank: ``slots`` (the candidates' places in the caller's list) side by side in
+    ``state``, under ``keys``, with one :func:`compare_question` each."""
+
+    slots: list[int]
+    keys: list[str]
+    state: dict[str, object]
+
+    def questions(self) -> dict[str, dict[str, object]]:
+        return {key: compare_question(key) for key in self.keys}
 
 
 @dataclass(frozen=True)
@@ -177,7 +231,7 @@ class DecisionRerank:
         return self.truncate(text, ceiling) if self.count(text) > ceiling else text
 
     def state(self, query: str, shared_context: str | None = None) -> str:
-        """The question's state: what is being asked, plus what every candidate shares.
+        """The pointwise and dedup state: what is being asked, plus what every candidate shares.
 
         ``shared_context`` is what recall would otherwise paste onto every candidate (the
         current date, and the bank's own context when every candidate shares one). It goes
@@ -189,12 +243,60 @@ class DecisionRerank:
         return f"{shared}\n\nQuestion: {query}" if shared else f"Question: {query}"
 
     def questions(self, docs: Sequence[str]) -> list[RerankQuestion]:
-        """One question per candidate, keyed ``m0``, ``m1``, ... in the order of ``docs``.
+        """Pointwise: one question per candidate, keyed ``m0``, ``m1``, ... in the order of ``docs``.
 
         Each memory is capped like the query, so no single question can outgrow the window.
         """
         return [
             RerankQuestion(key=f"m{slot}", memory=self.capped(doc, MAX_MEMORY_TOKENS)) for slot, doc in enumerate(docs)
+        ]
+
+    def requests(
+        self,
+        query: str,
+        docs: Sequence[Candidate],
+        shared_context: str | None = None,
+        extra_tokens: Callable[[str], int] | None = None,
+    ) -> list[RerankRequest]:
+        """Listwise: ``docs`` side by side, keyed ``c1``, ``c2``, ... in their order, in as few requests as fit
+        ``max_request_tokens``: each holds the question, the shared context and its run of candidates,
+        in order. One request when they all fit, as the ranking is best judged with every candidate in
+        view; split, each request's candidates are judged against each other only.
+
+        Each candidate's text is capped like the query, so no single one can outgrow the window.
+        ``extra_tokens(text)`` is what a candidate costs beyond its own text, given its JSON (a picture,
+        which the tokenizer does not count). At most ``MAX_QUESTIONS`` candidates a request.
+        """
+        base: dict[str, object] = {"question": self.capped(query, MAX_QUERY_TOKENS)}
+        shared = self.capped(shared_context or "", MAX_SHARED_CONTEXT_TOKENS)
+        if shared:
+            base["context"] = shared
+        envelope = self.count(json.dumps({**base, "candidates": {}}, ensure_ascii=False))
+        runs: list[list[tuple[int, str, Candidate]]] = []
+        current: list[tuple[int, str, Candidate]] = []
+        used = envelope
+        for slot, doc in enumerate(docs):
+            key = f"c{slot + 1}"
+            if isinstance(doc, str):
+                doc = self.capped(doc, MAX_MEMORY_TOKENS)
+            else:
+                doc = {**doc, "text": self.capped(doc.get("text", ""), MAX_MEMORY_TOKENS)}
+            text = json.dumps({key: doc}, ensure_ascii=False)
+            tokens = self.count(text + json.dumps(compare_question(key))) + (extra_tokens(text) if extra_tokens else 0)
+            if current and (len(current) >= MAX_QUESTIONS or used + tokens > self.max_request_tokens):
+                runs.append(current)
+                current, used = [], envelope
+            current.append((slot, key, doc))
+            used += tokens
+        if current:
+            runs.append(current)
+        return [
+            RerankRequest(
+                slots=[slot for slot, _, _ in run],
+                keys=[key for _, key, _ in run],
+                state={**base, "candidates": {key: doc for _, key, doc in run}},
+            )
+            for run in runs
         ]
 
     def split(
@@ -224,22 +326,24 @@ class DecisionRerank:
         return groups
 
     @staticmethod
-    def scores(answers: Sequence[float | None]) -> list[float]:
+    def scores(answers: Sequence[float | None], order_prior: float = 0.0) -> list[float]:
         """Scores from each candidate's Noul answer, both aligned with ``docs``.
 
         The scores are positions, not confidences: the best gets 1.0 and each place below
         it 1/n less. An unanswered candidate (None) counts as 0.0. Equal answers keep the
-        input order, so the caller's own order breaks ties.
+        input order, so the caller's own order breaks ties; with ``order_prior``
+        (``ORDER_PRIOR`` for listwise answers) each answer is also weighed with its place in
+        the input, so that order holds where the model is unsure.
         """
         n = len(answers)
-        order = sorted(range(n), key=lambda slot: -(answers[slot] or 0.0))
+        order = sorted(range(n), key=lambda slot: -((answers[slot] or 0.0) + order_prior / math.log2(slot + 2)))
         scores = [0.0] * n
         for position, slot in enumerate(order):
             scores[slot] = (n - position) / n
         return scores
 
     @staticmethod
-    def pruned(answers: Sequence[float | None]) -> list[float]:
+    def pruned(answers: Sequence[float | None], order_prior: float = 0.0) -> list[float]:
         """:meth:`scores`, with every candidate judged no help at exactly 0.0.
 
         No help is below ``PRUNE_BELOW``, or below ``PRUNE_BELOW_BEST`` of the best answer.
@@ -247,7 +351,7 @@ class DecisionRerank:
         """
         best = max((answer or 0.0 for answer in answers), default=0.0)
         floor = max(PRUNE_BELOW, PRUNE_BELOW_BEST * best)
-        scores = DecisionRerank.scores(answers)
+        scores = DecisionRerank.scores(answers, order_prior)
         return [score if score == 1.0 or (answer or 0.0) >= floor else 0.0 for answer, score in zip(answers, scores)]
 
     def repeat_questions(

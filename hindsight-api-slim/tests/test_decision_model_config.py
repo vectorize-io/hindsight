@@ -8,6 +8,7 @@ import pytest
 from aiohttp import web
 
 from hindsight_api.config import DecisionModelConfig, HindsightConfig
+from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.decision_model import (
     MAX_REQUEST_BYTES,
     DecisionAnswer,
@@ -79,11 +80,19 @@ def test_operation_override_wins_and_falls_back_per_setting(monkeypatch):
     assert (recall.model, recall.api_key) == ("jev-latest", "global-key")
 
 
-def test_knowledge_search_reranks_only_when_its_own_provider_is_named(monkeypatch):
-    # A reranked knowledge search is slower and costs a decision per hit: a global setup alone leaves it off.
-    assert _config(monkeypatch, _GLOBAL).decision_model_config("kb") is None
-    config = _config(monkeypatch, {**_GLOBAL, "HINDSIGHT_API_KB_DECISION_MODEL_PROVIDER": "typesafe"})
-    assert config.decision_model_config("kb") == config.decision_model_config("recall")
+def test_the_knowledge_reranker_is_any_cohere_rerank_endpoint(monkeypatch):
+    config = _config(monkeypatch, {})
+    assert config.kb_reranker_url is None
+    # Sized for a long-window reranker that reads pictures: what the published runs use.
+    assert (config.kb_reranker_max_tokens, config.kb_reranker_images) == (120_000, True)
+    url = {"HINDSIGHT_API_KB_RERANKER_URL": "https://rerank.test/v1/rerank"}
+    with pytest.raises(ValueError, match="KB_RERANKER_MODEL"):
+        _config(monkeypatch, url).validate()
+    config = _config(
+        monkeypatch, {**url, "HINDSIGHT_API_KB_RERANKER_MODEL": "m", "HINDSIGHT_API_KB_RERANKER_IMAGES": "0"}
+    )
+    config.validate()
+    assert (config.kb_reranker_model, config.kb_reranker_images) == ("m", False)
 
 
 def test_operation_can_opt_out(monkeypatch):
@@ -161,9 +170,10 @@ def test_unknown_provider_fails_at_startup(monkeypatch):
 
 def test_keys_and_endpoints_are_credentials():
     credentials = HindsightConfig.get_credential_fields()
-    for prefix in ("", "recall_", "reflect_", "consolidation_", "kb_"):
+    for prefix in ("", "recall_", "reflect_", "consolidation_"):
         assert f"{prefix}decision_model_api_key" in credentials
         assert f"{prefix}decision_model_base_url" in credentials
+    assert {"kb_reranker_api_key", "kb_reranker_url"} <= credentials
 
 
 _QUESTIONS = {

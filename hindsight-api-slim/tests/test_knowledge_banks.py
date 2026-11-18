@@ -18,12 +18,16 @@ import pytest
 from PIL import Image
 
 from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
-from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel, DecisionResponse
-from hindsight_api.engine.search.decision_reranker import DecisionModelReranker
 from hindsight_api.engine.token_encoding import count_tokens
 from hindsight_api.knowledge import media
 from hindsight_api.knowledge.embedders import EmbedInput, KnowledgeEmbedder
-from hindsight_api.knowledge.service import _EMBED_ROUND, _Work, get_knowledge_service, run_ingest_task
+from hindsight_api.knowledge.service import (
+    _EMBED_ROUND,
+    JUDGE_CONTEXT_TOKENS,
+    _Work,
+    get_knowledge_service,
+    run_ingest_task,
+)
 from hindsight_api.knowledge.store import StatusUpdate
 
 KB = "/v1/default/knowledge-banks"
@@ -718,62 +722,49 @@ async def test_reflect_recall_tool_returns_linked_documents_as_the_authority(api
 
 
 class _JudgeByPicture:
-    """A decision model that judges each hit by the picture it is shown: the bluer, the more relevant."""
-
-    max_request_tokens = 26_000
-    tokenizer = None
-    takes_images = True
-    rerank_interface = DecisionModel.rerank_interface
+    """A knowledge reranker that scores the documents it is sent by their pictures: the bluer, the more
+    relevant; a text document, not at all. ``settings`` are the server's knowledge reranker settings."""
 
     def __init__(self) -> None:
-        self.pictures: dict[str, Image.Image] = {}
+        self.settings: dict[str, object] = {"kb_reranker_images": True}
+        self.pictures: list[Image.Image] = []
         self.texts: list[str] = []
-        self.picks: list[int] = []  # how many hits each pick compared
+        self.requests: list[int] = []  # how many documents each request held
 
-    async def ask_all(self, state, questions, *, scope, assets=None):
-        answers = {}
-        for key, question in questions.items():
-            memory = question.instructions["memory"]
-            name = next((n for n in assets or {} if n in memory), None)
-            if name is None:
-                self.texts.append(memory)
-                answers[key] = DecisionAnswer(noul=0.0)
+    async def scores(self, query, documents):
+        self.requests.append(len(documents))
+        scores = []
+        for document in documents:
+            if isinstance(document, str):
+                self.texts.append(document)
+                scores.append(0.0)
                 continue
-            assert assets[name].format == "jpg"
-            picture = Image.open(io.BytesIO(base64.b64decode(assets[name].data_base64))).convert("RGB")
-            self.pictures[name] = picture
-            red, _green, blue = picture.resize((1, 1)).getpixel((0, 0))
-            answers[key] = DecisionAnswer(noul=blue / 255)
-        return answers
-
-    async def ask(self, state, questions, *, scope, assets=None):
-        """The pick over the best few: the bluest picture is the likeliest, a text hit the least."""
-        answers = {}
-        for key, question in questions.items():
-            blues = {}
-            for option, text in question.criteria.items():
-                name = next((n for n in assets or {} if n in text), None)
-                if name is None:
-                    blues[option] = 0.0
-                    continue
-                picture = Image.open(io.BytesIO(base64.b64decode(assets[name].data_base64))).convert("RGB")
-                blues[option] = picture.resize((1, 1)).getpixel((0, 0))[2] / 255
-            total = sum(blues.values()) or 1.0
-            self.picks.append(len(blues))
-            answers[key] = DecisionAnswer(probabilities={o: b / total for o, b in blues.items()})
-        return DecisionResponse(answers=answers)
+            assert document["type"] == "image" and isinstance(document["text"], str)
+            picture = Image.open(io.BytesIO(base64.b64decode(document["b64"]))).convert("RGB")
+            self.pictures.append(picture)
+            scores.append(picture.resize((1, 1)).getpixel((0, 0))[2] / 255)
+        return scores
 
 
 @pytest.fixture
-def judge(memory):
+def judge(memory, monkeypatch):
+    from hindsight_api import config as config_module
+    from hindsight_api.knowledge import service as service_module
+
+    fake = _JudgeByPicture()
+    monkeypatch.setattr(
+        service_module,
+        "get_config",
+        lambda: config_module.StaticConfigProxy(replace(config_module._get_raw_config(), **fake.settings)),
+    )
     service = get_knowledge_service(memory)
     previous = service._reranker, service._reranker_resolved
-    service._reranker, service._reranker_resolved = DecisionModelReranker(_JudgeByPicture()), True  # type: ignore[arg-type]
-    yield service._reranker._client
+    service._reranker, service._reranker_resolved = fake, True  # type: ignore[assignment]
+    yield fake
     service._reranker, service._reranker_resolved = previous
 
 
-async def test_a_decision_model_reranks_search_hits_by_their_pictures(api_client, kb, judge):
+async def test_the_reranker_reranks_search_hits_by_their_pictures(api_client, kb, judge):
     await _upload(
         api_client,
         kb,
@@ -791,37 +782,36 @@ async def test_a_decision_model_reranks_search_hits_by_their_pictures(api_client
 
     hits = await _search(api_client, kb, query="red")
     assert {h["document_id"] for h in hits} == {"manual", "demo", "faq"}
-    assert judge.texts == ["red pages and blue pages"]  # a text hit is judged by its text, with no picture
-    # The two pages by their pictures, at most 1024 a side; the video is not judged (four stills ranked
+    assert judge.texts == ["red pages and blue pages"]  # a text hit is shown by its text, with no picture
+    # The two pages by their pictures, at most 1024 a side; the video is not shown (four stills ranked
     # clips worse than search alone), it keeps its search place.
-    sizes = [picture.size for picture in judge.pictures.values()]
+    sizes = [picture.size for picture in judge.pictures]
     assert len(sizes) == 2 and all(max(size) <= 1024 for size in sizes)
-    blue = next(p for p in judge.pictures.values() if p.resize((1, 1)).getpixel((0, 0))[2] > 128)
+    blue = next(p for p in judge.pictures if p.resize((1, 1)).getpixel((0, 0))[2] > 128)
     assert blue.size != (1024, 1024)  # a page keeps its shape: no video grid was made
-    # Then one pick compared the judged hits at the top (the video stays out of it too), and the blue
-    # page, the pick's likeliest, leads.
-    assert judge.picks == [3]
+    # All three in one request (they fit), and the blue page leads.
+    assert judge.requests == [3]
     assert (hits[0]["document_id"], hits[0]["page"]) == ("manual", 2)
 
-    # A search with no text is not reranked: the questions ask about the query's words.
+    # A search with no text is not reranked: the reranker scores the hits against the query's words.
     judge.pictures.clear()
     await _search(api_client, kb, query_image=base64.b64encode(_png((0, 0, 255))).decode())
-    assert judge.pictures == {}
+    assert judge.pictures == []
 
 
-async def test_a_picture_too_small_for_the_model_is_judged_by_its_text(api_client, kb, judge):
-    # 64x64: System One takes no side under 280 px, and one refused image fails the whole request.
+async def test_a_picture_too_small_for_the_reranker_is_judged_by_its_text(api_client, kb, judge):
+    # 64x64: image rerankers take no side under 280 px, and one refused image fails the whole request.
     await _upload(api_client, kb, [("icon.png", _png((0, 0, 255)), "image/png")], [{"document_id": "icon"}])
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "a blue icon"}]})
     assert r.status_code == 200, r.text
 
     hits = await _search(api_client, kb, query="blue icon")
     assert {h["document_id"] for h in hits} == {"icon", "faq"}
-    assert judge.pictures == {}
+    assert judge.pictures == []
 
 
-async def test_a_decision_model_without_images_judges_pages_by_their_text(api_client, kb, judge):
-    judge.takes_images = False
+async def test_a_reranker_without_images_judges_pages_by_their_text(api_client, kb, judge):
+    judge.settings["kb_reranker_images"] = False
     pdf = _text_pdf("Emergency exits are on floor nine")
     await _upload(api_client, kb, [("exits.pdf", pdf, "application/pdf")], [{"document_id": "exits"}])
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "exits and floors"}]})
@@ -829,29 +819,48 @@ async def test_a_decision_model_without_images_judges_pages_by_their_text(api_cl
 
     r = await api_client.post(f"{KB}/{kb}/search", json={"query": "where are the exits"})
     assert r.status_code == 200, r.text  # not a 503 for the picture it cannot take
-    assert judge.pictures == {}
+    assert judge.pictures == []
     assert "Emergency exits are on floor nine" in judge.texts
 
 
-async def test_a_page_with_a_picture_is_also_judged_by_its_text_alone(api_client, kb, judge):
-    pdf = _text_pdf("Emergency exits are on floor nine")
+async def test_the_rerank_fills_one_request_and_a_low_budget_holds_less(api_client, kb, judge, monkeypatch):
+    from hindsight_api.knowledge import service as service_module
+
+    # Ten notes of ~150 tokens and a request of ~600: about three fit it.
+    items = [{"document_id": f"note{i}", "text": f"note {i} about the red key. " + "detail " * 140} for i in range(10)]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.status_code == 200, r.text
+    judge.settings["kb_reranker_max_tokens"] = 600
+
+    await _search(api_client, kb, query="red key", max_tokens=1_000_000)
+    assert len(judge.requests) == 1 and 1 < judge.requests[0] <= 3  # one request, as deep as it holds
+    shallow = judge.requests[0]
+
+    judge.settings["kb_reranker_max_tokens"] = 100_000
+    monkeypatch.setattr(service_module, "DEFAULT_KB_RERANKER_LOW_TOKENS", 600)
+    for budget, shown in (("low", shallow), ("mid", 10), ("high", 10)):
+        judge.requests.clear()
+        await _search(api_client, kb, query="red key", budget=budget, max_tokens=1_000_000)
+        assert judge.requests == [shown], budget
+
+
+async def test_a_long_page_is_shown_capped_to_the_context_it_gets(api_client, kb, judge):
+    # A PDF page's own text is not trimmed like a text hit's context: uncapped, one long page could
+    # fill the single request every candidate shares.
+    judge.settings["kb_reranker_images"] = False
+    pdf = _text_pdf("Emergency exits " + "floor nine " * 3000)
     await _upload(api_client, kb, [("exits.pdf", pdf, "application/pdf")], [{"document_id": "exits"}])
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "exits and floors"}]})
     assert r.status_code == 200, r.text
 
     await _search(api_client, kb, query="where are the exits")
-    # The page once with its picture, and once by its text alone (the two answers are averaged); the text
-    # hit once.
-    assert len(judge.pictures) == 1
-    assert sorted(t for t in judge.texts if "floor nine" in t or "exits and floors" in t) == [
-        "Emergency exits are on floor nine",
-        "exits and floors",
-    ]
+    page = next(t for t in judge.texts if "floor nine" in t)
+    assert count_tokens(page) <= JUDGE_CONTEXT_TOKENS < count_tokens("floor nine " * 3000)
 
 
 async def test_pieces_of_one_short_document_are_judged_once(api_client, kb, judge):
     # A guide long enough for several passages, short enough to be judged whole: every passage would show
-    # the model the same text, so it is one candidate.
+    # the reranker the same text, so it is one candidate.
     guide = "\n\n".join(f"Step {i}. Rotate the red key in the console. " + "detail " * 60 for i in range(6))
     items = [{"document_id": "guide", "text": guide}, {"document_id": "note", "text": "a red note"}]
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
@@ -864,7 +873,7 @@ async def test_pieces_of_one_short_document_are_judged_once(api_client, kb, judg
     assert any(text.count("Step") == 6 for text in judge.texts)
 
 
-async def test_a_failing_decision_model_is_reported_as_itself(api_client, kb, judge, monkeypatch):
+async def test_a_failing_reranker_is_reported_as_itself(api_client, kb, judge, monkeypatch):
     r = await api_client.post(
         f"{KB}/{kb}/ingest",
         json={"items": [{"document_id": d, "text": f"{d} guide"} for d in ("keys", "billing")]},
@@ -872,11 +881,11 @@ async def test_a_failing_decision_model_is_reported_as_itself(api_client, kb, ju
     assert r.status_code == 200, r.text
 
     async def down(*args, **kwargs):
-        raise UpstreamHTTPError(502, "bad gateway", {}, "http://decisions")
+        raise UpstreamHTTPError(400, "bad request", {}, "http://rerank")
 
-    monkeypatch.setattr(judge, "ask_all", down)
+    monkeypatch.setattr(judge, "scores", down)
     r = await api_client.post(f"{KB}/{kb}/search", json={"query": "guide"})
-    assert r.status_code == 503 and "decision model" in r.json()["detail"], r.text
+    assert r.status_code == 503 and "knowledge reranker" in r.json()["detail"], r.text
 
 
 async def test_bank_list_pages_and_searches_by_id(api_client, fake_embedder):
@@ -952,26 +961,21 @@ async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, 
     assert "score" not in (await _search(api_client, kb, query="invoice"))[0]
 
 
-def test_the_decision_models_order_is_fused_with_the_search_order():
-    from hindsight_api.knowledge.service import fused_order
+def test_candidates_fill_the_window_in_search_order():
+    from hindsight_api.knowledge.service import fitting
 
-    # The model likes slot 3 best and slot 0 least. Its rank counts double, so 3 climbs to the top and 0
-    # drops below 1; but 2, which the model ranks third, does not pass 0: search still has a say.
-    assert fused_order(4, {0: 0.1, 1: 0.5, 2: 0.4, 3: 0.9}) == [3, 1, 0, 2]
-    # An unjudged slot (a video) keeps its search rank on both sides: 0 stays first, the judged reorder.
-    assert fused_order(3, {1: 0.2, 2: 0.8}) == [0, 2, 1]
-    # Two neighbours the model sees the other way round: the model's side wins.
-    assert fused_order(2, {0: 0.1, 1: 0.9}) == [1, 0]
+    assert fitting([4, 4, 4], 10) == 2  # the third does not fit
+    assert fitting([4, 7, 2], 10) == 1  # in order: a later small one never jumps ahead
+    assert fitting([12, 3], 10) == 1  # the first always goes, even over the window
+    assert fitting([3, 3], 10) == 2
 
 
-def test_the_pick_reorders_the_candidates_it_compared_and_leaves_a_video_in_place():
-    from hindsight_api.knowledge.service import picked_order
+def test_the_scores_reorder_the_candidates_and_leave_a_video_in_place():
+    from hindsight_api.knowledge.service import reranked_order
 
-    # A sure pick of the third climbs to the top; a split pick keeps the order.
-    assert picked_order([7, 8, 9], {7: 0.05, 8: 0.05, 9: 0.9}) == [9, 7, 8]
-    assert picked_order([7, 8, 9], {7: 0.3, 8: 0.35, 9: 0.35}) == [7, 8, 9]
-    # 5 is a video the pick did not compare: it keeps its slot, the others move around it.
-    assert picked_order([5, 8, 9], {8: 0.05, 9: 0.95}) == [5, 9, 8]
+    assert reranked_order([0, 1, 2], {0: 0.05, 1: 0.05, 2: 0.9}) == [2, 0, 1]  # a tie keeps the search's order
+    # Candidate 1 (a video) was not shown: it keeps its place, the others swap around it.
+    assert reranked_order([0, 1, 2], {0: 0.05, 2: 0.95}) == [2, 1, 0]
 
 
 def test_a_text_hit_is_judged_with_the_passages_around_it():

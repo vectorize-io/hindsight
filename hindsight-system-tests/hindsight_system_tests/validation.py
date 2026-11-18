@@ -14,6 +14,7 @@ would not accept, and the stub says so with a 400 instead of answering.
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 # The OpenAI chat-completions request surface. Kept explicit rather than
@@ -191,7 +192,13 @@ def validate_rerank(body: dict[str, Any]) -> None:
     if not isinstance(documents, list) or not documents:
         raise RequestRejected("'documents' must be a non-empty array")
     for index, document in enumerate(documents):
-        if not isinstance(document, str):
+        # A text, or an image document for a reranker that reads pictures: base64 JPEG and its text.
+        if isinstance(document, dict):
+            if set(document) != {"type", "b64", "text"} or document["type"] != "image":
+                raise RequestRejected(f"documents[{index}] must be a string or an image document")
+            if base64.b64decode(document["b64"])[:2] != b"\xff\xd8":
+                raise RequestRejected(f"documents[{index}].b64 must be a base64 JPEG")
+        elif not isinstance(document, str):
             raise RequestRejected(f"documents[{index}] must be a string")
 
 

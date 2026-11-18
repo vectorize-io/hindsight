@@ -505,6 +505,10 @@ class RerankStub:
     #: retrieval order, which is not stable enough to pin.
     verdicts: dict[str, float]
 
+    #: What the Cohere-shaped /rerank scores a document, keyed by text it contains, for
+    #: the stories about a reranker's order (knowledge search's). Others are scored lexically.
+    rerank_scores: dict[str, float]
+
     #: The state each of those questions arrived with, so a story can see what the
     #: model was told besides the memory.
     states: list[str]
@@ -529,6 +533,7 @@ class RerankStub:
 
     def __init__(self) -> None:
         self.verdicts = {}
+        self.rerank_scores = {}
         self.states = []
         self.repeats = set()
         self.ranked = []
@@ -540,6 +545,10 @@ class RerankStub:
     def verdict(self, state: str, memory: str) -> float:
         scripted = next((score for text, score in self.verdicts.items() if text in memory), None)
         return self.score(state, memory) if scripted is None else scripted
+
+    def reranked(self, query: str, document: str) -> float:
+        scripted = next((score for text, score in self.rerank_scores.items() if text in document), None)
+        return self.score(query, document) if scripted is None else scripted
 
     def score(self, query: str, document: str) -> float:
         from .lexical import lexical_relevance
@@ -622,6 +631,7 @@ class Stubs:
         self.embeddings.calls.clear()
         self.rerank.cut_level = RerankStub.cut_level
         self.rerank.verdicts = {}
+        self.rerank.rerank_scores = {}
         self.rerank.states = []
         self.rerank.repeats = set()
         self.rerank.assets = []

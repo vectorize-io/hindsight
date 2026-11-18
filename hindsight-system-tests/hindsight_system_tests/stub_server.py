@@ -318,15 +318,6 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                     "probabilities": {"yes": 0.9, "no": 0.1} if keep else {"yes": 0.1, "no": 0.9},
                     "confidence": 0.9,
                 }
-            elif question_id == "pick":
-                # Knowledge search's pick over its best few hits: the rulebook's verdicts, normalised.
-                verdicts = {
-                    key: stubs.rerank.verdict(body["state"], str(text)) for key, text in question["criteria"].items()
-                }
-                total = sum(verdicts.values()) or 1.0
-                probabilities = {key: value / total for key, value in verdicts.items()}
-                best = max(probabilities, key=lambda key: probabilities[key])
-                answers[question_id] = {"type": "choice", "choice": best, "probabilities": probabilities}
             elif question["type"] == "choice":
                 criteria = question["criteria"]
                 stubs.rerank.ranked.extend(text if isinstance(text, str) else str(text) for text in criteria.values())
@@ -361,9 +352,15 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
             return _provider_error(f"stub provider error {status}", code="stub_error", status=status)
 
         query = body["query"]
+        # An image document (knowledge search's page or photo) is scored by its text; its picture is
+        # recorded like a decision model's asset, by its format.
+        documents = [document if isinstance(document, str) else document["text"] for document in body["documents"]]
+        stubs.rerank.assets.append(
+            {str(index): "jpg" for index, document in enumerate(body["documents"]) if not isinstance(document, str)}
+        )
         results = [
-            {"index": index, "relevance_score": stubs.rerank.score(query, document)}
-            for index, document in enumerate(body["documents"])
+            {"index": index, "relevance_score": stubs.rerank.reranked(query, document)}
+            for index, document in enumerate(documents)
         ]
         results.sort(key=lambda item: item["relevance_score"], reverse=True)
         return JSONResponse({"id": "rerank-stub", "results": results})
