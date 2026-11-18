@@ -515,8 +515,8 @@ class LocalSTEmbeddings(Embeddings):
             return [emb.tolist() for emb in embeddings]
         finally:
             # Only reclaim the GPU allocator pool here, and only when actually on a
-            # GPU (opt-in MPS/CUDA/XPU). encode() runs in tight retain loops, so a
-            # gc.collect()/malloc_trim on every call is too costly on the CPU default
+            # GPU (CUDA/XPU). encode() runs in tight retain loops, so a malloc_trim
+            # on every call is too costly on the CPU default
             # — and unnecessary: refcounting frees the small transient buffers
             # immediately and the allocator reuses them for the next batch. (The
             # reranker keeps its per-batch heap trim for the #1717 CPU case; it runs

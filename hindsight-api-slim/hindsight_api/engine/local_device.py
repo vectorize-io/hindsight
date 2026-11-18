@@ -74,7 +74,6 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.util
-import gc
 import logging
 import os
 import sys
@@ -286,18 +285,12 @@ def release_local_inference_memory(device_type: str | None = None) -> None:
     """Release transient heap (and GPU allocator) memory after a local inference batch.
 
     Returns freed native pages to the OS, and empties the GPU allocator pool when
-    the model ran on a GPU. Python's normal reference counting already releases
-    the short-lived CPU inference buffers; a full cyclic-GC scan on every batch is
-    needlessly expensive on that hot path, so CPU callers leave cyclic GC to its
-    normal threshold-based schedule. MLX callers skip it for the same reason: MLX
-    arrays are refcounted too. Torch GPU callers retain the existing full cleanup
-    because allocator release is part of the opt-in accelerator memory policy.
+    the model ran on a GPU. It never runs a full cyclic-GC scan: reference counting
+    already frees the short-lived inference buffers on every device, and a full
+    ``gc.collect()`` holds the GIL for a scan that grows with the process heap. On
+    CUDA that serialized the local-embeddings threads and left the GPU idle while
+    one core sat pinned (issue #6636; CPU was exempted earlier in #3858).
     """
-    # "mlx" is exempt for the same reason "cpu" is: MLX arrays are refcounted C++
-    # objects behind Python wrappers, so reference counting already releases them and
-    # a process-wide cycle scan on every batch does not release anything extra.
-    if device_type not in ("cpu", "mlx"):
-        gc.collect()
     _heap_trim()
     _empty_gpu_cache(device_type)
 

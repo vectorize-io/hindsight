@@ -7,11 +7,14 @@ real GPU: the functions under test do ``import torch`` lazily, so the fake is
 picked up.
 """
 
+import gc
 import logging
 import os
 import sys
 import types
 from unittest.mock import patch
+
+import pytest
 
 from hindsight_api.engine import local_device
 from hindsight_api.engine.local_device import (
@@ -214,24 +217,26 @@ class TestEmptyGpuCache:
 
 
 class TestReleaseLocalInferenceMemory:
-    def test_release_runs_all_steps_for_gpu(self):
+    @pytest.mark.parametrize("device", ["cuda", "xpu"])
+    def test_release_gpu_skips_gc_but_trims_and_empties_cache(self, device):
+        """A full gc.collect() per call serialized CUDA embed threads on the GIL (#6636)."""
         log = []
         calls = []
         with (
-            patch.dict(sys.modules, {"torch": _fake_torch(empty_cache_log=log)}),
-            patch.object(local_device.gc, "collect", lambda: calls.append("gc")),
+            patch.dict(sys.modules, {"torch": _fake_torch(has_xpu=True, empty_cache_log=log)}),
+            patch.object(gc, "collect", lambda: calls.append("gc")),
             patch.object(local_device, "_heap_trim", lambda: calls.append("trim")),
         ):
-            release_local_inference_memory("cuda")
-        assert calls == ["gc", "trim"]
-        assert log == ["cuda"]
+            release_local_inference_memory(device)
+        assert calls == ["trim"]
+        assert log == [device]
 
     def test_release_cpu_skips_gc_and_empty_cache_but_trims_heap(self):
         calls = []
         log = []
         with (
             patch.dict(sys.modules, {"torch": _fake_torch(empty_cache_log=log)}),
-            patch.object(local_device.gc, "collect", lambda: calls.append("gc")),
+            patch.object(gc, "collect", lambda: calls.append("gc")),
             patch.object(local_device, "_heap_trim", lambda: calls.append("trim")),
         ):
             release_local_inference_memory("cpu")
@@ -246,7 +251,7 @@ class TestReleaseLocalInferenceMemory:
         mlx, core = _fake_mlx(clear_cache_log=mlx_log)
         with (
             patch.dict(sys.modules, {"mlx": mlx, "mlx.core": core, "torch": _fake_torch()}),
-            patch.object(local_device.gc, "collect", lambda: calls.append("gc")),
+            patch.object(gc, "collect", lambda: calls.append("gc")),
             patch.object(local_device, "_heap_trim", lambda: calls.append("trim")),
         ):
             release_local_inference_memory("mlx")
