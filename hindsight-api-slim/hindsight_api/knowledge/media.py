@@ -612,6 +612,24 @@ def l2_normalize(vector: list[float]) -> list[float]:
 JUDGE_SIDE = 1024
 
 
+def query_picture(data: bytes, low: int, high: int) -> bytes | None:
+    """:func:`judge_picture` of a search's query image, enlarged (aspect kept) so its short side is ``low``
+    when smaller, as one picture costs nothing to enlarge; None when its long side would pass ``high``."""
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(judge_picture(data)))
+    short = min(image.size)
+    if short < low:
+        scale = low / short
+        size = (max(low, round(image.width * scale)), max(low, round(image.height * scale)))
+        if max(size) > high:
+            return None
+        image = image.resize(size, Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    image.save(out, format="JPEG", quality=85)
+    return out.getvalue()
+
+
 def judge_picture(data: bytes) -> bytes:
     """A JPEG a decision model judges an image or PDF page hit by, at most ``JUDGE_SIDE`` a side."""
     from PIL import Image

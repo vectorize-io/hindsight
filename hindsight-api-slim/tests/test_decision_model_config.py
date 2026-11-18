@@ -85,6 +85,8 @@ def test_the_knowledge_reranker_is_any_cohere_rerank_endpoint(monkeypatch):
     assert config.kb_reranker_url is None
     # Sized for a long-window reranker that reads pictures: what the published runs use.
     assert (config.kb_reranker_max_tokens, config.kb_reranker_images) == (120_000, True)
+    assert config.kb_reranker_query_images is False  # a reranker that takes only a string query keeps working
+    assert _config(monkeypatch, {"HINDSIGHT_API_KB_RERANKER_QUERY_IMAGES": "true"}).kb_reranker_query_images is True
     url = {"HINDSIGHT_API_KB_RERANKER_URL": "https://rerank.test/v1/rerank"}
     with pytest.raises(ValueError, match="KB_RERANKER_MODEL"):
         _config(monkeypatch, url).validate()

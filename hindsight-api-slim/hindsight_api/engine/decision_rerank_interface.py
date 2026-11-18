@@ -257,6 +257,7 @@ class DecisionRerank:
         docs: Sequence[Candidate],
         shared_context: str | None = None,
         extra_tokens: Callable[[str], int] | None = None,
+        query_picture: str | None = None,
     ) -> list[RerankRequest]:
         """Listwise: ``docs`` side by side, keyed ``c1``, ``c2``, ... in their order, in as few requests as fit
         ``max_request_tokens``: each holds the question, the shared context and its run of candidates,
@@ -266,12 +267,23 @@ class DecisionRerank:
         Each candidate's text is capped like the query, so no single one can outgrow the window.
         ``extra_tokens(text)`` is what a candidate costs beyond its own text, given its JSON (a picture,
         which the tokenizer does not count). At most ``MAX_QUESTIONS`` candidates a request.
+
+        ``query_picture`` is the System One asset that holds a picture the question is asked with: the
+        question is then ``{"text": query, "picture": query_picture}`` (``text`` left out when ``query`` is
+        empty), and the picture is in every request, so each can judge its candidates against it. Its cost
+        is ``extra_tokens`` of the request's envelope JSON, which holds the ``"picture"`` key as a
+        candidate's does. Without one the question is the plain ``query`` string, as before.
         """
-        base: dict[str, object] = {"question": self.capped(query, MAX_QUERY_TOKENS)}
+        capped_query = self.capped(query, MAX_QUERY_TOKENS)
+        question: str | dict[str, str] = capped_query
+        if query_picture is not None:
+            question = {"text": capped_query, "picture": query_picture} if capped_query else {"picture": query_picture}
+        base: dict[str, object] = {"question": question}
         shared = self.capped(shared_context or "", MAX_SHARED_CONTEXT_TOKENS)
         if shared:
             base["context"] = shared
-        envelope = self.count(json.dumps({**base, "candidates": {}}, ensure_ascii=False))
+        envelope_json = json.dumps({**base, "candidates": {}}, ensure_ascii=False)
+        envelope = self.count(envelope_json) + (extra_tokens(envelope_json) if extra_tokens and query_picture else 0)
         runs: list[list[tuple[int, str, Candidate]]] = []
         current: list[tuple[int, str, Candidate]] = []
         used = envelope

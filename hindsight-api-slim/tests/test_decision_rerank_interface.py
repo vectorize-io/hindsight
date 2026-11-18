@@ -57,6 +57,40 @@ def test_the_requests_fill_the_window_in_order_and_count_what_the_caller_adds():
     assert with_context[0].state == {"question": "q", "context": "today is monday", "candidates": {"c1": "alpha beta"}}
 
 
+def _words(max_request_tokens: int = 1_000) -> decision_rerank_interface.DecisionRerank:
+    return decision_rerank_interface.DecisionRerank(
+        count=lambda t: len(t.split()), truncate=lambda t, n: t, max_request_tokens=max_request_tokens
+    )
+
+
+def test_a_query_picture_goes_in_the_question_and_without_one_the_question_is_unchanged():
+    words = _words()
+    (plain,) = words.requests("q", ["a"])
+    assert plain.state["question"] == "q"  # the string form, byte for byte
+    (with_text,) = words.requests("q", ["a"], query_picture="query")
+    assert with_text.state["question"] == {"text": "q", "picture": "query"}
+    (image_only,) = words.requests("", ["a"], query_picture="query")
+    assert image_only.state["question"] == {"picture": "query"}  # no empty text
+    (empty,) = words.requests("", ["a"])
+    assert empty.state["question"] == ""
+
+
+def test_the_query_picture_costs_tokens_and_rides_in_every_split_request():
+    words = _words()
+    docs = ["alpha beta", "gamma delta"]
+    cost = lambda text: 900 if '"picture"' in text else 0  # noqa: E731
+    # The hook is the one candidate pictures use. Without a query picture it costs nothing and both fit.
+    (whole,) = words.requests("q", docs, extra_tokens=cost)
+    assert whole.slots == [0, 1]
+    # With one, every request's envelope holds it, so the pool splits and the picture repeats in each.
+    split = words.requests("q", docs, extra_tokens=cost, query_picture="query")
+    assert [r.slots for r in split] == [[0], [1]]
+    assert all(r.state["question"] == {"text": "q", "picture": "query"} for r in split)
+    # No hook, no cost: the picture is free and the pool stays whole.
+    (free,) = words.requests("q", docs, query_picture="query")
+    assert free.slots == [0, 1]
+
+
 def test_the_order_weighs_the_answers_with_the_input_order():
     """Listwise: an even answer keeps the caller's order; a clear one overturns it. Pointwise
     (no prior) the answer alone orders."""

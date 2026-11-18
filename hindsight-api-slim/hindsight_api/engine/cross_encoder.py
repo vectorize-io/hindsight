@@ -838,10 +838,12 @@ class CohereCompatibleRerankClient:
 
         return all_scores
 
-    async def scores(self, query: str, documents: list[str | dict[str, str]]) -> list[float]:
+    async def scores(self, query: str | dict[str, str], documents: list[str | dict[str, str]]) -> list[float]:
         """One request: each document's relevance score, aligned with ``documents``, 0.0 for one the
         endpoint left out. A document is a text, or an object for endpoints that take one (an image
-        document, ``{"type": "image", "b64": ..., "text": ...}``, for a reranker that reads pictures)."""
+        document, ``{"type": "image", "b64": ..., "text": ...}``, for a reranker that reads pictures).
+        The query is a text, or the same kind of object (``text`` optional) when the search is by a
+        picture, for a reranker that reads pictures."""
         body: dict[str, object] = {
             "model": self.model,
             "query": query,
