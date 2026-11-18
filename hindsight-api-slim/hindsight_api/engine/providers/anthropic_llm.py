@@ -656,8 +656,8 @@ class AnthropicLLM(LLMInterface):
             params["system"] = _cached_system_blocks(system_prompt, schema_msg)
 
         # Batch params ARE the raw Messages body, so operator-configured extra
-        # body params merge directly (the sync path routes them through the
-        # SDK's extra_body, which does the same merge server-side).
+        # body params merge directly; objects on both sides are deep-merged so a
+        # configured output_config.effort keeps output_config.format (#6640).
         if self._extra_body:
             params.update(merge_extra_body(params, self._extra_body))
 
