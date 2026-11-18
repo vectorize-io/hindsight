@@ -2029,10 +2029,11 @@ class KnowledgeService:
         shown with the text around it, any hit's text capped at ``JUDGE_CONTEXT_TOKENS``, and hits that
         would show the same text (pieces of one short page) are one candidate, kept together in the search's
         order. With ``kb_reranker_images``, an image or PDF page hit is shown by its picture
-        (``media.judge_picture``) and its text, and, with ``kb_reranker_query_images``, a search by an image is
-        reranked with that picture as its query, with or without text. A video hit is not shown: it keeps its search place. A search is
-        reranked when it has text or a picture the reranker takes: the reranker scores the hits against it.
-        A search by a video (alone or with text) is reranked by its text, never by the clip."""
+        (``media.judge_picture``) and its text, and, with ``kb_reranker_query_images``, a search by an image
+        is reranked with that picture as its query, with or without text. A video hit is not shown: it keeps
+        its search place. A search is reranked when it has text or a picture the reranker takes: the reranker
+        scores the hits against it. A search by a video (alone or with text) is reranked by its text, never by
+        the clip."""
         reranker = self.reranker
         text = (request.query or "").strip()
         config = get_config()
