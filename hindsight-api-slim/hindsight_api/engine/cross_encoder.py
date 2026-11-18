@@ -24,6 +24,8 @@ from pydantic import BaseModel
 from .._cross_loop import CrossLoopSemaphore
 from .._thread_limits import bound_onnx_session, onnx_intra_op_threads
 from ..config import (
+    DECISION_MODEL_PROVIDER_DEFAULTS,
+    DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS,
     DEFAULT_LITELLM_API_BASE,
     DEFAULT_RERANKER_ALIBABA_MODEL,
     DEFAULT_RERANKER_COHERE_MAX_CONCURRENT,
@@ -65,7 +67,7 @@ from ..config import (
 )
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import reranker_bank_attribution_headers
-from .decision_model import overflowed_window, record_decision_call
+from .decision_model import DecisionModel, overflowed_window, record_decision_call
 from .llm_trace import RERANK_SCOPE, trace_model_call
 from .local_device import (
     LOCAL_MODEL_BUILD_LOCK,
@@ -2912,14 +2914,28 @@ def _create_cross_encoder_backend(member: RerankerMemberConfig) -> CrossEncoderM
             raise ValueError(
                 f"{member.env_name('TYPESAFE_API_KEY')} is required when {member.env_name('PROVIDER')} is 'typesafe'"
             )
-        return TypeSafeCrossEncoder(
+        # Imported here: the decision rerankers subclass CrossEncoderModel from this module.
+        from .search.decision_reranker import DecisionModelReranker, ListwiseDecisionReranker
+
+        per_candidate = member.typesafe_per_candidate
+        engine = DecisionModel(
+            provider="typesafe",
             api_key=api_key,
-            model=member.typesafe_model,
-            base_url=member.typesafe_base_url,
+            # Tolerate an unset-but-present value ("VAR=" in a compose file) by falling back.
+            model=member.typesafe_model or DEFAULT_RERANKER_TYPESAFE_MODEL,
+            base_url=member.typesafe_base_url or DEFAULT_RERANKER_TYPESAFE_BASE_URL,
             timeout=member.typesafe_timeout,
-            max_concurrent=member.typesafe_max_concurrent,
-            prune_candidates=member.typesafe_prune_candidates,
+            max_concurrent=member.typesafe_max_concurrent or DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT,
+            # Listwise keeps the provider's own budget (DecisionModel.MAX_QUESTION_TOKENS, counted
+            # with HINDSIGHT_API_TOKENIZER_ENCODING); per candidate splits like a typesafe decision model.
+            max_request_tokens=DEFAULT_DECISION_MODEL_MAX_REQUEST_TOKENS if per_candidate else None,
+            tokenizer=DECISION_MODEL_PROVIDER_DEFAULTS["typesafe"].tokenizer if per_candidate else None,
+            # predict() retries the whole call with the reranker's policy, as for every remote member.
+            retry_policy=RetryPolicy(max_retries=0),
         )
+        if per_candidate:
+            return DecisionModelReranker(engine, prune=member.typesafe_prune_candidates)
+        return ListwiseDecisionReranker(engine, prune=member.typesafe_prune_candidates)
     elif provider == "hindsight":
         # Imported here: cloud_auth pulls in aiohttp's server, which only this provider needs.
         from .providers.cloud_auth import saved_api_key

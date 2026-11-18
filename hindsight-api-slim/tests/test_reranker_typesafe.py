@@ -20,6 +20,8 @@ from hindsight_api.engine.cross_encoder import (
     TypeSafeCrossEncoder,
     create_cross_encoder_from_env,
 )
+from hindsight_api.engine.decision_model import DecisionModel
+from hindsight_api.engine.search.decision_reranker import DecisionModelReranker, ListwiseDecisionReranker
 from hindsight_api.engine.token_encoding import count_tokens
 
 
@@ -297,11 +299,68 @@ class TestFactory:
         with patch("hindsight_api.config.get_config", return_value=config):
             encoder = create_cross_encoder_from_env()
 
+        # On the decision engine, ranking listwise as it always has.
+        assert isinstance(encoder, ListwiseDecisionReranker)
+        assert isinstance(encoder._client, DecisionModel)
+        assert encoder._client.provider == "typesafe" and encoder._client.base_url == "https://api.typesafe.ai"
         assert encoder.provider_name == "typesafe"
         assert encoder.model == "jev-latest"
         assert encoder.prunes_candidates is True
         # Deprecated in favour of the shared decision model; building it says so.
         assert "HINDSIGHT_API_DECISION_MODEL_PROVIDER" in caplog.text
+
+    def test_listwise_keeps_its_budget_and_one_retry_layer(self):
+        """The provider's own 26k question budget in the default tokenizer, and predict() retrying
+        the whole call with the reranker policy, as before it ran on the engine."""
+        config = _make_config(reranker_provider="typesafe", reranker_typesafe_api_key="k", reranker_max_retries=7)
+        with patch("hindsight_api.config.get_config", return_value=config):
+            encoder = create_cross_encoder_from_env()
+
+        assert encoder._client.question_tokens == 26_000 and encoder._client.tokenizer is None
+        assert encoder.retry_policy is not None and encoder.retry_policy.max_retries == 7
+        assert encoder._client.retry_policy.max_retries == 0
+
+    def test_per_candidate_ranking_is_opt_in(self, caplog):
+        """HINDSIGHT_API_RERANKER_TYPESAFE_PER_CANDIDATE swaps the listwise Choice for recall's
+        one-question-per-candidate reranker, on the same engine; the deprecation still warns."""
+        config = _make_config(
+            reranker_provider="typesafe",
+            reranker_typesafe_api_key="k",
+            reranker_typesafe_per_candidate=True,
+            reranker_typesafe_prune_candidates=True,
+        )
+        with patch("hindsight_api.config.get_config", return_value=config):
+            encoder = create_cross_encoder_from_env()
+
+        assert isinstance(encoder, DecisionModelReranker)
+        assert encoder.prunes_candidates is True
+        assert encoder._client.model == "jev-latest" and encoder._client.tokenizer == "jev"
+        assert encoder._client.max_request_tokens == 26_000
+        assert "deprecated" in caplog.text
+
+    def test_listwise_is_the_default(self):
+        assert HindsightConfig.from_env().reranker_typesafe_per_candidate is False
+
+    @pytest.mark.asyncio
+    async def test_the_listwise_reranker_ranks_each_query_in_its_own_pool_on_the_engine(self):
+        session = _FakeSession({"c0": 0.9, "c1": 0.1})
+        engine = DecisionModel(
+            provider="typesafe",
+            api_key="k",
+            model="jev-latest",
+            base_url="https://api.typesafe.ai",
+            timeout=5.0,
+            max_concurrent=2,
+            max_request_tokens=None,
+        )
+        engine._session = session  # type: ignore[assignment]
+        scores = await ListwiseDecisionReranker(engine)._predict(
+            [("a", "doc-a"), ("b", "doc-b"), ("a", "doc-a2"), ("b", "doc-b2")]
+        )
+
+        assert len(session.rank_requests) == 2
+        assert scores[0] > scores[2] and scores[1] > scores[3]
+        assert session.urls == ["https://api.typesafe.ai/v1/systemone"] * 2
 
     def test_missing_api_key_names_its_env_var(self):
         config = _make_config(reranker_provider="typesafe")

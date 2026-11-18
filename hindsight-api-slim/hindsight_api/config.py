@@ -788,6 +788,7 @@ ENV_RERANKER_TYPESAFE_BASE_URL = "HINDSIGHT_API_RERANKER_TYPESAFE_BASE_URL"
 ENV_RERANKER_TYPESAFE_TIMEOUT = "HINDSIGHT_API_RERANKER_TYPESAFE_TIMEOUT"
 ENV_RERANKER_TYPESAFE_MAX_CONCURRENT = "HINDSIGHT_API_RERANKER_TYPESAFE_MAX_CONCURRENT"
 ENV_RERANKER_TYPESAFE_PRUNE_CANDIDATES = "HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES"
+ENV_RERANKER_TYPESAFE_PER_CANDIDATE = "HINDSIGHT_API_RERANKER_TYPESAFE_PER_CANDIDATE"
 
 # Alibaba Cloud DashScope configuration (reranker only)
 ENV_RERANKER_ALIBABA_API_KEY = "HINDSIGHT_API_RERANKER_ALIBABA_API_KEY"
@@ -1752,6 +1753,10 @@ DEFAULT_RERANKER_HINDSIGHT_MODEL = "hs-rerank-1"
 DEFAULT_RERANKER_TYPESAFE_MAX_CONCURRENT = 24
 # Off by default: dropping changes what recall returns, so it is opt-in.
 DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES = False
+# Off by default: the typesafe reranker keeps ranking the pool with one listwise Choice. On, it
+# asks one question per candidate instead, as recall's decision-model reranker does: the order
+# holds further down the pool, but the head ranks worse (recall@1 0.87 against 0.94).
+DEFAULT_RERANKER_TYPESAFE_PER_CANDIDATE = False
 
 DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
 
@@ -3312,6 +3317,7 @@ class RerankerMemberConfig:
     typesafe_timeout: float
     typesafe_max_concurrent: int
     typesafe_prune_candidates: bool
+    typesafe_per_candidate: bool
     # alibaba
     alibaba_api_key: str | None
     alibaba_model: str
@@ -3484,6 +3490,9 @@ def _parse_reranker_members() -> list[RerankerMemberConfig]:
                 ),
                 typesafe_prune_candidates=_member_bool(
                     base, "TYPESAFE_PRUNE_CANDIDATES", DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES
+                ),
+                typesafe_per_candidate=_member_bool(
+                    base, "TYPESAFE_PER_CANDIDATE", DEFAULT_RERANKER_TYPESAFE_PER_CANDIDATE
                 ),
                 alibaba_api_key=_member_opt_str(base, "ALIBABA_API_KEY"),
                 alibaba_model=_member_str(base, "ALIBABA_MODEL", DEFAULT_RERANKER_ALIBABA_MODEL),
@@ -3989,6 +3998,7 @@ class HindsightConfig:
     reranker_typesafe_timeout: float
     reranker_typesafe_max_concurrent: int
     reranker_typesafe_prune_candidates: bool
+    reranker_typesafe_per_candidate: bool
     reranker_alibaba_api_key: str | None
     reranker_alibaba_model: str
     reranker_alibaba_timeout: float
@@ -4775,6 +4785,7 @@ class HindsightConfig:
             typesafe_timeout=self.reranker_typesafe_timeout,
             typesafe_max_concurrent=self.reranker_typesafe_max_concurrent,
             typesafe_prune_candidates=self.reranker_typesafe_prune_candidates,
+            typesafe_per_candidate=self.reranker_typesafe_per_candidate,
             alibaba_api_key=self.reranker_alibaba_api_key,
             alibaba_model=self.reranker_alibaba_model,
             alibaba_timeout=self.reranker_alibaba_timeout,
@@ -5711,6 +5722,9 @@ class HindsightConfig:
             ),
             reranker_typesafe_prune_candidates=_parse_boolean_env(
                 ENV_RERANKER_TYPESAFE_PRUNE_CANDIDATES, DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES
+            ),
+            reranker_typesafe_per_candidate=_parse_boolean_env(
+                ENV_RERANKER_TYPESAFE_PER_CANDIDATE, DEFAULT_RERANKER_TYPESAFE_PER_CANDIDATE
             ),
             # Alibaba Cloud DashScope reranker
             reranker_alibaba_api_key=os.getenv(ENV_RERANKER_ALIBABA_API_KEY),
