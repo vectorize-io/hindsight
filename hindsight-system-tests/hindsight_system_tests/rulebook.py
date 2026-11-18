@@ -516,6 +516,9 @@ class RerankStub:
     #: The candidates of every ranking question, as the decision model read them.
     ranked: list[str]
 
+    #: The image formats each decision-model request carried, by placeholder (empty: no images).
+    assets: list[dict[str, str]]
+
     #: Answer every decision-model request with this provider error instead, for the
     #: stories about a recall whose decision model fails. The /rerank endpoint ignores it.
     fail_with_status: int | None = None
@@ -529,6 +532,7 @@ class RerankStub:
         self.states = []
         self.repeats = set()
         self.ranked = []
+        self.assets = []
 
     def repeat(self, memory_a: str, memory_b: str) -> float:
         return 0.9 if any(a in memory_a and b in memory_b for a, b in self.repeats) else 0.1
@@ -620,6 +624,7 @@ class Stubs:
         self.rerank.verdicts = {}
         self.rerank.states = []
         self.rerank.repeats = set()
+        self.rerank.assets = []
         self.rerank.fail_with_status = None
         self.rerank.rerank_fail_with_status = None
         self.triage.reset()

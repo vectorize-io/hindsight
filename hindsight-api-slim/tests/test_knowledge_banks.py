@@ -7,6 +7,7 @@ hindsight-dev/benchmarks/knowledge_banks_mm.
 """
 
 import asyncio
+import base64
 import io
 import json
 import math
@@ -16,6 +17,9 @@ from dataclasses import replace
 import pytest
 from PIL import Image
 
+from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
+from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel, DecisionResponse
+from hindsight_api.engine.search.decision_reranker import DecisionModelReranker
 from hindsight_api.engine.token_encoding import count_tokens
 from hindsight_api.knowledge import media
 from hindsight_api.knowledge.embedders import EmbedInput, KnowledgeEmbedder
@@ -192,6 +196,22 @@ def test_image_is_kept_as_is_or_converted_when_an_api_would_not_take_it():
     assert converted.mime == "image/png" and converted.data != bmp.getvalue()
     with pytest.raises(media.MediaError):
         media.split_image(b"not an image")
+
+
+def test_a_video_with_an_odd_height_is_cut_into_windows():
+    import av
+    import numpy as np
+
+    out = io.BytesIO()
+    with av.open(out, "w", format="mp4") as dst:  # mpeg4: libx264 itself cannot make an odd-sized source
+        v = dst.add_stream("mpeg4", rate=5)
+        v.width, v.height, v.pix_fmt = 160, 121, "yuv420p"
+        for i in range(40):
+            picture = np.full((121, 160, 3), (i * 7) % 255, np.uint8)
+            dst.mux(v.encode(av.VideoFrame.from_ndarray(picture, format="rgb24")))
+        dst.mux(v.encode(None))
+    windows = list(media.split_media(out.getvalue(), "video", window_seconds=3, overlap_seconds=0, max_seconds=60))
+    assert len(windows) > 1 and all(w.mime == "video/mp4" and w.data for w in windows)
 
 
 def test_text_is_split_into_token_sized_passages():
@@ -697,6 +717,143 @@ async def test_reflect_recall_tool_returns_linked_documents_as_the_authority(api
     await memory.delete_bank(mem_bank, request_context=request_context)
 
 
+class _JudgeByPicture:
+    """A decision model that judges each hit by the picture it is shown: the bluer, the more relevant."""
+
+    max_request_tokens = 26_000
+    tokenizer = None
+    rerank_interface = DecisionModel.rerank_interface
+
+    def __init__(self) -> None:
+        self.pictures: dict[str, Image.Image] = {}
+        self.texts: list[str] = []
+        self.picks: list[int] = []  # how many hits each pick compared
+
+    async def ask_all(self, state, questions, *, scope, assets=None):
+        answers = {}
+        for key, question in questions.items():
+            memory = question.instructions["memory"]
+            name = next((n for n in assets or {} if n in memory), None)
+            if name is None:
+                self.texts.append(memory)
+                answers[key] = DecisionAnswer(noul=0.0)
+                continue
+            assert assets[name].format == "jpg"
+            picture = Image.open(io.BytesIO(base64.b64decode(assets[name].data_base64))).convert("RGB")
+            self.pictures[name] = picture
+            red, _green, blue = picture.resize((1, 1)).getpixel((0, 0))
+            answers[key] = DecisionAnswer(noul=blue / 255)
+        return answers
+
+    async def ask(self, state, questions, *, scope, assets=None):
+        """The pick over the best few: the bluest picture is the likeliest, a text hit the least."""
+        answers = {}
+        for key, question in questions.items():
+            blues = {}
+            for option, text in question.criteria.items():
+                name = next((n for n in assets or {} if n in text), None)
+                if name is None:
+                    blues[option] = 0.0
+                    continue
+                picture = Image.open(io.BytesIO(base64.b64decode(assets[name].data_base64))).convert("RGB")
+                blues[option] = picture.resize((1, 1)).getpixel((0, 0))[2] / 255
+            total = sum(blues.values()) or 1.0
+            self.picks.append(len(blues))
+            answers[key] = DecisionAnswer(probabilities={o: b / total for o, b in blues.items()})
+        return DecisionResponse(answers=answers)
+
+
+@pytest.fixture
+def judge(memory):
+    service = get_knowledge_service(memory)
+    previous = service._reranker, service._reranker_resolved
+    service._reranker, service._reranker_resolved = DecisionModelReranker(_JudgeByPicture()), True  # type: ignore[arg-type]
+    yield service._reranker._client
+    service._reranker, service._reranker_resolved = previous
+
+
+async def test_a_decision_model_reranks_search_hits_by_their_pictures(api_client, kb, judge):
+    await _upload(
+        api_client,
+        kb,
+        [
+            ("manual.pdf", _pdf((250, 10, 10), (10, 10, 250)), "application/pdf"),
+            ("demo.mp4", _tone(6, video=True), "video/mp4"),
+        ],
+        [{"document_id": "manual"}, {"document_id": "demo"}],
+    )
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest",
+        json={"items": [{"document_id": "faq", "text": "red pages and blue pages", "filename": "faq.md"}]},
+    )
+    assert r.status_code == 200, r.text
+
+    hits = await _search(api_client, kb, query="red")
+    assert {h["document_id"] for h in hits} == {"manual", "demo", "faq"}
+    assert judge.texts == ["red pages and blue pages"]  # a text hit is judged by its text, with no picture
+    # The two pages by their pictures, at most 1024 a side; the video is not judged (four stills ranked
+    # clips worse than search alone), it keeps its search place.
+    sizes = [picture.size for picture in judge.pictures.values()]
+    assert len(sizes) == 2 and all(max(size) <= 1024 for size in sizes)
+    blue = next(p for p in judge.pictures.values() if p.resize((1, 1)).getpixel((0, 0))[2] > 128)
+    assert blue.size != (1024, 1024)  # a page keeps its shape: no video grid was made
+    # Then one pick compared the judged hits at the top (the video stays out of it too), and the blue
+    # page, the pick's likeliest, leads.
+    assert judge.picks == [3]
+    assert (hits[0]["document_id"], hits[0]["page"]) == ("manual", 2)
+
+    # A search with no text is not reranked: the questions ask about the query's words.
+    judge.pictures.clear()
+    await _search(api_client, kb, query_image=base64.b64encode(_png((0, 0, 255))).decode())
+    assert judge.pictures == {}
+
+
+async def test_a_page_with_a_picture_is_also_judged_by_its_text_alone(api_client, kb, judge):
+    pdf = _text_pdf("Emergency exits are on floor nine")
+    await _upload(api_client, kb, [("exits.pdf", pdf, "application/pdf")], [{"document_id": "exits"}])
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "exits and floors"}]})
+    assert r.status_code == 200, r.text
+
+    await _search(api_client, kb, query="where are the exits")
+    # The page once with its picture, and once by its text alone (the two answers are averaged); the text
+    # hit once.
+    assert len(judge.pictures) == 1
+    assert sorted(t for t in judge.texts if "floor nine" in t or "exits and floors" in t) == [
+        "Emergency exits are on floor nine",
+        "exits and floors",
+    ]
+
+
+async def test_pieces_of_one_short_document_are_judged_once(api_client, kb, judge):
+    # A guide long enough for several passages, short enough to be judged whole: every passage would show
+    # the model the same text, so it is one candidate.
+    guide = "\n\n".join(f"Step {i}. Rotate the red key in the console. " + "detail " * 60 for i in range(6))
+    items = [{"document_id": "guide", "text": guide}, {"document_id": "note", "text": "a red note"}]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.status_code == 200, r.text
+    assert (await api_client.get(f"{KB}/{kb}")).json()["passage_count"] > 2  # the guide was split
+
+    hits = await _search(api_client, kb, query="red key", max_tokens=1_000_000)
+    assert {h["document_id"] for h in hits} == {"guide", "note"}
+    assert len(judge.texts) == 2  # the guide once, whole, and the note
+    assert any(text.count("Step") == 6 for text in judge.texts)
+
+
+async def test_a_failing_decision_model_is_reported_as_itself(api_client, kb, judge, monkeypatch):
+    r = await api_client.post(
+        f"{KB}/{kb}/ingest",
+        json={"items": [{"document_id": d, "text": f"{d} guide"} for d in ("keys", "billing")]},
+    )
+    assert r.status_code == 200, r.text
+
+    async def down(*args, **kwargs):
+        raise UpstreamHTTPError(502, "bad gateway", {}, "http://decisions")
+
+    monkeypatch.setattr(judge, "ask_all", down)
+    r = await api_client.post(f"{KB}/{kb}/search", json={"query": "guide"})
+    assert r.status_code == 503 and "decision model" in r.json()["detail"], r.text
+
+
 async def test_bank_list_pages_and_searches_by_id(api_client, fake_embedder):
     tag = uuid.uuid4().hex[:8]
     ids = [f"kb-{tag}-{n}" for n in range(3)]
@@ -768,6 +925,46 @@ async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, 
     top = (await _scored(memory, kb, "invoice"))[0]
     assert top.explain.passage_score > 0.5 and top.passage.text == text and top.passage.page == 1
     assert "score" not in (await _search(api_client, kb, query="invoice"))[0]
+
+
+def test_the_decision_models_order_is_fused_with_the_search_order():
+    from hindsight_api.knowledge.service import fused_order
+
+    # The model likes slot 3 best and slot 0 least. Its rank counts double, so 3 climbs to the top and 0
+    # drops below 1; but 2, which the model ranks third, does not pass 0: search still has a say.
+    assert fused_order(4, {0: 0.1, 1: 0.5, 2: 0.4, 3: 0.9}) == [3, 1, 0, 2]
+    # An unjudged slot (a video) keeps its search rank on both sides: 0 stays first, the judged reorder.
+    assert fused_order(3, {1: 0.2, 2: 0.8}) == [0, 2, 1]
+    # Two neighbours the model sees the other way round: the model's side wins.
+    assert fused_order(2, {0: 0.1, 1: 0.9}) == [1, 0]
+
+
+def test_a_text_hit_is_judged_with_the_passages_around_it():
+    from hindsight_api.knowledge.service import _around
+    from hindsight_api.knowledge.store import KnowledgePassage
+
+    run = [KnowledgePassage(index=i, modality="text", text=f"p{i} " + "word " * 20) for i in range(2, 9)]
+    one = len(_around(run, 5, 10_000).split("\n\n"))
+    assert one == 7  # everything fits: the whole run, in order
+    # A tight budget grows one passage a side, from the hit outwards.
+    assert [t.split()[0] for t in _around(run, 5, 70).split("\n\n")] == ["p4", "p5", "p6"]
+    # At the edge of the document it keeps growing on the side that has passages.
+    assert [t.split()[0] for t in _around(run, 2, 70).split("\n\n")] == ["p2", "p3", "p4"]
+    assert _around(run, 99, 1000) == ""  # a hit outside the run: the caller falls back to its own text
+
+
+def test_a_text_passage_is_also_found_by_its_window():
+    from hindsight_api.knowledge.store import page_score
+
+    text = "\n\n".join(f"Paragraph {i}. " + "word " * 80 for i in range(30))
+    drafts = media.split_text(text, tokens=128)
+    windows = [d.window_text for d in drafts]
+    assert all(windows) and 1 < len(set(windows)) < len(drafts)  # neighbours share a window
+    for d in drafts:
+        assert d.text in (d.window_text or "")
+    assert media.split_text("one short note", tokens=128)[0].window_text is None  # a window of one: none
+    # Its score is the better of itself and its window.
+    assert page_score(0.4, {"window": [0.7]}, 0.6) == 0.7 and page_score(0.8, {"window": [0.7]}, 0.6) == 0.8
 
 
 def test_page_score_follows_the_recipe():

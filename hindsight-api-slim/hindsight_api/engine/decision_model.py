@@ -64,6 +64,15 @@ class DecisionQuestion(BaseModel):
         return body
 
 
+class DecisionAsset(BaseModel):
+    """An image a question looks at, in System One's ``assets`` shape. Its key (the placeholder) stands
+    where the image belongs in the state or a question, and is replaced everywhere it appears."""
+
+    type: Literal["image"] = "image"
+    format: Literal["png", "jpg"]
+    data_base64: str
+
+
 class DecisionAnswer(BaseModel):
     """One answer. Which field is set depends on the question type: a choice fills
     ``choice`` and ``probabilities``, a noul fills ``noul``, a score fills ``score``."""
@@ -260,7 +269,12 @@ class DecisionModel:
         )
 
     async def ask(
-        self, state: str | dict[str, Any], questions: dict[str, DecisionQuestion], *, scope: str
+        self,
+        state: str | dict[str, Any],
+        questions: dict[str, DecisionQuestion],
+        *,
+        scope: str,
+        assets: dict[str, DecisionAsset] | None = None,
     ) -> DecisionResponse:
         """Ask ``questions`` (keyed by caller-chosen ids) about ``state`` in one request.
 
@@ -272,7 +286,7 @@ class DecisionModel:
         """
         try:
             return await acall_with_retry(
-                lambda: self._ask_traced(state, questions, scope),
+                lambda: self._ask_traced(state, questions, scope, assets),
                 policy=self.retry_policy,
                 budget=self.retry_policy.new_budget(),
                 provider=f"decision_model:{self.provider}",
@@ -284,7 +298,8 @@ class DecisionModel:
         half = len(items) // 2
         logger.warning(f"Decision model: {len(items)} questions overflowed the window, asking them in two halves")
         first, second = await asyncio.gather(
-            self.ask(state, dict(items[:half]), scope=scope), self.ask(state, dict(items[half:]), scope=scope)
+            self.ask(state, dict(items[:half]), scope=scope, assets=assets),
+            self.ask(state, dict(items[half:]), scope=scope, assets=assets),
         )
         return DecisionResponse(
             answers={**first.answers, **second.answers},
@@ -295,7 +310,12 @@ class DecisionModel:
         )
 
     async def ask_all(
-        self, state: str | dict[str, Any], questions: dict[str, DecisionQuestion], *, scope: str
+        self,
+        state: str | dict[str, Any],
+        questions: dict[str, DecisionQuestion],
+        *,
+        scope: str,
+        assets: dict[str, DecisionAsset] | None = None,
     ) -> dict[str, DecisionAnswer]:
         """Ask ``questions`` in as many requests as it takes for each to fit the window.
 
@@ -304,9 +324,19 @@ class DecisionModel:
         logged and left out, and recall's decision reranker then quietly ranked every
         candidate of a request Jev found too long behind the rest (#5715).
         """
+        # A question looking at an image goes in a request of its own, with only its image: images are
+        # not counted in the token split, and one per request is the form Jev was measured in (ViDoRe,
+        # video, ATM-Bench). The text-only questions are split as before.
+        seen: dict[str, dict[str, DecisionAsset]] = {}
+        for key, question in questions.items() if assets else ():
+            text = json.dumps(question.system_one(), ensure_ascii=False)
+            if used := {name: asset for name, asset in assets.items() if name in text}:
+                seen[key] = used
+        text_only = {key: question for key, question in questions.items() if key not in seen}
         answers: dict[str, DecisionAnswer] = {}
         for part in await asyncio.gather(
-            *(self.ask(state, part, scope=scope) for part in self._split(state, questions))
+            *(self.ask(state, part, scope=scope) for part in (self._split(state, text_only) if text_only else [])),
+            *(self.ask(state, {key: questions[key]}, scope=scope, assets=used) for key, used in seen.items()),
         ):
             answers.update(part.answers)
         return answers
@@ -339,13 +369,17 @@ class DecisionModel:
         )
 
     async def _ask_traced(
-        self, state: str | dict[str, Any], questions: dict[str, DecisionQuestion], scope: str
+        self,
+        state: str | dict[str, Any],
+        questions: dict[str, DecisionQuestion],
+        scope: str,
+        assets: dict[str, DecisionAsset] | None = None,
     ) -> DecisionResponse:
         started = time.monotonic()
         answer: DecisionResponse | None = None
         error: BaseException | None = None
         try:
-            answer = await self._ask_once(state, questions)
+            answer = await self._ask_once(state, questions, assets)
             return answer
         except BaseException as e:
             error = e
@@ -355,7 +389,12 @@ class DecisionModel:
                 provider=self.provider,
                 model=self.model,
                 scope=scope,
-                request={"state": state, "questions": {k: q.system_one() for k, q in questions.items()}},
+                # The images' names only: their bytes would fill the trace.
+                request={
+                    "state": state,
+                    "questions": {k: q.system_one() for k, q in questions.items()},
+                    **({"assets": sorted(assets)} if assets else {}),
+                },
                 # Defaults left out: an answer only fills the fields of its question's type. A
                 # structure, not a JSON string: the row stores it as an object, like rerank scores.
                 response=answer.model_dump(mode="json", exclude_defaults=True) if answer is not None else None,
@@ -364,8 +403,15 @@ class DecisionModel:
                 error=error,
             )
 
-    async def _ask_once(self, state: str | dict[str, Any], questions: dict[str, DecisionQuestion]) -> DecisionResponse:
+    async def _ask_once(
+        self,
+        state: str | dict[str, Any],
+        questions: dict[str, DecisionQuestion],
+        assets: dict[str, DecisionAsset] | None = None,
+    ) -> DecisionResponse:
         if self.provider == "openai":
+            if assets:
+                raise ValueError("the openai decision model takes no images; use a System One provider")
             # The Decisions API takes text, not a structured state.
             text = state if isinstance(state, str) else json.dumps(state, ensure_ascii=False)
             body = {
@@ -375,19 +421,24 @@ class DecisionModel:
             }
             return _from_openai(_OpenAIResponse.model_validate(await self._post("/v1/decisions", body)))
 
-        body = {
+        body: dict[str, Any] = {
             "model": self.model,
             "state": state,
             "questions": {name: q.system_one() for name, q in questions.items()},
         }
+        headers: dict[str, str] = {}
+        if assets:
+            body["assets"] = {name: asset.model_dump() for name, asset in assets.items()}
+            # TypeSafe answers about images only for a caller that opts in to its preview.
+            headers["TypeSafe-Danger-Zone-Images"] = "true"
         if self.provider == "cloudflare":
-            raw = await self._post(f"/@cf/cloudflare/{self.model}", body)
+            raw = await self._post(f"/@cf/cloudflare/{self.model}", body, headers)
             return _CloudflareEnvelope.model_validate(raw).result
-        return DecisionResponse.model_validate(await self._post("/v1/systemone", body))
+        return DecisionResponse.model_validate(await self._post("/v1/systemone", body, headers))
 
-    async def _post(self, path: str, body: dict[str, Any]) -> Any:
+    async def _post(self, path: str, body: dict[str, Any], headers: dict[str, str] | None = None) -> Any:
         # The slot is held per attempt, so a request waiting out its backoff frees it.
         async with self._semaphore:
-            async with self._session.get().post(f"{self.base_url}{path}", json=body) as response:
+            async with self._session.get().post(f"{self.base_url}{path}", json=body, headers=headers) as response:
                 await raise_for_status(response)
                 return await response.json(content_type=None)

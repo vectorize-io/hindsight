@@ -21,10 +21,11 @@ import numpy as np
 
 from ...config import DecisionModelConfig
 from ..cross_encoder import CrossEncoderModel
-from ..decision_model import DecisionModel, DecisionQuestion
+from ..decision_model import DecisionAsset, DecisionModel, DecisionQuestion
 from ..decision_rerank_interface import ALIKE_FROM
 
 PROVIDER_NAME = "decision_model"
+PICK_INSTRUCTIONS = "Which of these would help most to show someone answering the question?"
 
 # What every candidate in this rerank shares — the current date and the bank's own
 # framing, which recall would otherwise paste onto each one. The decision model gets it in
@@ -99,19 +100,50 @@ class DecisionModelReranker(CrossEncoderModel):
     async def initialize(self) -> None:
         pass
 
-    async def _rerank(self, query: str, docs: list[str], indices: list[int], scores: list[float]) -> None:
-        """Scores ``indices`` by position, best first."""
+    async def nouls(
+        self, query: str, docs: list[str], assets: dict[str, DecisionAsset] | None = None
+    ) -> list[float | None]:
+        """The model's answer per doc (None where none came back): whether showing it would help, the
+        question recall ranks its pool by. Knowledge-bank search's entry: it fuses these with its own order.
+
+        ``assets`` are the images some docs look at: a doc holding an asset's key is judged with that
+        image in front of the model (a page, a photo)."""
+        return await self._judge(query, docs, assets, scope="decision_knowledge_rerank")
+
+    async def pick(self, query: str, docs: list[str], assets: dict[str, DecisionAsset] | None = None) -> list[float]:
+        """One Choice over ``docs``, a short head already ranked: which would help most. Its probability
+        per doc. A Noul per candidate keeps the whole pool in order; a Choice compares the few at the top,
+        which judging each alone cannot (recall@1 0.94 against 0.87, the class note). Knowledge search asks
+        it over its best few hits after the Noul ranking: ViDoRe V3 nDCG@10 +1.0 to +1.7 on markdown, +1.5
+        on PDF hr (Jev 1.14, top 5)."""
+        rerank = self._client.rerank_interface()
+        # Each doc gets an even share of half a request: the state and the question take the rest.
+        share = rerank.max_request_tokens // (2 * max(1, len(docs)))
+        criteria: dict[str, str | None] = {f"item{n + 1}": rerank.capped(doc, share) for n, doc in enumerate(docs)}
+        question = DecisionQuestion(type="choice", instructions=PICK_INSTRUCTIONS, criteria=criteria)
+        used = {k: v for k, v in (assets or {}).items() if any(k in doc for doc in docs)}
+        response = await self._client.ask(
+            rerank.state(query), {"pick": question}, scope="decision_knowledge_pick", assets=used or None
+        )
+        answer = response.answers["pick"]
+        return [answer.probabilities.get(f"item{n + 1}", 0.0) for n in range(len(docs))]
+
+    async def _rerank(
+        self,
+        query: str,
+        docs: list[str],
+        indices: list[int],
+        scores: list[float],
+        assets: dict[str, DecisionAsset] | None = None,
+        scope: str = "decision_recall_rerank",
+    ) -> None:
+        """Scores ``indices`` by position, best first; traced under ``scope``."""
         rerank = self._client.rerank_interface()
         options = rerank_options.get()
         subset = [docs[index] for index in indices]
-        asked = rerank.questions(subset)
-        questions = {question.key: DecisionQuestion.model_validate(question.system_one()) for question in asked}
         state = rerank.state(query, rerank_shared_context.get())
-        # Every memory is capped (see DecisionRerank.questions), so no single question can
-        # outgrow the window: a failed request now raises instead of ranking its candidates last.
-        answers = await self._client.ask_all(state, questions, scope="decision_recall_rerank")
+        nouls = await self._judge(query, subset, assets, scope)
         # Stable on the caller's input order, so equal answers keep their RRF order.
-        nouls = [answers[question.key].noul if question.key in answers else None for question in asked]
         ranked = rerank.pruned(nouls) if options.prune else rerank.scores(nouls)
         if options.dedup:
             # The second request: its pairs depend on the ranking answers above.
@@ -126,6 +158,20 @@ class DecisionModelReranker(CrossEncoderModel):
                 ranked = rerank.deduped(ranked, repeats, {key: answer.noul for key, answer in found.items()})
         for slot, score in enumerate(ranked):
             scores[indices[slot]] = score
+
+    async def _judge(
+        self, query: str, docs: list[str], assets: dict[str, DecisionAsset] | None, scope: str
+    ) -> list[float | None]:
+        """One Noul per doc, in one batch of requests: whether showing it would help answer ``query``."""
+        rerank = self._client.rerank_interface()
+        asked = rerank.questions(docs)
+        questions = {question.key: DecisionQuestion.model_validate(question.system_one()) for question in asked}
+        # Every memory is capped (see DecisionRerank.questions), so no single question can
+        # outgrow the window: a failed request now raises instead of ranking its candidates last.
+        answers = await self._client.ask_all(
+            rerank.state(query, rerank_shared_context.get()), questions, scope=scope, assets=assets
+        )
+        return [answers[question.key].noul if question.key in answers else None for question in asked]
 
     @staticmethod
     async def _alike(

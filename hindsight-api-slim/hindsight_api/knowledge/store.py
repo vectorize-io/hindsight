@@ -1195,8 +1195,11 @@ def page_score(primary: float, roles: dict[str, list[float]], text_weight: float
     once the page is in the rescored top, and a whole-page text vector where an older ingest stored one);
     score = (1 - w) * image + w * text, w = ``kb_pdf_text_weight`` (default 0.7). That beat one
     blended page vector by ~7 nDCG@10.
+    A text passage: the better of its own vector and its window's (``media.TEXT_WINDOW_TOKENS``).
     Every other passage has only its primary vector, so its score is that vector's similarity.
     """
+    if roles.get("window"):  # a text passage: the better of itself and its window
+        return max(primary, *roles["window"])
     image = 0.5 * primary + 0.5 * max(roles["band"]) if roles.get("band") else primary
     texts = roles.get("page_text", []) + roles.get("unit", []) + roles.get("sentence", [])
     if not texts:
