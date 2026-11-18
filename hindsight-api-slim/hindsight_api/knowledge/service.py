@@ -746,6 +746,8 @@ class KnowledgeService:
                     uuid.uuid4(),
                     KIND,
                 )
+        # Outside the insert, on every create: a bank whose index build failed gets it on a retry.
+        await self.store.bank_created(bank_id)
         return await self.get_bank(bank_id, request_context)
 
     async def list_banks(
@@ -852,6 +854,7 @@ class KnowledgeService:
                 break
             await asyncio.sleep(1)
         await self._engine.delete_bank(bank_id, request_context=request_context, _knowledge_bank=True)
+        await self.store.bank_deleted(bank_id)
         await self._engine._file_storage.delete_prefix(f"{bank_storage_prefix(bank_id)}kb/")
         await self._on_delete_complete(bank_id, request_context, passages_removed, content_tokens_removed)
 

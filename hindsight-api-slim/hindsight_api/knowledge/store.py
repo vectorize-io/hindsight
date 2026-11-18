@@ -3,12 +3,13 @@
 ``KnowledgeStore`` is the seam an external backend plugs into
 through ``HINDSIGHT_API_KB_STORE_EXTENSION=module.path:ClassName``. The bank row itself
 always stays in the ``banks`` table, because async operations, audit and the delete cascade key
-off it. ``PostgresKnowledgeStore`` is the default: ``kb_documents`` + ``kb_passages`` with a
-pgvector HNSW index.
+off it. ``PostgresKnowledgeStore`` is the default: ``kb_documents`` + ``kb_passages`` with one
+pgvector HNSW index per bank.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -19,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast
 
+from ..engine.db.ops_postgresql import create_index_without_queueing
 from ..engine.db_utils import acquire_with_retry
 from ..engine.schema import fq_table
 from ..engine.search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
@@ -241,6 +243,12 @@ class KnowledgeStore(ABC):
     async def ensure_ready(self, dimension: int) -> None:
         """Prepare storage for vectors of ``dimension`` (idempotent, called before every use)."""
 
+    async def bank_created(self, bank_id: str) -> None:
+        """A bank was made (or made again: idempotent). A backend with per-bank structures builds them."""
+
+    async def bank_deleted(self, bank_id: str) -> None:
+        """A bank and all its documents are gone. A backend with per-bank structures drops them."""
+
     @abstractmethod
     async def get_documents(self, bank_id: str, document_ids: list[str]) -> dict[str, KnowledgeDocument]:
         """The documents found among ``document_ids``, by id (a missing one is simply absent)."""
@@ -383,11 +391,14 @@ RESCORE_POOL = 50
 #: Most candidates one arm of stage 1 returns (see ``search``); never fewer than ``top_k``.
 #: 300 kept ViDoRe hr nDCG@10 (65.68 vs 65.59 uncapped) and halved its search time (Gemini Embedding 2).
 CANDIDATE_POOL_CAP = 300
-#: A bank with at most this many passages is searched exactly, not through the shared HNSW index.
-#: Kept low because the exact scan also reads every extra vector (bands, text units, sentences) of
-#: each passage, several per passage.
-EXACT_SEARCH_MAX_PASSAGES = 2_000
 CANDIDATE_ROLES_SQL = "role NOT IN (" + ", ".join(f"'{r}'" for r in RESCORE_ONLY_ROLES) + ")"
+#: Each table's per-bank index names start with these; none of its other indexes do.
+_BANK_INDEX_PREFIX = {"kb_passages": "idx_kbp_emb_", "kb_passage_vectors": "idx_kbv_emb_"}
+
+
+def _bank_index(table_name: str, bank_id: str) -> str:
+    """The bank's index name: a hash, as a bank id may be longer than a name or hold any character."""
+    return _BANK_INDEX_PREFIX[table_name] + hashlib.md5(bank_id.encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 class PostgresKnowledgeStore(KnowledgeStore):
@@ -416,7 +427,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
     async def _pin_dimension(self, conn: Any, schema: str, table_name: str, dimension: int) -> None:
         passages = fq_table(table_name)
         async with conn.transaction():
-            # One process at a time pins the column and builds the index, per schema: the table
+            # One process at a time pins the column, per schema: the table
             # lock (not an advisory lock, which poolers break) serializes a concurrent first use,
             # and the loser then finds the column already pinned. Writers wait only this once.
             await conn.execute(f"LOCK TABLE {passages} IN SHARE ROW EXCLUSIVE MODE")
@@ -440,30 +451,59 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         f"dimensions (HINDSIGHT_API_KB_EMBEDDINGS_DIMENSIONS) or delete the knowledge "
                         f"banks and write them again."
                     )
-                await conn.execute(f"DROP INDEX IF EXISTS {fq_table(f'idx_{table_name}_embedding')}")
-                await conn.execute(f"DROP INDEX IF EXISTS {fq_table(f'idx_{table_name}_candidates')}")
+                # The halfvec indexes cast to the old size; they are rebuilt below at the new one.
+                for name in await conn.fetch(
+                    "SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexname LIKE $3",
+                    schema,
+                    table_name,
+                    f"{_BANK_INDEX_PREFIX[table_name]}%",
+                ):
+                    await conn.execute(f"DROP INDEX IF EXISTS {fq_table(name['indexname'])}")
                 await conn.execute(f"ALTER TABLE {passages} ALTER COLUMN embedding TYPE vector({dimension})")
-            if dimension <= _VECTOR_INDEX_MAX:
-                using = "hnsw (embedding vector_cosine_ops)"
-            elif dimension <= _HALFVEC_INDEX_MAX:
-                using = f"hnsw ((embedding::halfvec({dimension})) halfvec_cosine_ops)"
-            else:
-                using = None
-                logger.warning(f"Knowledge passages at {dimension} dims cannot be indexed; search scans")
-            if using and table_name == "kb_passage_vectors":
-                # Sentence vectors only rescore pages that the other vectors found, so they stay out of the
-                # HNSW graph: four times the rows in it made a ViDoRe hr ingest 2.7x slower and search 2x.
-                # The search's candidate arm repeats this predicate, or the planner cannot use the index.
-                await conn.execute(
-                    f"CREATE INDEX IF NOT EXISTS idx_{table_name}_candidates ON {passages} USING {using} "
-                    f"WHERE {CANDIDATE_ROLES_SQL}"
-                )
-                # Until _PIPELINE_VERSION became 10 one full index covered every vector; it was dropped then,
-                # as it would still pay every sentence insert.
-                await conn.execute(f"DROP INDEX IF EXISTS {fq_table(f'idx_{table_name}_embedding')}")
-            elif using:
-                # ponytail: one global HNSW index; per-bank partial indexes if one tenant holds many big banks.
-                await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table_name}_embedding ON {passages} USING {using}")
+                self._dimension = dimension
+                # The banks, all empty, get their index back at the new size.
+                for row in await conn.fetch(f"SELECT bank_id FROM {fq_table('banks')} WHERE kind = 'knowledge'"):
+                    await self._create_bank_index(conn, table_name, row["bank_id"])
+
+    def _index_using(self) -> str | None:
+        dimension = self._dimension
+        if dimension <= _VECTOR_INDEX_MAX:
+            return "hnsw (embedding vector_cosine_ops)"
+        if dimension <= _HALFVEC_INDEX_MAX:
+            return f"hnsw ((embedding::halfvec({dimension})) halfvec_cosine_ops)"
+        logger.warning(f"Knowledge passages at {dimension} dims cannot be indexed; search scans")
+        return None
+
+    async def _create_bank_index(self, conn: Any, table_name: str, bank_id: str) -> None:
+        """The bank's own HNSW index, partial on its rows: a search walks only its vectors. Its predicate is
+        the search's ``x.bank_id = $2`` (bound per call: the pool keeps no prepared plans), plus, for the
+        extra vectors, the role filter, as sentence vectors only rescore and stay out of the graph (four
+        times the rows in it made a ViDoRe hr ingest 2.7x slower and search 2x)."""
+        using = self._index_using()
+        if using is None:
+            return
+        predicate = "bank_id = '" + bank_id.replace("'", "''") + "'"
+        if table_name == "kb_passage_vectors":
+            predicate += f" AND {CANDIDATE_ROLES_SQL}"
+        # Plain, not CONCURRENTLY, so it can run in a transaction; the helper keeps its ShareLock wait
+        # from queueing every other bank's writes behind it.
+        await create_index_without_queueing(
+            conn,
+            f"CREATE INDEX IF NOT EXISTS {_bank_index(table_name, bank_id)} "
+            f"ON {fq_table(table_name)} USING {using} WHERE {predicate}",
+        )
+
+    async def bank_created(self, bank_id: str) -> None:
+        async with acquire_with_retry(await self._pool()) as conn:
+            for table in _BANK_INDEX_PREFIX:
+                await self._create_bank_index(conn, table, bank_id)
+
+    async def bank_deleted(self, bank_id: str) -> None:
+        # CONCURRENTLY: a plain DROP takes ACCESS EXCLUSIVE on the shared table and stalls every bank.
+        # Runs outside a transaction (autocommit), as CONCURRENTLY must.
+        async with acquire_with_retry(await self._pool()) as conn:
+            for table in _BANK_INDEX_PREFIX:
+                await conn.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {fq_table(_bank_index(table, bank_id))}")
 
     def _distance(self, placeholder: str, alias: str = "p") -> str:
         dimension = self._dimension
@@ -948,7 +988,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
             params.append(list(terms))
             tsquery = f"(SELECT to_tsquery('simple', string_agg(quote_literal(w), ' | ')) FROM unnest(${len(params)}::text[]) w)"
 
-        def nearest(table: str, exact: str) -> str:
+        def nearest(table: str) -> str:
             roles = f" AND {CANDIDATE_ROLES_SQL.replace('role', 'x.role')}" if table == "kb_passage_vectors" else ""
             arm = "vector" if table == "kb_passages" else "extra_vectors"
             return f"""
@@ -956,7 +996,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 FROM {fq_table(table)} x
                 JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
                 WHERE x.bank_id = $2{where}{roles}
-                ORDER BY {self._distance("$1", "x")}{exact} LIMIT {pool}
+                ORDER BY {self._distance("$1", "x")} LIMIT {pool}
             """
 
         def keyword_arm() -> str:
@@ -969,13 +1009,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
             """
 
         async with acquire_with_retry(await self._pool()) as conn:
-            # The HNSW index spans every bank. Filtered to one bank, its scan gives up after
-            # hnsw.max_scan_tuples, or on a graph region of equal vectors, and a small bank in a
-            # big table found none of its own passages (#6607). A small bank is cheap to scan
-            # whole, so it is: `+ 0` makes the ORDER BY one the index cannot serve.
-            # ponytail: exact only under EXACT_SEARCH_MAX_PASSAGES; per-bank indexes if mid-size banks miss.
-            exact = " + 0" if bank_passages <= EXACT_SEARCH_MAX_PASSAGES else ""
-            arms = [nearest("kb_passages", exact), nearest("kb_passage_vectors", exact)]
+            # Each bank's own HNSW index (_create_bank_index). One index spanning every bank, filtered
+            # to one, gave up after hnsw.max_scan_tuples and a small bank next to a big one found none
+            # of its passages (#6607); small banks were then scanned exactly, which this replaced.
+            arms = [nearest("kb_passages"), nearest("kb_passage_vectors")]
             if terms:
                 arms.append(keyword_arm())
             async with conn.transaction():

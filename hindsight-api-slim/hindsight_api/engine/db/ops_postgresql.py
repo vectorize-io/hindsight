@@ -27,13 +27,14 @@ from .result import ResultRow
 _INDEX_LOCK_BUDGET_SECONDS = 300.0
 
 
-async def _create_index_without_queueing(conn: DatabaseConnection, ddl: str) -> None:
-    """Run a plain CREATE INDEX on memory_units without parking in its lock queue.
+async def create_index_without_queueing(conn: DatabaseConnection, ddl: str) -> None:
+    """Run a plain CREATE INDEX on a table every bank shares (memory_units, the knowledge-bank
+    passages) without parking in its lock queue.
 
     The ShareLock it needs conflicts with every INSERT/UPDATE/DELETE, and Postgres
     queues later lockers behind a waiting one. So while it waits — behind another bank
     delete's DROP INDEX CONCURRENTLY, or a CONCURRENTLY build, both of which wait for
-    every older transaction to end — every write to memory_units, in every bank, waits
+    every older transaction to end — every write to the table, in every bank, waits
     with it (#5805). Instead each attempt waits in a savepoint for at most twice
     ``deadlock_timeout``, then leaves the queue and backs off so writers get through.
 
@@ -1384,7 +1385,7 @@ class PostgreSQLOps(DataAccessOps):
             for ft, suffix in fact_types.items():
                 uid = str(internal_id).replace("-", "")[:16]
                 idx = f"idx_mu_emb_{suffix}_{uid}"
-                await _create_index_without_queueing(
+                await create_index_without_queueing(
                     conn,
                     f"CREATE INDEX IF NOT EXISTS {idx} "
                     f"ON {table} {index_clause} "
