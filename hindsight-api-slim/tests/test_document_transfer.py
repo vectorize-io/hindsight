@@ -2984,6 +2984,55 @@ async def test_restored_operations_log_cannot_re_run_the_source_bank_work(memory
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("renamed", [False, True])
+async def test_restored_failed_operation_keeps_its_record_but_not_its_task(memory, request_context, renamed):
+    """A failed operation restores as history only: its task is not carried, so it cannot be retried.
+
+    Its ``task_payload`` is the task the source bank ran. Retrying it in the copy would
+    re-run the source's work there, like the in-flight rows the restore already drops.
+    Covers a restore under the archive's own bank id (operation ids kept) and a renamed one.
+    """
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("ops_failed_src")
+    target = _unique_bank("ops_failed_dst") if renamed else source
+    try:
+        await _retain(memory, source, "Frank plays the cello.", request_context, "doc-1")
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"INSERT INTO {fq_store_table('async_operations')} "
+                f"(operation_id, bank_id, operation_type, status, task_payload) "
+                f"VALUES ($1, $2, 'export_bank', 'failed', $3::jsonb)",
+                uuid.uuid4(),
+                source,
+                json.dumps({"type": "export_bank", "bank_id": "some-other-bank", "_schema": "public"}),
+            )
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+        if not renamed:
+            await memory.delete_bank(source, request_context=request_context)
+
+        await memory.import_bank_async(archive, request_context, target_bank_id=target)
+
+        async with acquire_with_retry(backend) as conn:
+            row = await conn.fetchrow(
+                f"SELECT operation_id, task_payload FROM {fq_store_table('async_operations')} "
+                f"WHERE bank_id = $1 AND operation_type = 'export_bank' AND status = 'failed'",
+                target,
+            )
+        assert row is not None, "the failed operation is kept as the copy's history"
+        assert row["task_payload"] is None
+
+        with pytest.raises(OperationValidationError) as exc:
+            await memory.retry_operation(target, str(row["operation_id"]), request_context=request_context)
+        assert exc.value.status_code == 409
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        if renamed:
+            await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
 # Seeds the attachment link with a raw INSERT that needs the document's SQL row.
 @pytest.mark.memory_backend_incompatible
 async def test_attachment_bytes_travel_with_the_bank(memory, request_context):

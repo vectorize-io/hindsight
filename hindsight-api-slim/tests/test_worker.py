@@ -581,6 +581,53 @@ class TestWorkerPoller:
         assert run.task_id == my_claims[0].operation_id and run.queued_at == my_claims[0].queued_at
 
     @pytest.mark.asyncio
+    async def test_claimed_task_takes_its_bank_and_operation_from_the_row(self, pool, backend, clean_operations):
+        """The job runs for the bank, operation and schema its row was claimed from.
+
+        The row is the one source of truth; the payload only carries the task's arguments.
+        """
+        from hindsight_api.worker import WorkerPoller
+        from hindsight_api.worker.poller import ClaimedTask
+
+        bank_id = f"test-worker-{uuid.uuid4().hex[:8]}"
+        await _ensure_bank(pool, bank_id)
+        op_id = uuid.uuid4()
+        payload = {
+            "type": "test_task",
+            "bank_id": "some-other-bank",
+            "operation_id": str(uuid.uuid4()),
+            "_schema": "some_other_schema",
+        }
+        await pool.execute(
+            """
+            INSERT INTO async_operations (operation_id, bank_id, operation_type, status, task_payload)
+            VALUES ($1, $2, 'test', 'pending', $3::jsonb)
+            """,
+            op_id,
+            bank_id,
+            json.dumps(payload),
+        )
+
+        executed: list[dict] = []
+
+        async def executor(task_dict):
+            executed.append(dict(task_dict))
+
+        poller = WorkerPoller(backend=backend, worker_id="test-worker-row", executor=executor)
+        claimed = [c for c in await poller.claim_batch() if c.operation_id == str(op_id)]
+        assert len(claimed) == 1
+        assert claimed[0].task_dict["bank_id"] == bank_id
+        assert claimed[0].task_dict["operation_id"] == str(op_id)
+
+        # A task claimed from the default schema (None) runs without the payload's schema.
+        await poller._execute_task_inner(
+            ClaimedTask(operation_id=str(op_id), task_dict=claimed[0].task_dict, schema=None)
+        )
+        assert len(executed) == 1
+        assert "_schema" not in executed[0]
+        assert executed[0]["bank_id"] == bank_id
+
+    @pytest.mark.asyncio
     async def test_claim_batch_cannot_see_rows_outside_this_files_schema(self, pool, clean_operations):
         """Rows in ``public`` are invisible here, so they can never crowd out our claims (#3963).
 

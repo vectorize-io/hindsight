@@ -1067,7 +1067,10 @@ async def _restore_operational_rows(
     ``drop_operation_ids`` when restoring under a new bank id: operation ids are unique
     across the schema, and the source's rows may still be here (see :func:`_drop_ids`).
     """
-    operations = _finished_operations(_iter_data_rows(zf, "async_operations", bank_id))
+    # The rows are the copy's history, not its work: ``task_payload`` is the task the
+    # source bank ran, so it is not carried, and retrying a restored operation cannot
+    # re-run the source's work in the copy (same reason as :func:`_finished_operations`).
+    operations = _without(_finished_operations(_iter_data_rows(zf, "async_operations", bank_id)), "task_payload")
     if drop_operation_ids:
         operations = _without(operations, "operation_id")
     restored_ops = await _restore_rows(

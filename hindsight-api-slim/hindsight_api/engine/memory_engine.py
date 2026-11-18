@@ -22934,7 +22934,9 @@ class MemoryEngine(MemoryEngineInterface):
                       -- reset): retrying runs it now instead of waiting it out.
                       OR (status = 'pending' AND next_retry_at > NOW())
                   )
-                  AND NOT (operation_type = 'batch_retain' AND task_payload IS NULL)
+                  -- A row without a task has nothing for a worker to run: a batch_retain
+                  -- parent (handled below) or a restored record (refused below).
+                  AND task_payload IS NOT NULL
                 RETURNING operation_id
                 """,
                 op_uuid,
@@ -22976,6 +22978,7 @@ class MemoryEngine(MemoryEngineInterface):
                             updated_at = NOW()
                         WHERE bank_id = $1
                           AND result_metadata::jsonb @> $2::jsonb
+                          AND task_payload IS NOT NULL
                           AND (
                               status IN ('failed', 'cancelled')
                               OR (status = 'pending' AND next_retry_at > NOW())
@@ -23002,6 +23005,7 @@ class MemoryEngine(MemoryEngineInterface):
                               WHERE child.bank_id = $2
                                 AND child.result_metadata::jsonb @> $3::jsonb
                                 AND child.status <> 'completed'
+                                AND child.task_payload IS NOT NULL
                           )
                         RETURNING operation_id
                         """,
@@ -23020,6 +23024,12 @@ class MemoryEngine(MemoryEngineInterface):
                         f"to retry (its children have all completed, or it has none). Resubmit the source "
                         f"documents to re-ingest them, then delete this record via "
                         f"DELETE /operations/{operation_id}/delete.",
+                        409,
+                    )
+                if row["task_payload"] is None:
+                    raise OperationValidationError(
+                        f"Operation {operation_id} has no task to re-run (restored operations keep their "
+                        f"record only). Resubmit the work to run it again.",
                         409,
                     )
                 raise OperationValidationError(
