@@ -10,7 +10,7 @@ Each case has a ``category`` and its test id is ``<category>/<case id>``, so
   (``hq-owner-latest``, ``du-oncall-departed``, ``du-renamed-service``,
   ``du-backup-correction``);
 * aggregation — a list or count grows or loses a member (``hq-count-billing``,
-  ``du-enterprise-plan``, ``du-launch-risk``);
+  ``du-enterprise-plan``, ``du-launch-risk``, ``du-chained-sections``);
 * no_overreach — the bank does not say it, or says it only for one scope
   (``hq-absent-2024``, ``hq-scoped-2fa``);
 * stability — a page that should keep what it has does: a wave with nothing for it,

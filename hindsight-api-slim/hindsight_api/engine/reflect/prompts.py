@@ -1346,6 +1346,11 @@ ALLOWED OPERATIONS (each line shows the JSON shape)
   ✅ ``{"op": "append_block", "section_id": "members", "text": "- Carol"}``
   ❌ ``{"op": "replace_section_blocks", "section_id": "members", "blocks": ["- Carol"], "blocks_note": "merged"}``
   ✅ ``{"op": "replace_section_blocks", "section_id": "members", "blocks": ["- Carol"]}``
+- ``after_section_id`` is the id of a section in CURRENT DOCUMENT (omit it to add at
+  the end). A section this reply adds has no id yet: to place a new section after
+  it, use its heading exactly as you wrote it, never an id you made up from it.
+  ❌ ``"after_section_id": "q3-goals"`` for a "Q3 Goals" section this reply adds
+  ✅ ``"after_section_id": "Q3 Goals"``
 
 BLOCK TEXT RULES
 - Every ``text`` (and every entry of ``blocks``) is ONE markdown fragment:
