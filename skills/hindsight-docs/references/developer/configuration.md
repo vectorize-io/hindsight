@@ -2328,7 +2328,6 @@ Configuration for the file upload and conversion pipeline (used by `POST /v1/def
 | `HINDSIGHT_API_ENABLE_FILE_UPLOAD_API` | Enable the file upload API endpoint | `true` |
 | `HINDSIGHT_API_ENABLE_DOCUMENT_EXPORT_API` | Enable the [document export](./api/memory-banks.md#document-export--import-superseded) endpoint (`GET /document-transfer`) | `true` |
 | `HINDSIGHT_API_ENABLE_DOCUMENT_IMPORT_API` | Enable the [document import](./api/memory-banks.md#document-export--import-superseded) endpoint (`POST /document-transfer`) | `true` |
-| `HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS` | Enable [knowledge banks](./knowledge-banks.md). Off, their endpoints answer `404`, reflect ignores linked knowledge banks and the control plane hides them | `true` |
 | `HINDSIGHT_API_FILE_PARSER` | Server-side default parser or fallback chain (comma-separated, e.g. `iris,markitdown`) | `markitdown` |
 | `HINDSIGHT_API_FILE_PARSER_ALLOWLIST` | Comma-separated list of parsers clients are allowed to request. If not set, all registered parsers are allowed. | — |
 | `HINDSIGHT_API_FILE_CONVERSION_MAX_BATCH_SIZE` | Max files per upload request | `10` |
@@ -2684,7 +2683,7 @@ Disposition traits control how the bank reasons during reflect operations. Each 
 
 ### Knowledge banks
 
-Knowledge banks hold documents (PDF, Office, images, audio, video, text) for search by meaning and keywords; a memory bank links them in its `knowledge_banks` config, and reflect reads them (see [Reflect](#reflect)). They are off by default while the feature is being built. The settings marked *per bank* can be overridden for one knowledge bank through `PATCH /v1/default/knowledge-banks/{bank_id}/config`; a bank can only narrow the server's limits, never widen them.
+Knowledge banks hold documents (PDF, Office, images, audio, video, text) for search by meaning and keywords; a memory bank links them in its `knowledge_banks` config, and reflect reads them (see [Reflect](#reflect)). They are on by default. The settings marked *per bank* can be overridden for one knowledge bank through `PATCH /v1/default/knowledge-banks/{bank_id}/config`; a bank can only narrow the server's limits, never widen them.
 
 **Limits on what one file may cost.** Each limit catches a different file, so a server that accepts uploads from users sets them together:
 
@@ -2698,7 +2697,7 @@ A file over a limit fails with the limit's name in its error, and its stored cop
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `HINDSIGHT_API_ENABLE_KB` | Turn knowledge banks on. Off, their HTTP routes answer 404, reflect ignores linked knowledge banks and the control plane hides them. | `false` |
+| `HINDSIGHT_API_ENABLE_KB` | Knowledge banks on or off. Off, their HTTP routes answer 404, reflect ignores linked knowledge banks and the control plane hides them. | `true` |
 | `HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER` | The one embedder for every knowledge bank; what it embeds decides which media types can be ingested. `local` (EmbeddingGemma 2 in-process: text, image, audio, video), `gemini` / `vertex` (Gemini Embedding 2), `voyage` (text, image, video), `cohere` (text, image), `openai` (any OpenAI-compatible `/v1/embeddings` server), `text` (a memory-bank embeddings provider, text only). | `local` |
 | `HINDSIGHT_API_KB_EMBEDDINGS_MODEL` | The model. Unset uses the provider's: `google/embeddinggemma-2`, `gemini-embedding-2`, `voyage-multimodal-3.5`, `embed-v4.0`. Required for `openai`. | - |
 | `HINDSIGHT_API_KB_EMBEDDINGS_API_KEY` | API key for the remote providers. | - |

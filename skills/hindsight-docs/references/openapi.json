@@ -16386,7 +16386,7 @@
               }
             ],
             "title": "Strategy",
-            "description": "Ingestion strategy for this item (one of the server's `HINDSIGHT_API_INGEST_STRATEGIES`). Omit it and the server's default applies. A file whose type the strategy does not map is chunked as it is."
+            "description": "Ingestion strategy for this item (one of the server's `HINDSIGHT_API_KB_INGEST_STRATEGIES`). Omit it and the server's default applies. A file whose type the strategy does not map is chunked as it is."
           }
         },
         "type": "object",
