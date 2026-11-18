@@ -7666,7 +7666,7 @@ class MemoryEngine(MemoryEngineInterface):
         # and the global config refuses the access rather than let a per-bank override be silently
         # ignored.
         from .memories import get_memories as _get_memories_session
-        from .memories.base import StoreWriteConflict
+        from .memories.base import StoreWriteConflict, StoreWriteUnavailable
 
         _store = _get_memories_session()
         retain_session = None
@@ -8107,12 +8107,28 @@ class MemoryEngine(MemoryEngineInterface):
             # is already stored. The event is the lossy side of a boundary that is not
             # transactional either way (see the deferral note above): log it loudly and let
             # the retain report the truth, which is that it succeeded.
+            #
+            # A store that sheds the callback's count read ("not now, retry shortly") is retried
+            # here: the transaction rolls back whole, so a re-run queues each event exactly once,
+            # and the retain has nothing left to redo that could recover the event later.
             try:
                 backend = await self._get_backend()
-                async with acquire_with_retry(backend) as conn:
-                    async with conn.transaction():
-                        for callback in pending_outbox_callbacks:
-                            await callback(conn)
+                for attempt in range(1, self._OUTBOX_UNAVAILABLE_ATTEMPTS + 1):
+                    try:
+                        async with acquire_with_retry(backend) as conn:
+                            async with conn.transaction():
+                                for callback in pending_outbox_callbacks:
+                                    await callback(conn)
+                        break
+                    except StoreWriteUnavailable:
+                        if attempt == self._OUTBOX_UNAVAILABLE_ATTEMPTS:
+                            raise
+                        logger.info(
+                            f"[BATCH_RETAIN] bank={bank_id} operation={operation_id} store shed the "
+                            f"retain.completed outbox write (attempt {attempt}); retrying"
+                        )
+                        # Slept with the connection released, so a busy store does not also pin the pool.
+                        await asyncio.sleep(random.uniform(0.5, 1.0) * 2 ** (attempt - 1))
             except Exception:
                 logger.error(
                     "[BATCH_RETAIN] bank=%s operation=%s retained successfully but the retain.completed "
@@ -8287,6 +8303,10 @@ class MemoryEngine(MemoryEngineInterface):
     # itself on the sync path); failing then is better than looping, because
     # the operation-level retry re-runs the whole submission anyway.
     _APPEND_CONFLICT_ATTEMPTS = 3
+    # Retain completion outbox attempts when the store sheds its count read. Backoff doubles from
+    # ~0.5s, so the last attempt lands ~8-15s after the first: long enough to ride out a busy bank,
+    # short enough not to hold the retain task open on a store that stays down.
+    _OUTBOX_UNAVAILABLE_ATTEMPTS = 5
 
     def _validator_with_hook(self, name: str) -> "OperationValidatorExtension | None":
         """The loaded validator if it implements the optional hook ``name``, else None.
