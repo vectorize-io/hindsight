@@ -168,8 +168,12 @@ EDIT_TEXT_KEYS = ("new_string", "content", "patch", "diff", "new_str", "file_tex
 # Commands that change nothing, or only run checks: no moment.
 # A `cd` may end its line instead of `&&`/`;` (beta: 11 of a session's 14 checks were `cd <repo>` then
 # `git grep` / `gh run view` on the next line, each a reflect that found nothing).
+# Waiting and polling (`sleep`, `until …`, `ps`, `pgrep`, `stat`, `date`) joined on 2026-11-18: in a week
+# of rated notes none from such a command was used, and command notes overall were used 7 times in 51.
+# `du`/`df` stay watched: disk cleanups started with them, and those notes were used.
 READ_ONLY_CMD = re.compile(
     r"^\s*(cd [^;&|\n]+(&&|;|\n)\s*)?(cat|ls|find|grep|rg|head|tail|wc|tree|file|which|pwd|echo|sed -n|awk|"
+    r"sleep|until|ps|pgrep|stat|date|"
     r"command -v|git (status|diff|log|show|blame|grep|fetch|rev-parse|ls-files)|"
     r"gh (run (view|list)|pr (view|list|diff|checks)|issue (view|list))|python3? -m pytest|pytest|"
     r"python3? -c|python3? -I -c|pip3? install|npm (test|run test)|npx (vitest|jest))\b"

@@ -266,6 +266,21 @@ def test_a_read_after_a_cd_on_its_own_line_is_not_a_moment():
         assert not W.READ_ONLY_CMD.match(cmd), cmd
 
 
+def test_waiting_and_polling_is_not_a_moment():
+    """Live, 2026-11-18: no note from a wait or a poll was ever used; disk checks still are watched."""
+    for cmd in (
+        "sleep 2",
+        'until grep -qE "done|Error" out.txt; do sleep 2; done',
+        "ps aux | grep -Ei 'ciak' | head -5",
+        "pgrep -fl cargo | head",
+        "stat -f '%Sm %N' ~/.pg0/instances/*",
+        "date; tail -n 40 job.log",
+    ):
+        assert W.READ_ONLY_CMD.match(cmd), cmd
+    for cmd in ("du -sg ~/.cache/*", "df -h /", "status.py", "psql -c 'drop table x'", "dateutil-migrate"):
+        assert not W.READ_ONLY_CMD.match(cmd), cmd
+
+
 def test_a_request_that_names_no_work_gets_no_heads_up():
     """'/ship-it' searched memory by its own words and got a note about whatever shared them."""
 
