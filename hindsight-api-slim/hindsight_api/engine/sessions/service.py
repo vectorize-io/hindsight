@@ -600,9 +600,11 @@ class SessionService:
                         credits,
                         dismissed,
                     )
-                notes = await self._notes_after(
-                    conn, bank_id, session_id, request.ack if request.ack is not None else acked
-                )
+                # After the highest ack ever sent, not the one in this request: a client whose state
+                # was wiped (a reboot clears the temp dir it lives in) sends 0 and was handed every
+                # note of the session again (live, 2026-11-18). A lost response loses nothing: its
+                # ack never reached the server, so the note is still after `acked`.
+                notes = await self._notes_after(conn, bank_id, session_id, acked)
                 if notes:
                     await self._hand_off(conn, bank_id, session_id, notes, [r[0] for r in rows])
                 checking = settings.live and _checking(state, row["checking_since"])
@@ -650,7 +652,7 @@ class SessionService:
                 acked = ack
             settings = _settings_of(None, conn.parse_json(row["settings"]))
             state = W.WatchState.model_validate(conn.parse_json(row["watch_state"]) or {})
-            notes = await self._notes_after(conn, bank_id, session_id, ack if ack is not None else acked)
+            notes = await self._notes_after(conn, bank_id, session_id, acked)  # the highest ack: see append
             # Locks only when a note goes out for the first time: polls stay lock-free otherwise.
             if notes and len(await self._handed(conn, bank_id, session_id, notes)) < len(notes):
                 async with conn.transaction():

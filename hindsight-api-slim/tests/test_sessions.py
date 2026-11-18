@@ -416,6 +416,26 @@ async def test_the_log_records_when_a_note_first_goes_back_to_the_client(memory,
     assert handoffs[0].seq == 5
 
 
+async def test_a_client_that_lost_its_ack_is_not_handed_old_notes_again(memory, request_context, monkeypatch):
+    """Live: a reboot wiped the plugin's state, it sent ack 0, and every note of the session came back."""
+    monkeypatch.setattr(memory, "reflect_async", _reflect_stub([("Half cents round down.", [str(uuid.uuid4())])], []))
+    bank, s = _bank(), memory.sessions
+    ask = {"id": "1", "role": "user", "text": "Fix the half cent rounding in pay/rounding.py"}
+    await s.append(bank, "s1", _req(ask, live=True, retain="off"), request_context=request_context)
+    await s.append(
+        bank, "s1", _req({"id": "2", "role": "assistant", "text": "Looking."}), request_context=request_context
+    )
+    r = await s.append(bank, "s1", _req(), request_context=request_context)
+    assert [n.seq for n in r.notes] == [3]
+    # Not acked yet: it comes back, as a lost response needs.
+    assert [n.seq for n in (await s.append(bank, "s1", _req(), request_context=request_context)).notes] == [3]
+    await s.append(bank, "s1", _req(ack=3), request_context=request_context)
+    # Now the client forgets: ack 0, on an append and on a poll.
+    assert (await s.append(bank, "s1", _req(ack=0), request_context=request_context)).notes == []
+    more = _req({"id": "3", "role": "assistant", "text": "Done."}, ack=0)
+    assert (await s.append(bank, "s1", more, request_context=request_context)).notes == []
+
+
 async def test_an_abstained_check_is_logged_silent(memory, request_context, monkeypatch):
     monkeypatch.setattr(memory, "reflect_async", _reflect_stub([("", [])], []))
     bank = _bank()
