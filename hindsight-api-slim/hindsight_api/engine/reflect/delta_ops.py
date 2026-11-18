@@ -479,6 +479,14 @@ def _unreachable_correction_prompt(
             continue
         lines += ["", f"The blocks of section {section.id} are:"]
         lines += [f"- {block.id}: {block.text[:80]!r}" for block in section.blocks]
+    # A section the reply adds is not in the list above, so a chain of new
+    # sections can only be fixed by naming them by heading (#6583).
+    if any(e.get("op") == "add_section" for e in skipped):
+        lines += [
+            "",
+            "A section this reply adds has no id yet: to place a new section after it, "
+            "set ``after_section_id`` to its heading exactly as you wrote it.",
+        ]
     lines += [
         "",
         "Send the COMPLETE list again, with every section_id and block_id copied "

@@ -85,7 +85,7 @@ stays out of the category counts.
 | reflect | pages | 2 | the bank holds a page about the question, and the answer comes from it |
 | refresh_pages | precision | 3 | a page built across waves keeps the asked attribute apart from its near-misses |
 | refresh_pages | update | 4 | a later wave changes the answer: a newer owner, a departed on-call, a renamed service, a corrected figure |
-| refresh_pages | aggregation | 4 | a count grows across waves; a list gains and loses members; a new risk joins the list; a table grows over four deltas |
+| refresh_pages | aggregation | 5 | a count grows across waves; a list gains and loses members; a new risk joins the list; a table grows over four deltas; four new sections chained into the middle of a page |
 | refresh_pages | no_overreach | 2 | a year the bank does not cover; a rule true in one region only |
 | refresh_pages | stability | 3 | a wave with nothing for the page leaves it intact; no page collapses across waves; a history re-recorded every wave is not re-added |
 | refresh_pages | consistency | 2 | a changed value changes everywhere the page restates it (English, Chinese) |

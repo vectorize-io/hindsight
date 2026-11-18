@@ -539,3 +539,27 @@ async def test_request_delta_operations_asks_again_after_a_refused_parsed_array(
     assert replayed["role"] == "assistant"
     assert json.loads(replayed["content"]) == _STRAY_ARRAY_PARSED
     assert op_list.operations[0].section_id == "s"
+
+
+_GUESSED_CHAIN = (
+    '{"operations": ['
+    '{"op": "add_section", "heading": "Who\'s On Call", "blocks": ["a"], "after_section_id": "prefs"},'
+    '{"op": "add_section", "heading": "Rollback", "blocks": ["b"], "after_section_id": "whos-on-call"}]}'
+)
+_HEADING_CHAIN = (
+    '{"operations": ['
+    '{"op": "add_section", "heading": "Who\'s On Call", "blocks": ["a"], "after_section_id": "prefs"},'
+    '{"op": "add_section", "heading": "Rollback", "blocks": ["b"], "after_section_id": "Who\'s On Call"}]}'
+)
+
+
+async def test_request_delta_operations_tells_a_guessed_new_section_id_to_use_the_heading():
+    """#6583: a section the reply adds is not in the listed sections, so the retry has to
+    say to place after it by heading — otherwise the model guesses the same id again."""
+    llm = _ScriptedLLM(_GUESSED_CHAIN, _HEADING_CHAIN)
+    op_list = await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test", document=_DOC)
+    assert len(llm.calls) == 2
+    assert "its heading exactly as you wrote it" in llm.calls[1][3]["content"]
+    outcome = apply_operations(_DOC, op_list.operations)
+    assert not outcome.skipped
+    assert [s.heading for s in outcome.document.sections] == ["Preferences", "Who's On Call", "Rollback"]

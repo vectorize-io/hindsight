@@ -12,6 +12,11 @@ way an update reaches a page (its category in brackets):
 * ``du-backup-correction`` (update) — a memory saying an earlier figure was wrong;
 * ``du-enterprise-plan`` (aggregation) — one item joins a list and another leaves it;
 * ``du-launch-risk`` (aggregation) — something the topic covers that the page has never mentioned;
+* ``du-chained-sections`` (aggregation) — the update brings four practices that become four new
+  sections between two the page has. Each new section is placed after the one before it, by an id
+  the model guesses from a heading it just wrote, and headings like "Disable, Don't Delete" make
+  the guess miss ("dont" for the server's "don-t", #6583) — dropping that section and every one
+  chained after it;
 * ``du-quiet-wave`` (stability) — nothing in the wave bears on the page, which must survive it;
 * ``du-rerecorded-history`` (stability) — a release history grown over five deltas, 20 releases
   to 61, each wave re-recording in other words every release the page already lists. A prompt
@@ -272,6 +277,35 @@ CASES: tuple[DeltaUpdate, ...] = (
             "The vendor of the payment SDK we ship with announced it ends support for that SDK on 1 September 2026.",
         ),
         base_criteria="Names the load tests reaching only 60% of peak traffic as a launch risk.",
+    ),
+    DeltaUpdate(
+        question=_q(
+            "du-chained-sections",
+            "aggregation",
+            "What is our feature-flag runbook? One numbered section per practice, titled after the practice, "
+            "in order, with the Glossary kept as the last section.",
+            "Has a section for each of the four practices: Disable, Don't Delete; Who's On Call, Who's "
+            "Flipping; Rollback & Recover; Ops/Infra Flags Aren't Yours. Still says flags are created in the "
+            "flag console with an owner and an expiry date, and still has the Glossary.",
+            "",
+        ),
+        base=(
+            "Feature flags gate every risky change in the checkout service.",
+            "Feature flags are created in the flag console with an owner and an expiry date.",
+            "Glossary for the feature-flag runbook: a flag is a runtime switch; a flag's owner is the engineer "
+            "accountable for it.",
+        ),
+        update=(
+            'The team calls the next feature-flag practice "Disable, Don\'t Delete": retired flags are switched '
+            "off, never removed, so the audit trail survives.",
+            'The feature-flag practice after that is "Who\'s On Call, Who\'s Flipping": only the on-call '
+            "engineer flips flags at night.",
+            'The next feature-flag practice is "Rollback & Recover": flip the flag off before any redeploy.',
+            'The last feature-flag practice is "Ops/Infra Flags Aren\'t Yours": only the platform team flips '
+            "infra flags.",
+        ),
+        base_criteria="Says flags are created in the flag console with an owner and an expiry date, and has a "
+        "Glossary.",
     ),
     DeltaUpdate(
         question=_q(
