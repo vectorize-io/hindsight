@@ -54,6 +54,7 @@ from ..config import (
     LLM_STRATEGY_METADATA,
     SYSTEM_ONE_DECISION_MODEL_PROVIDERS,
     ConfigLike,
+    DecisionModelOperation,
     HindsightConfig,
     LLMMemberConfig,
     LLMStrategyConfig,
@@ -689,7 +690,8 @@ from .bank_life import (
     job_bank_bound,
 )
 from .bank_templates import apply_default_bank_template_resources, load_default_bank_template_manifest
-from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel, TypeSafeCrossEncoder, recall_log_id
+from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel, recall_log_id
+from .decision_model import DecisionModel, decision_engine
 from .embeddings import (
     EMBEDDING_MODEL_SETTING,
     Embeddings,
@@ -779,7 +781,7 @@ from .reflect.tools import (
     tool_search_mental_models,
     tool_search_observations,
 )
-from .remote_retry import RetryPolicy, is_transient_remote_error, status_code_of
+from .remote_retry import is_transient_remote_error, status_code_of
 from .response_models import (
     DIRECTIVE_PRIORITY_MAX,
     DIRECTIVE_PRIORITY_MIN,
@@ -2999,6 +3001,7 @@ class MemoryEngine(MemoryEngineInterface):
         consolidation_llm_base_url: str | None = None,
         embeddings: Embeddings | None = None,
         cross_encoder: CrossEncoderModel | None = None,
+        decision_engine_for: Callable[[DecisionModelOperation], DecisionModel | None] | None = None,
         query_analyzer: QueryAnalyzer | None = None,
         pool_min_size: int | None = None,
         pool_max_size: int | None = None,
@@ -3037,6 +3040,9 @@ class MemoryEngine(MemoryEngineInterface):
             consolidation_llm_base_url: Base URL for consolidation LLM. Falls back to memory_llm_base_url.
             embeddings: Embeddings implementation. If not provided, created from env vars.
             cross_encoder: Cross-encoder model. If not provided, created from env vars.
+            decision_engine_for: The decision model each operation asks, by operation (None for none).
+                                Defaults to decision_model.decision_engine, the shared engine built
+                                from HINDSIGHT_API_DECISION_MODEL_*.
             query_analyzer: Query analyzer implementation. If not provided, uses DateparserQueryAnalyzer.
             pool_min_size: Minimum number of connections in the pool. Defaults to HINDSIGHT_API_DB_POOL_MIN_SIZE.
             pool_max_size: Maximum number of connections in the pool. Defaults to HINDSIGHT_API_DB_POOL_MAX_SIZE.
@@ -3508,7 +3514,7 @@ class MemoryEngine(MemoryEngineInterface):
 
         # Initialize cross-encoder reranker (cached for performance)
         self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
-        self._reflect_decision_model_client: TypeSafeCrossEncoder | None = None
+        self._decision_engine_for = decision_engine_for or decision_engine
         self._reflect_decision_model_unsupported_logged = False
 
         # Page-index writes a create hands off instead of waiting on; held so the loop does not
@@ -16224,59 +16230,41 @@ class MemoryEngine(MemoryEngineInterface):
             return self._reflect_llm_config
         return override
 
-    def _reflect_decision_model(self) -> TypeSafeCrossEncoder | None:
-        """The decision model reflect asks "is this enough?", or None when none is set up.
+    def _reflect_decision_model(self) -> DecisionModel | None:
+        """The decision model reflect and page refresh ask, or None when none is set up.
 
-        Built from the reflect decision-model setup (HINDSIGHT_API_DECISION_MODEL_*, with
-        HINDSIGHT_API_REFLECT_DECISION_MODEL_* overrides), once per engine so its connection
-        pool is shared across reflects. It is a TypeSafeCrossEncoder because pruning needs
-        that class's rank-and-cut; the sufficiency question is one more call on it.
+        The shared engine for reflect (HINDSIGHT_API_DECISION_MODEL_*, with
+        HINDSIGHT_API_REFLECT_DECISION_MODEL_* overrides), injected through the constructor. It
+        prunes the evidence, judges "is this enough?" and gates delta page refreshes; its
+        requests are retried (DecisionModel.ask), so a single 429 does not drop a round's cut or
+        verdict. Its questions are sized to the configured window, counted in the setup's
+        tokenizer (#6659); with no window (Hindsight Inference) at the Jev-sized default.
 
-        That client speaks only the System One endpoint (typesafe, hindsight), so another provider
-        (cloudflare, openai) leaves reflect on agent turns instead of failing every reflect's first round.
+        Reflect runs on the System One providers (typesafe, hindsight) only, as measured; another
+        provider (cloudflare, openai) leaves reflect on agent turns.
         """
-        if self._reflect_decision_model_client is None:
-            setup = get_config().decision_model_config("reflect")
-            if setup is None:
-                return None
-            if setup.provider not in SYSTEM_ONE_DECISION_MODEL_PROVIDERS:
-                if not self._reflect_decision_model_unsupported_logged:
-                    self._reflect_decision_model_unsupported_logged = True
-                    logger.warning(
-                        "Reflect's decision model supports only the typesafe and hindsight providers, not %r: "
-                        "reflect keeps agent turns.",
-                        setup.provider,
-                    )
-                return None
-            self._reflect_decision_model_client = TypeSafeCrossEncoder(
-                api_key=setup.api_key,
-                model=setup.model,
-                base_url=setup.base_url,
-                timeout=setup.timeout,
-                max_concurrent=setup.max_concurrent,
-                prune_candidates=True,
-                # The recall cut keeps at most 12; a reflect answer can need more (a count
-                # over seven customers is seven facts plus the observations about them).
-                # The floor guards the cut's coarse levels: on that count it kept five.
-                shortlist=25,
-                min_keep=15,
-                vision=setup.vision,
-                # None (Hindsight Inference, which fits requests itself): the class default, sized for Jev.
-                max_question_tokens=setup.max_request_tokens,
-                tokenizer=setup.tokenizer,
-            )
-            # Retried like the shared decision model (DecisionModel.ask): without it a single 429
-            # dropped the cut (every item kept) or the "is this enough?" verdict (an agent turn)
-            # for that round. On a shared endpoint under load it was 30% of reflects in a LoComo
-            # run, which then quietly answered like agent mode.
-            self._reflect_decision_model_client.retry_policy = RetryPolicy()
-        return self._reflect_decision_model_client
+        model = self._decision_engine_for("reflect")
+        if model is None:
+            return None
+        if model.provider not in SYSTEM_ONE_DECISION_MODEL_PROVIDERS:
+            if not self._reflect_decision_model_unsupported_logged:
+                self._reflect_decision_model_unsupported_logged = True
+                logger.warning(
+                    "Reflect's decision model supports only the typesafe and hindsight providers, not %r: "
+                    "reflect keeps agent turns.",
+                    model.provider,
+                )
+            return None
+        return model
 
     async def _prune_reflect_evidence(self, query: str, texts: list[str]) -> list[bool]:
         """Keep flags for the first retrieval of a decision-orchestrated reflect."""
         model = self._reflect_decision_model()
         assert model is not None  # only wired when a decision model is configured
-        scores = await model.predict([(query, text) for text in texts])
+        # The recall cut keeps at most 12; a reflect answer can need more (a count over seven
+        # customers is seven facts plus the observations about them). The floor guards the
+        # cut's coarse levels: on that count it kept five.
+        scores = await model.rank(query, texts, prune=True, shortlist=25, min_keep=15)
         return [score > 0.0 for score in scores]
 
     def _llm_for_reflect_operation(self, operation_label: str) -> "LLMConfig | MultiLLMProvider":

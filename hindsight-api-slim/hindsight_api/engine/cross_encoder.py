@@ -7,7 +7,6 @@ Configuration via environment variables - see hindsight_api.config for all env v
 """
 
 import asyncio
-import base64
 import contextvars
 import logging
 import os
@@ -15,7 +14,7 @@ import threading
 import time
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar, cast
 
@@ -66,14 +65,7 @@ from ..config import (
 )
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import reranker_bank_attribution_headers
-from .decision_model import (
-    JEV_IMAGE_FORMATS,
-    JEV_IMAGES_HEADER,
-    jev_accepts,
-    overflowed_window,
-    record_decision_call,
-)
-from .decision_rerank_interface import EvidenceImage
+from .decision_model import overflowed_window, record_decision_call
 from .llm_trace import RERANK_SCOPE, trace_model_call
 from .local_device import (
     LOCAL_MODEL_BUILD_LOCK,
@@ -1205,33 +1197,6 @@ _CUT_INSTRUCTIONS = (
     "Count a candidate as relevant only if it helps answer the question."
 )
 
-_SUFFICIENCY_INSTRUCTIONS = (
-    "Does the evidence above answer the question? Judge only what the evidence states, "
-    "not what could be guessed from it."
-)
-
-# The page-impact gate answers with the single most likely option, and anything but
-# "no" keeps the memory. With only yes/no, a memory that bears on the topic by
-# implication lost to "no": "the payment SDK vendor ends support on 1 September"
-# against a page of risks to a 15 September launch got p(yes) 0.10-0.22, so a new
-# launch risk never reached the page. Several ways to say "it may matter" split the
-# doubt across options that all keep the memory, so "no" wins only when it is the
-# model's clear answer: on replayed eval pages, 54/54 memories that should change a
-# page kept (48/54 before), unrelated memories let through 13/80 (12/80 before).
-_PAGE_IMPACT_INSTRUCTIONS = (
-    "Is the new memory about the page's topic, or about anything the topic depends on (a "
-    "dependency, vendor, date, person or system the topic relies on)? A memory that could "
-    "threaten, block, delay or change what the topic is about counts, even when it never names "
-    "the topic. Answer no only when it concerns a different subject altogether."
-)
-_PAGE_IMPACT_OPTIONS = {
-    "yes": "Yes, it concerns the page's topic or something it depends on",
-    "maybe": "Possibly, it might affect the topic or something it relies on",
-    "unsure": "Unclear whether it bears on the topic",
-    "depends": "It concerns something the topic relies on (a vendor, dependency, date, person or system)",
-    "no": "No, a different subject altogether: nothing this page covers or relies on",
-}
-
 _OPTION_KEY_OVERHEAD = 7  # JSON envelope overhead per choice option: '"c249": "' + comma/newline
 _LISTING_ITEM_OVERHEAD = 10  # Formatting overhead per item in cut listing: "[1] ...\n\n"
 _MAX_QUERY_TOKENS = 2_000  # Defensive ceiling on query tokens in reranker
@@ -1243,7 +1208,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
 
     Deprecated as a reranker provider (``HINDSIGHT_API_RERANKER_PROVIDER=typesafe``): set up
     the shared decision model (``HINDSIGHT_API_DECISION_MODEL_*``) instead, which recall
-    uses in place of the reranker. The class stays, since reflect's decision model uses it.
+    uses in place of the reranker. Reflect asks the shared decision engine (DecisionModel.rank).
 
     Not a Cohere-compatible /rerank endpoint: TypeSafe evaluates typed *questions*
     against a *state*. This provider asks two of them.
@@ -1331,7 +1296,6 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         prune_candidates: bool = DEFAULT_RERANKER_TYPESAFE_PRUNE_CANDIDATES,
         shortlist: int | None = None,
         min_keep: int | None = None,
-        vision: bool = False,
         max_question_tokens: int | None = None,
         tokenizer: str | None = None,
     ):
@@ -1352,8 +1316,6 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         self.base_url = (base_url or DEFAULT_RERANKER_TYPESAFE_BASE_URL).rstrip("/")
         self.timeout = timeout
         self.prunes_candidates = bool(prune_candidates)
-        # Whether the sufficiency question is shown the evidence's pictures (HINDSIGHT_API_DECISION_MODEL_VISION).
-        self.vision = vision
         # CrossLoopSemaphore, not asyncio.Semaphore: one encoder instance is built at
         # startup and reached from every loop in the process (worker threads run their
         # own via asyncio.run), and an asyncio.Semaphore binds to whichever loop first
@@ -1532,148 +1494,6 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
 
         ranked_finalists = await self._rank_once(query, effective_docs, finalists)
         return ranked_finalists + rest
-
-    # Ordered verdicts for the reflect sufficiency question; only the last one ends
-    # retrieval. "Partly" is its own level so a half-answer keeps searching.
-    SUFFICIENCY_LEVELS = [
-        "The evidence does not answer the question",
-        "The evidence answers part of the question; something it asks is missing",
-        "The evidence fully answers the question",
-    ]
-
-    async def evidence_is_sufficient(
-        self, query: str, evidence: str, *, pictures: Sequence[EvidenceImage] = ()
-    ) -> bool:
-        """Whether ``evidence`` already answers ``query``: one Score question.
-
-        Used by a decision-orchestrated reflect to skip the LLM turns that would otherwise decide to keep
-        searching. A Score, not a yes/no Choice, for the reason the cut uses one: the
-        levels are ordered, and "partly" must not be rounded up to "yes".
-
-        ``pictures`` (the knowledge-bank pictures the evidence names by label) are shown too when
-        ``vision`` is on, as image assets each referenced after its label; the ones Jev would refuse
-        are left out.
-        """
-        shown = [p for p in pictures if jev_accepts(p.media_type, p.data)] if self.vision else []
-        references = {f"[[picture-{i + 1}]]": picture for i, picture in enumerate(shown)}
-        pictures_text = "".join(f"\n{p.label}: {ref}" for ref, p in references.items())
-        assets = {
-            ref: {
-                "type": "image",
-                "format": JEV_IMAGE_FORMATS[p.media_type],
-                "data_base64": base64.b64encode(p.data).decode(),
-            }
-            for ref, p in references.items()
-        }
-        overhead = (
-            count_tokens(_SUFFICIENCY_INSTRUCTIONS, self.tokenizer)
-            + sum(count_tokens(level, self.tokenizer) for level in self.SUFFICIENCY_LEVELS)
-            + 50
-        )
-        prefix = f"Question: {query}\n\nEvidence:\n"
-        policy = self.retry_policy or RetryPolicy()
-
-        async def ask(question_budget: int) -> dict:
-            # The pictures' own tokens are Jev's to count: a request it finds too long is rebuilt smaller.
-            budget = max(
-                100,
-                question_budget
-                - overhead
-                - count_tokens(prefix, self.tokenizer)
-                - count_tokens(pictures_text, self.tokenizer),
-            )
-            # ponytail: keeps the head of the evidence; the agent's own results come
-            # first (pages, then observations, then facts), so the tail is raw facts.
-            fitted = (
-                truncate_to_tokens(evidence, budget, self.tokenizer).text
-                if count_tokens(evidence, self.tokenizer) > budget
-                else evidence
-            )
-            body = {
-                "state": f"{prefix}{fitted}" + (f"\n\nPictures:{pictures_text}" if assets else ""),
-                **({"assets": assets} if assets else {}),
-                "model": self.model,
-                "questions": {
-                    "sufficient": {
-                        "type": "score",
-                        "instructions": _SUFFICIENCY_INSTRUCTIONS,
-                        "criteria": self.SUFFICIENCY_LEVELS,
-                    }
-                },
-            }
-            # Retried as the page-impact question is: a rate limit read as "not enough" bought
-            # the agent turns the decision model exists to save.
-            return await acall_with_retry(
-                lambda: self._ask(body, "decision_evidence_sufficiency", JEV_IMAGES_HEADER if assets else None),
-                policy=policy,
-                budget=policy.new_budget(),
-                provider=self.provider_name,
-            )
-
-        result = await self._within_window(ask)
-        answer = result["answers"]["sufficient"]
-        # The most likely level, not the rounded expected score: an expected 1.43 is "partly" when
-        # rounded, though "fully" was the likeliest verdict at 0.54 (sde-bench boltons-budget), and
-        # every such rounding cost two LLM turns. The score is the fallback for a reply without
-        # per-level probabilities.
-        probabilities = answer.get("probabilities")
-        if probabilities:
-            level = int(max(probabilities, key=lambda key: float(probabilities[key])))
-        else:
-            level = round(float(answer["score"]))
-        return level >= len(self.SUFFICIENCY_LEVELS) - 1
-
-    async def could_change_page(self, topic: str, page: str, memory: str) -> bool:
-        """Whether ``memory`` could change a page about ``topic`` that reads ``page``: one Choice.
-
-        Gates a delta page refresh: a memory answered "no" is never shown to
-        the LLM. Worded so a doubt is a "yes", because a wrong "no" is silent and
-        permanent (the refresh moves past the memory) while a wrong "yes" costs one
-        LLM call, which is what every refresh pays without the gate.
-        """
-        prefix = f"Page topic: {topic}\n\nNew memory: {memory}\n\nThe page as it reads now:\n"
-        overhead = (
-            count_tokens(_PAGE_IMPACT_INSTRUCTIONS, self.tokenizer)
-            + sum(count_tokens(option, self.tokenizer) for option in _PAGE_IMPACT_OPTIONS.values())
-            + count_tokens(prefix, self.tokenizer)
-            + 50
-        )
-        policy = self.retry_policy or RetryPolicy()
-
-        async def ask(question_budget: int) -> dict:
-            budget = max(100, question_budget - overhead)
-            # ponytail: keeps the head of the page (its first sections); a page past
-            # ~25k tokens is already far over its own budget.
-            fitted = (
-                truncate_to_tokens(page, budget, self.tokenizer).text
-                if count_tokens(page, self.tokenizer) > budget
-                else page
-            )
-            body = {
-                "state": f"{prefix}{fitted}",
-                "model": self.model,
-                "questions": {
-                    "impact": {
-                        "type": "choice",
-                        "instructions": _PAGE_IMPACT_INSTRUCTIONS,
-                        "criteria": _PAGE_IMPACT_OPTIONS,
-                    }
-                },
-            }
-            # A refresh asks this once per new memory, all at once, so a rate limit is the
-            # expected failure rather than a rare one: retried, not handed back as "search".
-            return await acall_with_retry(
-                lambda: self._ask(body, "decision_page_impact"),
-                policy=policy,
-                budget=policy.new_budget(),
-                provider=self.provider_name,
-            )
-
-        result = await self._within_window(ask)
-        answer = result["answers"]["impact"]
-        probabilities = answer.get("probabilities") or {}
-        choice = answer.get("choice") or max(probabilities, key=lambda key: float(probabilities[key]), default="yes")
-        return choice != "no"
 
     async def _cut(self, query: str, docs: list[str], order: list[int], budget: int) -> int:
         """How many of the ranked candidates are relevant, as the model sees it."""
