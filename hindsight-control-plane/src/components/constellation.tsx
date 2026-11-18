@@ -187,6 +187,108 @@ function escapeHtml(s: string): string {
   );
 }
 
+/**
+ * The hover tooltip for one node, as HTML for ``innerHTML``.
+ *
+ * Every value is escaped or forced to a number, including ones that look computed:
+ * a colour can come from a caller's ``node.color``, and the id, dates and counts
+ * come from stored data.
+ */
+export function tooltipHtml(
+  node: GraphNode,
+  heatColor: string,
+  rawLinkCount: number,
+  isDark: boolean
+): string {
+  const meta = node.metadata as Record<string, any> | undefined;
+  const fullText = escapeHtml(String(meta?.text || node.label || node.id));
+  const entities: string[] = meta?.entities
+    ? String(meta.entities)
+        .split(",")
+        .map((e: string) => escapeHtml(e.trim()))
+        .filter(Boolean)
+    : [];
+  const nodeColor = escapeHtml(String(heatColor));
+  const linkCount = Number(rawLinkCount) || 0;
+  const factType = escapeHtml(String(meta?.fact_type || node.group || "memory"));
+  const context = meta?.context && meta.context !== "N/A" ? escapeHtml(String(meta.context)) : null;
+  const tags: string[] = Array.isArray(meta?.tags) ? meta.tags.map(String).map(escapeHtml) : [];
+  const occurredStart = meta?.occurred_start || null;
+  const occurredEnd = meta?.occurred_end || null;
+  const mentionedAt = meta?.mentioned_at || null;
+  const proofCount = Number(meta?.proof_count) || null;
+  const documentId = meta?.document_id || null;
+
+  const muted = isDark ? "#a1a1aa" : "#71717a";
+  const dimmed = isDark ? "#71717a" : "#a1a1aa";
+  const labelStyle = `font-size:10px;color:${dimmed};text-transform:uppercase;letter-spacing:0.04em;font-weight:500`;
+  const valStyle = `font-size:12px;color:${isDark ? "#e4e4e7" : "#18181b"}`;
+  const rowStyle = `display:flex;justify-content:space-between;align-items:baseline;gap:12px`;
+
+  // Type badge + link count
+  let html = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">`;
+  html += `<span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:${nodeColor};background:${nodeColor}18;padding:2px 8px;border-radius:4px">${factType}</span>`;
+  html += `<span style="font-size:10px;color:${muted}">${linkCount} link${linkCount !== 1 ? "s" : ""}</span>`;
+  html += `</div>`;
+
+  // Text
+  html += `<div style="font-size:12px;line-height:1.6;margin-bottom:8px">${fullText}</div>`;
+
+  // Metadata grid
+  html += `<div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid ${isDark ? "#27272a" : "#e4e4e7"};padding-top:8px">`;
+
+  if (context) {
+    html += `<div style="${rowStyle}"><span style="${labelStyle}">Context</span><span style="${valStyle}">${context}</span></div>`;
+  }
+
+  // Format ISO timestamp as "YYYY-MM-DD HH:MM" — keeps the row compact
+  // while still surfacing the time-of-day the user asked for.
+  const fmtTs = (iso: string) => escapeHtml(String(iso).slice(0, 16).replace("T", " "));
+
+  if (occurredStart) {
+    const start = fmtTs(occurredStart);
+    const end = occurredEnd ? fmtTs(occurredEnd) : null;
+    const occurredDisplay = end && end !== start ? `${start} → ${end}` : start;
+    html += `<div style="${rowStyle}"><span style="${labelStyle}">Occurred</span><span style="${valStyle}">${occurredDisplay}</span></div>`;
+  }
+
+  if (mentionedAt) {
+    html += `<div style="${rowStyle}"><span style="${labelStyle}">Mentioned</span><span style="${valStyle}">${fmtTs(mentionedAt)}</span></div>`;
+  }
+
+  if (proofCount && proofCount > 1) {
+    html += `<div style="${rowStyle}"><span style="${labelStyle}">Evidence</span><span style="${valStyle}">${proofCount} sources</span></div>`;
+  }
+
+  if (documentId) {
+    html += `<div style="${rowStyle}"><span style="${labelStyle}">Document</span><span style="font-size:11px;font-family:monospace;color:${muted}">${escapeHtml(String(documentId).slice(0, 12))}...</span></div>`;
+  }
+
+  html += `</div>`;
+
+  // Entities
+  if (entities.length > 0 && !(entities.length === 1 && entities[0] === "None")) {
+    html += `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">`;
+    for (const ent of entities) {
+      html += `<span style="font-size:10px;background:${isDark ? "#27272a" : "#f4f4f5"};color:${isDark ? "#d4d4d8" : "#3f3f46"};padding:2px 7px;border-radius:4px">${ent}</span>`;
+    }
+    html += `</div>`;
+  }
+
+  // Tags
+  if (tags.length > 0) {
+    html += `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">`;
+    for (const tag of tags) {
+      html += `<span style="font-size:10px;background:${nodeColor}15;color:${nodeColor};padding:2px 7px;border-radius:4px">#${tag}</span>`;
+    }
+    html += `</div>`;
+  }
+
+  // ID
+  html += `<div style="margin-top:8px;font-size:9px;font-family:monospace;color:${dimmed}">${escapeHtml(String(node.id))}</div>`;
+  return html;
+}
+
 function hashStr(s: string): number {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
@@ -1260,97 +1362,12 @@ export function Constellation({
       // Only rebuild innerHTML when the hovered node changes
       if (idx !== s.prevHoverIndex) {
         s.prevHoverIndex = idx;
-        const meta = node.metadata as Record<string, any> | undefined;
-        const fullText = escapeHtml(String(meta?.text || node.label || node.id));
-        const entities: string[] = meta?.entities
-          ? String(meta.entities)
-              .split(",")
-              .map((e: string) => escapeHtml(e.trim()))
-              .filter(Boolean)
-          : [];
-        const nodeColor = preparedNodes[idx].heatColor;
-        const linkCount = preparedNodes[idx].linkCount;
-        const factType = escapeHtml(String(meta?.fact_type || node.group || "memory"));
-        const context =
-          meta?.context && meta.context !== "N/A" ? escapeHtml(String(meta.context)) : null;
-        const tags: string[] = Array.isArray(meta?.tags)
-          ? meta.tags.map(String).map(escapeHtml)
-          : [];
-        const occurredStart = meta?.occurred_start || null;
-        const occurredEnd = meta?.occurred_end || null;
-        const mentionedAt = meta?.mentioned_at || null;
-        const proofCount = meta?.proof_count || null;
-        const documentId = meta?.document_id || null;
-
-        const muted = isDark ? "#a1a1aa" : "#71717a";
-        const dimmed = isDark ? "#71717a" : "#a1a1aa";
-        const labelStyle = `font-size:10px;color:${dimmed};text-transform:uppercase;letter-spacing:0.04em;font-weight:500`;
-        const valStyle = `font-size:12px;color:${isDark ? "#e4e4e7" : "#18181b"}`;
-        const rowStyle = `display:flex;justify-content:space-between;align-items:baseline;gap:12px`;
-
-        // Type badge + link count
-        let html = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">`;
-        html += `<span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:${nodeColor};background:${nodeColor}18;padding:2px 8px;border-radius:4px">${factType}</span>`;
-        html += `<span style="font-size:10px;color:${muted}">${linkCount} link${linkCount !== 1 ? "s" : ""}</span>`;
-        html += `</div>`;
-
-        // Text
-        html += `<div style="font-size:12px;line-height:1.6;margin-bottom:8px">${fullText}</div>`;
-
-        // Metadata grid
-        html += `<div style="display:flex;flex-direction:column;gap:4px;border-top:1px solid ${isDark ? "#27272a" : "#e4e4e7"};padding-top:8px">`;
-
-        if (context) {
-          html += `<div style="${rowStyle}"><span style="${labelStyle}">Context</span><span style="${valStyle}">${context}</span></div>`;
-        }
-
-        // Format ISO timestamp as "YYYY-MM-DD HH:MM" — keeps the row compact
-        // while still surfacing the time-of-day the user asked for.
-        const fmtTs = (iso: string) => iso.slice(0, 16).replace("T", " ");
-
-        if (occurredStart) {
-          const start = fmtTs(occurredStart);
-          const end = occurredEnd ? fmtTs(occurredEnd) : null;
-          const occurredDisplay = end && end !== start ? `${start} → ${end}` : start;
-          html += `<div style="${rowStyle}"><span style="${labelStyle}">Occurred</span><span style="${valStyle}">${occurredDisplay}</span></div>`;
-        }
-
-        if (mentionedAt) {
-          html += `<div style="${rowStyle}"><span style="${labelStyle}">Mentioned</span><span style="${valStyle}">${fmtTs(mentionedAt)}</span></div>`;
-        }
-
-        if (proofCount && proofCount > 1) {
-          html += `<div style="${rowStyle}"><span style="${labelStyle}">Evidence</span><span style="${valStyle}">${proofCount} sources</span></div>`;
-        }
-
-        if (documentId) {
-          html += `<div style="${rowStyle}"><span style="${labelStyle}">Document</span><span style="font-size:11px;font-family:monospace;color:${muted}">${escapeHtml(String(documentId).slice(0, 12))}...</span></div>`;
-        }
-
-        html += `</div>`;
-
-        // Entities
-        if (entities.length > 0 && !(entities.length === 1 && entities[0] === "None")) {
-          html += `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">`;
-          for (const ent of entities) {
-            html += `<span style="font-size:10px;background:${isDark ? "#27272a" : "#f4f4f5"};color:${isDark ? "#d4d4d8" : "#3f3f46"};padding:2px 7px;border-radius:4px">${ent}</span>`;
-          }
-          html += `</div>`;
-        }
-
-        // Tags
-        if (tags.length > 0) {
-          html += `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">`;
-          for (const tag of tags) {
-            html += `<span style="font-size:10px;background:${nodeColor}15;color:${nodeColor};padding:2px 7px;border-radius:4px">#${tag}</span>`;
-          }
-          html += `</div>`;
-        }
-
-        // ID
-        html += `<div style="margin-top:8px;font-size:9px;font-family:monospace;color:${dimmed}">${node.id}</div>`;
-
-        tip.innerHTML = html;
+        tip.innerHTML = tooltipHtml(
+          node,
+          preparedNodes[idx].heatColor,
+          preparedNodes[idx].linkCount,
+          isDark
+        );
       }
 
       tip.style.display = "block";

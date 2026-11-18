@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
-import { middleware } from "@/middleware";
+import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
+import { config, middleware } from "@/middleware";
 import { ACCESS_KEY_COOKIE, createSessionToken } from "@/lib/auth/session";
 
 // The real i18n middleware can't load under vitest; locale rewriting isn't what's tested.
@@ -60,5 +61,32 @@ describe("middleware body limit", () => {
       limitBytes: 1024 * 1024,
     });
     expect((await post(1024 * 1024)).status).toBe(200);
+  });
+});
+
+describe("middleware matcher", () => {
+  const matches = (path: string) => unstable_doesMiddlewareMatch({ config, url: `http://localhost${path}` });
+
+  it("runs on every API route, including ids that end like a static file", () => {
+    for (const path of [
+      "/api/banks",
+      "/api/banks/x",
+      "/api/banks/notes.json",
+      "/api/stats/demo.txt",
+      "/api/banks/x/aliases/a.js",
+      "/api/banks/x/directives/d.xml",
+    ]) {
+      expect(matches(path), path).toBe(true);
+    }
+  });
+
+  it("still skips static assets and Next.js internals", () => {
+    for (const path of ["/logo.png", "/fonts/inter.woff2", "/_next/static/chunk.js", "/robots.txt"]) {
+      expect(matches(path), path).toBe(false);
+    }
+  });
+
+  it("still runs on pages, including bank ids with dots", () => {
+    expect(matches("/banks/SX.Products.GovComply.Build")).toBe(true);
   });
 });

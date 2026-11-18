@@ -106,10 +106,15 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Match all paths except Next.js internals and static assets.
+  // Every API route, whatever its last segment looks like: a bank id or alias
+  // may end in ".json" or ".js", and the asset exclusion below must not skip
+  // the access check for it.
+  // Then all other paths except Next.js internals and static assets.
   // - Use an explicit file extension allowlist instead of .*\..* so that
   //   dynamic segments containing dots (e.g. bank IDs like
   //   "SX.Products.GovComply.Build") still get the i18n locale rewrite.
-  matcher:
+  matcher: [
+    "/api/:path*",
     "/((?!_next|_vercel|.*\\.(?:png|jpe?g|gif|svg|webp|ico|css|js|map|woff2?|ttf|eot|txt|xml|json)$).*)",
+  ],
 };

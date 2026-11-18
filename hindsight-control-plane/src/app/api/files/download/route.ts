@@ -30,12 +30,21 @@ export async function GET(request: NextRequest) {
 
     const body = await response.arrayBuffer();
     const fallbackName = path.split("/").pop() || "download.zip";
+    // Always a download, never rendered: this route answers from the UI's own
+    // origin, and a stored file's type is whatever it was stored with. The
+    // dataplane's filename is kept; an "inline" disposition from it is not.
+    const disposition = response.headers
+      .get("content-disposition")
+      ?.replace(/^\s*inline\b/i, "attachment");
     return new NextResponse(body, {
       status: 200,
       headers: {
         "Content-Type": response.headers.get("content-type") || "application/zip",
-        "Content-Disposition":
-          response.headers.get("content-disposition") || `attachment; filename="${fallbackName}"`,
+        "Content-Disposition": disposition?.startsWith("attachment")
+          ? disposition
+          : `attachment; filename="${fallbackName}"`,
+        "Content-Security-Policy": "sandbox; default-src 'none'",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (error) {

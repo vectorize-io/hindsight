@@ -3742,3 +3742,101 @@ async def test_a_big_mental_model_history_moves_without_being_held_whole(memory,
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_bank_import_checks_the_key_before_reading_the_archive(memory, request_context, monkeypatch):
+    """A caller whose key is refused gets nothing read out of their upload, not even the manifest."""
+    from hindsight_api.extensions.tenant import AuthenticationError
+
+    class _CountingArchive(io.BytesIO):
+        reads = 0
+
+        def read(self, *args):
+            type(self).reads += 1
+            return super().read(*args)
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", b"{}")
+
+    async def refuse(_ctx):
+        raise AuthenticationError("bad key")
+
+    monkeypatch.setattr(memory, "_authenticate_tenant", refuse)
+    archive = _CountingArchive(buf.getvalue())
+    with pytest.raises(AuthenticationError):
+        await memory.submit_bank_import_async("any-bank", archive, request_context)
+    assert _CountingArchive.reads == 0
+
+
+def test_an_oversized_manifest_is_refused_without_unzipping_it():
+    """The manifest is a handful of counts: one that claims megabytes is not a transfer archive."""
+    from hindsight_api.engine.transfer.importer import read_bank_manifest
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", b"{" + b" " * (2 * 1024 * 1024) + b"}")
+    with pytest.raises(ValueError, match="manifest.json is larger than"):
+        read_bank_manifest(buf.getvalue())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("renamed", [False, True])
+async def test_restored_rows_land_in_the_restored_bank_whatever_the_archive_says(memory, request_context, renamed):
+    """Every restored row belongs to the bank being restored, under its own id or a new one.
+
+    The archive's rows are given other ``bank_id`` values (another bank, none) to show
+    the restore sets the bank itself rather than carrying it.
+    """
+    from hindsight_api.engine.transfer import export_bank
+
+    source = _unique_bank("rows_src")
+    other = _unique_bank("rows_other")
+    target = _unique_bank("rows_dst") if renamed else source
+    hook_url = "https://hooks.example.invalid/restored"
+    try:
+        await _retain(memory, other, "Grace keeps bees.", request_context, "doc-other")
+        await _retain(memory, source, "Frank plays the cello.", request_context, "doc-1")
+        await memory.create_directive(source, "kept", "Kept with its bank.", request_context=request_context)
+        await memory.create_webhook(
+            source,
+            webhook_id=uuid.uuid4(),
+            url=hook_url,
+            secret=None,
+            event_types=["retain.completed"],
+            enabled=True,
+            http_config_json="{}",
+            request_context=request_context,
+        )
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            archive = await export_bank(conn, source, file_storage=memory._file_storage)
+        await memory.delete_bank(source, request_context=request_context)
+
+        src = zipfile.ZipFile(io.BytesIO(archive))
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as dst:
+            for name in src.namelist():
+                data = src.read(name)
+                if name in ("directives.json", "webhooks.json"):
+                    rows = json.loads(data)
+                    for row in rows:
+                        row["bank_id"] = other if name == "directives.json" else None
+                    data = json.dumps(rows).encode()
+                dst.writestr(name, data)
+
+        await memory.import_bank_async(out.getvalue(), request_context, target_bank_id=target)
+
+        restored = await memory.list_directives(target, request_context=request_context)
+        elsewhere = await memory.list_directives(other, request_context=request_context)
+        assert [d["name"] for d in restored.items] == ["kept"]
+        assert elsewhere.items == []
+        hooks = await memory.list_webhooks(target, request_context=request_context)
+        assert [h["url"] for h in hooks["items"]] == [hook_url]
+        async with acquire_with_retry(backend) as conn:
+            for_other = await backend.ops.get_webhooks_for_dispatch(conn, fq_store_table("webhooks"), other)
+        assert all(r["url"] != hook_url for r in for_other)
+    finally:
+        for bank in {source, target, other}:
+            await memory.delete_bank(bank, request_context=request_context)

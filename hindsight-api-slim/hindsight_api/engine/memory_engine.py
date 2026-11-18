@@ -8518,11 +8518,13 @@ class MemoryEngine(MemoryEngineInterface):
         from .transfer.importer import read_bank_manifest
 
         scope = scope or TransferScope()
+        # Authenticate before reading anything out of the upload, like every other
+        # import path: an unauthenticated caller gets nothing unzipped.
+        await self._authenticate_tenant(request_context)
         # Validate the archive synchronously: a malformed or documents-only zip is
         # a caller error (400), not a background failure.
         target = target_bank_id or read_bank_manifest(archive).source_bank_id
 
-        await self._authenticate_tenant(request_context)
         await self._refuse_bank_wide_if_scoped(bank_id, request_context, "import into the bank")
         backend = await self._get_backend()
         if await bank_utils.get_bank_profile_if_exists(backend, target) is not None:
