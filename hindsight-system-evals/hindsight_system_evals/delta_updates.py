@@ -13,10 +13,9 @@ way an update reaches a page (its category in brackets):
 * ``du-enterprise-plan`` (aggregation) — one item joins a list and another leaves it;
 * ``du-launch-risk`` (aggregation) — something the topic covers that the page has never mentioned;
 * ``du-chained-sections`` (aggregation) — the update brings four practices that become four new
-  sections between two the page has. Each new section is placed after the one before it, by an id
-  the model guesses from a heading it just wrote, and headings like "Disable, Don't Delete" make
-  the guess miss ("dont" for the server's "don-t", #6583) — dropping that section and every one
-  chained after it;
+  sections between two the page has, each placed after the one before it. A new section has no id
+  yet, so the model must point at it by heading: an id guessed from "Disable, Don't Delete" misses
+  ("dont" for the server's "don-t", #6583) and drops that section and every one chained after it;
 * ``du-quiet-wave`` (stability) — nothing in the wave bears on the page, which must survive it;
 * ``du-rerecorded-history`` (stability) — a release history grown over five deltas, 20 releases
   to 61, each wave re-recording in other words every release the page already lists. A prompt
