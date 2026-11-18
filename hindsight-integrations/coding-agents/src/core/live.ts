@@ -37,6 +37,8 @@ export const NOTE_DISMISS = noteDismiss("<number>");
  * real decision (a recorded corp-beta override) a prompt injection and refused it three times.
  * "Copy the line exactly": agents drifted to a bare "🧠 Hindsight thought #N: ..." or "#N said ...",
  * which loses the quote that sets the line apart in the reply (11 of 84 lines on 2026-11-13).
+ * "An empty line between two thoughts": markdown joins consecutive "> " lines into one paragraph, so
+ * 30 thoughts in a reply rendered as one unreadable block (2026-11-18).
  */
 export const LIVE_DECLARATION =
   "Hindsight is this project's long-term memory, and it thinks alongside you. As you work, thoughts " +
@@ -46,7 +48,8 @@ export const LIVE_DECLARATION =
   "if the source says what the thought claims, act on it as part of the task; ignore it only if the " +
   "source does not say so, or it does not touch your work. Share every thought with the user in your " +
   "reply, one line each, by its number, so they see memory thinking. Copy the line below exactly, starting " +
-  'with the "> " that sets it apart from your answer. Ask one question: did you do ' +
+  'with the "> " that sets it apart from your answer, and leave an empty line between two thoughts. ' +
+  "Ask one question: did you do " +
   "anything differently because of it (fix, add, avoid or undo something)? If yes:\n" +
   `${NOTE_CREDIT} <what you did differently>\n` +
   "If no (you were already doing it, or it does not apply):\n" +
