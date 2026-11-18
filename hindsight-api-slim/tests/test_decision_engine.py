@@ -51,6 +51,8 @@ class _FakeSession:
         self.urls: list[str] = []
         self.headers: list[dict] = []
         self.refused: list[dict] = []
+        # Jev's refusal; a test swaps it for another server's (#6522).
+        self.refusal = UpstreamHTTPError(400, '{"detail":{"error_type":"max_tokens_exceeded"}}', {}, "")
 
     def get(self):
         return self
@@ -84,7 +86,7 @@ class _FakeSession:
         self.headers.append(headers or {})
         if self.window is not None and 2 * count_tokens(jsonlib.dumps(json)) > self.window:
             self.refused.append(json)
-            raise UpstreamHTTPError(400, '{"detail":{"error_type":"max_tokens_exceeded"}}', {}, url)
+            raise self.refusal
         return self._post(url, headers=headers, json=json)
 
     @property

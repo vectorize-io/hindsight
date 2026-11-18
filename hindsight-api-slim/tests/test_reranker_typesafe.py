@@ -1,13 +1,14 @@
-"""TypeSafe reranker: the rank question, the cut question, and what comes back.
+"""The deprecated typesafe reranker provider: the rank question, the cut question, and what comes back.
 
 TypeSafe answers typed questions rather than exposing a /rerank endpoint, so the
-mapping from (query, doc) pairs onto questions — and from answers back onto scores —
-is this provider's whole substance. The HTTP round trip is faked; what is asserted is
-the requests we build and the order and cut we derive from the answers.
+mapping from (query, doc) pairs onto questions, and from answers back onto scores,
+is this provider's whole substance. It runs on the decision engine
+(:class:`ListwiseDecisionReranker` over :meth:`DecisionModel.rank`). The HTTP round trip is
+faked; what is asserted is the requests the engine builds and the order and cut derived
+from the answers.
 """
 
 import json as jsonlib
-from contextlib import asynccontextmanager
 from dataclasses import fields
 from unittest.mock import patch
 
@@ -15,99 +16,26 @@ import pytest
 
 from hindsight_api.config import HindsightConfig
 from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
-from hindsight_api.engine.cross_encoder import (
-    _OPTION_KEY_OVERHEAD,
-    TypeSafeCrossEncoder,
-    create_cross_encoder_from_env,
-)
-from hindsight_api.engine.decision_model import DecisionModel
+from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
+from hindsight_api.engine.decision_model import _OPTION_KEY_OVERHEAD, DecisionModel
+from hindsight_api.engine.remote_retry import RetryPolicy
 from hindsight_api.engine.search.decision_reranker import DecisionModelReranker, ListwiseDecisionReranker
 from hindsight_api.engine.token_encoding import count_tokens
-
-
-class _FakeResponse:
-    def __init__(self, payload: dict):
-        self._payload = payload
-        self.status = 200
-
-    async def json(self, content_type=None):
-        return self._payload
-
-    def raise_for_status(self) -> None:
-        return None
-
-
-class _FakeSession:
-    """Answers a rank question from `ranking` and a cut question from `cut_level`.
-
-    `ranking` maps an option key ("c0", "c1", …) to the probability the model would
-    give it, so a pool ranked in several rounds is answered per round exactly as the
-    real API would answer it.
-    """
-
-    # Set to refuse a body the way Jev does when it counts it over its window. Jev counts
-    # mixed-script text at twice our tokenizer (#5715), so the window here does too.
-    window: int | None = None
-
-    def __init__(self, ranking: dict[str, float], cut_level: float = 0.0):
-        self.ranking = ranking
-        self.cut_level = cut_level
-        self.posted: list[dict] = []
-        self.urls: list[str] = []
-        self.refused: list[dict] = []
-        # Jev's refusal; a test swaps it for another server's (#6522).
-        self.refusal = UpstreamHTTPError(400, '{"detail":{"error_type":"max_tokens_exceeded"}}', {}, "")
-
-    def get(self):
-        return self
-
-    @asynccontextmanager
-    async def _post(self, url, headers=None, json=None):
-        self.urls.append(url)
-        self.posted.append(json)
-        question_id, question = next(iter(json["questions"].items()))
-        if question["type"] == "choice":
-            keys = list(question["criteria"])
-            answer = {
-                "type": "choice",
-                "choice": keys[0],
-                "probabilities": {key: self.ranking.get(key, 0.0) for key in keys},
-                "confidence": 0.9,
-            }
-        else:
-            answer = {
-                "type": "score",
-                "score": self.cut_level,
-                "legend": dict(enumerate(question["criteria"])),
-                "confidence": 0.9,
-            }
-        yield _FakeResponse({"answers": {question_id: answer}, "usage": {"input_tokens": 1, "output_tokens": 1}})
-
-    def post(self, url, headers=None, json=None):
-        if self.window is not None and 2 * count_tokens(jsonlib.dumps(json)) > self.window:
-            self.refused.append(json)
-            raise self.refusal
-        return self._post(url, headers=headers, json=json)
-
-    @property
-    def rank_requests(self) -> list[dict]:
-        return [body for body in self.posted if next(iter(body["questions"].values()))["type"] == "choice"]
-
-    @property
-    def cut_requests(self) -> list[dict]:
-        return [body for body in self.posted if next(iter(body["questions"].values()))["type"] == "score"]
+from tests.test_decision_engine import _engine, _FakeSession
 
 
 def _encoder(
     ranking: dict[str, float],
     cut_level: float = 0.0,
     max_question_tokens: int | None = None,
+    prune_candidates: bool = False,
     **kwargs,
-):
-    encoder = TypeSafeCrossEncoder(api_key="k", max_question_tokens=max_question_tokens, **kwargs)
+) -> tuple[ListwiseDecisionReranker, _FakeSession]:
+    """Built as the factory builds it: no configured window (the 26k question budget) and no
+    retry of its own, unless ``max_question_tokens`` names the window."""
     session = _FakeSession(ranking, cut_level)
-    encoder._session = session
-    return encoder, session
+    engine = _engine(session, max_request_tokens=max_question_tokens, retry_policy=RetryPolicy(max_retries=0), **kwargs)
+    return ListwiseDecisionReranker(engine, prune=prune_candidates), session
 
 
 def _make_config(**overrides) -> HindsightConfig:
@@ -203,7 +131,7 @@ class TestChunking:
     @pytest.mark.asyncio
     async def test_a_pool_over_the_option_cap_is_ranked_in_rounds(self):
         """A Choice takes at most 255 options, so a bigger pool needs several rounds."""
-        size = TypeSafeCrossEncoder.MAX_OPTIONS + 10
+        size = DecisionModel.MAX_OPTIONS + 10
         encoder, session = _encoder({f"c{i}": 1.0 / (i + 1) for i in range(size)})
         scores = await encoder._predict([("q", f"doc {i}") for i in range(size)])
 
@@ -214,7 +142,7 @@ class TestChunking:
 
     @pytest.mark.asyncio
     async def test_every_candidate_still_gets_a_distinct_position(self):
-        size = TypeSafeCrossEncoder.MAX_OPTIONS + 10
+        size = DecisionModel.MAX_OPTIONS + 10
         encoder, _ = _encoder({f"c{i}": 1.0 / (i + 1) for i in range(size)})
         scores = await encoder._predict([("q", f"doc {i}") for i in range(size)])
 
@@ -231,7 +159,7 @@ class TestCut:
         assert len(session.cut_requests) == 1
         question = session.cut_requests[0]["questions"]["depth"]
         assert question["type"] == "score"
-        assert question["criteria"] == TypeSafeCrossEncoder.CUT_LEVELS
+        assert question["criteria"] == DecisionModel.CUT_LEVELS
 
     @pytest.mark.asyncio
     async def test_level_zero_keeps_only_the_best_candidate(self):
@@ -260,7 +188,7 @@ class TestCut:
     async def test_the_top_level_keeps_the_whole_shortlist(self):
         encoder, _ = _encoder(
             {f"c{i}": 1.0 / (i + 1) for i in range(4)},
-            cut_level=float(len(TypeSafeCrossEncoder.CUT_LEVELS) - 1),
+            cut_level=float(len(DecisionModel.CUT_LEVELS) - 1),
             prune_candidates=True,
         )
         scores = await encoder._predict([("q", f"doc {i}") for i in range(4)])
@@ -280,8 +208,7 @@ class TestMinKeep:
     async def test_the_cut_never_keeps_fewer_than_the_floor(self):
         """Level 0 keeps one; a floor of three keeps the top three by rank."""
         encoder, _ = _encoder({"c0": 0.1, "c1": 0.4, "c2": 0.3, "c3": 0.2}, cut_level=0.0, prune_candidates=True)
-        encoder.MIN_KEEP = 3
-        scores = await encoder._predict([("q", "a"), ("q", "b"), ("q", "c"), ("q", "d")])
+        scores = await encoder._client.rank("q", ["a", "b", "c", "d"], prune=True, min_keep=3)
 
         assert [score > 0 for score in scores] == [False, True, True, True]
 
@@ -343,20 +270,8 @@ class TestFactory:
 
     @pytest.mark.asyncio
     async def test_the_listwise_reranker_ranks_each_query_in_its_own_pool_on_the_engine(self):
-        session = _FakeSession({"c0": 0.9, "c1": 0.1})
-        engine = DecisionModel(
-            provider="typesafe",
-            api_key="k",
-            model="jev-latest",
-            base_url="https://api.typesafe.ai",
-            timeout=5.0,
-            max_concurrent=2,
-            max_request_tokens=None,
-        )
-        engine._session = session  # type: ignore[assignment]
-        scores = await ListwiseDecisionReranker(engine)._predict(
-            [("a", "doc-a"), ("b", "doc-b"), ("a", "doc-a2"), ("b", "doc-b2")]
-        )
+        encoder, session = _encoder({"c0": 0.9, "c1": 0.1})
+        scores = await encoder._predict([("a", "doc-a"), ("b", "doc-b"), ("a", "doc-a2"), ("b", "doc-b2")])
 
         assert len(session.rank_requests) == 2
         assert scores[0] > scores[2] and scores[1] > scores[3]
@@ -413,7 +328,7 @@ class TestTokenBudgetingAndOrder:
         Under the new code, non-finalists fall back to initial RRF order (0 < 1 < ...), discarding
         uncalibrated intra-group probabilities.
         """
-        size = TypeSafeCrossEncoder.MAX_OPTIONS + 20  # 270 candidates
+        size = DecisionModel.MAX_OPTIONS + 20  # 270 candidates
         # Intra-group model preference is opposite to initial RRF order
         encoder, session = _encoder({f"c{i}": float(i + 1) for i in range(size)})
         pairs = [("q", f"candidate_{i}") for i in range(size)]
@@ -590,7 +505,7 @@ class TestTokenBudgetingAndOrder:
             {"c0": 0.6, "c1": 0.4},
             max_question_tokens=max_question_tokens,
         )
-        with patch.object(encoder, "_rank_once", wraps=encoder._rank_once) as mock_rank_once:
+        with patch.object(encoder._client, "_rank_once", wraps=encoder._client._rank_once) as mock_rank_once:
             scores = await encoder._predict([("q", huge_doc), ("q", normal_doc)])
             assert len(scores) == 2
 
@@ -629,7 +544,7 @@ class TestTokenBudgetingAndOrder:
         """
         size = 30
         encoder, session = _encoder({f"c{i}": 1.0 / (i + 1) for i in range(size)}, max_question_tokens=400)
-        encoder.MAX_OPTIONS = 10
+        encoder._client.MAX_OPTIONS = 10
         scores = await encoder._predict([("q", "long document words " * 40 + str(i)) for i in range(size)])
 
         assert len(scores) == size
