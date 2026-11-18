@@ -237,6 +237,12 @@ def pytest_configure(config):
         # session, matching the precedence hindsight_api used to apply at import
         # time (removed in #2961 so library imports are side-effect-free).
         load_dotenv(env_file, override=True)
+        # Importing this conftest already built the config, before .env was read.
+        # Session fixtures (``llm_config``) set up before the per-test cache reset,
+        # so without this they saw the pre-.env defaults.
+        from hindsight_api.config import clear_config_cache
+
+        clear_config_cache()
     else:
         print(f"Warning: {env_file} not found, tests may fail without proper configuration")
 
