@@ -17,7 +17,6 @@ import hashlib
 import itertools
 import json
 import logging
-import math
 import re
 import threading
 import time
@@ -30,20 +29,21 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 import aiohttp
 
-from ..config import get_config
+from ..config import DEFAULT_KB_RERANKER_LOW_TOKENS, get_config
 from ..engine import bank_aliases
 from ..engine.aiohttp_session import UpstreamHTTPError
+from ..engine.cross_encoder import CohereCompatibleRerankClient, reranker_retry_policy
 from ..engine.db_utils import acquire_with_retry
-from ..engine.decision_model import DecisionAsset, DecisionRefusedError, jev_accepts
+from ..engine.decision_model import jev_accepts
 from ..engine.operation_metadata import KnowledgeIngestChildMetadata, KnowledgeIngestParentMetadata
+from ..engine.remote_retry import acall_with_retry
 from ..engine.response_models import KnowledgeDocumentHit
 from ..engine.retain import bank_utils
 from ..engine.retain import timing as _timing
 from ..engine.schema import fq_table
-from ..engine.search.decision_reranker import DecisionModelReranker
 from ..engine.search.tag_resolution import MAX_VOCABULARY, TagResolutionError, needs_resolution, resolve_tag_groups
 from ..engine.storage import bank_storage_prefix, key_segment
-from ..engine.token_encoding import count_tokens
+from ..engine.token_encoding import count_tokens, truncate_to_tokens
 from ..extensions.operation_validator import (
     BankListScope,
     CreateKnowledgeBankContext,
@@ -139,31 +139,40 @@ class KnowledgeBankError(Exception):
         self.status_code = status_code
 
 
-#: The decision model's order is fused with the search's (reciprocal rank fusion), not trusted outright: a
-#: yes/no judgement per hit promotes deep hits it wrongly says yes to. Over the best 100, own language, Jev
-#: 1.14 + EmbeddingGemma 2: ViDoRe V3 PDF 65.40 (model's order) -> 66.80 fused at k=60 (search alone 59.42),
-#: ATM-Bench recall@10 89.55 -> 89.34 (85.27). The model's rank then counts twice the search's, at k=30:
-#: PDF hr + computer_science 76.02 -> 76.99, markdown (4 subsets, hits judged with their context) 66.42 ->
-#: 67.04 over k=60 with equal weights. Scoring by the model's probability instead won on markdown (67.55) and
-#: lost on PDF, where a page is judged from its image.
-RERANK_FUSION_K = 30
-RERANK_MODEL_WEIGHT = 2.0
-
+#: The rerank is one request to the knowledge reranker (``HINDSIGHT_API_KB_RERANKER_*``, Cohere's rerank
+#: API) holding the search's best hits, as many as ``kb_reranker_max_tokens`` holds: how deep it goes is
+#: what fits, not a count. A reranker built on a decision model (``decision_rerank_interface``) judges
+#: them side by side in that one request. It replaced up to 100 hits each judged alone (~9 requests on
+#: text and ~105 on PDF, one per page picture), fused with the search's order, then a Choice over the best
+#: five: a hit judged alone could not tell a cover page or a table of another entity from the page holding
+#: the answer. On ViDoRe V3 (nDCG@10, own language, one System One model throughout), by the tokens of
+#: hits in the request:
+#:   tokens of hits                markdown hr   markdown finance_fr   pdf hr
+#:   old rerank (~9 / ~105 req.)   70.47         57.39                 71.66
+#:   2 x 26k                       71.21         53.74                 69.98
+#:   60k                           72.55         54.48                 71.32
+#:   120k                          73.12         56.55                 71.86
+#:   200k                          72.75         56.55                 70.94
+#:   2 x 120k (in order / dealt)   72.61/72.87   55.86/56.32           70.45/71.51
+#: so one request: deeper or split, nothing more came back.
+#: What a page picture costs in the request, in tokens: 1,950 measured for a ViDoRe page at
+#: ``media.JUDGE_SIDE`` (1024 px), rounded up, as images are not in the tokenizer's count. Smaller pictures
+#: (768 or 512 px), each page's text cut to 512 tokens, or both, fit twice the pages and moved PDF less
+#: than half a point either way.
+JUDGE_PICTURE_TOKENS = 2_000
+#: A hit's framing in its request beyond its text: its place in the request and its own question.
+_CANDIDATE_TOKENS = 60
 
 #: A text hit is judged with the text around it, up to this many tokens: a 256-token passage alone lost
-#: what its page says about it. ViDoRe V3 markdown (Jev 1.14, own language) nDCG@10, the passage vs its
+#: what its page says about it. ViDoRe V3 markdown (own language) nDCG@10, the passage vs its
 #: whole page judged: finance_en 60.98 -> 72.61, hr 66.58 -> 70.31, pharmaceuticals 66.06 -> 67.75,
 #: industrial 56.60 -> 60.73.
 JUDGE_CONTEXT_TOKENS = 2048
-#: The best hits after fusion that one Choice then reorders (``DecisionModelReranker.pick``): each moves by
-#: its pick probability plus 1/log2(its place + 2), so a clear pick climbs and a coin toss keeps the order.
-#: 5 and 10 were within 0.5 nDCG@10 of each other on ViDoRe markdown; 5 keeps one request of 5 page images.
-RERANK_PICK = 5
 #: Passages loaded on each side of a text hit before trimming to ``JUDGE_CONTEXT_TOKENS``.
 _JUDGE_SPAN = 16
-#: How deep the rerank looks for its candidates, in multiples of ``kb_decision_model_candidates``:
-#: hits that share a candidate (``_reranked``) do not count, so the candidates come from further down.
-_JUDGE_POOL = 3
+#: Hits the rerank reads its candidates from, most: past it they keep the search's order. Hits that share
+#: a candidate (``_reranked``) are many, so the window fills from further down than its candidates.
+_JUDGE_POOL = 300
 
 
 def _around(run: list[KnowledgePassage], index: int, max_tokens: int) -> str:
@@ -187,26 +196,23 @@ def _around(run: list[KnowledgePassage], index: int, max_tokens: int) -> str:
     return "\n\n".join(p.text or "" for p in run[first : last + 1])
 
 
-def fused_order(size: int, model_scores: dict[int, float]) -> list[int]:
-    """The search slots ``0..size-1`` ordered by the fusion of their search rank and the decision model's
-    rank (``model_scores``: slot -> score). A slot the model did not judge (a video) takes its search rank
-    as its model rank. Ties keep the search's order."""
-    model_rank = {slot: slot for slot in range(size)}
-    for rank, slot in enumerate(sorted(model_scores, key=lambda s: -model_scores[s])):
-        model_rank[slot] = rank
-    fused = {
-        slot: 1 / (RERANK_FUSION_K + slot) + RERANK_MODEL_WEIGHT / (RERANK_FUSION_K + rank)
-        for slot, rank in model_rank.items()
-    }
-    return sorted(range(size), key=lambda slot: -fused[slot])
+def fitting(costs: list[int], window: int) -> int:
+    """How many of the candidates (their ``costs``, in search order) fit ``window`` tokens: the first one
+    that does not ends it, so the request always holds the search's best. At least one."""
+    used = 0
+    for n, cost in enumerate(costs):
+        used += cost
+        if used > window:
+            return max(1, n)
+    return len(costs)
 
 
-def picked_order(head: list[int], picked: dict[int, float]) -> list[int]:
-    """``head`` (candidates, best first) reordered by the pick: each picked candidate by its probability
-    (``picked``) plus ``1/log2(position+2)``, so a sure pick moves up and a split one keeps the order. Only
-    the picked candidates move, among their own positions: one the pick did not compare (a video) stays."""
-    slots = [m for m, n in enumerate(head) if n in picked]
-    ranked = sorted(slots, key=lambda m: -(picked[head[m]] + 1 / math.log2(m + 2)))
+def reranked_order(head: list[int], scores: dict[int, float]) -> list[int]:
+    """``head`` (candidates in search order) reordered by the reranker's ``scores``, the search's order
+    breaking ties. Only scored candidates move, among their own positions: one the reranker was not shown
+    (a video) stays where it was."""
+    slots = [m for m, n in enumerate(head) if n in scores]
+    ranked = sorted(slots, key=lambda m: -scores[head[m]])
     out = list(head)
     for slot, m in zip(slots, ranked, strict=True):
         out[slot] = head[m]
@@ -620,7 +626,7 @@ class KnowledgeService:
         self._engine = engine
         self._embedder: KnowledgeEmbedder | None = None
         self._store: KnowledgeStore | None = None
-        self._reranker: DecisionModelReranker | None = None
+        self._reranker: CohereCompatibleRerankClient | None = None
         self._reranker_resolved = False
 
     # --- wiring -----------------------------------------------------------------------------
@@ -632,11 +638,16 @@ class KnowledgeService:
         return self._embedder
 
     @property
-    def reranker(self) -> DecisionModelReranker | None:
-        """Recall's decision reranker on the knowledge decision model, or None when none is set up for it."""
+    def reranker(self) -> CohereCompatibleRerankClient | None:
+        """The knowledge reranker (``HINDSIGHT_API_KB_RERANKER_*``), or None when none is set up."""
         if not self._reranker_resolved:
-            setup = get_config().decision_model_config("kb")
-            self._reranker = DecisionModelReranker.from_config(setup) if setup else None
+            config = get_config()
+            if config.kb_reranker_url and config.kb_reranker_model:
+                self._reranker = CohereCompatibleRerankClient(
+                    api_key=config.kb_reranker_api_key or "",
+                    model=config.kb_reranker_model,
+                    rerank_url=config.kb_reranker_url,
+                )
             self._reranker_resolved = True
         return self._reranker
 
@@ -2007,83 +2018,89 @@ class KnowledgeService:
         )
 
     async def _reranked(self, bank_id: str, request: SearchRequest, hits: list[SearchHit]) -> list[SearchHit]:
-        """``hits`` with the best ``kb_decision_model_candidates`` candidates reordered by fusing the
-        search's order with the decision model's (``RERANK_FUSION_K``); the rest keep the search's order.
+        """``hits`` with the best of them reordered by the knowledge reranker; the rest keep the search's order.
 
-        A text hit is judged with the text around it (``JUDGE_CONTEXT_TOKENS``), and hits that would show the
-        model the same text (pieces of one short page) are one candidate, judged once, kept together in the
-        search's order. An image or PDF page hit is judged by its picture (``media.judge_picture``) along with
-        any text it holds. A video hit is not judged: it keeps its search position in the fusion. Only a
-        search with text is reranked: the questions ask about it."""
+        Candidates go in search order into one request, as many as ``kb_reranker_max_tokens`` holds counted
+        with ``kb_reranker_tokenizer`` (``fitting``): how deep the rerank goes is what fits, not a count. A
+        ``low`` budget holds at most ``DEFAULT_KB_RERANKER_LOW_TOKENS``, a faster request. A text hit is
+        shown with the text around it, any hit's text capped at ``JUDGE_CONTEXT_TOKENS``, and hits that
+        would show the same text (pieces of one short page) are one candidate, kept together in the search's
+        order. With ``kb_reranker_images``, an image or PDF page hit is shown by its picture
+        (``media.judge_picture``) and its text. A video hit is not shown: it keeps its search place. Only a
+        search with text is reranked: the reranker scores the hits against it."""
         reranker = self.reranker
         query = (request.query or "").strip()
         if reranker is None or not query:
             return hits
-        candidates = get_config().kb_decision_model_candidates
-        pool = hits[: candidates * _JUDGE_POOL]
+        config = get_config()
+        pool = hits[:_JUDGE_POOL]
         texts = await self._judged_texts(bank_id, pool)
-        # Candidates in search order, each the hits sharing what the model would read. On ViDoRe markdown
-        # the best 100 hits held a median 43 distinct pages: the rest were pieces of those pages, judged
-        # again on the same page.
+        # Candidates in search order, each the hits sharing what the reranker would read. On ViDoRe markdown
+        # the best 100 hits held a median 43 distinct pages: the rest were pieces of those pages.
         groups: list[list[int]] = []
         group_of: dict[tuple[str, str | int], int] = {}
         for i, hit in enumerate(pool):
             same: tuple[str, str | int] = ("text", texts[i]) if hit.passage.modality == "text" else ("hit", i)
             if same in group_of:
                 groups[group_of[same]].append(i)
-            elif len(groups) < candidates:
+            else:
                 group_of[same] = len(groups)
                 groups.append([i])
-        # Videos are left out: judged by four still frames (decision models take images, not video), a
-        # clip ranked worse than search alone (MSR-VTT nDCG@10 65.85 -> 61.54). Until a model reads video.
-        judged = [n for n, group in enumerate(groups) if pool[group[0]].passage.modality != "video"]
-        if len(judged) < 2:
+        # Videos are left out: judged by four still frames (rerankers take images, not video), a clip
+        # ranked worse than search alone (MSR-VTT nDCG@10 65.85 -> 61.54). Until a reranker reads video.
+        shown = [n for n, group in enumerate(groups) if pool[group[0]].passage.modality != "video"]
+        if len(shown) < 2:
             return hits
-        # A decision model that takes no images (OpenAI's) judges every hit by its text.
-        pictures = (
-            await asyncio.gather(*(self._picture(pool[groups[n][0]]) for n in judged))
-            if reranker.takes_images
-            else [None] * len(judged)
+        encoding = config.kb_reranker_tokenizer
+
+        def capped(text: str) -> str:
+            # In the reranker's own tokens: the request is counted in them, and a page's own text (a PDF's
+            # text layer) is not trimmed like a text hit's context, so one long page could fill the request.
+            if count_tokens(text, encoding) <= JUDGE_CONTEXT_TOKENS:
+                return text
+            return truncate_to_tokens(text, JUDGE_CONTEXT_TOKENS, encoding).text
+
+        shown_text = [capped(texts[groups[n][0]]) for n in shown]
+        has_picture = [
+            config.kb_reranker_images
+            and pool[groups[n][0]].passage.modality == "image"
+            and bool(pool[groups[n][0]].passage.media_key)
+            for n in shown
+        ]
+        costs = [
+            count_tokens(text, encoding) + _CANDIDATE_TOKENS + (JUDGE_PICTURE_TOKENS if picture else 0)
+            for text, picture in zip(shown_text, has_picture, strict=True)
+        ]
+        window = config.kb_reranker_max_tokens
+        if request.budget == "low":
+            window = min(window, DEFAULT_KB_RERANKER_LOW_TOKENS)
+        # The query rides in the request too.
+        seen = list(range(fitting(costs, window - count_tokens(query, encoding) - _CANDIDATE_TOKENS)))
+        pictures = await asyncio.gather(
+            *(self._picture(pool[groups[shown[m]][0]]) if has_picture[m] else asyncio.sleep(0) for m in seen)
         )
-        docs: list[str] = []
-        assets: dict[str, DecisionAsset] = {}
-        for n, picture in zip(judged, pictures, strict=True):
-            text = texts[groups[n][0]]
-            if picture is None:
-                docs.append(text)
-                continue
-            # The placeholder leads: a long page text is capped from its end, never cutting it off.
-            key = f"hs-kb-hit-{n:04d}"
-            assets[key] = DecisionAsset(format="jpg", data_base64=base64.b64encode(picture).decode())
-            docs.append(f"{key}\n\n{text}" if text else key)
-        # A page with a picture is also asked by its text alone, and the two answers averaged: the picture
-        # alone misled on text-heavy pages. ViDoRe V3 PDF nDCG@10, own language, picture+text vs the mean of
-        # both: hr 71.66 -> 71.93, computer_science 84.11 -> 85.08, pharmaceuticals 72.71 -> 72.43,
-        # finance_en 75.80 -> 76.10, industrial 63.17 -> 63.17, finance_fr 58.42 -> 58.92, energy 74.47 -> 75.27.
-        also = [m for m, n in enumerate(judged) if texts[groups[n][0]] and docs[m] != texts[groups[n][0]]]
+        documents: list[str | dict[str, str]] = [
+            shown_text[m]
+            if picture is None
+            else {"type": "image", "b64": base64.b64encode(picture).decode(), "text": shown_text[m]}
+            for m, picture in zip(seen, pictures, strict=True)
+        ]
+        policy = reranker_retry_policy()
         try:
-            answers = await reranker.nouls(query, docs + [texts[groups[judged[m]][0]] for m in also], assets)
-            scores = answers[: len(docs)]
-            for extra, m in zip(answers[len(docs) :], also, strict=True):
-                first = scores[m]
-                if first is not None and extra is not None:
-                    scores[m] = (first + extra) / 2
-            order = fused_order(
-                len(groups), {n: s if s is not None else 0.0 for n, s in zip(judged, scores, strict=True)}
+            scores = await acall_with_retry(
+                lambda: reranker.scores(query, documents),
+                policy=policy,
+                budget=policy.new_budget(),
+                provider="kb_reranker",
             )
-            # The best few, compared in one question: a judgement per hit cannot tell which of several
-            # good hits is best. Videos stay out, as above.
-            doc_of = dict(zip(judged, docs, strict=True))
-            top = [n for n in order[:RERANK_PICK] if n in doc_of]
-            if len(top) > 1:
-                probabilities = await reranker.pick(query, [doc_of[n] for n in top], assets)
-                order[:RERANK_PICK] = picked_order(order[:RERANK_PICK], dict(zip(top, probabilities, strict=True)))
-        except (aiohttp.ClientError, UpstreamHTTPError, DecisionRefusedError) as exc:
+        except (aiohttp.ClientError, UpstreamHTTPError, TimeoutError) as exc:
             # Named for what failed: the routes report any other upstream error as the embedder's outage.
-            raise KnowledgeBankError(f"knowledge decision model unavailable: {exc}", 503) from exc
-        ranked = [i for n in order for i in groups[n]]
-        kept = set(ranked)
-        return [pool[i] for i in ranked] + [h for i, h in enumerate(pool) if i not in kept] + hits[len(pool) :]
+            raise KnowledgeBankError(f"knowledge reranker unavailable: {exc}", 503) from exc
+        score_of = {shown[m]: score for m, score in zip(seen, scores, strict=True)}
+        # The head is every candidate up to the last one shown, videos among them in their places.
+        head = list(range(max(score_of) + 1))
+        order = reranked_order(head, score_of) + list(range(len(head), len(groups)))
+        return [pool[i] for n in order for i in groups[n]] + hits[len(pool) :]
 
     async def _judged_texts(self, bank_id: str, hits: list[SearchHit]) -> list[str]:
         """The text each hit is judged by: a text passage with the passages around it, grown evenly on both
@@ -2104,9 +2121,9 @@ class KnowledgeService:
         return out
 
     async def _picture(self, hit: SearchHit) -> bytes | None:
-        """The JPEG a decision model judges an image or PDF page hit by, or None for a hit judged by its text:
-        any other hit, and a picture System One would refuse (a side under 280 px, as a small photo or a long
-        receipt shrunk to fit), since one refused image fails the whole request."""
+        """The JPEG the reranker judges an image or PDF page hit by, or None for a hit judged by its text: any
+        other hit, and a picture outside 280-1568 px a side (a small photo, or a long receipt shrunk to fit),
+        which image rerankers refuse, and one refused image fails the whole request."""
         if hit.passage.modality != "image" or not hit.passage.media_key:
             return None
         data = await self._engine._file_storage.retrieve(hit.passage.media_key)

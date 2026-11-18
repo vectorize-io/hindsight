@@ -1,11 +1,9 @@
-"""Knowledge-bank search on a server whose knowledge search has a decision model.
+"""Knowledge-bank search on a server whose knowledge search has a reranker.
 
-The decision model is asked of each of the search's best hits whether showing it would help answer the
-query, as recall asks of its pool, and a PDF page is judged with its picture in front of the model. Its
-order is fused with the search's (reciprocal rank fusion), not trusted outright, and one more question then
-picks among the best few. Each step is unit-tested; the story shows that this order is what the client receives, that the page's question carries its
-picture, and that a server without the setting searches the very same bank in the search's own order: a
-global or absent decision model leaves knowledge search alone.
+The reranker (any Cohere-style /rerank endpoint) gets the search's best hits in one request, as many as
+its token budget holds; a PDF page goes as its picture with its text. Its scores reorder them. Each step
+is unit-tested; the story shows that this order is what the client receives, that the page goes with its
+picture, and that a server without the setting searches the very same bank in the search's own order.
 """
 
 from __future__ import annotations
@@ -23,7 +21,7 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-async def knowledge_bank(client, knowledge_decision_client) -> AsyncIterator[str]:
+async def knowledge_bank(client, knowledge_reranker_client) -> AsyncIterator[str]:
     """The guides and a one-page PDF, ingested through the main server: the reranking server runs no
     worker, and the two share one database."""
     kb = KnowledgeBanks(client)
@@ -45,19 +43,17 @@ async def _order(client, bank_id: str, query: str) -> list[str]:
     return [hit["document_id"] for hit in r.body["results"]]
 
 
-async def test_the_models_order_reaches_the_client_and_a_page_is_judged_by_its_picture(
-    client, knowledge_decision_client, knowledge_bank, stubs
+async def test_the_rerankers_order_reaches_the_client_and_a_page_goes_with_its_picture(
+    client, knowledge_reranker_client, knowledge_bank, stubs
 ):
     query = "how do I rotate an api key"
     # Without the setting, the search's own order: the guide about keys first.
     assert await _order(client, knowledge_bank, query) == ["keys", "outage", "billing", "exits"]
     assert stubs.rerank.assets == []
 
-    # The model ranks billing, exits, outage, keys, and its rank counts twice the search's: fused, billing
-    # leads and keys, the search's first, ends last. The pick over the best few, side by side, agrees.
-    stubs.rerank.verdicts = {"Invoices": 0.9, "Emergency exits": 0.8, "outage": 0.3, "Rotate": 0.05}
-    assert await _order(knowledge_decision_client, knowledge_bank, query) == ["billing", "exits", "outage", "keys"]
-    # The page's question went alone, with its picture as a JPEG, and so did the pick that compared it with
-    # the guides; the guides' own questions carried none.
-    pictures = [asset for asset in stubs.rerank.assets if asset]
-    assert len(pictures) == 2 and all(list(p.values()) == ["jpg"] for p in pictures)
+    # The reranker scores billing and exits highest and keys lowest: billing leads and keys, the search's
+    # first, ends last.
+    stubs.rerank.rerank_scores = {"Invoices": 0.9, "Emergency exits": 0.8, "outage": 0.3, "Rotate": 0.05}
+    assert await _order(knowledge_reranker_client, knowledge_bank, query) == ["billing", "exits", "outage", "keys"]
+    # All four in one request, the page with its picture as a JPEG.
+    assert stubs.rerank.assets == [{next(iter(stubs.rerank.assets[0])): "jpg"}]

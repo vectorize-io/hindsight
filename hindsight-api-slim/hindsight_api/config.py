@@ -808,7 +808,6 @@ ENV_DECISION_MODEL_TOKENIZER = "HINDSIGHT_API_DECISION_MODEL_TOKENIZER"
 ENV_RECALL_DECISION_MODEL_PRUNE = "HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE"
 ENV_RECALL_DECISION_MODEL_DEDUP = "HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP"
 ENV_RECALL_DECISION_MODEL_FALLBACK = "HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK"
-ENV_KB_DECISION_MODEL_CANDIDATES = "HINDSIGHT_API_KB_DECISION_MODEL_CANDIDATES"
 
 ENV_VECTOR_EXTENSION = "HINDSIGHT_API_VECTOR_EXTENSION"
 ENV_ANN_ITERATIVE_SCAN = "HINDSIGHT_API_ANN_ITERATIVE_SCAN"
@@ -1005,6 +1004,14 @@ ENV_KB_EMBEDDINGS_MODALITIES = "HINDSIGHT_API_KB_EMBEDDINGS_MODALITIES"
 ENV_KB_EMBEDDINGS_DEVICE = "HINDSIGHT_API_KB_EMBEDDINGS_DEVICE"
 ENV_KB_EMBEDDINGS_BATCH_SIZE = "HINDSIGHT_API_KB_EMBEDDINGS_BATCH_SIZE"
 ENV_KB_EMBEDDINGS_MAX_IN_FLIGHT = "HINDSIGHT_API_KB_EMBEDDINGS_MAX_IN_FLIGHT"
+# Knowledge-bank search's reranker: any endpoint speaking Cohere's rerank API ({model, query,
+# documents} in, {results: [{index, relevance_score}]} out). Unset URL: search keeps its own order.
+ENV_KB_RERANKER_URL = "HINDSIGHT_API_KB_RERANKER_URL"
+ENV_KB_RERANKER_API_KEY = "HINDSIGHT_API_KB_RERANKER_API_KEY"
+ENV_KB_RERANKER_MODEL = "HINDSIGHT_API_KB_RERANKER_MODEL"
+ENV_KB_RERANKER_MAX_TOKENS = "HINDSIGHT_API_KB_RERANKER_MAX_TOKENS"
+ENV_KB_RERANKER_TOKENIZER = "HINDSIGHT_API_KB_RERANKER_TOKENIZER"
+ENV_KB_RERANKER_IMAGES = "HINDSIGHT_API_KB_RERANKER_IMAGES"
 # Media types (document, image, audio, video, text) this server refuses to ingest, comma-separated,
 # whatever its embedder could embed: e.g. "video,audio" to skip the cost of decoding clips.
 ENV_KB_DISABLED_MEDIA_TYPES = "HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES"
@@ -1717,8 +1724,8 @@ DEFAULT_RERANKER_ALIBABA_MODEL = "qwen3-rerank"
 
 DEFAULT_RERANKER_GOOGLE_MODEL = "semantic-ranker-default-004"
 
-DecisionModelOperation = Literal["recall", "reflect", "consolidation", "kb"]
-DECISION_MODEL_OPERATIONS: tuple[DecisionModelOperation, ...] = ("recall", "reflect", "consolidation", "kb")
+DecisionModelOperation = Literal["recall", "reflect", "consolidation"]
+DECISION_MODEL_OPERATIONS: tuple[DecisionModelOperation, ...] = ("recall", "reflect", "consolidation")
 
 
 @dataclass(frozen=True)
@@ -1782,11 +1789,6 @@ DEFAULT_RECALL_DECISION_MODEL_DEDUP = False
 # Off by default: a recall ranked by the cross-encoder instead is a quieter, worse answer, so a
 # failing decision model fails the recall unless the operator chose the fallback.
 DEFAULT_RECALL_DECISION_MODEL_FALLBACK = False
-# Knowledge-bank search reranks this many of its best hits with the decision model (when one is set up
-# for it); the rest keep the search's order. Offline, Jev on ATM-Bench took R@10 from 85.3 to 89.2 on the
-# top 30 and to 90.9 on the top 100 (the top 100 hold 95% of the wanted items, the top 30 91%); recall's
-# reranker takes 300 (HINDSIGHT_API_RERANKER_MAX_CANDIDATES), but each hit here can be an image request.
-DEFAULT_KB_DECISION_MODEL_CANDIDATES = 100
 
 
 def _decision_model_env(operation: str, setting: str) -> str:
@@ -2078,6 +2080,13 @@ DEFAULT_KB_EMBEDDINGS_BATCH_SIZE = 32  # 8 left a GPU embedder idle between requ
 # what the embedder (and any proxy in front of it) sees: past what it takes, it answers 429 and the
 # requests only come back later. 0 removes the cap.
 DEFAULT_KB_EMBEDDINGS_MAX_IN_FLIGHT = 16
+# Tokens of hits one knowledge rerank request holds on a mid or high budget (a low one holds at most
+# DEFAULT_KB_RERANKER_LOW_TOKENS). The hits go in search order while they fit, so this is how deep the
+# rerank goes. On ViDoRe V3 with a listwise decision-model reranker and a 262k-token window, 120k beat
+# 60k and 200k (markdown hr nDCG@10 72.55 / 73.12 / 72.75) and two requests of 120k (72.61). A reranker
+# with a smaller window splits what it is sent, or refuses it: lower this to its window.
+DEFAULT_KB_RERANKER_MAX_TOKENS = 120_000
+DEFAULT_KB_RERANKER_LOW_TOKENS = 26_000
 DEFAULT_KB_IMAGE_TOKENS = 280  # EmbeddingGemma 2 vision token budget per image (70..1120)
 DEFAULT_KB_MAX_FILE_MB = 500
 DEFAULT_KB_MAX_MEDIA_SECONDS = 7200  # 2h of audio/video per file
@@ -4363,11 +4372,6 @@ class HindsightConfig:
     consolidation_decision_model_api_key: str | None = None
     consolidation_decision_model_model: str | None = None
     consolidation_decision_model_base_url: str | None = None
-    kb_decision_model_provider: str | None = None
-    kb_decision_model_api_key: str | None = None
-    kb_decision_model_model: str | None = None
-    kb_decision_model_base_url: str | None = None
-    kb_decision_model_candidates: int = DEFAULT_KB_DECISION_MODEL_CANDIDATES
     # Knowledge banks (static, server-level: one embedding space per server)
     kb_embeddings_provider: str = DEFAULT_KB_EMBEDDINGS_PROVIDER
     kb_embeddings_model: str | None = None  # None: the provider's default
@@ -4378,6 +4382,15 @@ class HindsightConfig:
     kb_embeddings_device: str | None = None  # None: auto (cuda, mps, cpu)
     kb_embeddings_batch_size: int = DEFAULT_KB_EMBEDDINGS_BATCH_SIZE
     kb_embeddings_max_in_flight: int = DEFAULT_KB_EMBEDDINGS_MAX_IN_FLIGHT
+    kb_reranker_url: str | None = None
+    kb_reranker_api_key: str | None = None
+    kb_reranker_model: str | None = None
+    kb_reranker_max_tokens: int = DEFAULT_KB_RERANKER_MAX_TOKENS
+    # The encoding the reranker counts its window in; None: HINDSIGHT_API_TOKENIZER_ENCODING.
+    kb_reranker_tokenizer: str | None = None
+    # Send image and PDF page hits as pictures (with their text); off: by their text only, for a
+    # reranker that reads no images.
+    kb_reranker_images: bool = True
     kb_disabled_media_types: frozenset[str] = frozenset()
     #: The "text" knowledge provider's own embeddings config (HINDSIGHT_API_KB_TEXT_EMBEDDINGS_*),
     #: or None to use the memory banks' embedder.
@@ -4488,8 +4501,9 @@ class HindsightConfig:
         "reflect_decision_model_base_url",
         "consolidation_decision_model_api_key",
         "consolidation_decision_model_base_url",
-        "kb_decision_model_api_key",
-        "kb_decision_model_base_url",
+        # Knowledge-bank reranker key and endpoint
+        "kb_reranker_api_key",
+        "kb_reranker_url",
         # chatgpt: points at a directory holding an OAuth grant.
         "llm_chatgpt_home",
     }
@@ -4746,6 +4760,8 @@ class HindsightConfig:
         """Validate configuration values and raise errors for invalid combinations."""
         for operation in DECISION_MODEL_OPERATIONS:
             self.decision_model_config(operation)  # raises on an unknown provider or a missing key
+        if self.kb_reranker_url and not self.kb_reranker_model:
+            raise ValueError(f"{ENV_KB_RERANKER_MODEL} is required when {ENV_KB_RERANKER_URL} is set")
         # Validate vector_extension
         validate_extension(self.vector_extension)
 
@@ -5660,11 +5676,6 @@ class HindsightConfig:
             recall_decision_model_fallback=_parse_boolean_env(
                 ENV_RECALL_DECISION_MODEL_FALLBACK, DEFAULT_RECALL_DECISION_MODEL_FALLBACK
             ),
-            kb_decision_model_candidates=_parse_positive_int(
-                ENV_KB_DECISION_MODEL_CANDIDATES,
-                os.getenv(ENV_KB_DECISION_MODEL_CANDIDATES),
-                DEFAULT_KB_DECISION_MODEL_CANDIDATES,
-            ),
             # Server
             host=os.getenv(ENV_HOST) or None,
             port=int(os.getenv(ENV_PORT, DEFAULT_PORT)),
@@ -5892,6 +5903,12 @@ class HindsightConfig:
             kb_embeddings_max_in_flight=int(
                 os.getenv(ENV_KB_EMBEDDINGS_MAX_IN_FLIGHT, str(DEFAULT_KB_EMBEDDINGS_MAX_IN_FLIGHT))
             ),
+            kb_reranker_url=os.getenv(ENV_KB_RERANKER_URL) or None,
+            kb_reranker_api_key=os.getenv(ENV_KB_RERANKER_API_KEY) or None,
+            kb_reranker_model=os.getenv(ENV_KB_RERANKER_MODEL) or None,
+            kb_reranker_max_tokens=int(os.getenv(ENV_KB_RERANKER_MAX_TOKENS, str(DEFAULT_KB_RERANKER_MAX_TOKENS))),
+            kb_reranker_tokenizer=os.getenv(ENV_KB_RERANKER_TOKENIZER) or None,
+            kb_reranker_images=_parse_boolean_env(ENV_KB_RERANKER_IMAGES, True),
             kb_image_tokens=int(os.getenv(ENV_KB_IMAGE_TOKENS, str(DEFAULT_KB_IMAGE_TOKENS))),
             kb_disabled_media_types=_parse_kb_media_types(os.getenv(ENV_KB_DISABLED_MEDIA_TYPES)),
             kb_max_file_mb=int(os.getenv(ENV_KB_MAX_FILE_MB, str(DEFAULT_KB_MAX_FILE_MB))),
@@ -6409,10 +6426,6 @@ class HindsightConfig:
         # Hindsight's decision model is set up for consolidation, reflect and pages. Recall keeps
         # its reranker unless the recall override names it: on recall the reranker evaluated better.
         if provider == "hindsight" and operation == "recall" and own_provider is None:
-            return None
-        # Knowledge-bank search reranks only when its own provider is named: a reranked search is
-        # slower and costs a decision per hit, so a global decision model does not turn it on.
-        if operation == "kb" and own_provider is None:
             return None
         defaults = DECISION_MODEL_PROVIDER_DEFAULTS[provider]
         inherits_global = provider == (self.decision_model_provider or "").lower()

@@ -1659,7 +1659,7 @@ export HINDSIGHT_API_DECISION_MODEL_API_KEY=your-key
 
 Every request is retried on its own when it is rate-limited (429) or fails transiently.
 
-**One operation on a different setup.** `HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION,KB}_DECISION_MODEL_{PROVIDER,API_KEY,MODEL,BASE_URL}`
+**One operation on a different setup.** `HINDSIGHT_API_{RECALL,REFLECT,CONSOLIDATION}_DECISION_MODEL_{PROVIDER,API_KEY,MODEL,BASE_URL}`
 replace the global value for that operation only. Key, model and URL fall back to the global
 value only while the operation uses the global provider; an operation that switches to another
 provider takes that provider's defaults and needs its own key. You can also give one operation
@@ -1697,8 +1697,6 @@ The bank settings are also listed with their operation under [Observations](#obs
 | `HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE` | Also drop recall candidates judged no help, instead of only ordering them (see below). Per bank (`recall_decision_model_prune`). | `false` |
 | `HINDSIGHT_API_RECALL_DECISION_MODEL_DEDUP` | Also drop recall candidates repeating a better-ranked one (see below). Per bank (`recall_decision_model_dedup`). | `false` |
 | `HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK` | When the decision model fails or refuses a recall's ranking after its retries, rank that recall with the configured `HINDSIGHT_API_RERANKER_*` reranker (failover chain included) instead of failing it. Off, the recall fails, so you see the outage instead of quietly worse results. Server-wide. | `false` |
-| `HINDSIGHT_API_KB_DECISION_MODEL_PROVIDER` | Rerank knowledge-bank search hits with a decision model: its order is fused with the search's (reciprocal rank fusion), not trusted outright, and one more question then picks among the best five. A text hit is judged with the text around it (up to 2048 tokens); an image or PDF page hit by its picture together with any text it holds; a video hit is not judged and keeps its search place; a search with no text query is not reranked. Reflect's search of the knowledge banks a memory bank links is reranked too, at up to one request per candidate for each linked bank; when the decision model is down, that bank's results are left out of the reflect. A picture System One would refuse (a side under 280 px) is judged by the hit's text alone. Off unless set: a global decision model alone does not turn it on. Pictures go in System One's `assets` field, which Jev (`typesafe`) reads; `openai` takes none, so with it every hit is judged by its text. Key, model and URL follow the per-operation rules above. | - |
-| `HINDSIGHT_API_KB_DECISION_MODEL_CANDIDATES` | How many of a knowledge search's best hits the decision model reranks; the rest keep the search's order. At least 1. Server-wide. | `100` |
 | `HINDSIGHT_API_MENTAL_MODEL_DELTA_GATE_MAX_MEMORIES` | The most new memories a delta page refresh asks the decision model about; past it, the refresh runs reflect. See [Reflect](#reflect). | `200` |
 
 - **Rate limits.** `HINDSIGHT_API_DECISION_MODEL_MAX_CONCURRENT` caps requests in flight for
@@ -2699,6 +2697,12 @@ Knowledge banks hold documents (PDF, Office, images, audio, video, text) for sea
 | `HINDSIGHT_API_KB_EMBEDDINGS_BATCH_SIZE` | Passages per embedder request. | `32` |
 | `HINDSIGHT_API_KB_EMBEDDINGS_MAX_IN_FLIGHT` | Requests to a remote embedder in flight at once from this process, across every ingest and search. `0` removes the cap. | `16` |
 | `HINDSIGHT_API_KB_TEXT_EMBEDDINGS_*` | For the `text` provider: its own embeddings setup, any `HINDSIGHT_API_EMBEDDINGS_*` setting with this prefix (e.g. `HINDSIGHT_API_KB_TEXT_EMBEDDINGS_PROVIDER`). Unset uses the memory banks' embedder. | - |
+| `HINDSIGHT_API_KB_RERANKER_URL` | Rerank knowledge-bank search hits with any reranker speaking Cohere's rerank API (`{model, query, documents}` in, `{results: [{index, relevance_score}]}` out), at this full URL (e.g. `https://api.cohere.com/v2/rerank`). The best hits go in one request, in search order, as many as `HINDSIGHT_API_KB_RERANKER_MAX_TOKENS` holds; its scores reorder them, ties keeping the search's order, and the rest keep the search's order. A text hit is sent with the text around it (up to 2048 tokens); a video hit is not sent and keeps its search place; a search with no text query is not reranked. Reflect's search of the knowledge banks a memory bank links is reranked too; when the reranker is down, that bank's results are left out of the reflect. Unset: no rerank. | - |
+| `HINDSIGHT_API_KB_RERANKER_MODEL` | The reranker's model. Required with the URL. | - |
+| `HINDSIGHT_API_KB_RERANKER_API_KEY` | Its API key, sent as a bearer token. | - |
+| `HINDSIGHT_API_KB_RERANKER_MAX_TOKENS` | Tokens of hits one rerank request holds on a `mid` or `high` search budget, which is how deep the rerank goes; a `low` budget holds at most 26,000. Sized for a reranker with a long window; lower it to your reranker's window, or it splits or refuses what it is sent. | `120000` |
+| `HINDSIGHT_API_KB_RERANKER_TOKENIZER` | The encoding the reranker counts its window in. Unset uses `HINDSIGHT_API_TOKENIZER_ENCODING`. | - |
+| `HINDSIGHT_API_KB_RERANKER_IMAGES` | Send image and PDF page hits as pictures, each an image document `{"type": "image", "b64": <base64 JPEG>, "text": <its text>}`. A picture under 280 or over 1568 px a side is sent as its text. Set `false` for a reranker that reads no images: every hit then goes as its text. | `true` |
 | `HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES` | Media types refused at ingest, comma-separated (`document`, `image`, `audio`, `video`, `text`). *Per bank* (a bank can only add to it). | - |
 | `HINDSIGHT_API_KB_MAX_FILE_MB` | Largest file accepted. | `500` |
 | `HINDSIGHT_API_KB_MAX_MEDIA_SECONDS` | Longest audio or video file. *Per bank*. | `7200` |

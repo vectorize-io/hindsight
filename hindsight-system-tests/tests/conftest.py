@@ -159,17 +159,17 @@ def decision_model_server(stub_server, tmp_path_factory: pytest.TempPathFactory)
 
 
 @pytest.fixture(scope="session")
-def knowledge_decision_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
-    """A server whose knowledge-bank search reranks with a decision model, pointed at the stub. Only
-    knowledge search: its own provider turns it on. HTTP only, as ``decision_model_server``."""
-    log_path: Path = tmp_path_factory.mktemp("knowledge-decision-server") / "server.log"
+def knowledge_reranker_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server whose knowledge-bank search reranks with the stub's Cohere-style /rerank, pictures
+    included. Only knowledge search: recall keeps its own reranker. HTTP only, as ``decision_model_server``."""
+    log_path: Path = tmp_path_factory.mktemp("knowledge-reranker-server") / "server.log"
     server = start_hindsight_server(
         stub_url=stub_server.url,
         log_path=log_path,
         extra_env={
-            "HINDSIGHT_API_KB_DECISION_MODEL_PROVIDER": "typesafe",
-            "HINDSIGHT_API_KB_DECISION_MODEL_API_KEY": "stub-key",
-            "HINDSIGHT_API_KB_DECISION_MODEL_BASE_URL": stub_server.url,
+            "HINDSIGHT_API_KB_RERANKER_URL": f"{stub_server.url}/rerank",
+            "HINDSIGHT_API_KB_RERANKER_API_KEY": "stub-key",
+            "HINDSIGHT_API_KB_RERANKER_MODEL": "stub-reranker",
             "HINDSIGHT_API_WORKER_ENABLED": "false",
         },
     )
@@ -628,8 +628,8 @@ async def decision_model_client(decision_model_server) -> AsyncIterator[Hindsigh
 
 
 @pytest.fixture
-async def knowledge_decision_client(knowledge_decision_server) -> AsyncIterator[Hindsight]:
-    client = Hindsight(base_url=knowledge_decision_server.url)
+async def knowledge_reranker_client(knowledge_reranker_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=knowledge_reranker_server.url)
     yield client
     await client.aclose()
 

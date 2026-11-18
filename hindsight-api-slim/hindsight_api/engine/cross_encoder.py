@@ -776,7 +776,7 @@ class RemoteTEICrossEncoder(CrossEncoderModel):
         return await self._predict_async(pairs)
 
 
-class _CohereCompatibleRerankClient:
+class CohereCompatibleRerankClient:
     """
     Internal HTTP client for Cohere-compatible /rerank endpoints.
 
@@ -832,32 +832,37 @@ class _CohereCompatibleRerankClient:
         all_scores = [0.0] * len(pairs)
 
         for query, indexed_texts in query_groups.items():
-            texts = [text for _, text in indexed_texts]
-            indices = [idx for idx, _ in indexed_texts]
-
-            body: dict[str, object] = {
-                "model": self.model,
-                "query": query,
-                "documents": texts,
-                "return_documents": False,
-            }
-            if self.include_top_n:
-                body["top_n"] = len(texts)
-
-            async with self._session.get().post(
-                self.rerank_url,
-                headers=reranker_bank_attribution_headers(),
-                json=body,
-            ) as response:
-                await raise_for_status(response)
-                result = await response.json(content_type=None)
-
-            for item in result.get("results", []):
-                original_idx = item["index"]
-                score = item["relevance_score"]
-                all_scores[indices[original_idx]] = score
+            texts: list[str | dict[str, str]] = [text for _, text in indexed_texts]
+            for (idx, _), score in zip(indexed_texts, await self.scores(query, texts), strict=True):
+                all_scores[idx] = score
 
         return all_scores
+
+    async def scores(self, query: str, documents: list[str | dict[str, str]]) -> list[float]:
+        """One request: each document's relevance score, aligned with ``documents``, 0.0 for one the
+        endpoint left out. A document is a text, or an object for endpoints that take one (an image
+        document, ``{"type": "image", "b64": ..., "text": ...}``, for a reranker that reads pictures)."""
+        body: dict[str, object] = {
+            "model": self.model,
+            "query": query,
+            "documents": documents,
+            "return_documents": False,
+        }
+        if self.include_top_n:
+            body["top_n"] = len(documents)
+
+        async with self._session.get().post(
+            self.rerank_url,
+            headers=reranker_bank_attribution_headers(),
+            json=body,
+        ) as response:
+            await raise_for_status(response)
+            result = await response.json(content_type=None)
+
+        scores = [0.0] * len(documents)
+        for item in result.get("results", []):
+            scores[item["index"]] = item["relevance_score"]
+        return scores
 
 
 class CohereCrossEncoder(CrossEncoderModel):
@@ -900,8 +905,8 @@ class CohereCrossEncoder(CrossEncoderModel):
         # Used when base_url is set (Azure AI Foundry and other Cohere-compatible hosts).
         # Azure endpoints already include the full invoke path, so rerank_url == base_url
         # and top_n is omitted to match the existing Azure contract.
-        self._http_client: _CohereCompatibleRerankClient | None = (
-            _CohereCompatibleRerankClient(
+        self._http_client: CohereCompatibleRerankClient | None = (
+            CohereCompatibleRerankClient(
                 api_key=api_key,
                 model=model,
                 rerank_url=base_url,
@@ -1011,7 +1016,7 @@ class ZeroEntropyCrossEncoder(CrossEncoderModel):
     ):
         self.model = model
         self.base_url = base_url.rstrip("/") if base_url else self.DEFAULT_BASE_URL
-        self._client = _CohereCompatibleRerankClient(
+        self._client = CohereCompatibleRerankClient(
             api_key=api_key,
             model=model,
             rerank_url=f"{self.base_url}{self.RERANK_PATH}",
@@ -1039,7 +1044,7 @@ class SiliconFlowCrossEncoder(CrossEncoderModel):
 
     SiliconFlow (https://siliconflow.cn) exposes a Cohere-compatible /rerank
     endpoint. Shares the HTTP client with ZeroEntropy/Cohere-custom-endpoint
-    via _CohereCompatibleRerankClient.
+    via CohereCompatibleRerankClient.
     """
 
     RERANK_PATH = "/rerank"
@@ -1053,7 +1058,7 @@ class SiliconFlowCrossEncoder(CrossEncoderModel):
     ):
         self.model = model
         self.base_url = base_url.rstrip("/")
-        self._client = _CohereCompatibleRerankClient(
+        self._client = CohereCompatibleRerankClient(
             api_key=api_key,
             model=model,
             rerank_url=f"{self.base_url}{self.RERANK_PATH}",
@@ -1098,7 +1103,7 @@ class NvidiaCrossEncoder(CrossEncoderModel):
     """
     NVIDIA NIM cross-encoder using the native reranking API.
 
-    Not Cohere-compatible, so it cannot reuse _CohereCompatibleRerankClient:
+    Not Cohere-compatible, so it cannot reuse CohereCompatibleRerankClient:
     the path carries the model (/retrieval/<model>/reranking), the query is
     {"text": ...}, each passage is {"text": ...}, and the response is
     rankings[].logit — a raw logit, not a 0..1 relevance_score. Raw logits are
@@ -2680,7 +2685,7 @@ class AlibabaCloudCrossEncoder(CrossEncoderModel):
         timeout: float = 60.0,
     ):
         self.model = model
-        self._client = _CohereCompatibleRerankClient(
+        self._client = CohereCompatibleRerankClient(
             api_key=api_key,
             model=model,
             rerank_url=self.RERANK_URL,
@@ -2853,7 +2858,7 @@ _RERANKER_PROVIDERS_WITHOUT_RETRY = {
 }
 
 
-def _reranker_retry_policy() -> RetryPolicy:
+def reranker_retry_policy() -> RetryPolicy:
     """Build the reranker retry policy from resolved configuration."""
     from ..config import get_config
 
@@ -2887,7 +2892,7 @@ def create_cross_encoder(member: RerankerMemberConfig) -> CrossEncoderModel:
     encoder = _create_cross_encoder_backend(member)
     encoder.max_tokens_per_candidate = member.max_tokens_per_candidate
     if member.provider.lower() not in _RERANKER_PROVIDERS_WITHOUT_RETRY:
-        encoder.retry_policy = _reranker_retry_policy()
+        encoder.retry_policy = reranker_retry_policy()
     return encoder
 
 
