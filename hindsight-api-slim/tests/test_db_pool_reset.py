@@ -25,6 +25,7 @@ import ast
 import inspect
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import asyncpg
 import pytest
@@ -68,7 +69,13 @@ class TestPoolWiring:
         # asyncpg's Connection.reset() is `if reset_query: await self.execute(...)`,
         # so an empty string is the documented way to opt out. A subclass returning
         # None would raise there instead.
-        assert _NoResetConnection.get_reset_query(None) == ""  # type: ignore[arg-type]
+        conn = SimpleNamespace(_cancelled_mid_query=False)
+        assert _NoResetConnection.get_reset_query(conn) == ""  # type: ignore[arg-type]
+        # After a cancelled query it sends one statement, once: see
+        # test_cancelled_query_releases_its_locks.py.
+        conn._cancelled_mid_query = True
+        assert _NoResetConnection.get_reset_query(conn) == "SELECT 1"  # type: ignore[arg-type]
+        assert _NoResetConnection.get_reset_query(conn) == ""  # type: ignore[arg-type]
 
     def test_asyncpg_still_rolls_back_open_transactions(self):
         # The reset *query* is skipped; Connection._reset() is not, and that is
