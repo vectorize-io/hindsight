@@ -11,6 +11,8 @@ hide_table_of_contents: false
 ---
 
 import ThemedImage from '@theme/ThemedImage';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 :::danger Draft with mock numbers
 Every Hindsight score and every cost in this post is **made up** to show the layout. The competitor scores are the published ones collected in [agent-memory-benchmark #78](https://github.com/vectorize-io/agent-memory-benchmark/pull/78). Replace the mock numbers with real runs before publishing, and remove this box. The support-agent section is real, but it comes from a single local run.
@@ -105,15 +107,42 @@ We ran it three ways, with the same model (Gemma 4) answering through reflect:
 | All in a knowledge bank | 71.1% | 96% | 62% | 69% | 61% |
 | **Together** | **85.1%** | **100%** | **85%** | 73% | **83%** |
 
-Here's one question from each kind that the other setups got wrong and the linked setup got right.
+Here's one question of each kind, with what each setup answered.
 
-**Manual only.** *"When I share a folder with someone on another company's Nextcloud server, what permission options do I get?"* The manual says there's only one: **Can edit**. With everything in memory, the manual had been broken into loose facts, and the agent mixed in the options for calendars and public links. Together, it found the page and answered "Can edit".
+<div className="post-wide">
 
-**Manual + chat history.** *"Is the old Nextcloud on our workshop server still getting maintenance updates?"* One chat says the server runs Nextcloud 30. The manual says it came out in September 2024 and that each version is supported for one year. With everything in memory, the agent knew the version but not the date. With everything in a knowledge bank, it explained the policy but never found the version. Together, it put the two side by side: **no, Nextcloud 30 reached end of life around September 2025**.
+<Tabs>
+<TabItem value="docs" label="Manual only">
 
-**Chat contradicts the manual.** *"If I add the glossary to the 'Hanami Cosmetics launch' project, will Daisuke be able to open it?"* In an old chat a colleague says, with confidence, that adding a file to a project shares it with everyone in the project. Both single-bank setups repeated that. Together, the agent went with the manual: **projects don't give access to anything, so share the file with Daisuke first**.
+<ThemedImage alt={"A federated share's only permission option, answered by each setup"} sources={{light: "/img/blog/knowledge-banks/supportbench-docs-light.png", dark: "/img/blog/knowledge-banks/supportbench-docs-dark.png"}} />
 
-**Approved exception.** *"How long does the Activity stream keep our history?"* Two customers ask the exact same question. One of them has an approved exception that raises the limit from 365 to 730 days. With everything in memory or everything in a knowledge bank, both customers were told 365 days. Together, each customer got their own answer: **730 days for the customer with the exception, and 365 for the other**. The exception note is tagged to its customer, so the other customer's question never sees it.
+The manual says there's only one option: **Can edit**. With everything in memory, the manual had been broken into loose facts, and the agent mixed in the options for calendars and public links.
+
+</TabItem>
+<TabItem value="both" label="Manual + chat history">
+
+<ThemedImage alt={"Whether an old Nextcloud 30 server still gets updates, answered by each setup"} sources={{light: "/img/blog/knowledge-banks/supportbench-both-light.png", dark: "/img/blog/knowledge-banks/supportbench-both-dark.png"}} />
+
+Only Lukas's chats say the server runs Nextcloud 30, released in September 2024. Only the manual says each version is supported for one year. Each single-bank setup missed one half. Together, it put them side by side: **no, it reached end of life around September 2025**.
+
+</TabItem>
+<TabItem value="conflict" label="Chat contradicts the manual">
+
+<ThemedImage alt={"Whether adding a file to a project shares it, answered by each setup"} sources={{light: "/img/blog/knowledge-banks/supportbench-conflict-light.png", dark: "/img/blog/knowledge-banks/supportbench-conflict-dark.png"}} />
+
+In an old chat a colleague says, with confidence, that adding a file to a project shares it. Both single-bank setups repeated that. Together, the agent went with the manual: **share the file with Daisuke first**.
+
+</TabItem>
+<TabItem value="exception" label="Approved exception">
+
+<ThemedImage alt={"Activity retention for two customers, one with an approved exception, answered by each setup"} sources={{light: "/img/blog/knowledge-banks/supportbench-exception-light.png", dark: "/img/blog/knowledge-banks/supportbench-exception-dark.png"}} />
+
+Two customers ask the exact same question, and only Amara has an exception. Both single-bank setups told both customers 365 days. Together, each got their own answer, because the exception note is tagged to its customer and the other customer's question never sees it.
+
+</TabItem>
+</Tabs>
+
+</div>
 
 ## What it costs
 
