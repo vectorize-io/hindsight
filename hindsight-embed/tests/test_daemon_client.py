@@ -401,6 +401,9 @@ class TestStartDaemonSerialization:
 
         with (
             patch.object(DaemonEmbedManager, "_clear_port", side_effect=lambda _: calls.append("clear") or True),
+            patch.object(
+                DaemonEmbedManager, "_wait_for_previous_daemon_exit", side_effect=lambda _: calls.append("wait")
+            ),
             patch.object(DaemonEmbedManager, "is_running", side_effect=[False, True, True]),
             patch.object(
                 DaemonEmbedManager, "_rotate_daemon_log", side_effect=lambda *_args, **_kwargs: calls.append("rotate")
@@ -416,7 +419,56 @@ class TestStartDaemonSerialization:
         ):
             assert manager._start_daemon_locked({}, "codex", paths) is True
 
-        assert calls == ["clear", "rotate", "spawn"]
+        assert calls == ["clear", "wait", "rotate", "spawn"]
+
+    def test_start_waits_for_the_previous_daemon_to_exit(self, tmp_path, monkeypatch):
+        """A free port is not a stopped daemon (#6540).
+
+        A stopping daemon frees its port first and stops the profile's embedded
+        Postgres last. A replacement spawned in between ran its migrations against
+        a Postgres that then went away. The stand-in below is "still shutting down"
+        for a moment after the port is free; the wait must outlast it.
+        """
+        import subprocess
+
+        from hindsight_embed.profile_manager import ProfilePaths
+
+        paths = ProfilePaths(
+            config=tmp_path / "embed", lock=tmp_path / "daemon.lock", log=tmp_path / "daemon.log", port=9600
+        )
+        exiting = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(1.5)", "hindsight-api", "--port", "9600"]
+        )
+        try:
+            DaemonEmbedManager._daemon_pid_file(paths).write_text(str(exiting.pid))
+            DaemonEmbedManager()._wait_for_previous_daemon_exit(paths)
+            # The process is our child, so it lingered as a zombie until this
+            # poll() reaped it; the wait must have read that zombie as gone.
+            assert exiting.poll() is not None, "the wait returned while the previous daemon was alive"
+            assert not DaemonEmbedManager._daemon_pid_file(paths).exists()
+        finally:
+            exiting.kill()
+            exiting.wait()
+
+    def test_previous_daemon_pid_reused_by_another_process_is_ignored(self, tmp_path, monkeypatch):
+        """The recorded PID only counts while it is still a daemon on this profile's port."""
+        from hindsight_embed.profile_manager import ProfilePaths
+
+        paths = ProfilePaths(
+            config=tmp_path / "embed", lock=tmp_path / "daemon.lock", log=tmp_path / "daemon.log", port=9600
+        )
+        DaemonEmbedManager._daemon_pid_file(paths).write_text("4321")
+        monkeypatch.setattr(
+            DaemonEmbedManager,
+            "_process_command_line",
+            staticmethod(lambda _pid: "python -m hindsight_api.main --idle-timeout 0 --port 9700"),
+        )
+        killed: list[int] = []
+        monkeypatch.setattr("os.kill", lambda pid, _sig: killed.append(pid))
+
+        DaemonEmbedManager()._wait_for_previous_daemon_exit(paths)
+
+        assert killed == []
 
 
 class TestDaemonLogRotation:

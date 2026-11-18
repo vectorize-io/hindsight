@@ -28,7 +28,7 @@ from rich.text import Text
 
 from ._http_probe import ProbeResponse, probe_get
 from .embed_manager import EmbedManager
-from .profile_manager import ProfileLockTimeout, ProfileManager, lock_file, unlock_file
+from .profile_manager import ProfileLockTimeout, ProfileManager, ProfilePaths, lock_file, unlock_file
 
 logger = logging.getLogger(__name__)
 console = Console(stderr=True)
@@ -71,6 +71,13 @@ def _parse_non_negative_int(value: str | None, default: int, name: str) -> int:
 # runners than POSIX.
 DAEMON_STARTUP_TIMEOUT = int(os.getenv("HINDSIGHT_EMBED_DAEMON_STARTUP_TIMEOUT", "180"))
 DAEMON_STARTUP_TERMINATE_TIMEOUT = 10
+# How long a start waits for the daemon it replaces to finish exiting. A stopping
+# daemon frees its port first, then drains in-flight work (up to
+# HINDSIGHT_API_WORKER_SHUTDOWN_DRAIN_SECONDS, 20s by default), and only then stops
+# the profile's embedded Postgres. A replacement started inside that window ran its
+# migrations against a Postgres the old daemon then shut down: "Database migration
+# failed" on restart (#6540). Generous on purpose: waiting is cheap, the race is not.
+PREVIOUS_DAEMON_EXIT_TIMEOUT = 60.0
 DEFAULT_DAEMON_IDLE_TIMEOUT = 0  # 0 = disabled (no auto-exit)
 ENV_DAEMON_LOG_MAX_BYTES = "HINDSIGHT_EMBED_DAEMON_LOG_MAX_BYTES"
 ENV_DAEMON_LOG_BACKUP_COUNT = "HINDSIGHT_EMBED_DAEMON_LOG_BACKUP_COUNT"
@@ -820,6 +827,58 @@ class DaemonEmbedManager(EmbedManager):
         return False
 
     @staticmethod
+    def _daemon_pid_file(paths: ProfilePaths) -> Path:
+        """Where the start path records the PID of the daemon it launched."""
+        return paths.log.with_suffix(".pid")
+
+    @staticmethod
+    def _is_profile_daemon(pid: int, port: int) -> bool:
+        """True while `pid` is alive and is the daemon launched for `port`.
+
+        The port check guards against PID reuse (another profile's daemon, or
+        anything else) and rules out an exited daemon left as a zombie, whose
+        command line no longer carries its arguments.
+        """
+        cmdline = DaemonEmbedManager._process_command_line(pid)
+        if cmdline is None:
+            return False
+        lowered = cmdline.lower()
+        return any(marker in lowered for marker in DAEMON_PROCESS_MARKERS) and f"--port {port}" in lowered
+
+    def _wait_for_previous_daemon_exit(self, paths: ProfilePaths) -> None:
+        """Block until the daemon this profile last launched has exited.
+
+        Callers reach this with the port already free, so a recorded daemon that
+        is still alive is one that is shutting down and has yet to stop the
+        embedded Postgres a replacement would share. If it outlives the wait it
+        is hung; it is killed so the start can proceed.
+        """
+        pid_file = self._daemon_pid_file(paths)
+        try:
+            pid = int(pid_file.read_text().strip())
+        except (OSError, ValueError):
+            return
+
+        def _exited_within(seconds: float) -> bool:
+            deadline = time.monotonic() + seconds
+            while self._is_profile_daemon(pid, paths.port):
+                if time.monotonic() >= deadline:
+                    return False
+                time.sleep(0.2)
+            return True
+
+        if self._is_profile_daemon(pid, paths.port):
+            logger.info(f"Waiting for the previous daemon (PID {pid}) to finish shutting down")
+            if not _exited_within(PREVIOUS_DAEMON_EXIT_TIMEOUT):
+                logger.warning(f"Previous daemon (PID {pid}) did not exit in time; killing it")
+                try:
+                    os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+                except OSError:
+                    pass
+                _exited_within(DAEMON_STARTUP_TERMINATE_TIMEOUT)
+        pid_file.unlink(missing_ok=True)
+
+    @staticmethod
     def _port_health_ok(port: int) -> bool:
         """Return True when the listener on port responds like initialized Hindsight."""
         response = _probe(f"http://127.0.0.1:{port}/health", HEALTH_PROBE_TIMEOUT)
@@ -964,6 +1023,10 @@ class DaemonEmbedManager(EmbedManager):
                 self._register_profile(profile, port, config)
             return True
 
+        # A free port does not mean the previous daemon is gone (see
+        # PREVIOUS_DAEMON_EXIT_TIMEOUT).
+        self._wait_for_previous_daemon_exit(paths)
+
         # Load profile's .env file and merge with provided config
         # This fixes issue #305 where profile env vars were ignored
         profile_config = self._profile_manager.load_profile_config(profile)
@@ -1053,6 +1116,10 @@ class DaemonEmbedManager(EmbedManager):
             # can close its handle as soon as Popen returns.
             with open(daemon_log, "ab") as daemon_log_handle:
                 daemon_process = subprocess.Popen(cmd, env=env, **_detach_popen_kwargs(daemon_log_handle))
+            try:
+                self._daemon_pid_file(paths).write_text(str(daemon_process.pid))
+            except OSError:
+                logger.debug("Could not record daemon PID for %s", profile_label, exc_info=True)
 
             # Wait for daemon to be ready with rich UI
             start_time = time.time()

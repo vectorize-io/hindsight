@@ -930,6 +930,8 @@ def _capture_daemon_env(manager, profile: str, config: dict) -> dict[str, str]:
         patch("hindsight_embed.daemon_embed_manager.subprocess.Popen", side_effect=fake_popen),
         patch("hindsight_embed.daemon_embed_manager.time.sleep"),
         patch.object(manager, "_clear_port", return_value=True),
+        # Popen is stubbed, so the process lookup this would run must not be.
+        patch.object(manager, "_wait_for_previous_daemon_exit"),
         patch.object(manager, "_find_api_command", return_value=["hindsight-api"]),
         patch.object(manager, "is_running", side_effect=fake_is_running),
     ):
