@@ -48,7 +48,7 @@
     "darkMode": "Cambiar a modo oscuro",
     "lightMode": "Cambiar a modo claro",
     "bank": {
-      "select": "Selecciona un banco de memoria...",
+      "select": "Selecciona un banco...",
       "allBanks": "Todos los bancos de memoria",
       "search": "Buscar bancos de memoria...",
       "empty": "Aún no hay bancos de memoria.",
@@ -2593,7 +2593,6 @@
       "missing": "Ya no existe"
     },
     "selector": {
-      "select": "Selecciona un banco de conocimiento...",
       "search": "Buscar bancos de conocimiento...",
       "empty": "Aún no hay bancos de conocimiento.",
       "noSearchResults": "Ningún banco de conocimiento coincide con tu búsqueda.",

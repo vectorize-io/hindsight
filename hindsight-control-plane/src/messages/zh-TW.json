@@ -48,7 +48,7 @@
     "darkMode": "切換到深色模式",
     "lightMode": "切換到淺色模式",
     "bank": {
-      "select": "選擇記憶庫...",
+      "select": "選擇庫...",
       "allBanks": "所有記憶庫",
       "search": "搜尋記憶庫...",
       "empty": "還沒有記憶庫。",
@@ -2593,7 +2593,6 @@
       "missing": "已不存在"
     },
     "selector": {
-      "select": "選擇文件庫...",
       "search": "搜尋文件庫...",
       "empty": "尚無文件庫。",
       "noSearchResults": "沒有符合搜尋的文件庫。",

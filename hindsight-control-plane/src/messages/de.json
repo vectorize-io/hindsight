@@ -48,7 +48,7 @@
     "darkMode": "Zum Dunkelmodus wechseln",
     "lightMode": "Zum Hellmodus wechseln",
     "bank": {
-      "select": "Speicherbank auswählen...",
+      "select": "Bank auswählen...",
       "allBanks": "Alle Speicherbänke",
       "search": "Speicherbänke durchsuchen...",
       "empty": "Noch keine Speicherbänke vorhanden.",
@@ -2593,7 +2593,6 @@
       "missing": "Existiert nicht mehr"
     },
     "selector": {
-      "select": "Wissensbank auswählen...",
       "search": "Wissensbänke durchsuchen...",
       "empty": "Noch keine Wissensbänke.",
       "noSearchResults": "Keine Wissensbank passt zu deiner Suche.",

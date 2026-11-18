@@ -682,10 +682,10 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
             >
               <span className="truncate">
                 {/* On a knowledge page the page IS that bank, so the trigger names
-                        it, not whichever memory bank was picked last. */}
-                {kind === "knowledge"
-                  ? knowledgeBankId || tKb("select")
-                  : currentBankName || currentBank || tNavBank("select")}
+                        it, not whichever memory bank was picked last. The placeholder
+                        names no kind: the picker lists both kinds on every page. */}
+                {(kind === "knowledge" ? knowledgeBankId : currentBankName || currentBank) ||
+                  tNavBank("select")}
               </span>
               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
             </Button>
