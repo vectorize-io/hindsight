@@ -726,13 +726,15 @@ class _JudgeByPicture:
     relevant; a text document, not at all. ``settings`` are the server's knowledge reranker settings."""
 
     def __init__(self) -> None:
-        self.settings: dict[str, object] = {"kb_reranker_images": True}
+        self.settings: dict[str, object] = {"kb_reranker_images": True, "kb_reranker_query_images": True}
         self.pictures: list[Image.Image] = []
         self.texts: list[str] = []
         self.requests: list[int] = []  # how many documents each request held
+        self.queries: list[str | dict[str, str]] = []
 
     async def scores(self, query, documents):
         self.requests.append(len(documents))
+        self.queries.append(query)
         scores = []
         for document in documents:
             if isinstance(document, str):
@@ -793,10 +795,108 @@ async def test_the_reranker_reranks_search_hits_by_their_pictures(api_client, kb
     assert judge.requests == [3]
     assert (hits[0]["document_id"], hits[0]["page"]) == ("manual", 2)
 
-    # A search with no text is not reranked: the reranker scores the hits against the query's words.
-    judge.pictures.clear()
-    await _search(api_client, kb, query_image=base64.b64encode(_png((0, 0, 255))).decode())
-    assert judge.pictures == []
+    # A text search sends its query as the plain string.
+    assert judge.queries == ["red"]
+
+
+async def test_a_search_by_an_image_sends_the_picture_as_the_query_even_without_text(api_client, kb, judge):
+    await _upload(
+        api_client,
+        kb,
+        [("manual.pdf", _pdf((250, 10, 10), (10, 10, 250)), "application/pdf")],
+        [{"document_id": "manual"}],
+    )
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "some notes"}]})
+    assert r.status_code == 200, r.text
+    photo = _png((0, 0, 255), size=(300, 300))
+    b64 = base64.b64encode(photo).decode()
+
+    await _search(api_client, kb, query_image=b64)
+    (query,) = judge.queries
+    assert isinstance(query, dict) and set(query) == {"type", "b64"} and query["type"] == "image"
+    sent = Image.open(io.BytesIO(base64.b64decode(query["b64"])))
+    assert sent.format == "JPEG" and sent.size == (300, 300)
+    assert judge.requests == [3]  # reranked: the pages and the note in one request
+
+    judge.queries.clear()
+    await _search(api_client, kb, query="blue", query_image=b64)
+    (query,) = judge.queries
+    assert isinstance(query, dict) and query["text"] == "blue" and query["type"] == "image"
+
+    # A reranker that reads no images is sent the text, and an image alone is not reranked.
+    judge.settings["kb_reranker_images"] = False
+    judge.queries.clear()
+    await _search(api_client, kb, query="blue", query_image=b64)
+    assert judge.queries == ["blue"]
+    judge.queries.clear()
+    await _search(api_client, kb, query_image=b64)
+    assert judge.queries == []
+
+
+async def test_the_query_picture_takes_its_share_of_the_rerank_window(api_client, kb, judge):
+    items = [{"document_id": f"note{i}", "text": f"note {i} about the blue key. " + "detail " * 140} for i in range(10)]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.status_code == 200, r.text
+    await _upload(api_client, kb, [("a.png", _png((0, 0, 255), size=(300, 300)), "image/png")], [{"document_id": "a"}])
+    judge.settings["kb_reranker_max_tokens"] = 4_000
+    image = base64.b64encode(_png((0, 0, 255), size=(300, 300))).decode()
+
+    await _search(api_client, kb, query="blue key", max_tokens=1_000_000)
+    await _search(api_client, kb, query="blue key", query_image=image, max_tokens=1_000_000)
+    by_text, with_picture = judge.requests
+    assert with_picture < by_text  # the picture's tokens come out of what the candidates may hold
+
+
+async def test_a_small_query_picture_is_enlarged_and_an_extreme_strip_left_out(api_client, kb, judge):
+    await _upload(api_client, kb, [("a.png", _png((0, 0, 255), size=(300, 300)), "image/png")], [{"document_id": "a"}])
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "a blue note"}]})
+    assert r.status_code == 200, r.text
+
+    small = base64.b64encode(_png((0, 0, 255), size=(64, 64))).decode()
+    await _search(api_client, kb, query_image=small)
+    (query,) = judge.queries
+    assert Image.open(io.BytesIO(base64.b64decode(query["b64"]))).size == (280, 280)
+
+    # Aspect kept: 100x200 becomes 280x560.
+    judge.queries.clear()
+    await _search(api_client, kb, query_image=base64.b64encode(_png((0, 0, 255), size=(100, 200))).decode())
+    assert Image.open(io.BytesIO(base64.b64decode(judge.queries[0]["b64"]))).size == (280, 560)
+
+    # A 20x2000 strip cannot reach 280 on its short side within 1568 on the long one: left out.
+    judge.queries.clear()
+    strip = base64.b64encode(_png((0, 0, 255), size=(20, 2000))).decode()
+    await _search(api_client, kb, query_image=strip)
+    assert judge.queries == []
+    await _search(api_client, kb, query="blue", query_image=strip)
+    assert judge.queries == ["blue"]
+
+
+async def test_without_query_images_a_search_is_reranked_by_its_text_as_before(api_client, kb, judge):
+    judge.settings["kb_reranker_query_images"] = False
+    await _upload(api_client, kb, [("a.png", _png((0, 0, 255), size=(300, 300)), "image/png")], [{"document_id": "a"}])
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "a blue note"}]})
+    assert r.status_code == 200, r.text
+    image = base64.b64encode(_png((0, 0, 255), size=(300, 300))).decode()
+
+    await _search(api_client, kb, query="blue", query_image=image)
+    assert judge.queries == ["blue"]  # the plain string, as before
+    judge.queries.clear()
+    await _search(api_client, kb, query_image=image)
+    assert judge.queries == []  # no text: not reranked
+
+
+async def test_a_search_by_a_video_is_reranked_by_its_text_only(api_client, kb, judge):
+    await _upload(api_client, kb, [("a.png", _png((0, 0, 255), size=(300, 300)), "image/png")], [{"document_id": "a"}])
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "a blue note"}]})
+    assert r.status_code == 200, r.text
+    clip = base64.b64encode(_tone(6, video=True)).decode()
+    image = base64.b64encode(_png((0, 0, 255), size=(300, 300))).decode()
+
+    await _search(api_client, kb, query_video=clip)
+    await _search(api_client, kb, query_video=clip, query_image=image)
+    assert judge.queries == []
+    await _search(api_client, kb, query="blue", query_video=clip, query_image=image)
+    assert judge.queries == ["blue"]
 
 
 async def test_a_picture_too_small_for_the_reranker_is_judged_by_its_text(api_client, kb, judge):

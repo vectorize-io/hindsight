@@ -1012,6 +1012,7 @@ ENV_KB_RERANKER_MODEL = "HINDSIGHT_API_KB_RERANKER_MODEL"
 ENV_KB_RERANKER_MAX_TOKENS = "HINDSIGHT_API_KB_RERANKER_MAX_TOKENS"
 ENV_KB_RERANKER_TOKENIZER = "HINDSIGHT_API_KB_RERANKER_TOKENIZER"
 ENV_KB_RERANKER_IMAGES = "HINDSIGHT_API_KB_RERANKER_IMAGES"
+ENV_KB_RERANKER_QUERY_IMAGES = "HINDSIGHT_API_KB_RERANKER_QUERY_IMAGES"
 # Media types (document, image, audio, video, text) this server refuses to ingest, comma-separated,
 # whatever its embedder could embed: e.g. "video,audio" to skip the cost of decoding clips.
 ENV_KB_DISABLED_MEDIA_TYPES = "HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES"
@@ -4391,6 +4392,9 @@ class HindsightConfig:
     # Send image and PDF page hits as pictures (with their text); off: by their text only, for a
     # reranker that reads no images.
     kb_reranker_images: bool = True
+    # Also send the picture of a search by an image as the rerank query (an image object, not a string);
+    # needs kb_reranker_images. Off: the query goes as its text, and a search with no text is not reranked.
+    kb_reranker_query_images: bool = False
     kb_disabled_media_types: frozenset[str] = frozenset()
     #: The "text" knowledge provider's own embeddings config (HINDSIGHT_API_KB_TEXT_EMBEDDINGS_*),
     #: or None to use the memory banks' embedder.
@@ -5909,6 +5913,7 @@ class HindsightConfig:
             kb_reranker_max_tokens=int(os.getenv(ENV_KB_RERANKER_MAX_TOKENS, str(DEFAULT_KB_RERANKER_MAX_TOKENS))),
             kb_reranker_tokenizer=os.getenv(ENV_KB_RERANKER_TOKENIZER) or None,
             kb_reranker_images=_parse_boolean_env(ENV_KB_RERANKER_IMAGES, True),
+            kb_reranker_query_images=_parse_boolean_env(ENV_KB_RERANKER_QUERY_IMAGES, False),
             kb_image_tokens=int(os.getenv(ENV_KB_IMAGE_TOKENS, str(DEFAULT_KB_IMAGE_TOKENS))),
             kb_disabled_media_types=_parse_kb_media_types(os.getenv(ENV_KB_DISABLED_MEDIA_TYPES)),
             kb_max_file_mb=int(os.getenv(ENV_KB_MAX_FILE_MB, str(DEFAULT_KB_MAX_FILE_MB))),

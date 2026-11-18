@@ -34,7 +34,7 @@ from ..engine import bank_aliases
 from ..engine.aiohttp_session import UpstreamHTTPError
 from ..engine.cross_encoder import CohereCompatibleRerankClient, reranker_retry_policy
 from ..engine.db_utils import acquire_with_retry
-from ..engine.decision_model import jev_accepts
+from ..engine.decision_model import JEV_IMAGE_SIDE, jev_accepts
 from ..engine.operation_metadata import KnowledgeIngestChildMetadata, KnowledgeIngestParentMetadata
 from ..engine.remote_retry import acall_with_retry
 from ..engine.response_models import KnowledgeDocumentHit
@@ -2029,13 +2029,25 @@ class KnowledgeService:
         shown with the text around it, any hit's text capped at ``JUDGE_CONTEXT_TOKENS``, and hits that
         would show the same text (pieces of one short page) are one candidate, kept together in the search's
         order. With ``kb_reranker_images``, an image or PDF page hit is shown by its picture
-        (``media.judge_picture``) and its text. A video hit is not shown: it keeps its search place. Only a
-        search with text is reranked: the reranker scores the hits against it."""
+        (``media.judge_picture``) and its text, and, with ``kb_reranker_query_images``, a search by an image is
+        reranked with that picture as its query, with or without text. A video hit is not shown: it keeps its search place. A search is
+        reranked when it has text or a picture the reranker takes: the reranker scores the hits against it.
+        A search by a video (alone or with text) is reranked by its text, never by the clip."""
         reranker = self.reranker
-        query = (request.query or "").strip()
-        if reranker is None or not query:
-            return hits
+        text = (request.query or "").strip()
         config = get_config()
+        query_picture = (
+            await self._query_picture(request)
+            if config.kb_reranker_images and config.kb_reranker_query_images
+            else None
+        )
+        if reranker is None or not (text or query_picture):
+            return hits
+        query: str | dict[str, str] = text
+        if query_picture is not None:
+            query = {"type": "image", "b64": base64.b64encode(query_picture).decode()}
+            if text:
+                query["text"] = text
         pool = hits[:_JUDGE_POOL]
         texts = await self._judged_texts(bank_id, pool)
         # Candidates in search order, each the hits sharing what the reranker would read. On ViDoRe markdown
@@ -2077,8 +2089,9 @@ class KnowledgeService:
         window = config.kb_reranker_max_tokens
         if request.budget == "low":
             window = min(window, DEFAULT_KB_RERANKER_LOW_TOKENS)
-        # The query rides in the request too.
-        seen = list(range(fitting(costs, window - count_tokens(query, encoding) - _CANDIDATE_TOKENS)))
+        # The query rides in the request too, its picture with it.
+        query_cost = count_tokens(text, encoding) + _CANDIDATE_TOKENS + (JUDGE_PICTURE_TOKENS if query_picture else 0)
+        seen = list(range(fitting(costs, window - query_cost)))
         pictures = await asyncio.gather(
             *(self._picture(pool[groups[shown[m]][0]]) if has_picture[m] else asyncio.sleep(0) for m in seen)
         )
@@ -2122,6 +2135,15 @@ class KnowledgeService:
                 continue
             out.append(_around(found.get(span(hit), []), hit.passage.index, JUDGE_CONTEXT_TOKENS) or own)
         return out
+
+    async def _query_picture(self, request: SearchRequest) -> bytes | None:
+        """The JPEG the reranker judges the hits against when the search is by an image, or None: no query
+        image, a search by a video (its image, if any, is one of several inputs the reranker cannot take
+        as one query), or a picture that cannot be made to fit the sides image rerankers take (a small one is enlarged)."""
+        if request.query_image is None or request.query_video is not None:
+            return None
+        picture = await asyncio.to_thread(media.query_picture, request.query_image, *JEV_IMAGE_SIDE)
+        return picture if picture is not None and jev_accepts("image/jpeg", picture) else None
 
     async def _picture(self, hit: SearchHit) -> bytes | None:
         """The JPEG the reranker judges an image or PDF page hit by, or None for a hit judged by its text: any
