@@ -13,7 +13,7 @@ hide_table_of_contents: false
 import ThemedImage from '@theme/ThemedImage';
 
 :::danger Draft with mock numbers
-Every Hindsight score and every cost in this post is **made up** to show the layout. The competitor scores are the published ones collected in [agent-memory-benchmark #78](https://github.com/vectorize-io/agent-memory-benchmark/pull/78). Replace the mock numbers with real runs before publishing, and remove this box.
+Every Hindsight score and every cost in this post is **made up** to show the layout. The competitor scores are the published ones collected in [agent-memory-benchmark #78](https://github.com/vectorize-io/agent-memory-benchmark/pull/78). Replace the mock numbers with real runs before publishing, and remove this box. The support-agent section is real, but it comes from a single local run.
 :::
 
 **Your agent's memory learns. Its documents shouldn't change.** A memory bank turns what your agent hears into facts. A product manual, a contract or a training video should stay exactly as written: found, quoted, and pointed to by page or by second. Today we're releasing **knowledge banks**: upload your files as they are, and search them with text, an image or a clip. There's no LLM anywhere, at ingest or at search, and on five public benchmarks they match or beat the best search APIs at a fraction of the cost.
@@ -88,6 +88,32 @@ A sentence finds the clip. **68.1** on average, against 67.0 for Mixedbread and 
 ### One person's life: ATM-Bench
 
 Four years of one person's data: 3,759 photos, 533 videos and 6,742 emails, and 1,013 questions about them. **92.9** Recall@10, the top of the leaderboard. The two systems closest to it, Memexa v2 (92.3) and Graphon V1 (90.0), first run an LLM over every item to build their memory. A knowledge bank embeds each photo, video and email once, and that's all.
+
+### Memory and documents together: a support agent
+
+Search scores don't show what happens when an agent has to mix a manual with what it remembers. So we built a benchmark for it: a support agent for a Nextcloud hosting service. It has the real Nextcloud 32 user and admin manuals (837 pages of PDF), plus 260 past support chats with 20 customers. The chats are noisy on purpose: about half of them are product chatter, and much of that chatter is wrong. Some customers also have an approved exception, a note that changes one setting for their account only. There are 114 questions, and none of them says where to look.
+
+We ran it three ways, with the same model (Gemma 4) answering through reflect:
+
+- **All in memory:** the manuals and the chats go into one memory bank.
+- **All in a knowledge bank:** everything is kept as documents.
+- **Together:** the chats go into the memory bank, and the manuals and exception notes go into a linked knowledge bank.
+
+| Setup | All | Manual only | Manual + chat history | Chat contradicts manual | Approved exception |
+|---|---|---|---|---|---|
+| All in memory | 74.6% | 81% | 69% | 73% | 75% |
+| All in a knowledge bank | 71.1% | 96% | 62% | 69% | 61% |
+| **Together** | **85.1%** | **100%** | **85%** | 73% | **83%** |
+
+Here's one question from each kind that the other setups got wrong and the linked setup got right.
+
+**Manual only.** *"When I share a folder with someone on another company's Nextcloud server, what permission options do I get?"* The manual says there's only one: **Can edit**. With everything in memory, the manual had been broken into loose facts, and the agent mixed in the options for calendars and public links. Together, it found the page and answered "Can edit".
+
+**Manual + chat history.** *"Is the old Nextcloud on our workshop server still getting maintenance updates?"* One chat says the server runs Nextcloud 30. The manual says it came out in September 2024 and that each version is supported for one year. With everything in memory, the agent knew the version but not the date. With everything in a knowledge bank, it explained the policy but never found the version. Together, it put the two side by side: **no, Nextcloud 30 reached end of life around September 2025**.
+
+**Chat contradicts the manual.** *"If I add the glossary to the 'Hanami Cosmetics launch' project, will Daisuke be able to open it?"* In an old chat a colleague says, with confidence, that adding a file to a project shares it with everyone in the project. Both single-bank setups repeated that. Together, the agent went with the manual: **projects don't give access to anything, so share the file with Daisuke first**.
+
+**Approved exception.** *"How long does the Activity stream keep our history?"* Two customers ask the exact same question. One of them has an approved exception that raises the limit from 365 to 730 days. With everything in memory or everything in a knowledge bank, both customers were told 365 days. Together, each customer got their own answer: **730 days for the customer with the exception, and 365 for the other**. The exception note is tagged to its customer, so the other customer's question never sees it.
 
 ## What it costs
 
