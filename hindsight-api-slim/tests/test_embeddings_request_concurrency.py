@@ -33,12 +33,22 @@ from hindsight_api.engine.retain.embedding_coalescer import resolve_max_batch_si
 from tests.aiohttp_stub import Handler, stub_server
 
 
+# How long a held request, or the wait for the bound to fill, may take. Generous: it only
+# guards against a hang, and a held handler that gave up first would close its request and
+# leave the bound one short of full (#6475).
+_HOLD_TIMEOUT = 60
+
+
 class _ConcurrencyProbe:
     """Records the high-water mark of simultaneously open requests."""
 
-    def __init__(self, hold_until: int) -> None:
+    def __init__(self, hold_until: int, wait_for_open: int = 0) -> None:
         self._hold_until = hold_until
         self._reached = asyncio.Event()
+        self._wait_for_open = wait_for_open
+        # Set once `wait_for_open` requests are open at once. Tests wait on it, not on a
+        # wall-clock poll a loaded runner can miss (#6475).
+        self.all_open = asyncio.Event()
         self.open_now = 0
         self.peak = 0
         self.requests = 0
@@ -49,6 +59,8 @@ class _ConcurrencyProbe:
         self.peak = max(self.peak, self.open_now)
         if self.open_now >= self._hold_until:
             self._reached.set()
+        if self._wait_for_open and self.open_now >= self._wait_for_open:
+            self.all_open.set()
         # Every request parks here until `hold_until` of them are open at once, so the
         # peak below is a real observation and not a lucky interleaving.
         if self._hold_until > 1:
@@ -144,14 +156,14 @@ async def test_concurrent_callers_share_one_bound() -> None:
     A semaphore per encode() call would let two simultaneous retains put 2x the bound
     on the wire.
     """
-    probe = _ConcurrencyProbe(hold_until=1)
+    probe = _ConcurrencyProbe(hold_until=1, wait_for_open=4)
     release = asyncio.Event()
 
     async def handler(request: web.Request) -> web.StreamResponse:
         await probe.enter()
         try:
             # Hold every request open so the peak below counts simultaneous ones.
-            await asyncio.wait_for(release.wait(), timeout=10)
+            await asyncio.wait_for(release.wait(), timeout=_HOLD_TIMEOUT)
             return web.json_response([[0.4]])
         finally:
             probe.leave()
@@ -165,9 +177,7 @@ async def test_concurrent_callers_share_one_bound() -> None:
         try:
             # Wait until everything the bound allows is open, then a settle window in
             # which an unbounded implementation would open more.
-            async with asyncio.timeout(10):
-                while probe.open_now < 4:
-                    await asyncio.sleep(0.01)
+            await asyncio.wait_for(probe.all_open.wait(), timeout=_HOLD_TIMEOUT)
             await asyncio.sleep(0.1)
             peak_while_held = probe.peak
         finally:
@@ -190,13 +200,13 @@ async def test_inline_path_respects_the_shared_bound(texts_per_caller: int, conc
     Eight small recall queries at once used to put eight requests on the wire whatever
     the limit, because the inline path returned before the shared semaphore.
     """
-    probe = _ConcurrencyProbe(hold_until=1)
+    probe = _ConcurrencyProbe(hold_until=1, wait_for_open=concurrency)
     release = asyncio.Event()
 
     async def handler(request: web.Request) -> web.StreamResponse:
         await probe.enter()
         try:
-            await asyncio.wait_for(release.wait(), timeout=10)
+            await asyncio.wait_for(release.wait(), timeout=_HOLD_TIMEOUT)
             return web.json_response([[0.7]] * len(await _inputs(request)))
         finally:
             probe.leave()
@@ -206,9 +216,7 @@ async def test_inline_path_respects_the_shared_bound(texts_per_caller: int, conc
             asyncio.create_task(embeddings.encode([f"{c} {i}" for i in range(texts_per_caller)])) for c in range(8)
         ]
         try:
-            async with asyncio.timeout(10):
-                while probe.open_now < concurrency:
-                    await asyncio.sleep(0.01)
+            await asyncio.wait_for(probe.all_open.wait(), timeout=_HOLD_TIMEOUT)
             # Settle window in which an unbounded path would open more.
             await asyncio.sleep(0.1)
             peak_while_held = probe.peak

@@ -2390,15 +2390,31 @@ class TestDeltaRefreshGeminiEval:
             ids |= {op.get("assigned_id") for op in applied}
             return {i for i in ids if i}
 
-        def owning_section(markdown: str, line: str) -> str | None:
-            return next((s.id for s in split_markdown(markdown).sections if line in render_section(s)), None)
+        # Section ids come from the STORED structure, never from re-splitting the
+        # markdown: the ids an operation names are the stored ones, and they are not
+        # always the slug of the heading (an ``add_section`` may pass its own
+        # ``new_id``). Comparing a split-derived id against the ops' ids reported an
+        # edited section as an untouched one that drifted (#6379).
+        async def stored_document(content: str) -> StructuredDocument:
+            stored = await gemini_memory.get_mental_model(
+                bank_id=bank_id, mental_model_id=mental_model_id, request_context=request_context
+            )
+            assert stored is not None
+            structured = stored.get("structured_content")
+            assert structured is not None, "no structure was persisted"
+            doc = StructuredDocument.model_validate(structured)
+            assert content == render_document(doc), "stored markdown is not the render of the stored structure"
+            return doc
+
+        def owning_section(doc: StructuredDocument, line: str) -> str | None:
+            return next((s.id for s in doc.sections if line in render_section(s)), None)
 
         # The seeding refresh is a real delta refresh: the model may deliberately
         # rewrite sections there too, so the contract is the same as every later
         # round — a construct in a section no operation named must survive.
         first_touched = touched_sections(seeded["first"])
         for name, canary in canaries.items():
-            if owning_section(existing_markdown, canary) in first_touched:
+            if owning_section(split_markdown(existing_markdown), canary) in first_touched:
                 continue
             assert canary in previous_content.splitlines(), (
                 f"{name} was lost by the first refresh, which never named its section "
@@ -2407,7 +2423,8 @@ class TestDeltaRefreshGeminiEval:
         # Constructs the seed refresh edited away are no longer part of the contract.
         canaries = {n: c for n, c in canaries.items() if c in previous_content.splitlines()}
 
-        previous_sections = {s.id: render_section(s) for s in split_markdown(previous_content).sections}
+        previous_doc = await stored_document(previous_content)
+        previous_sections = {s.id: render_section(s) for s in previous_doc.sections}
         # Sections no operation has *ever* named must still be byte-identical at
         # the end of the run, not just between consecutive rounds.
         never_touched = dict(previous_sections)
@@ -2430,16 +2447,7 @@ class TestDeltaRefreshGeminiEval:
             content = refreshed["content"]
             where = f"round {round_index} (fact: {new_fact!r})"
 
-            stored = await gemini_memory.get_mental_model(
-                bank_id=bank_id, mental_model_id=mental_model_id, request_context=request_context
-            )
-            assert stored is not None
-            structured = stored.get("structured_content")
-            assert structured is not None, f"{where}: no structure was persisted"
-            doc = StructuredDocument.model_validate(structured)
-            assert content == render_document(doc), (
-                f"{where}: stored markdown is not the render of the stored structure"
-            )
+            doc = await stored_document(content)
 
             for line in content.splitlines():
                 if collapsed_table_rx.search(line):
@@ -2458,8 +2466,7 @@ class TestDeltaRefreshGeminiEval:
                 f"touched={sorted(i for i in touched if i)} bytes={len(content)}"
             )
 
-            current = split_markdown(content)
-            for section in current.sections:
+            for section in doc.sections:
                 if section.id in touched:
                     continue
                 before = previous_sections.get(section.id)
@@ -2474,14 +2481,15 @@ class TestDeltaRefreshGeminiEval:
             for name, canary in canaries.items():
                 if canary not in previous_lines:
                     continue  # an earlier round deliberately edited it away
-                if owning_section(previous_content, canary) in touched:
+                if owning_section(previous_doc, canary) in touched:
                     continue  # the model deliberately edited that section
                 assert canary in content.splitlines(), (
                     f"{where}: {name} disappeared from a section the model never touched.\n{content}"
                 )
 
             previous_content = content
-            previous_sections = {s.id: render_section(s) for s in current.sections}
+            previous_doc = doc
+            previous_sections = {s.id: render_section(s) for s in doc.sections}
 
         print(f"[delta-stability] final document after {len(rounds)} rounds:\n{previous_content}")
 
@@ -2492,7 +2500,7 @@ class TestDeltaRefreshGeminiEval:
             "Every section was edited at least once, so this run proves nothing about "
             "preservation — the fixture's facts have drifted too close to the seed document."
         )
-        final_by_id = {s.id: render_section(s) for s in split_markdown(previous_content).sections}
+        final_by_id = {s.id: render_section(s) for s in previous_doc.sections}
         for section_id, original in never_touched.items():
             assert final_by_id.get(section_id) == original, (
                 f"Section {section_id!r} eroded across {len(rounds)} rounds without any "

@@ -7,6 +7,7 @@ avoiding Python-level wrapping overhead (~570K __getitem__ calls per
 20-query benchmark → measurable regression when wrapped).
 """
 
+import asyncio
 import importlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -228,7 +229,27 @@ class _NoResetConnection(asyncpg.Connection):
     being sent keeps it until the connection is replaced.
     """
 
+    # Set when a query was cancelled (an asyncio.wait_for timeout, a cancelled
+    # task). asyncpg prepares with Parse/Describe/Flush and no Sync, so a cancel
+    # landing right after the prepare returns leaves the server in an implicit
+    # transaction — holding the statement's table locks — that asyncpg does not
+    # know about, and _reset() sees no transaction to roll back. Parked in the
+    # pool, that session blocked every DROP/CREATE INDEX CONCURRENTLY on the
+    # tables it read, and with them every bank create/delete on the server, until
+    # the process exited (#6613). Any simple query ends that transaction.
+    _cancelled_mid_query = False
+
+    async def _do_execute(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await super()._do_execute(*args, **kwargs)
+        except asyncio.CancelledError:
+            self._cancelled_mid_query = True
+            raise
+
     def get_reset_query(self) -> str:
+        if self._cancelled_mid_query:
+            self._cancelled_mid_query = False
+            return "SELECT 1"
         return ""
 
 
