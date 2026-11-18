@@ -383,6 +383,8 @@ RESCORE_POOL = 50
 #: Most candidates one arm of stage 1 returns (see ``search``); never fewer than ``top_k``.
 #: 300 kept ViDoRe hr nDCG@10 (65.68 vs 65.59 uncapped) and halved its search time (Gemini Embedding 2).
 CANDIDATE_POOL_CAP = 300
+#: A bank with at most this many passages is searched exactly, not through the shared HNSW index.
+EXACT_SEARCH_MAX_PASSAGES = 10_000
 CANDIDATE_ROLES_SQL = "role NOT IN (" + ", ".join(f"'{r}'" for r in RESCORE_ONLY_ROLES) + ")"
 
 
@@ -936,7 +938,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
             tsquery = f"(SELECT to_tsquery('simple', string_agg(quote_literal(w), ' | ')) FROM unnest(${len(params)}::text[]) w)"
         docs = fq_table("kb_documents")
 
-        def nearest(table: str) -> str:
+        def nearest(table: str, exact: str) -> str:
             roles = f" AND {CANDIDATE_ROLES_SQL.replace('role', 'x.role')}" if table == "kb_passage_vectors" else ""
             arm = "vector" if table == "kb_passages" else "extra_vectors"
             return f"""
@@ -944,19 +946,31 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 FROM {fq_table(table)} x
                 JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
                 WHERE x.bank_id = $2{where}{roles}
-                ORDER BY {self._distance("$1", "x")} LIMIT {pool}
+                ORDER BY {self._distance("$1", "x")}{exact} LIMIT {pool}
             """
 
-        arms = [nearest("kb_passages"), nearest("kb_passage_vectors")]
-        if terms:
-            arms.append(f"""
+        def keyword_arm() -> str:
+            return f"""
                 SELECT x.document_id, x.idx, 'keyword' AS arm,
                        ts_rank_cd(x.search_vector, {tsquery}) AS arm_score FROM {fq_table("kb_passages")} x
                 JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
                 WHERE x.bank_id = $2{where} AND x.search_vector @@ {tsquery}
                 ORDER BY ts_rank_cd(x.search_vector, {tsquery}) DESC LIMIT {pool}
-            """)
+            """
+
         async with acquire_with_retry(await self._pool()) as conn:
+            bank_passages = await conn.fetchval(
+                f"SELECT coalesce(sum(passage_count), 0) FROM {docs} WHERE bank_id = $1", bank_id
+            )
+            # The HNSW index spans every bank. Filtered to one bank, its scan gives up after
+            # hnsw.max_scan_tuples, or on a graph region of equal vectors, and a small bank in a
+            # big table found none of its own passages (#6607). A small bank is cheap to scan
+            # whole, so it is: `+ 0` makes the ORDER BY one the index cannot serve.
+            # ponytail: exact only under EXACT_SEARCH_MAX_PASSAGES; per-bank indexes if mid-size banks miss.
+            exact = " + 0" if bank_passages <= EXACT_SEARCH_MAX_PASSAGES else ""
+            arms = [nearest("kb_passages", exact), nearest("kb_passage_vectors", exact)]
+            if terms:
+                arms.append(keyword_arm())
             async with conn.transaction():
                 # A filtered HNSW scan otherwise stops at ef_search candidates and returns too few rows.
                 await conn.execute("SET LOCAL hnsw.ef_search = 200")

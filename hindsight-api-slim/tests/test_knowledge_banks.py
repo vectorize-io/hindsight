@@ -2116,6 +2116,52 @@ async def test_media_hits_cost_a_fixed_amount_of_the_budget(api_client, kb):
     assert len(await _search(api_client, kb, query="red", max_tokens=3 * MEDIA_HIT_TOKENS)) == 3
 
 
+async def test_a_small_bank_finds_its_passages_next_to_a_big_one(api_client, memory, kb, monkeypatch):
+    """A small bank is searched exactly, not through the HNSW index shared by every bank (#6607).
+
+    Statistics taken while one big bank filled the table make a generic plan scan that index;
+    filtered to a small bank, among thousands of equal vectors, it found none of the bank's own
+    passages. Every acquire here forces generic plans, as asyncpg's cached statements reach.
+    """
+    from contextlib import asynccontextmanager
+
+    from hindsight_api.engine.db_utils import acquire_with_retry
+    from hindsight_api.knowledge import store as store_module
+
+    big = f"kb-big-{uuid.uuid4().hex[:8]}"
+    assert (await api_client.post(KB, json={"bank_id": big})).status_code == 200
+    try:
+        async with acquire_with_retry(await memory._get_backend()) as conn:
+            await conn.execute(
+                "INSERT INTO kb_documents (bank_id, document_id, content_type, media_type, content_hash, "
+                "passage_count) VALUES ($1, 'd', 'text/plain', 'text', 'h', 3000)",
+                big,
+            )
+            await conn.execute(
+                "INSERT INTO kb_passages (bank_id, document_id, idx, modality, embedding) "
+                "SELECT $1, 'd', i, 'text', $2::vector FROM generate_series(1, 3000) i",
+                big,
+                str(FakeEmbedder._norm([1.0] * len(_AXES))),
+            )
+            await conn.execute("ANALYZE kb_passages")
+        for n, color in enumerate(((255, 0, 0), (0, 0, 255), (0, 255, 0))):
+            await _upload(api_client, kb, [(f"swatch{n}.png", _png(color), "image/png")], [{"document_id": f"s{n}"}])
+
+        real_acquire = store_module.acquire_with_retry
+
+        @asynccontextmanager
+        async def generic_plans(pool):
+            async with real_acquire(pool) as conn:
+                await conn.execute("SET plan_cache_mode = force_generic_plan")
+                yield conn
+
+        monkeypatch.setattr(store_module, "acquire_with_retry", generic_plans)
+        hits = await _search(api_client, kb, query="red", max_tokens=1_000_000)
+        assert {h["document_id"] for h in hits} == {"s0", "s1", "s2"}
+    finally:
+        await api_client.delete(f"{KB}/{big}")
+
+
 async def test_the_search_budget_sets_how_deep_it_ranks(api_client, kb):
     from hindsight_api.knowledge.service import SEARCH_CANDIDATES
 
