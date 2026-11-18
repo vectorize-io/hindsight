@@ -12487,7 +12487,7 @@
             },
             "type": "array",
             "title": "Event Types",
-            "description": "List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered'.",
+            "description": "List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered', 'mental_model.refreshed'.",
             "default": [
               "consolidation.completed"
             ]

@@ -11,6 +11,7 @@ class WebhookEventType(StrEnum):
     CONSOLIDATION_COMPLETED = "consolidation.completed"
     RETAIN_COMPLETED = "retain.completed"
     MEMORY_DEFENSE_TRIGGERED = "memory_defense.triggered"
+    MENTAL_MODEL_REFRESHED = "mental_model.refreshed"
 
 
 class ConsolidationEventData(BaseModel):
@@ -74,6 +75,24 @@ class MemoryDefenseEventData(BaseModel):
     receipt_uri: str | None = None  # storage pointer for the audit trail entry
 
 
+class MentalModelRefreshedEventData(BaseModel):
+    """Payload for a mental_model.refreshed event: one refresh operation that finished.
+
+    Sent once per refresh operation, whatever started it (a manual refresh, a schedule,
+    or a consolidation), when it completes or fails for good. A refresh that is retried
+    sends nothing until its last attempt. ``outcome`` and ``failure_reason`` are the
+    same values the operation records in its ``result_metadata``.
+    """
+
+    mental_model_id: str
+    name: str | None = None
+    # content_written / content_unchanged / content_preserved_no_new_facts, or a
+    # refresh_failed_* value when the refresh did not write.
+    outcome: str | None = None
+    failure_reason: str | None = None  # set on failed refreshes only
+    error_message: str | None = None
+
+
 class WebhookEvent(BaseModel):
     # One logical event: shared by every webhook it fans out to and stable across
     # retries, so receivers dedupe on it. ``operation_id`` can't serve: a batch
@@ -82,9 +101,9 @@ class WebhookEvent(BaseModel):
     event: WebhookEventType
     bank_id: str
     operation_id: str
-    status: str  # "completed"/"failed" for retain/consolidation; the action ("redact"/"block") for memory_defense
+    status: str  # "completed"/"failed" for retain/consolidation/mental_model; the action ("redact"/"block") for memory_defense
     timestamp: datetime
-    data: ConsolidationEventData | RetainEventData | MemoryDefenseEventData
+    data: ConsolidationEventData | RetainEventData | MemoryDefenseEventData | MentalModelRefreshedEventData
 
 
 class WebhookHttpConfig(BaseModel):
