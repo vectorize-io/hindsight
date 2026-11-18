@@ -8097,9 +8097,9 @@ class MemoryEngine(MemoryEngineInterface):
             # here: the transaction rolls back whole, so a re-run queues each event exactly once,
             # and the retain has nothing left to redo that could recover the event later.
             try:
+                backend = await self._get_backend()
                 for attempt in range(1, self._OUTBOX_UNAVAILABLE_ATTEMPTS + 1):
                     try:
-                        backend = await self._get_backend()
                         async with acquire_with_retry(backend) as conn:
                             async with conn.transaction():
                                 for callback in pending_outbox_callbacks:
