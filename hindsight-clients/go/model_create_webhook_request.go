@@ -24,7 +24,7 @@ type CreateWebhookRequest struct {
 	// HTTP(S) endpoint URL to deliver events to
 	Url string `json:"url"`
 	Secret NullableString `json:"secret,omitempty"`
-	// List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered'.
+	// List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered', 'mental_model.refreshed'.
 	EventTypes []string `json:"event_types,omitempty"`
 	// Whether this webhook is active
 	Enabled *bool `json:"enabled,omitempty"`

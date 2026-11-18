@@ -8415,7 +8415,7 @@ components:
           default:
           - consolidation.completed
           description: "List of event types to deliver. Supported: 'retain.completed',\
-            \ 'consolidation.completed', 'memory_defense.triggered'."
+            \ 'consolidation.completed', 'memory_defense.triggered', 'mental_model.refreshed'."
           items:
             type: string
           type: array

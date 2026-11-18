@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from hindsight_api.engine.memory_engine import MemoryEngine
+from hindsight_api.webhooks.models import MentalModelRefreshedEventData
 
 
 class _FakeTx:
@@ -125,6 +126,28 @@ class TestMarkOperationCompletedAndFireWebhook:
         assert len(conn.fetchrow_calls) == 1
         engine._maybe_update_parent_operation.assert_not_awaited()
         engine._webhook_manager.fire_event_with_conn.assert_not_awaited()
+        engine._fire_consolidation_webhook.assert_not_awaited()
+
+    async def test_a_given_event_is_queued_and_falls_back_as_itself(self):
+        """A caller's own event (mental_model.refreshed) goes through the outbox in place of
+        the consolidation one, and is the event delivered best-effort on the fallback path."""
+        op_id = str(uuid.uuid4())
+        engine, conn = _make_engine({"operation_id": op_id}, webhook_raises=True)
+        engine._fire_webhook_event = AsyncMock()
+        event = engine._mental_model_refreshed_event(
+            {"bank_id": "bank-1", "operation_id": op_id, "mental_model_id": "mm-1"},
+            "completed",
+            MentalModelRefreshedEventData(mental_model_id="mm-1"),
+        )
+
+        await engine._mark_operation_completed_and_fire_webhook(
+            operation_id=op_id, bank_id="bank-1", status="completed", result=None, event=event
+        )
+
+        queued, _conn = engine._webhook_manager.fire_event_with_conn.await_args.args
+        assert queued is event
+        engine._fire_webhook_event.assert_awaited_once()
+        assert engine._fire_webhook_event.await_args.args[0] is event
         engine._fire_consolidation_webhook.assert_not_awaited()
 
 

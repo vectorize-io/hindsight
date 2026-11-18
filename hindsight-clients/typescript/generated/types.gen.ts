@@ -1932,7 +1932,7 @@ export type CreateWebhookRequest = {
   /**
    * Event Types
    *
-   * List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered'.
+   * List of event types to deliver. Supported: 'retain.completed', 'consolidation.completed', 'memory_defense.triggered', 'mental_model.refreshed'.
    */
   event_types?: Array<string>;
   /**

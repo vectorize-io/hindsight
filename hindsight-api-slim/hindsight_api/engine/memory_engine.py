@@ -707,6 +707,7 @@ if TYPE_CHECKING:
     from hindsight_api.models import RequestContext
 
     from ..knowledge.service import KnowledgeService
+    from ..webhooks.models import MentalModelRefreshedEventData, WebhookEvent
     from ..webhooks.url_guard import GuardedWebhookClient
     from . import bank_aliases as bank_aliases_mod
     from .audit import AuditLogEntry, AuditLogListResponse, AuditLogStatsResponse, AuditLogSummary
@@ -5005,7 +5006,7 @@ class MemoryEngine(MemoryEngineInterface):
             f"last refreshed at {last_refreshed_at.isoformat()}, next refresh due at {due_at.isoformat()}",
         )
 
-    async def _handle_refresh_mental_model(self, task_dict: dict[str, Any]):
+    async def _handle_refresh_mental_model(self, task_dict: dict[str, Any]) -> "MentalModelRefreshedEventData":
         """
         Handler for refresh_mental_model tasks.
 
@@ -5019,6 +5020,9 @@ class MemoryEngine(MemoryEngineInterface):
 
         Args:
             task_dict: Dict with 'bank_id', 'mental_model_id', 'operation_id'
+
+        Returns:
+            The mental_model.refreshed payload, queued with the operation's completion.
 
         Raises:
             ValueError: If required fields are missing
@@ -5153,6 +5157,11 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.warning(f"Post-mental-model-refresh hook error (non-fatal): {hook_err}")
 
         logger.info(f"[REFRESH_MENTAL_MODEL_TASK] Completed for bank_id={bank_id}, mental_model_id={mental_model_id}")
+        from ..webhooks.models import MentalModelRefreshedEventData
+
+        return MentalModelRefreshedEventData(
+            mental_model_id=mental_model_id, name=refreshed.get("name"), outcome=rr.get("outcome")
+        )
 
     @_bind_bank_id("task_dict", key="bank_id")
     async def execute_task(self, task_dict: dict[str, Any]) -> None:
@@ -5229,6 +5238,7 @@ class MemoryEngine(MemoryEngineInterface):
     ) -> None:
         """Run a task's handler and record its outcome. See :meth:`execute_task`."""
         consolidation_result: dict | None = None
+        refresh_event: "WebhookEvent | None" = None
         bank_id = task_dict.get("bank_id")
         async with audit_context(
             self._audit_logger, task_type or "unknown", "system", bank_id, request=task_dict
@@ -5258,7 +5268,9 @@ class MemoryEngine(MemoryEngineInterface):
                 elif task_type == "vector_index_maintenance":
                     await self._handle_vector_index_maintenance(task_dict)
                 elif task_type == "refresh_mental_model":
-                    await self._handle_refresh_mental_model(task_dict)
+                    refresh_event = self._mental_model_refreshed_event(
+                        task_dict, "completed", await self._handle_refresh_mental_model(task_dict)
+                    )
                 elif task_type == "knowledge_ingest":
                     from ..knowledge.service import run_ingest_task
 
@@ -5283,6 +5295,15 @@ class MemoryEngine(MemoryEngineInterface):
                             status="completed",
                             result=consolidation_result,
                             schema=schema,
+                        )
+                    elif refresh_event is not None:
+                        await self._mark_operation_completed_and_fire_webhook(
+                            operation_id=operation_id,
+                            bank_id=task_dict.get("bank_id", ""),
+                            status="completed",
+                            result=None,
+                            schema=schema,
+                            event=refresh_event,
                         )
                     else:
                         await self._mark_operation_completed(operation_id)
@@ -5357,6 +5378,8 @@ class MemoryEngine(MemoryEngineInterface):
                     # invalid embedding dimensions, etc.) will not succeed by rerunning
                     # the same payload. Retrying just burns worker capacity.
                     logger.error(f"Not retrying task {task_type} (deterministic failure): {type(e).__name__}")
+                    if task_type == "refresh_mental_model" and operation_id:
+                        await self._fire_mental_model_refresh_failed_webhook(task_dict, e, error_message, schema)
                     if task_type == "consolidation" and operation_id:
                         await self._fire_consolidation_webhook(
                             bank_id=task_dict.get("bank_id", ""),
@@ -5431,6 +5454,11 @@ class MemoryEngine(MemoryEngineInterface):
                             retry_at=datetime.now(UTC) + timedelta(seconds=config.worker_task_retry_backoff_seconds),
                             message=error_message,
                         )
+                    # The last attempt: the poller fails the operation on this raise, so
+                    # a refresh reports its failure now. Earlier attempts report nothing,
+                    # since the refresh may still succeed.
+                    if task_type == "refresh_mental_model" and operation_id:
+                        await self._fire_mental_model_refresh_failed_webhook(task_dict, e, error_message, schema)
                     raise
 
     async def on_task_wall_timeout(
@@ -5469,6 +5497,8 @@ class MemoryEngine(MemoryEngineInterface):
                 )
             finally:
                 _current_schema.reset(token)
+            if task_dict.get("operation_id"):
+                await self._fire_mental_model_refresh_failed_webhook(task_dict, None, error_message, schema)
             return
         if task_dict.get("type") != "consolidation":
             return
@@ -5518,6 +5548,50 @@ class MemoryEngine(MemoryEngineInterface):
             await self._webhook_manager.fire_event(event, schema=schema)
         except Exception as e:
             logger.error(f"Failed to fire consolidation webhook for operation {operation_id}: {e}")
+
+    def _mental_model_refreshed_event(
+        self, task_dict: dict[str, Any], status: str, data: "MentalModelRefreshedEventData"
+    ) -> "WebhookEvent":
+        """Build the mental_model.refreshed event for a refresh operation that finished."""
+        from ..webhooks.models import WebhookEvent, WebhookEventType
+
+        return WebhookEvent(
+            event=WebhookEventType.MENTAL_MODEL_REFRESHED,
+            bank_id=task_dict.get("bank_id", ""),
+            operation_id=task_dict.get("operation_id", ""),
+            status=status,
+            timestamp=datetime.now(UTC),
+            data=data,
+        )
+
+    async def _fire_mental_model_refresh_failed_webhook(
+        self, task_dict: dict[str, Any], error: Exception | None, error_message: str, schema: str | None
+    ) -> None:
+        """Fire mental_model.refreshed with status ``failed`` for a refresh that failed for good.
+
+        A refusal carries its own outcome and reason; anything else that escaped the
+        refresh (or a wall-clock cut-off, ``error=None``) is recorded the way
+        ``_handle_refresh_mental_model`` records it.
+        """
+        from ..webhooks.models import MentalModelRefreshedEventData
+
+        refusal = error if isinstance(error, MentalModelRefreshError) else None
+        data = MentalModelRefreshedEventData(
+            mental_model_id=task_dict.get("mental_model_id", ""),
+            outcome=refusal.outcome if refusal else "refresh_failed_error",
+            failure_reason=refusal.reason if refusal else "unexpected_error",
+            error_message=error_message,
+        )
+        await self._fire_webhook_event(self._mental_model_refreshed_event(task_dict, "failed", data), schema=schema)
+
+    async def _fire_webhook_event(self, event: "WebhookEvent", schema: str | None = None) -> None:
+        """Queue a webhook event outside any transaction. Non-fatal - logs errors but does not raise."""
+        if not self._webhook_manager:
+            return
+        try:
+            await self._webhook_manager.fire_event(event, schema=schema)
+        except Exception as e:
+            logger.error(f"Failed to fire {event.event} webhook for operation {event.operation_id}: {e}")
 
     def _build_retain_outbox_callback(
         self,
@@ -6053,8 +6127,12 @@ class MemoryEngine(MemoryEngineInterface):
         result: dict | None,
         schema: str | None = None,
         error_message: str | None = None,
+        event: "WebhookEvent | None" = None,
     ) -> None:
-        """Mark an operation as completed and queue its consolidation webhook.
+        """Mark an operation as completed and queue its webhook.
+
+        The webhook is ``event`` when given, otherwise the consolidation.completed
+        event built from ``status``/``result``/``error_message``.
 
         Happy path uses the transactional outbox pattern: the webhook delivery row is
         inserted in the *same* transaction as the ``status = 'completed'`` update, which
@@ -6095,21 +6173,23 @@ class MemoryEngine(MemoryEngineInterface):
 
                     # Queue webhook deliveries inside the same transaction
                     if self._webhook_manager:
-                        data = ConsolidationEventData(
-                            observations_created=result.get("observations_created") if result else None,
-                            observations_updated=result.get("observations_updated") if result else None,
-                            observations_deleted=result.get("observations_deleted") if result else None,
-                            error_message=error_message,
-                        )
-                        event = WebhookEvent(
-                            event=WebhookEventType.CONSOLIDATION_COMPLETED,
-                            bank_id=bank_id,
-                            operation_id=operation_id,
-                            status=status,
-                            timestamp=datetime.now(UTC),
-                            data=data,
-                        )
-                        await self._webhook_manager.fire_event_with_conn(event, conn, schema=schema)
+                        queued = event
+                        if queued is None:
+                            data = ConsolidationEventData(
+                                observations_created=result.get("observations_created") if result else None,
+                                observations_updated=result.get("observations_updated") if result else None,
+                                observations_deleted=result.get("observations_deleted") if result else None,
+                                error_message=error_message,
+                            )
+                            queued = WebhookEvent(
+                                event=WebhookEventType.CONSOLIDATION_COMPLETED,
+                                bank_id=bank_id,
+                                operation_id=operation_id,
+                                status=status,
+                                timestamp=datetime.now(UTC),
+                                data=data,
+                            )
+                        await self._webhook_manager.fire_event_with_conn(queued, conn, schema=schema)
             return
         except Exception as e:
             logger.error(
@@ -6146,7 +6226,9 @@ class MemoryEngine(MemoryEngineInterface):
             # marks the row completed after this returns.
             logger.error(f"Fallback completion commit failed for {operation_id}: {e}")
 
-        if completed_in_fallback:
+        if completed_in_fallback and event is not None:
+            await self._fire_webhook_event(event, schema=schema)
+        elif completed_in_fallback:
             await self._fire_consolidation_webhook(
                 bank_id=bank_id,
                 operation_id=operation_id,
