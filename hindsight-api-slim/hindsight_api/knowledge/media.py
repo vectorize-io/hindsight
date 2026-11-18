@@ -70,11 +70,13 @@ class PassageDraft:
     bands: tuple[bytes, ...] = ()
     # A PDF page's text layer as embedded: ``text`` without the running headers and footers.
     embed_text: str | None = None
+    # A text passage's window: the stretch of text around it it is also found by (``split_text``).
+    window_text: str | None = None
 
     def __post_init__(self) -> None:
         # Postgres text cannot hold NUL, and one NUL failed every document in the same ingest
         # batch (BRIGHT-Pro economics lost 100). Every passage is built here, so strip it once.
-        for name in ("text", "embed_text"):
+        for name in ("text", "embed_text", "window_text"):
             value = getattr(self, name)
             if value and "\x00" in value:
                 object.__setattr__(self, name, value.replace("\x00", ""))
@@ -375,10 +377,39 @@ def pack_lines(text: str, *, tokens: int) -> list[str]:
     return out
 
 
+#: A text passage is also found by its window: the consecutive passages around it, up to this many tokens,
+#: embedded once as one more vector of each. A small passage alone lost what its page says about it (a
+#: table's rows without the table's title, or the company named only in the footer); the window keeps it,
+#: and results stay the small passages. ViDoRe V3 markdown (own language, EmbeddingGemma 2), nDCG@10 on
+#: hr / finance_en / industrial / pharmaceuticals: no window 60.03 / 54.12 / 50.73 / 61.71, 1024 tokens
+#: 61.12 / 59.74 / 51.64 / 62.18, 2048 tokens 61.08 / 60.95 / 51.64 / 62.24 (a dense table page outgrew 1024).
+TEXT_WINDOW_TOKENS = 2048
+
+
 def split_text(text: str, *, tokens: int) -> list[PassageDraft]:
+    from ..engine.token_encoding import count_tokens
     from .text_passages import split_into_passages
 
-    return [PassageDraft(modality="text", text=chunk) for chunk in split_into_passages(text, passage_size=tokens)]
+    chunks = split_into_passages(text, passage_size=tokens)
+    drafts: list[PassageDraft] = []
+    window: list[str] = []
+    window_tokens = 0
+
+    def close() -> None:
+        # A window of one passage is that passage: no second vector.
+        joined = "\n\n".join(window) if len(window) > 1 else None
+        drafts.extend(PassageDraft(modality="text", text=chunk, window_text=joined) for chunk in window)
+        window.clear()
+
+    for chunk in chunks:
+        n = count_tokens(chunk)
+        if window and window_tokens + n > TEXT_WINDOW_TOKENS:
+            close()
+            window_tokens = 0
+        window.append(chunk)
+        window_tokens += n
+    close()
+    return drafts
 
 
 # --- audio / video -----------------------------------------------------------------------------
@@ -487,7 +518,9 @@ def _encode_window(data: bytes, w: Window, out: str, *, video: bool, audio: bool
         v_out = a_out = None
         if video:
             v_in = src.streams.video[0]
-            height = min(480, v_in.codec_context.height)
+            # Even, as the width below: H.264 in yuv420p refuses an odd size ("avcodec_open2 libx264"), and a
+            # source 359 pixels high failed every window of its video.
+            height = min(480, v_in.codec_context.height) // 2 * 2
             rate = Fraction(v_in.average_rate or 25)
             v_out = dst.add_stream("libx264", rate=rate)
             v_out.codec_context.time_base = 1 / rate
@@ -572,3 +605,19 @@ def decode_video_frames(data: bytes, *, fps: int = 1, side: int = 448) -> np.nda
 def l2_normalize(vector: list[float]) -> list[float]:
     norm = math.sqrt(sum(v * v for v in vector)) or 1.0
     return [v / norm for v in vector]
+
+
+#: Longest side of the picture a decision model judges a hit by: the size ViDoRe V3 was measured at.
+#: System One takes up to 1568 (``JEV_IMAGE_SIDE``); a smaller picture is also a cheaper request.
+JUDGE_SIDE = 1024
+
+
+def judge_picture(data: bytes) -> bytes:
+    """A JPEG a decision model judges an image or PDF page hit by, at most ``JUDGE_SIDE`` a side."""
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(data)).convert("RGB")
+    image.thumbnail((JUDGE_SIDE, JUDGE_SIDE))
+    out = io.BytesIO()
+    image.save(out, format="JPEG", quality=85)
+    return out.getvalue()

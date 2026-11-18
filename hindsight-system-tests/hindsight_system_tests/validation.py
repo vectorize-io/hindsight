@@ -195,7 +195,8 @@ def validate_rerank(body: dict[str, Any]) -> None:
             raise RequestRejected(f"documents[{index}] must be a string")
 
 
-SYSTEMONE_FIELDS = frozenset({"model", "state", "questions"})
+# "assets": the images a question looks at (TypeSafe's preview form; knowledge search sends pages and photos).
+SYSTEMONE_FIELDS = frozenset({"model", "state", "questions", "assets"})
 # TypeSafe's documented ceiling. A pool above it must be split by the caller, and a
 # stub that accepted 300 options would hide exactly that bug.
 SYSTEMONE_MAX_OPTIONS = 255

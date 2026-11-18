@@ -294,6 +294,7 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                 answers[question_id] = {"type": "choice", "choice": pick, "probabilities": probabilities}
             return JSONResponse({"model": "stub", "answers": answers, "usage": {"input_tokens": 1, "output_tokens": 1}})
 
+        stubs.rerank.assets.append({name: asset["format"] for name, asset in body.get("assets", {}).items()})
         for question_id, question in body["questions"].items():
             if question["type"] == "noul" and "memory_a" in question["instructions"]:
                 instructions = question["instructions"]
@@ -317,6 +318,15 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                     "probabilities": {"yes": 0.9, "no": 0.1} if keep else {"yes": 0.1, "no": 0.9},
                     "confidence": 0.9,
                 }
+            elif question_id == "pick":
+                # Knowledge search's pick over its best few hits: the rulebook's verdicts, normalised.
+                verdicts = {
+                    key: stubs.rerank.verdict(body["state"], str(text)) for key, text in question["criteria"].items()
+                }
+                total = sum(verdicts.values()) or 1.0
+                probabilities = {key: value / total for key, value in verdicts.items()}
+                best = max(probabilities, key=lambda key: probabilities[key])
+                answers[question_id] = {"type": "choice", "choice": best, "probabilities": probabilities}
             elif question["type"] == "choice":
                 criteria = question["criteria"]
                 stubs.rerank.ranked.extend(text if isinstance(text, str) else str(text) for text in criteria.values())

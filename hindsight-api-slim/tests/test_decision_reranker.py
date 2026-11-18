@@ -38,7 +38,7 @@ class _Client:
 
     rerank_interface = DecisionModel.rerank_interface
 
-    async def ask_all(self, state, questions, *, scope):
+    async def ask_all(self, state, questions, *, scope, assets=None):
         self.asked.append((state, questions))
         self.scopes.append(scope)
         return {key: DecisionAnswer(noul=self._answer(question.instructions)) for key, question in questions.items()}
@@ -97,7 +97,7 @@ class TestRanking:
         client = _Client(keep={"b": 0.9})
         reranker = _reranker(client)
 
-        async def partial(state, questions, *, scope):
+        async def partial(state, questions, *, scope, assets=None):
             return {"m1": DecisionAnswer(noul=0.9)}
 
         client.ask_all = partial  # type: ignore[method-assign]
@@ -407,7 +407,7 @@ class TestDedupAlike:
             return await _found(_VECTORS)
 
         class _Ranking(_Client):
-            async def ask_all(self, state, questions, *, scope):
+            async def ask_all(self, state, questions, *, scope, assets=None):
                 if scope == "decision_recall_rerank":
                     await asyncio.wait_for(read_ran.wait(), timeout=5)
                 return await super().ask_all(state, questions, scope=scope)
@@ -446,7 +446,7 @@ class _CrossEncoder(CrossEncoderModel):
 def _refusing_reranker() -> DecisionModelReranker:
     client = _Client()
 
-    async def refuse(state, questions, *, scope):
+    async def refuse(state, questions, *, scope, assets=None):
         raise DecisionRefusedError("decision model refused to answer 'm0'")
 
     client.ask_all = refuse  # type: ignore[method-assign]

@@ -159,6 +159,25 @@ def decision_model_server(stub_server, tmp_path_factory: pytest.TempPathFactory)
 
 
 @pytest.fixture(scope="session")
+def knowledge_decision_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """A server whose knowledge-bank search reranks with a decision model, pointed at the stub. Only
+    knowledge search: its own provider turns it on. HTTP only, as ``decision_model_server``."""
+    log_path: Path = tmp_path_factory.mktemp("knowledge-decision-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={
+            "HINDSIGHT_API_KB_DECISION_MODEL_PROVIDER": "typesafe",
+            "HINDSIGHT_API_KB_DECISION_MODEL_API_KEY": "stub-key",
+            "HINDSIGHT_API_KB_DECISION_MODEL_BASE_URL": stub_server.url,
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture(scope="session")
 def decision_model_prune_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """``decision_model_server`` with recall's prune flag on. A process of its own for the
     same reason: the flag is server-level."""
@@ -604,6 +623,13 @@ async def split_embeddings_client(split_embeddings_server) -> AsyncIterator[Hind
 @pytest.fixture
 async def decision_model_client(decision_model_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=decision_model_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def knowledge_decision_client(knowledge_decision_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=knowledge_decision_server.url)
     yield client
     await client.aclose()
 
