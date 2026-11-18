@@ -1,0 +1,158 @@
+{
+  "about": "One file per issue a corpus sweep found (python -m hindsight_system_evals.kb_edge_cases harvest). expect: ready (found by query, and its passages holding text_contains, when given), failed or rejected (with error_contains in the reason). Sources: FFmpeg FATE suite (fate-suite.ffmpeg.org), Mozilla pdf.js test corpus (test/pdfs), or made here.",
+  "cases": [
+    {
+      "id": "non-utf8-metadata",
+      "category": "video",
+      "file": "video/non-utf8-metadata.mov",
+      "source": "FATE mov/mov_alpha_straight.mov",
+      "issue": "Its QuickTime handler name is Latin-1 ('Module de gestion vid\\xe9o'); PyAV decoded metadata as strict UTF-8 and the file failed with a UnicodeDecodeError.",
+      "expect": "ready"
+    },
+    {
+      "id": "no-index",
+      "category": "video",
+      "file": "video/no-index.avi",
+      "source": "FATE h264/ref_10.avi",
+      "issue": "An AVI without an index refuses to seek (EPERM) and the container then gives no frames; it is now read from the start.",
+      "expect": "ready"
+    },
+    {
+      "id": "damaged-video-packets",
+      "category": "video",
+      "file": "video/damaged-packets.mov",
+      "source": "FATE mov/displaymatrix.mov",
+      "issue": "A partial file with a bad H.264 packet: one packet the decoder refused failed the whole file, where ffmpeg skips it.",
+      "expect": "ready"
+    },
+    {
+      "id": "damaged-audio-packets",
+      "category": "audio",
+      "file": "audio/damaged-packets.aac",
+      "source": "FATE aac/foo.aac",
+      "issue": "An AAC stream that runs out mid-frame: the last packet's decode error failed the file.",
+      "expect": "ready"
+    },
+    {
+      "id": "cut-off-upload",
+      "category": "video",
+      "file": "video/cut-off.mkv",
+      "source": "FATE mkv/1242-small.mkv",
+      "issue": "The first 100KB of a 22-minute video (an interrupted upload): every window past the data was empty and raised FileNotFoundError, so the part that was there was lost too.",
+      "expect": "ready"
+    },
+    {
+      "id": "heic-photo",
+      "category": "image",
+      "file": "image/photo.heic",
+      "source": "FATE heif-conformance/C002.heic",
+      "issue": ".heic is a supported extension (every iPhone photo) but Pillow has no HEIF decoder: 'cannot identify image file'. Decoded through PyAV now.",
+      "expect": "ready"
+    },
+    {
+      "id": "float32-tiff",
+      "category": "image",
+      "file": "image/float32.tiff",
+      "source": "Pillow Tests/images/10ct_32bit_128.tiff",
+      "issue": "Control: a 32-bit float TIFF (scientific imaging) has no web format and is re-encoded as PNG.",
+      "expect": "ready"
+    },
+    {
+      "id": "rotated-phone-video",
+      "category": "video",
+      "file": "video/rotated.mp4",
+      "source": "made here: 3s 160x120 with a 90 degree display matrix",
+      "issue": "Control: a portrait phone video carries its rotation as metadata.",
+      "expect": "ready"
+    },
+    {
+      "id": "silent-video",
+      "category": "video",
+      "file": "video/silent.mp4",
+      "source": "made here: 3s, no audio track",
+      "issue": "Control: a screen recording without sound.",
+      "expect": "ready"
+    },
+    {
+      "id": "sound-only-mp4",
+      "category": "audio",
+      "file": "audio/sound-only.mp4",
+      "source": "made here: 3s AAC in an .mp4, no video track",
+      "issue": "Control: a voice memo exported as .mp4 is ingested as audio.",
+      "expect": "ready"
+    },
+    {
+      "id": "broken-pdf-page",
+      "category": "pdf",
+      "file": "pdf/broken-page.pdf",
+      "source": "pdf.js test/pdfs/Pages-tree-refs.pdf",
+      "issue": "Page 2's page tree loops: 'Failed to load page' raised, was retried three times, and page 1 was lost with it. A page that cannot load is now skipped.",
+      "expect": "ready",
+      "query": "Testcase Pages loop"
+    },
+    {
+      "id": "nul-bytes",
+      "category": "text",
+      "file": "text/nul-bytes.txt",
+      "source": "made here",
+      "issue": "Control: Postgres text cannot hold NUL; they are stripped.",
+      "expect": "ready",
+      "query": "kiln reaches 1200 degrees",
+      "text_contains": "Cool it overnight"
+    },
+    {
+      "id": "unsupported-codec",
+      "category": "video",
+      "file": "video/unsupported-codec.mp4",
+      "source": "FATE mov/uncv-rgb24.mp4",
+      "issue": "ISO uncompressed video, which PyAV opens without a codec context: an AttributeError, retried three times (~3 minutes). Fails at once now.",
+      "expect": "failed",
+      "error_contains": "no decodable video"
+    },
+    {
+      "id": "truncated-mp4",
+      "category": "video",
+      "file": "video/truncated.mp4",
+      "source": "made here: the first half of an mp4 whose index is at the end",
+      "issue": "Control: nothing can be read without the index; ffmpeg cannot either.",
+      "expect": "failed",
+      "error_contains": "unreadable media"
+    },
+    {
+      "id": "encrypted-pdf",
+      "category": "pdf",
+      "file": "pdf/encrypted.pdf",
+      "source": "pdf.js test/pdfs/crypt_filters.pdf",
+      "issue": "Control: a password-protected PDF says so.",
+      "expect": "failed",
+      "error_contains": "password"
+    },
+    {
+      "id": "jpeg-renamed-pdf",
+      "category": "pdf",
+      "file": "pdf/jpeg-renamed.pdf",
+      "source": "made here: a JPEG named .pdf",
+      "issue": "Control: the wrong extension is reported, not crashed on.",
+      "expect": "failed",
+      "error_contains": "unreadable PDF"
+    },
+    {
+      "id": "not-a-zip-docx",
+      "category": "office",
+      "file": "office/not-a-zip.docx",
+      "source": "made here: a zip header and nothing else",
+      "issue": "Control: a broken Office file is reported.",
+      "expect": "failed",
+      "error_contains": "unreadable .docx"
+    },
+    {
+      "id": "empty-file",
+      "category": "pdf",
+      "file": "pdf/empty.pdf",
+      "source": "made here: 0 bytes",
+      "issue": "Control: refused at upload.",
+      "expect": "rejected",
+      "error_contains": "is empty"
+    }
+  ]
+}

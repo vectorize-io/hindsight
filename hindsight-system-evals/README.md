@@ -27,8 +27,8 @@ signal to re-run, not proof of a regression.
 ## What it evaluates
 
 One test file per operation, `evals/<operation>/test_<operation>.py`: `retain`,
-`recall`, `consolidation`, `reflect`, `refresh-pages` and `misc/` for the coding-agents metric.
-Knowledge-bank benchmarks live in AMB (see Benchmarks below). Run one operation with `uv run pytest evals/recall`.
+`recall`, `consolidation`, `reflect`, `refresh-pages`, `knowledge` (odd and big files) and `misc/` for the
+coding-agents metric. Knowledge-bank benchmarks live in AMB (see Benchmarks below). Run one operation with `uv run pytest evals/recall`.
 
 **Every case has a category**, and its test id is `<category>/<case id>`
 (`test_retain[temporal/no-event-date]`). That is the syntax:
@@ -591,6 +591,55 @@ To A/B a server setting, `HINDSIGHT_EVAL_SET_<X>=v` reaches the server as
 ```bash
 HINDSIGHT_EVAL_SET_LLM_PROMPT_CACHE_ENABLED=false uv run pytest evals/refresh-pages -k benchmark_cost
 ```
+
+### Knowledge — `evals/knowledge/test_kb_edge_cases.py`
+
+Not quality: whether a knowledge bank **survives the files people actually upload**. No model call
+and no judge — the server's own embedder (local EmbeddingGemma 2 by default) does the work, so it
+runs with `HINDSIGHT_EVAL_LLM_PROVIDER=none`:
+
+```bash
+PYTEST_ADDOPTS= HINDSIGHT_EVAL_LLM_PROVIDER=none uv run pytest evals/knowledge          # the sample
+PYTEST_ADDOPTS= HINDSIGHT_EVAL_LLM_PROVIDER=none uv run pytest evals/knowledge --full   # + heavy files
+```
+
+**The sample** (`test_edge_case`, `fixtures/kb-edge-cases/`, under 1 MB): one file per issue found by
+sweeping public corpora of broken and odd files, each with what the server must do with it in
+`manifest.json`: `ready` (and, where its content is known, come back from a search among all the
+others), or `failed` / `rejected` with a reason — **within 45s**, because a deterministic failure the
+worker took for a transient one was retried a minute apart, three times, before failing anyway.
+The categories are the media types (`video`, `audio`, `image`, `pdf`, `text`, `office`); every
+case names its source and the bug it reproduces, or says it is a control.
+
+**Heavy files** (`test_heavy_file`, `--full`): common uploads, only big — 3 minutes of 4K at 60 fps, a
+108 MP photo, an hour of audio, a 1500-page PDF, a 50 MB CSV — built with `ffmpeg` at run time into
+`~/.cache/hindsight-evals/kb-heavy` (reused) and never committed. Each must become ready and be found.
+
+Every file is ingested **alone** while the server's process tree is sampled, so each line reports its
+peak memory, CPU seconds and wall time; `HINDSIGHT_EVAL_KB_USAGE=FILE` appends them as JSON lines,
+to compare two runs. They are reported, not asserted: numbers from a loaded laptop are not a budget.
+
+**Finding the next case.** `harvest` sweeps any folder through a server and writes one JSON line per
+file — `ready`, `failed`, `rejected`, or the bugs: `error` (a 5xx) and `timeout`. A `failed` file is
+only fine when `ffmpeg` / the format's own tools cannot read it either, so check those by hand.
+
+```bash
+uv run python -m hindsight_system_evals.kb_edge_cases harvest ~/corpus/pdfjs ~/corpus/fate \
+    --out sweep.jsonl --concurrency 6     # resumes: files already in sweep.jsonl are skipped
+```
+
+The corpora the first sweep used (fetch a slice, not all of them):
+
+| corpus | what is in it | how |
+|---|---|---|
+| FFmpeg FATE suite | odd and damaged audio/video: every container, codec, broken stream | `rsync -r --max-size=60m fate-suite.ffmpeg.org::fate-suite/mov .` |
+| pdf.js `test/pdfs` | ~1100 PDFs from browser bug reports: broken trees, encryption, odd fonts | sparse clone of `mozilla/pdf.js` |
+| Apache POI `test-data` | damaged and odd docx/xlsx/pptx/xls | sparse clone of `apache/poi` |
+| Pillow `Tests/images`, PngSuite | every image mode and depth, broken PNG/TIFF/GIF | sparse clone of `python-pillow/Pillow`; `schaik.com/pngsuite` |
+| Govdocs1, SafeDocs CC-MAIN-2021-31-PDF | real-world office files and PDFs at scale, in 1000-file zips | `digitalcorpora.org` |
+
+A new failure becomes a case: fix it, copy the smallest file that shows it into the fixtures, and
+add its manifest entry saying where it came from and what broke.
 
 ## The corpus
 

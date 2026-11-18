@@ -1,0 +1,413 @@
+"""Knowledge-bank edge cases: odd, broken and big files, and what ingesting them costs.
+
+Not a quality eval. The question per file is only: does the server process it, without a 5xx, a
+hang or a crash, and can it then be found? A file the server refuses is fine when it says why
+(a 4xx, or a failed document with a reason); a file that is ready and comes back from a search
+is fine too. Everything else is a bug.
+
+Two ways in, one code path:
+
+* ``harvest`` runs any folder of files through a server it starts (or ``--api-url``) and writes
+  one JSON line per file, so a public corpus (pdf.js's test PDFs, Apache POI's test documents,
+  FFmpeg's FATE samples, ...) can be swept for what breaks::
+
+      uv run python -m hindsight_system_evals.kb_edge_cases harvest ~/corpus/pdfjs --out pdfjs.jsonl
+
+* the eval (``evals/knowledge``) runs the committed sample: one file per issue found that way,
+  listed in ``fixtures/kb-edge-cases/manifest.json`` with what the server must do with it.
+
+Each file is ingested alone and the server's process tree is sampled meanwhile (peak memory,
+CPU seconds), so a file that costs too much shows up as a number, not a guess.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+import threading
+import time
+import uuid
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+import httpx
+
+KB = "/v1/default/knowledge-banks"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "kb-edge-cases"
+
+#: The extensions a knowledge bank takes (``knowledge/media.py``). Others are rejected with a 415,
+#: which is correct and so not worth a harvest's time.
+SUPPORTED = {
+    ".pdf",
+    *(".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".heic"),
+    *(".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"),
+    *(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".mpeg", ".mpg"),
+    *(".txt", ".md", ".markdown", ".json", ".jsonl", ".csv", ".tsv", ".yaml", ".yml", ".xml", ".rst"),
+    *(".docx", ".pptx", ".xlsx", ".xls", ".html", ".htm", ".epub"),
+}
+
+
+@dataclass
+class Usage:
+    start_rss_mb: float
+    peak_rss_mb: float
+    cpu_seconds: float
+    rss_after_mb: float
+
+    @property
+    def growth_mb(self) -> float:
+        """How far above where it started the server's memory went: what this file cost it."""
+        return round(self.peak_rss_mb - self.start_rss_mb, 1)
+
+
+class ResourceMeter:
+    """Samples a process and its children (the API server and its worker) on a thread."""
+
+    def __init__(self, pid: int | None, interval: float = 0.2) -> None:
+        self._pid = pid
+        self._interval = interval
+        self._peak = 0.0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._cpu_start = 0.0
+        self._start = 0.0
+
+    def _tree(self):
+        import psutil
+
+        root = psutil.Process(self._pid)
+        return [root, *root.children(recursive=True)]
+
+    def _rss_cpu(self) -> tuple[float, float]:
+        import psutil
+
+        rss = cpu = 0.0
+        for p in self._tree():
+            try:
+                rss += p.memory_info().rss
+                t = p.cpu_times()
+                cpu += t.user + t.system
+            except psutil.Error:
+                continue
+        return rss / 1048576, cpu
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            self._peak = max(self._peak, self._rss_cpu()[0])
+            self._stop.wait(self._interval)
+
+    def __enter__(self) -> ResourceMeter:
+        if self._pid is not None:
+            self._start, self._cpu_start = self._rss_cpu()
+            self._peak = self._start
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join()
+
+    def usage(self) -> Usage | None:
+        if self._pid is None:
+            return None
+        rss, cpu = self._rss_cpu()
+        return Usage(
+            start_rss_mb=round(self._start, 1),
+            peak_rss_mb=round(max(self._peak, rss), 1),
+            cpu_seconds=round(cpu - self._cpu_start, 2),
+            rss_after_mb=round(rss, 1),
+        )
+
+
+@dataclass
+class FileOutcome:
+    name: str
+    document_id: str
+    size_bytes: int
+    #: ``ready`` | ``failed`` (the document says why) | ``rejected`` (a 4xx at upload) |
+    #: ``error`` (a 5xx at upload) | ``timeout`` (never left pending/processing)
+    status: str
+    http_status: int
+    error: str | None
+    passage_count: int
+    media_type: str | None
+    seconds: float
+    usage: Usage | None
+
+    @property
+    def handled(self) -> bool:
+        """Processed, or refused with a reason. ``error`` and ``timeout`` are bugs."""
+        return self.status in ("ready", "failed", "rejected")
+
+
+async def create_bank(http: httpx.AsyncClient, bank_id: str | None = None) -> str:
+    bank_id = bank_id or f"syseval-kb-{uuid.uuid4().hex[:10]}"
+    r = await http.post(KB, json={"bank_id": bank_id})
+    r.raise_for_status()
+    return bank_id
+
+
+async def ingest_file(
+    http: httpx.AsyncClient,
+    bank_id: str,
+    path: Path,
+    *,
+    document_id: str,
+    pid: int | None,
+    timeout: float = 900.0,
+) -> FileOutcome:
+    size = path.stat().st_size
+    started = time.monotonic()
+    # Sent from the open file, not read first: a heavy case is gigabytes, and this process is not under test.
+    with ResourceMeter(pid) as meter, path.open("rb") as upload:
+        r = await http.post(
+            f"{KB}/{bank_id}/files/ingest",
+            files={"files": (path.name, upload)},
+            data={"request": json.dumps({"files": [{"document_id": document_id}]})},
+            timeout=timeout,
+        )
+        doc: dict = {}
+        if r.status_code < 400:
+            deadline = time.monotonic() + timeout
+            while True:
+                d = await http.get(f"{KB}/{bank_id}/documents/{document_id}")
+                doc = d.json() if d.status_code == 200 else {}
+                if doc.get("status") in ("ready", "failed") or time.monotonic() > deadline:
+                    break
+                await asyncio.sleep(0.25)
+    if r.status_code >= 500:
+        status, error = "error", r.text[:500]
+    elif r.status_code >= 400:
+        status, error = "rejected", _detail(r)
+    else:
+        status = doc.get("status") if doc.get("status") in ("ready", "failed") else "timeout"
+        error = doc.get("error")
+    return FileOutcome(
+        name=path.name,
+        document_id=document_id,
+        size_bytes=size,
+        status=status,
+        http_status=r.status_code,
+        error=error,
+        passage_count=doc.get("passage_count", 0),
+        media_type=doc.get("media_type"),
+        seconds=round(time.monotonic() - started, 2),
+        usage=meter.usage(),
+    )
+
+
+def _detail(r: httpx.Response) -> str:
+    try:
+        return str(r.json().get("detail"))
+    except ValueError:
+        return r.text[:500]
+
+
+async def rank_of(http: httpx.AsyncClient, bank_id: str, query: str, document_id: str, k: int = 10) -> int | None:
+    """Where ``document_id`` first comes back for ``query`` (1-based), or None if not in the top ``k``."""
+    r = await http.post(f"{KB}/{bank_id}/search", json={"query": query})
+    r.raise_for_status()
+    seen: list[str] = []
+    for hit in r.json()["results"]:
+        if hit["document_id"] not in seen:
+            seen.append(hit["document_id"])
+    return seen.index(document_id) + 1 if document_id in seen[:k] else None
+
+
+def server_alive(pid: int | None) -> bool:
+    if pid is None:
+        return True
+    import psutil
+
+    return psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+
+
+# --- heavy files: common, just big -------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class HeavyCase:
+    """A file a real user uploads every day, only large: built at run time, never committed."""
+
+    id: str
+    filename: str
+    #: ``ffmpeg`` arguments after the inputs; None for a file this module writes itself.
+    ffmpeg: tuple[str, ...] | None
+    query: str | None
+    #: ``ready``, or ``rejected`` for a file over the server's size limit.
+    expect: str = "ready"
+    #: The most the server's memory may grow ingesting it: set where the answer must not scale with the file.
+    max_growth_mb: float | None = None
+
+
+#: Over the server's default 500 MB upload limit, so it must be refused, and without being read into memory.
+OVER_LIMIT_MB = 3 * 1024
+
+HEAVY_CASES = (
+    # Phone footage: a minute of 4K at 60 fps and 50 Mb/s (what a phone records), with sound: ~375 MB.
+    HeavyCase(
+        "4k-60fps-video",
+        "phone-4k-1min.mp4",
+        (
+            *("-f", "lavfi", "-i", "testsrc2=s=3840x2160:r=60", "-f", "lavfi", "-i", "sine=f=440:r=48000"),
+            *("-t", "60", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"),
+            *("-b:v", "50M", "-maxrate", "50M", "-bufsize", "100M", "-c:a", "aac"),
+        ),
+        "a test pattern with a moving colour gradient and a counter",
+    ),
+    # Three minutes of the same is 3 GB: refused for its size, at upload, before anything reads it.
+    HeavyCase("over-limit-video", "phone-4k-long.mp4", None, None, expect="rejected", max_growth_mb=300),
+    # A camera's full-resolution photo: 108 megapixels, past Pillow's 89 MP warning.
+    HeavyCase(
+        "108mp-photo",
+        "camera-108mp.jpg",
+        ("-f", "lavfi", "-i", "testsrc2=s=12000x9000", "-frames:v", "1", "-q:v", "3"),
+        "a colourful test pattern image",
+    ),
+    # An hour-long podcast.
+    HeavyCase(
+        "1h-podcast",
+        "podcast-1h.m4a",
+        ("-f", "lavfi", "-i", "sine=f=220:r=44100", "-t", "3600", "-c:a", "aac", "-b:a", "96k"),
+        "a steady tone",
+    ),
+    HeavyCase("1500-page-pdf", "manual-1500p.pdf", None, "section 1234 torque specification for the rear axle"),
+    HeavyCase("50mb-csv", "export-50mb.csv", None, "order 777777 shipped to Reykjavik"),
+)
+
+
+def build_heavy(case: HeavyCase, folder: Path) -> Path:
+    """Write ``case``'s file into ``folder`` (once: an existing one is reused). Needs ``ffmpeg`` for media."""
+    import shutil
+    import subprocess
+
+    path = folder / case.filename
+    if path.exists():
+        return path
+    if case.ffmpeg is not None:
+        if not shutil.which("ffmpeg"):
+            raise FileNotFoundError("ffmpeg is not on PATH")
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", *case.ffmpeg, str(path)], check=True)
+    elif case.expect == "rejected":
+        # Its content is never read, so it need not be a video: a sparse file costs no disk to make.
+        with path.open("wb") as f:
+            f.truncate(OVER_LIMIT_MB * 1048576)
+    elif path.suffix == ".pdf":
+        path.write_bytes(
+            text_pdf([f"Section {n}. Torque specification for the rear axle: {n % 90 + 10} Nm." for n in range(1500)])
+        )
+    else:
+        with path.open("w") as f:
+            f.write("order_id,customer,city,status\n")
+            n = 0
+            while f.tell() < 50 * 1048576:
+                city = "Reykjavik" if n == 777777 else "Lisbon"
+                f.write(f"{n},customer-{n},{city},shipped\n")
+                n += 1
+    return path
+
+
+def text_pdf(pages: list[str]) -> bytes:
+    """A minimal valid PDF, one line of Helvetica per page: no PDF library needed to make one."""
+    objects = ["<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    kids = []
+    for text in pages:
+        stream = f"BT /F1 14 Tf 72 720 Td ({text.replace('(', '[').replace(')', ']')}) Tj ET"
+        objects.append(f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream")
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {len(objects)} 0 R "
+            "/Resources << /Font << /F1 3 0 R >> >> >>"
+        )
+        kids.append(f"{len(objects)} 0 R")
+    objects[1] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>"
+    out, offsets = bytearray(b"%PDF-1.4\n"), []
+    for n, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += f"{n} 0 obj\n{body}\nendobj\n".encode()
+    xref = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
+    out += b"".join(f"{o:010d} 00000 n \n".encode() for o in offsets)
+    out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+# --- harvest -----------------------------------------------------------------------------------
+
+
+def _files(roots: list[Path], limit: int | None) -> list[Path]:
+    found = sorted(p for root in roots for p in root.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED)
+    return found[:limit] if limit else found
+
+
+async def _harvest(files: list[Path], out: Path, url: str, pid: int | None, timeout: float, concurrency: int) -> int:
+    """Ingest ``files`` into one bank, ``concurrency`` at a time (then usage is the mix's, not one file's).
+
+    Resumes: a file already in ``out`` is skipped, so a stopped sweep picks up where it was.
+    """
+    done = {json.loads(line)["path"] for line in out.open()} if out.exists() else set()
+    todo = [p for p in files if str(p) not in done]
+    bugs = 0
+    gate = asyncio.Semaphore(concurrency)
+    async with httpx.AsyncClient(base_url=url, timeout=60) as http:
+        bank_id = await create_bank(http)
+        print(f"bank {bank_id}, {len(todo)} of {len(files)} files to go -> {out}")
+        with out.open("a") as sink:
+
+            async def one(n: int, path: Path) -> None:
+                nonlocal bugs
+                doc_id = f"f{n}-{path.stem[:60]}"
+                async with gate:
+                    if not server_alive(pid):
+                        return
+                    try:
+                        outcome = await ingest_file(http, bank_id, path, document_id=doc_id, pid=pid, timeout=timeout)
+                    except httpx.HTTPError as exc:
+                        outcome = FileOutcome(
+                            path.name, doc_id, path.stat().st_size, "error", 0, repr(exc), 0, None, 0, None
+                        )
+                sink.write(json.dumps(asdict(outcome) | {"path": str(path)}) + "\n")
+                sink.flush()
+                mark = "ok " if outcome.handled else "BUG"
+                usage = (
+                    f"{outcome.usage.peak_rss_mb:.0f}MB {outcome.usage.cpu_seconds:.0f}cpu-s" if outcome.usage else ""
+                )
+                print(
+                    f"{mark} {n}/{len(todo)} {outcome.status:8} {outcome.seconds:6.1f}s {usage:18} {path.name}  {(outcome.error or '')[:120]}"
+                )
+                bugs += not outcome.handled
+
+            await asyncio.gather(*(one(n, p) for n, p in enumerate(todo, 1)))
+    if not server_alive(pid):
+        print("the server died")
+        return bugs + 1
+    return bugs
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="command", required=True)
+    h = sub.add_parser("harvest", help="ingest every supported file under the given folders, one JSON line each")
+    h.add_argument("roots", nargs="+", type=Path)
+    h.add_argument("--out", type=Path, required=True)
+    h.add_argument("--limit", type=int, default=None, help="only the first N files (sorted by path)")
+    h.add_argument("--timeout", type=float, default=900.0, help="seconds a file may take")
+    h.add_argument("--concurrency", type=int, default=1, help="files in flight at once")
+    h.add_argument("--api-url", default=None, help="a server already running; else one is started")
+    args = parser.parse_args(argv)
+
+    from hindsight_system_evals.target import eval_target
+
+    files = _files(args.roots, args.limit)
+    # The server's log beside the results: a file that broke it is read about there.
+    with eval_target(args.api_url, log_path=args.out.with_suffix(".server.log")) as target:
+        return (
+            1 if asyncio.run(_harvest(files, args.out, target.url, target.pid, args.timeout, args.concurrency)) else 0
+        )
+
+
+if __name__ == "__main__":
+    sys.exit(main())

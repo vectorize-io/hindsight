@@ -12,6 +12,7 @@ import io
 import json
 import math
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import replace
 
 import pytest
@@ -263,6 +264,46 @@ def test_audio_and_video_are_cut_into_timed_windows():
     assert media.decode_audio_pcm(video[0].data or b"").size > 16000 * 7
     with pytest.raises(media.MediaError, match="limit is 5s"):
         list(media.split_media(_tone(8, video=False), "audio", window_seconds=30, overlap_seconds=5, max_seconds=5))  # fmt: skip
+
+
+def test_an_image_over_the_pixel_limit_is_refused_before_it_is_decoded():
+    big = _png((10, 20, 30), size=(2000, 1000))  # 2 MP
+    with pytest.raises(media.MediaError, match="limit is 1 MP"):
+        media.split_image(big, max_megapixels=1)
+    assert len(media.split_image(big, max_megapixels=2)) == 1
+
+
+def test_the_heic_fallback_is_not_a_way_around_the_pixel_limit():
+    # What Pillow cannot read goes to PyAV (HEIC); its picture size is checked before decoding too.
+    import av
+    import numpy as np
+
+    out = io.BytesIO()
+    with av.open(out, "w", format="mp4") as dst:
+        v = dst.add_stream("libx264", rate=1)
+        v.width, v.height, v.pix_fmt = 2000, 1000, "yuv420p"
+        dst.mux(v.encode(av.VideoFrame.from_ndarray(np.zeros((1000, 2000, 3), np.uint8), format="rgb24")))
+        dst.mux(v.encode(None))
+    with pytest.raises(media.MediaError, match="limit is 1 MP"):
+        media.split_image(out.getvalue(), max_megapixels=1)
+    assert len(media.split_image(out.getvalue(), max_megapixels=2)) == 1
+
+
+async def test_a_media_type_can_have_its_own_size_limit(api_client, kb, monkeypatch):
+    from hindsight_api.config import clear_config_cache
+
+    monkeypatch.setenv("HINDSIGHT_API_KB_MAX_FILE_MB_BY_MEDIA_TYPE", "image=1")
+    clear_config_cache()
+    try:
+        payload = b"\0" * (1024 * 1024 + 1)  # over 1 MB; never decoded, the size is checked first
+        r = await _upload(api_client, kb, [("big.png", payload, "image/png")])
+        assert r.status_code == 413 and "the limit for image is 1MB" in r.json()["detail"], r.text
+        # Every other type keeps the server's limit (500 MB).
+        r = await _upload(api_client, kb, [("big.txt", b"word " * 300_000, "text/plain")])
+        assert r.status_code == 202, r.text
+    finally:
+        monkeypatch.delenv("HINDSIGHT_API_KB_MAX_FILE_MB_BY_MEDIA_TYPE")
+        clear_config_cache()
 
 
 def test_unreadable_media_is_a_media_error():
@@ -2011,10 +2052,10 @@ async def test_a_file_replaced_while_its_ingest_reads_it_is_skipped_not_retried(
     assert r.status_code == 200, r.text
     old_key = (await store.get_documents(kb, ["d"]))["d"].storage_key
     await store.set_statuses(kb, [StatusUpdate("d", "pending", None, old_key)])  # as if its task were queued
-    real = memory._file_storage.retrieve
+    real = memory._file_storage.retrieve_stream
     replaced = False
 
-    async def retrieve(key: str) -> bytes:
+    async def retrieve_stream(key: str) -> AsyncIterator[bytes]:
         # The newer upload lands between the batch's check and its read, deleting the old file.
         nonlocal replaced
         if key == old_key and not replaced:
@@ -2022,9 +2063,10 @@ async def test_a_file_replaced_while_its_ingest_reads_it_is_skipped_not_retried(
             r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "d", "text": "new red"}]})
             assert r.status_code == 200, r.text
             raise FileNotFoundError(key)
-        return await real(key)
+        async for chunk in real(key):
+            yield chunk
 
-    monkeypatch.setattr(memory._file_storage, "retrieve", retrieve)
+    monkeypatch.setattr(memory._file_storage, "retrieve_stream", retrieve_stream)
     await service.process_batch(kb, [_Work("d", old_key)])  # no error, so no retry
     doc = (await store.get_documents(kb, ["d"]))["d"]
     assert doc.status == "ready" and doc.storage_key != old_key
@@ -2033,10 +2075,11 @@ async def test_a_file_replaced_while_its_ingest_reads_it_is_skipped_not_retried(
     # Gone under the current version, the file cannot come back: the document fails, once.
     await store.set_statuses(kb, [StatusUpdate("d", "pending", None, doc.storage_key)])
 
-    async def gone(key: str) -> bytes:
+    async def gone(key: str) -> AsyncIterator[bytes]:
         raise FileNotFoundError(key)
+        yield b""  # an async generator, as retrieve_stream is
 
-    monkeypatch.setattr(memory._file_storage, "retrieve", gone)
+    monkeypatch.setattr(memory._file_storage, "retrieve_stream", gone)
     with pytest.raises(media.MediaError):  # with retries left, a transient error would leave it pending
         await service.process_batch(kb, [_Work("d", doc.storage_key)], retries_left=True)
     failed = (await store.get_documents(kb, ["d"]))["d"]
@@ -2614,3 +2657,13 @@ def test_overlapping_ranges_around_hits_are_read_once():
     # Touching (0-4, 5-9) and overlapping (5-9, 8-11) spans of one document join; another document's never do.
     assert _merged_ranges(spans) == [("a", 0, 14), ("b", 0, 2)]
     assert _merged_ranges([("a", 0, 2), ("a", 4, 6)]) == [("a", 0, 2), ("a", 4, 6)]
+
+
+def test_a_size_limit_per_media_type_is_read_from_the_server_setting():
+    from hindsight_api.config import _parse_kb_size_limits
+
+    assert _parse_kb_size_limits(" video=2000, image=50 ") == {"video": 2000, "image": 50}
+    assert _parse_kb_size_limits(None) == {}
+    for bad in ("pictures=5", "video=lots", "video=0", "video"):
+        with pytest.raises(ValueError, match="MAX_FILE_MB_BY_MEDIA_TYPE"):
+            _parse_kb_size_limits(bad)

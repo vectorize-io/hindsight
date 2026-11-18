@@ -15,6 +15,7 @@ the Docker image, a CI step); PyAV keeps the work in-process and needs nothing o
 from __future__ import annotations
 
 import collections
+import contextlib
 import io
 import math
 import re
@@ -50,6 +51,20 @@ _EXT_KIND: dict[str, Kind] = {
 # The image formats an embedding API accepts as they are; anything else is re-encoded as PNG.
 _PASSTHROUGH_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 _MAX_IMAGE_SIDE = 3072
+
+
+#: A file to split: its bytes, or (for a stored upload, which may be gigabytes) the path of a local
+#: copy, which the readers below open by name and read only as far as they need.
+Source = bytes | str
+
+
+def _readable(source: Source) -> Any:
+    """What PyAV, Pillow and pypdfium2 open: the path itself, or the bytes as a file."""
+    return source if isinstance(source, str) else io.BytesIO(source)
+
+
+def _bytes(source: Source) -> bytes:
+    return Path(source).read_bytes() if isinstance(source, str) else source
 
 
 class MediaError(ValueError):
@@ -160,14 +175,28 @@ def _contrasting_background(image) -> tuple[int, int, int]:
     return (32, 32, 32) if lum > 128 else (224, 224, 224)
 
 
-def split_image(data: bytes) -> list[PassageDraft]:
-    try:
-        from PIL import Image
+def split_image(data: Source, *, max_megapixels: int = 178) -> list[PassageDraft]:
+    """``max_megapixels`` is checked from the header, before anything is decoded: an image costs memory by
+    its pixels, and a few-MB PNG can declare 30000 x 30000 of them."""
+    from PIL import Image
 
-        image = Image.open(io.BytesIO(data))
+    # Pillow's own bomb guard at ours: it only warns up to twice that, so the check below speaks first.
+    Image.MAX_IMAGE_PIXELS = max_megapixels * 1_000_000
+    try:
+        image = Image.open(_readable(data))
+        _check_pixels(image.width, image.height, max_megapixels)
         image.load()
+    except MediaError:
+        raise
+    except Image.DecompressionBombError as exc:  # not a reason to try another decoder
+        raise MediaError(
+            f"image is too large ({exc}); the limit is {max_megapixels} MP (HINDSIGHT_API_KB_MAX_IMAGE_MEGAPIXELS)"
+        ) from exc
     except Exception as exc:
-        raise MediaError(f"unreadable image: {exc}") from exc
+        # Pillow has no HEIC/HEIF decoder (every iPhone photo); ffmpeg has one, and PyAV carries it.
+        image = _first_frame(data, max_megapixels)
+        if image is None:
+            raise MediaError(f"unreadable image: {exc}") from exc
     mime = Image.MIME.get(image.format or "", "")
     transparent = image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info)
     small = min(image.size) < _MIN_IMAGE_SIDE
@@ -182,10 +211,34 @@ def split_image(data: bytes) -> list[PassageDraft]:
         image.thumbnail((_MAX_IMAGE_SIDE, _MAX_IMAGE_SIDE))
         return [PassageDraft(modality="image", data=_png(image), mime="image/png", page=1)]
     if mime in _PASSTHROUGH_IMAGE_TYPES and max(image.size) <= _MAX_IMAGE_SIDE:
-        return [PassageDraft(modality="image", data=data, mime=mime, page=1)]
+        return [PassageDraft(modality="image", data=_bytes(data), mime=mime, page=1)]
     image = image.convert("RGB")
     image.thumbnail((_MAX_IMAGE_SIDE, _MAX_IMAGE_SIDE))
     return [PassageDraft(modality="image", data=_png(image), mime="image/png", page=1)]
+
+
+def _check_pixels(width: int, height: int, max_megapixels: int) -> None:
+    if width * height > max_megapixels * 1_000_000:
+        raise MediaError(
+            f"image is {width}x{height} ({width * height / 1e6:.0f} MP); the limit is {max_megapixels} MP "
+            "(HINDSIGHT_API_KB_MAX_IMAGE_MEGAPIXELS)"
+        )
+
+
+def _first_frame(data: Source, max_megapixels: int) -> Any:
+    """The first picture ffmpeg decodes from ``data`` as a Pillow image, or None if it decodes none.
+    Raises MediaError for one over ``max_megapixels``: this is not a way around the limit."""
+    try:
+        import av
+
+        with av.open(_readable(data), metadata_errors="replace") as container:
+            stream = container.streams.video[0]
+            _check_pixels(stream.codec_context.width, stream.codec_context.height, max_megapixels)
+            return next(container.decode(stream)).to_image()
+    except MediaError:
+        raise
+    except Exception:
+        return None
 
 
 # --- PDF ---------------------------------------------------------------------------------------
@@ -224,7 +277,7 @@ def _band_pngs(sharp: Any) -> tuple[bytes, ...]:
     )
 
 
-def split_pdf(data: bytes, *, page_pixels: int, max_pages: int, bands: bool = False) -> Iterator[PassageDraft]:
+def split_pdf(data: Source, *, page_pixels: int, max_pages: int, bands: bool = False) -> Iterator[PassageDraft]:
     """One PNG per page, the longest side rendered at ``page_pixels``."""
     import pypdfium2 as pdfium
 
@@ -245,21 +298,30 @@ def split_pdf(data: bytes, *, page_pixels: int, max_pages: int, bands: bool = Fa
         # (Pillow lets go of the GIL), so it runs on a few threads while the next pages render. Page by
         # page in order it was half of a PDF's ingest; up to _PDF_LOOKAHEAD pages are held at once.
         pending: collections.deque[tuple[int, Future[bytes], Future[tuple[bytes, ...]] | None]] = collections.deque()
-        number = 0
+        number, rendered = 0, 0
         while number < page_count or pending:
             while number < page_count and len(pending) < _PDF_LOOKAHEAD:
                 with _PDFIUM_LOCK:
-                    page = pdf[number]
-                    width, height = page.get_size()
-                    scale = (max(page_pixels, PDF_BAND_PIXELS) if bands else page_pixels) / max(width, height, 1)
-                    sharp = page.render(scale=scale).to_pil().convert("RGB")
-                    page.close()
+                    try:
+                        page = pdf[number]
+                        width, height = page.get_size()
+                        scale = (max(page_pixels, PDF_BAND_PIXELS) if bands else page_pixels) / max(width, height, 1)
+                        sharp = page.render(scale=scale).to_pil().convert("RGB")
+                        page.close()
+                    except Exception:  # noqa: BLE001 - see below
+                        # A damaged page (a broken page tree: "Failed to load page") is skipped, so the rest
+                        # of the PDF stays searchable; raised, it was retried three times and lost them all.
+                        number += 1
+                        continue
                 # Bands only when asked: they used to be cut and encoded for every page and then dropped,
                 # three PNGs per page for nothing (half of a PDF's ingest time with bands off).
                 crops = _PNG_POOL.submit(_band_pngs, sharp) if bands else None
                 pending.append((number, _PNG_POOL.submit(_page_png, sharp, page_pixels, bands), crops))
                 number += 1
+            if not pending:
+                break
             done, page_png, crops = pending.popleft()
+            rendered += 1
             yield PassageDraft(
                 modality="image",
                 text=texts[done],
@@ -269,6 +331,8 @@ def split_pdf(data: bytes, *, page_pixels: int, max_pages: int, bands: bool = Fa
                 bands=crops.result() if crops is not None else (),
                 embed_text=embed_texts[done],
             )
+        if not rendered:
+            raise MediaError("no page of the PDF could be rendered")
     finally:
         with _PDFIUM_LOCK:
             pdf.close()
@@ -276,7 +340,10 @@ def split_pdf(data: bytes, *, page_pixels: int, max_pages: int, bands: bool = Fa
 
 def _page_text(pdf: Any, number: int) -> str | None:
     with _PDFIUM_LOCK:
-        page = pdf[number]
+        try:
+            page = pdf[number]
+        except Exception:  # noqa: BLE001 - a page PDFium cannot load has no text; split_pdf skips it
+            return None
         textpage = page.get_textpage()
         # PDFium returns a soft hyphen as U+FFFE inside the word ("employ\ufffement"): 40% of ViDoRe hr
         # pages had one, and every such word was lost to keyword search.
@@ -307,8 +374,10 @@ def strip_repeated_lines(pages: list[str | None]) -> list[str | None]:
 # --- text --------------------------------------------------------------------------------------
 
 
-def read_text(data: bytes, filename: str | None) -> str:
+def read_text(source: Source, filename: str | None) -> str:
     """The text of a text-like file. Office and HTML files are read for their text layer (no OCR)."""
+    # ponytail: a text file is read whole (its passages are all held anyway); the size limit bounds it.
+    data = _bytes(source)
     ext = Path(filename or "").suffix.lower()
     if ext in _OFFICE_EXTENSIONS:
         from markitdown import MarkItDown
@@ -417,13 +486,13 @@ def split_text(text: str, *, tokens: int) -> list[PassageDraft]:
 # nothing is needed on the system.
 
 
-def _open(data: bytes) -> Any:
+def _open(data: Source) -> Any:
     try:
         import av
     except ImportError as exc:
         raise MediaError("audio and video need the local-ml extra (PyAV)") from exc
     try:
-        return av.open(io.BytesIO(data))
+        return av.open(_readable(data), metadata_errors="replace")
     except av.FFmpegError as exc:
         raise MediaError(f"unreadable media: {exc}") from exc
 
@@ -441,7 +510,7 @@ class Window:
     end: float
 
 
-def probe(data: bytes) -> MediaInfo:
+def probe(data: Source) -> MediaInfo:
     """Duration and tracks of a media file."""
     with _open(data) as container:
         duration = container.duration / 1_000_000 if container.duration else 0.0
@@ -472,7 +541,7 @@ def windows(duration: float, window: float, overlap: float) -> list[Window]:
 
 
 def split_media(
-    data: bytes,
+    data: Source,
     kind: Literal["audio", "video"],
     *,
     window_seconds: int,
@@ -489,31 +558,93 @@ def split_media(
         kind = "audio"
     if kind == "audio" and not info.has_audio:
         raise MediaError("the file has no audio track")
+    import av
+
+    # A damaged file still gives what decodes, as ffmpeg itself does: a window with nothing in it, or
+    # one the codec refuses, is skipped. Only a file with no window left fails, and for good (a
+    # MediaError): an ffmpeg error escaping here was retried as if it were transient, three times.
+    cut_any, last_error = False, None
     for w in windows(info.duration, window_seconds, min(overlap_seconds, window_seconds - 1)):
+        try:
+            clip = _cut(data, w, video=kind == "video", audio=info.has_audio)
+        except av.FFmpegError as exc:
+            clip, last_error = None, exc
+        except Exception as exc:  # noqa: BLE001 - a codec PyAV only half supports (MPEG-H audio, uncompressed
+            # video) has no codec context, and fails with an AttributeError on every attempt: cutting is local
+            # and deterministic, so a retry only repeats it.
+            clip, last_error = None, exc
+        if clip is None:
+            continue
+        cut_any = True
         yield PassageDraft(
             modality=kind,
-            data=_cut(data, w, video=kind == "video", audio=info.has_audio),
+            data=clip,
             mime="video/mp4" if kind == "video" else "audio/mp4",
             start_ms=int(w.start * 1000),
             end_ms=int(w.end * 1000),
         )
+    if not cut_any:
+        raise MediaError(f"no decodable {kind} in the file" + (f": {last_error}" if last_error else ""))
 
 
-def _cut(data: bytes, w: Window, *, video: bool, audio: bool) -> bytes:
-    """One window re-encoded as mp4: H.264 at most 480p high, and/or mono 64 kb/s AAC."""
+def _cut(data: Source, w: Window, *, video: bool, audio: bool) -> bytes | None:
+    """One window re-encoded as mp4: H.264 at most 480p high, and/or mono 64 kb/s AAC; None if it is empty."""
     # A temp file, not a buffer: "+faststart" moves the index to the front by re-reading the file by name.
     with tempfile.TemporaryDirectory(prefix="hs-kb-") as tmp:
         out = str(Path(tmp) / "clip.mp4")
-        _encode_window(data, w, out, video=video, audio=audio)
+        if not _encode_window(data, w, out, video=video, audio=audio):
+            return None
         return Path(out).read_bytes()
 
 
-def _encode_window(data: bytes, w: Window, out: str, *, video: bool, audio: bool) -> None:
+def _decoded(src: Any, streams: list[Any]) -> Iterator[Any]:
+    """The frames of ``streams``, past what is damaged: a packet the decoder refuses is dropped, and a
+    container that breaks off ends the stream, as ffmpeg's own command line does with them."""
+    import av
+
+    try:
+        for packet in src.demux(*streams):
+            try:
+                frames = packet.decode()
+            except av.FFmpegError:
+                continue
+            yield from frames
+    except av.FFmpegError:
+        return
+
+
+@contextlib.contextmanager
+def _seeked(data: Source, start: float) -> Iterator[Any]:
+    """The file opened at ``start`` seconds in.
+
+    A file without an index (an AVI, an mp4 starting on a non-key frame) refuses to seek (EPERM), and
+    the container it refused gives no more frames; it is opened again and read from the beginning:
+    slower, the same result, since frames before the window are skipped.
+    """
+    import av
+
+    src = _open(data)
+    try:
+        try:
+            src.seek(int(start * 1_000_000), any_frame=False)
+        except av.FFmpegError:
+            src.close()
+            src = _open(data)
+        yield src
+    finally:
+        src.close()
+
+
+def _encode_window(data: Source, w: Window, out: str, *, video: bool, audio: bool) -> int:
+    """Encode window ``w`` of ``data`` into ``out``; how many frames it wrote (0: nothing decoded there)."""
     from fractions import Fraction
 
     import av
 
-    with _open(data) as src, av.open(out, "w", format="mp4", options={"movflags": "+faststart"}) as dst:
+    with (
+        _seeked(data, w.start) as src,
+        av.open(out, "w", format="mp4", options={"movflags": "+faststart"}) as dst,
+    ):
         streams: list[Any] = []
         v_out = a_out = None
         if video:
@@ -540,8 +671,7 @@ def _encode_window(data: bytes, w: Window, out: str, *, video: bool, audio: bool
             else None
         )
         audio_samples, video_frames, finished = 0, 0, set()
-        src.seek(int(w.start * 1_000_000), any_frame=False)
-        for frame in src.decode(*streams):
+        for frame in _decoded(src, streams):
             t = frame.time
             if t is None or t < w.start:
                 continue
@@ -567,6 +697,7 @@ def _encode_window(data: bytes, w: Window, out: str, *, video: bool, audio: bool
         for s in (v_out, a_out):
             if s is not None:
                 dst.mux(s.encode(None))
+        return video_frames + audio_samples
 
 
 def decode_audio_pcm(data: bytes, *, required: bool = True) -> np.ndarray | None:

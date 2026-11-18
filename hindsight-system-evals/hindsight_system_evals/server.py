@@ -58,7 +58,8 @@ def pg0_instance() -> str:
     return os.getenv("HINDSIGHT_EVAL_PG0_INSTANCE") or f"{PG0_INSTANCE_PREFIX}{uuid.uuid4().hex[:8]}"
 
 
-SERVER_STARTUP_TIMEOUT = 180.0
+#: A loaded machine (other servers, a training run) can take minutes just to start pg0 and load models.
+SERVER_STARTUP_TIMEOUT = float(os.getenv("HINDSIGHT_EVAL_SERVER_STARTUP_TIMEOUT", "180"))
 
 
 @dataclass
@@ -198,6 +199,9 @@ def start_eval_server(*, log_path: Path) -> EvalServer:
             "HINDSIGHT_API_HOST": "127.0.0.1",
             "HINDSIGHT_API_PORT": str(port),
             "HINDSIGHT_API_LOG_LEVEL": "info",
+            # Knowledge banks are off by default; the flag only adds their routes, and the
+            # knowledge service (and its embedder) starts on first use, so other suites pay nothing.
+            "HINDSIGHT_API_ENABLE_KB": "true",
             # The debug tools replay a captured delta-ops request verbatim, and the
             # default 50k-char cap truncates a large one mid-document. A replay of a
             # truncated prompt is a different prompt.

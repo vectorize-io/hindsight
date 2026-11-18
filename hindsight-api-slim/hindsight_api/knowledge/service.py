@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import hashlib
+import io
 import itertools
 import json
 import logging
+import os
 import re
+import tempfile
 import threading
 import time
 import uuid
@@ -25,7 +29,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal, TypeVar, cast
 
 import aiohttp
 
@@ -253,6 +257,34 @@ class IngestItem:
     tags: list[str] = field(default_factory=list)
     #: The ingestion strategy for this item; None falls back to the server's default.
     strategy: str | None = None
+    #: An uploaded file, read from where the HTTP layer spooled it to disk instead of from ``data``
+    #: (then empty): a 2 GB video read whole was 2 GB of the API's memory before it was even refused.
+    file: BinaryIO | None = None
+
+    @property
+    def size(self) -> int:
+        if self.file is None:
+            return len(self.data)
+        return self.file.seek(0, io.SEEK_END)
+
+    def chunks(self) -> Iterator[bytes]:
+        """Its content, ``_FILE_CHUNK`` at a time."""
+        if self.file is None:
+            yield self.data
+            return
+        self.file.seek(0)
+        while chunk := self.file.read(_FILE_CHUNK):
+            yield chunk
+
+    async def stream(self) -> AsyncIterator[bytes]:
+        """``chunks`` with each disk read off the event loop."""
+        chunks = self.chunks()
+        while (chunk := await asyncio.to_thread(next, chunks, None)) is not None:
+            yield chunk
+
+
+#: How much of a file is read or written at once (the Postgres file store's chunk size).
+_FILE_CHUNK = 4 * 1024 * 1024
 
 
 @dataclass
@@ -469,7 +501,7 @@ def _work(entry: _Entry, saved: _Saved) -> _Work:
         entry.plan.strategy,
         entry.plan.handler,
         saved.was_split,
-        len(entry.item.data),
+        entry.item.size,
     )
 
 
@@ -495,8 +527,8 @@ def _content_tokens(item: IngestItem) -> int:
     """A document's billable content size. Text (the text-ingest API, or an uploaded .txt/.md) is
     counted by its tokens; any other file is counted by its size at ``_MEDIA_BYTES_PER_CONTENT_TOKEN``."""
     if (item.content_type or "").startswith("text/"):
-        return count_tokens(item.data.decode("utf-8", "ignore"))
-    return -(-len(item.data) // _MEDIA_BYTES_PER_CONTENT_TOKEN)  # ceil(bytes / rate)
+        return sum(count_tokens(chunk.decode("utf-8", "ignore")) for chunk in item.chunks())
+    return -(-item.size // _MEDIA_BYTES_PER_CONTENT_TOKEN)  # ceil(bytes / rate)
 
 
 class _MemoryBudget:
@@ -939,16 +971,22 @@ class KnowledgeService:
 
     def _check_item(self, item: IngestItem, settings: KnowledgeBankSettings, *, depth: int = 0) -> _Plan:
         """How the file will be split; refuses what cannot be ingested."""
-        limit = get_config().kb_max_file_mb * 1024 * 1024
-        if len(item.data) > limit:
+        kind = media.classify(item.content_type, item.filename)
+        config = get_config()
+        media_type = media.media_type_of(kind, item.filename) if kind else None
+        typed = config.kb_max_file_mb_by_media_type.get(media_type or "")
+        limit_mb = typed or config.kb_max_file_mb
+        size = item.size
+        if size > limit_mb * 1024 * 1024:
+            env = "HINDSIGHT_API_KB_MAX_FILE_MB_BY_MEDIA_TYPE" if typed else "HINDSIGHT_API_KB_MAX_FILE_MB"
             raise KnowledgeBankError(
-                f"'{item.filename}' is {len(item.data) / 1048576:.1f}MB; the limit is "
-                f"{get_config().kb_max_file_mb}MB (HINDSIGHT_API_KB_MAX_FILE_MB)",
+                f"'{item.filename}' is {size / 1048576:.1f}MB; the limit"
+                + (f" for {media_type}" if typed else "")
+                + f" is {limit_mb}MB ({env})",
                 413,
             )
-        if not item.data:
+        if not size:
             raise KnowledgeBankError(f"'{item.filename}' is empty")
-        kind = media.classify(item.content_type, item.filename)
         strategy = self._strategy(item.strategy)
         # A file inside a file inside ... stops at MAX_DEPTH: deeper ones are chunked as they are.
         handler = (
@@ -1017,7 +1055,11 @@ class KnowledgeService:
             f"|{s.image_tokens}|{s.audio_window_seconds}|{s.video_window_seconds}"
             f"|{s.media_overlap_seconds}|{c.kb_pdf_text_weight}|{s.pdf_bands}|{s.text_passage_tokens}"
         )
-        return hashlib.sha256(item.data + settings.encode()).hexdigest()
+        digest = hashlib.sha256()
+        for chunk in item.chunks():
+            digest.update(chunk)
+        digest.update(settings.encode())
+        return digest.hexdigest()
 
     async def ingest(
         self, bank_id: str, items: list[IngestItem], request_context: RequestContext, *, wait: bool = False
@@ -1140,7 +1182,8 @@ class KnowledgeService:
         for e in entries:
             item = e.item
             item.filename = item.filename or f"{e.document_id}.md"
-            content_hash = self._content_hash(item, e.plan, settings)
+            # Off the event loop: both read the whole file (hundreds of MB), and every request waited meanwhile.
+            content_hash = await asyncio.to_thread(self._content_hash, item, e.plan, settings)
             before = existing.get(e.document_id)
             if (
                 before
@@ -1154,6 +1197,7 @@ class KnowledgeService:
             ):
                 saved.append(None)  # unchanged: nothing to do
                 continue
+            content_tokens = await asyncio.to_thread(_content_tokens, item)
             storage_key = f"{bank_storage_prefix(bank_id)}kb/files/{uuid.uuid4()}/{key_segment(item.filename)}"
             files.append((storage_key, e))
             # A ready document without passages is one a strategy split into files (anything else ready
@@ -1168,7 +1212,7 @@ class KnowledgeService:
                     content_type=item.content_type,
                     # A type only a strategy reads is filed as a document until it is split.
                     media_type=media.media_type_of(e.plan.kind, item.filename) if e.plan.kind else "document",
-                    size_bytes=len(item.data),
+                    size_bytes=item.size,
                     storage_key=storage_key,
                     content_hash=content_hash,
                     status="pending",
@@ -1176,7 +1220,7 @@ class KnowledgeService:
                     passage_count=before.passage_count if before else 0,
                     tags=item.tags,
                     source_document_id=e.source_document_id,
-                    content_tokens=_content_tokens(item),
+                    content_tokens=content_tokens,
                 )
             )
         # Saved one after another, these were most of an ingest's time (a commit each on Postgres, a few
@@ -1185,11 +1229,11 @@ class KnowledgeService:
 
         async def store(key: str, e: _Entry) -> None:
             async with limit:
-                await self._engine._file_storage.store(
-                    file_data=e.item.data,
-                    key=key,
-                    metadata={"content_type": e.item.content_type, "bank_id": bank_id, "document_id": e.document_id},
-                )
+                metadata = {"content_type": e.item.content_type, "bank_id": bank_id, "document_id": e.document_id}
+                if e.item.file is None:
+                    await self._engine._file_storage.store(file_data=e.item.data, key=key, metadata=metadata)
+                else:  # in pieces, never whole
+                    await self._engine._file_storage.store_stream(key=key, stream=e.item.stream(), metadata=metadata)
 
         await asyncio.gather(*(store(key, e) for key, e in files))
         previous = await self.store.put_documents(bank_id, rows)
@@ -1210,7 +1254,7 @@ class KnowledgeService:
     # --- ingest (worker) --------------------------------------------------------------------
 
     def _drafts(
-        self, document: KnowledgeDocument, data: bytes, s: KnowledgeBankSettings
+        self, document: KnowledgeDocument, data: media.Source, s: KnowledgeBankSettings
     ) -> Iterator[media.PassageDraft]:
         kind = media.classify(document.content_type, document.filename)
         if kind == "pdf":
@@ -1221,7 +1265,7 @@ class KnowledgeService:
                 bands=s.pdf_bands,
             )
         if kind == "image":
-            return iter(media.split_image(data))
+            return iter(media.split_image(data, max_megapixels=get_config().kb_max_image_megapixels))
         if kind in ("audio", "video"):
             window = s.audio_window_seconds if kind == "audio" else s.video_window_seconds
             return media.split_media(
@@ -1660,16 +1704,23 @@ class KnowledgeService:
     ) -> Iterator[media.PassageDraft] | None:
         """One document's passages to embed, as a lazy iterator; None when its strategy split it into files."""
         document, w = doc.document, doc.work
+        if w.handler is None:
+            # To a local file, in pieces: the splitters open it by name and read as far as they need, so a
+            # 2 GB video costs a window's worth of memory, not 2 GB (it was read whole, then cut).
+            path = await self._download(w.storage_key, document.filename)
+            # Splitting is blocking (pdfium, PyAV): it runs in a thread, one draft at a time.
+            try:
+                drafts = await _split(self._drafts, document, path, settings)
+            except BaseException:
+                _unlink(path)
+                raise
+            return _deleting(path, drafts)
         async with _timing.timed("file.read"):
             try:
+                # ponytail: an extension takes bytes, so its file is read whole; a path when one needs more.
                 data = await self._engine._file_storage.retrieve(w.storage_key)
             except FileNotFoundError as exc:
-                # Only the stored original being gone means "superseded or lost" to the batch; a missing
-                # file further in (a splitter's helper, a temp file) stays an ordinary, retried error.
                 raise _FileGone(str(exc)) from exc
-        if w.handler is None:
-            # Splitting is blocking (pdfium, PyAV): it runs in a thread, one draft at a time.
-            return await _split(self._drafts, document, data, settings)
         made = await ingest_strategy.load_extension(w.handler).ingest(
             ingest_strategy.IngestFile(
                 bank_id=bank_id,
@@ -1688,6 +1739,25 @@ class KnowledgeService:
         for d in emitted:
             self._check_passage_modality(d.modality, settings)
         return iter(emitted)
+
+    async def _download(self, key: str, filename: str | None) -> str:
+        """A local copy of stored file ``key``, written in pieces; the caller deletes it. It keeps the file's
+        extension: ffmpeg reads a raw stream (an .aac with an ID3 tag) only with that hint."""
+        fd, path = tempfile.mkstemp(prefix="hs-kb-src-", suffix=Path(filename or "").suffix[:16])
+        try:
+            async with _timing.timed("file.read"):
+                with os.fdopen(fd, "wb") as f:
+                    async for chunk in self._engine._file_storage.retrieve_stream(key):
+                        await asyncio.to_thread(f.write, chunk)
+        except FileNotFoundError as exc:
+            _unlink(path)
+            # Only the stored original being gone means "superseded or lost" to the batch; a missing
+            # file further in (a splitter's helper, a temp file) stays an ordinary, retried error.
+            raise _FileGone(str(exc)) from exc
+        except BaseException:
+            _unlink(path)
+            raise
+        return path
 
     async def _embed_round(
         self,
@@ -2464,6 +2534,20 @@ def _close_drafts(drafts: Iterator[media.PassageDraft]) -> None:
     close = getattr(drafts, "close", None)  # generators release the PDF / media they hold
     if close is not None:
         close()
+
+
+def _deleting(path: str, drafts: Iterator[media.PassageDraft]) -> Iterator[media.PassageDraft]:
+    """``drafts``, then ``path`` deleted: when they run out, fail, or are closed part-way."""
+    try:
+        yield from drafts
+    finally:
+        _close_drafts(drafts)
+        _unlink(path)
+
+
+def _unlink(path: str) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        os.unlink(path)
 
 
 def _next_draft(drafts: Iterator[media.PassageDraft]) -> media.PassageDraft | None:
