@@ -5660,8 +5660,10 @@ class HindsightConfig:
             recall_decision_model_fallback=_parse_boolean_env(
                 ENV_RECALL_DECISION_MODEL_FALLBACK, DEFAULT_RECALL_DECISION_MODEL_FALLBACK
             ),
-            kb_decision_model_candidates=int(
-                os.getenv(ENV_KB_DECISION_MODEL_CANDIDATES, str(DEFAULT_KB_DECISION_MODEL_CANDIDATES))
+            kb_decision_model_candidates=_parse_positive_int(
+                ENV_KB_DECISION_MODEL_CANDIDATES,
+                os.getenv(ENV_KB_DECISION_MODEL_CANDIDATES),
+                DEFAULT_KB_DECISION_MODEL_CANDIDATES,
             ),
             # Server
             host=os.getenv(ENV_HOST) or None,

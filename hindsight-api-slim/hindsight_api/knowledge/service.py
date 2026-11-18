@@ -34,7 +34,7 @@ from ..config import get_config
 from ..engine import bank_aliases
 from ..engine.aiohttp_session import UpstreamHTTPError
 from ..engine.db_utils import acquire_with_retry
-from ..engine.decision_model import DecisionAsset, DecisionRefusedError
+from ..engine.decision_model import DecisionAsset, DecisionRefusedError, jev_accepts
 from ..engine.operation_metadata import KnowledgeIngestChildMetadata, KnowledgeIngestParentMetadata
 from ..engine.response_models import KnowledgeDocumentHit
 from ..engine.retain import bank_utils
@@ -199,6 +199,18 @@ def fused_order(size: int, model_scores: dict[int, float]) -> list[int]:
         for slot, rank in model_rank.items()
     }
     return sorted(range(size), key=lambda slot: -fused[slot])
+
+
+def picked_order(head: list[int], picked: dict[int, float]) -> list[int]:
+    """``head`` (candidates, best first) reordered by the pick: each picked candidate by its probability
+    (``picked``) plus ``1/log2(position+2)``, so a sure pick moves up and a split one keeps the order. Only
+    the picked candidates move, among their own positions: one the pick did not compare (a video) stays."""
+    slots = [m for m, n in enumerate(head) if n in picked]
+    ranked = sorted(slots, key=lambda m: -(picked[head[m]] + 1 / math.log2(m + 2)))
+    out = list(head)
+    for slot, m in zip(slots, ranked, strict=True):
+        out[slot] = head[m]
+    return out
 
 
 @dataclass
@@ -2027,7 +2039,12 @@ class KnowledgeService:
         judged = [n for n, group in enumerate(groups) if pool[group[0]].passage.modality != "video"]
         if len(judged) < 2:
             return hits
-        pictures = await asyncio.gather(*(self._picture(pool[groups[n][0]]) for n in judged))
+        # A decision model that takes no images (OpenAI's) judges every hit by its text.
+        pictures = (
+            await asyncio.gather(*(self._picture(pool[groups[n][0]]) for n in judged))
+            if reranker.takes_images
+            else [None] * len(judged)
+        )
         docs: list[str] = []
         assets: dict[str, DecisionAsset] = {}
         for n, picture in zip(judged, pictures, strict=True):
@@ -2059,11 +2076,9 @@ class KnowledgeService:
             doc_of = dict(zip(judged, docs, strict=True))
             top = [n for n in order[:RERANK_PICK] if n in doc_of]
             if len(top) > 1:
-                picked = dict(zip(top, await reranker.pick(query, [doc_of[n] for n in top], assets), strict=True))
-                best = order[:RERANK_PICK]
-                moved = sorted(range(len(best)), key=lambda m: -(picked.get(best[m], 0.0) + 1 / math.log2(m + 2)))
-                order[:RERANK_PICK] = [best[m] for m in moved]
-        except (aiohttp.ClientError, UpstreamHTTPError, DecisionRefusedError, ValueError) as exc:
+                probabilities = await reranker.pick(query, [doc_of[n] for n in top], assets)
+                order[:RERANK_PICK] = picked_order(order[:RERANK_PICK], dict(zip(top, probabilities, strict=True)))
+        except (aiohttp.ClientError, UpstreamHTTPError, DecisionRefusedError) as exc:
             # Named for what failed: the routes report any other upstream error as the embedder's outage.
             raise KnowledgeBankError(f"knowledge decision model unavailable: {exc}", 503) from exc
         ranked = [i for n in order for i in groups[n]]
@@ -2089,11 +2104,14 @@ class KnowledgeService:
         return out
 
     async def _picture(self, hit: SearchHit) -> bytes | None:
-        """The JPEG a decision model judges an image or PDF page hit by, or None for a hit judged by its text."""
+        """The JPEG a decision model judges an image or PDF page hit by, or None for a hit judged by its text:
+        any other hit, and a picture System One would refuse (a side under 280 px, as a small photo or a long
+        receipt shrunk to fit), since one refused image fails the whole request."""
         if hit.passage.modality != "image" or not hit.passage.media_key:
             return None
         data = await self._engine._file_storage.retrieve(hit.passage.media_key)
-        return await asyncio.to_thread(media.judge_picture, data)
+        picture = await asyncio.to_thread(media.judge_picture, data)
+        return picture if jev_accepts("image/jpeg", picture) else None
 
     async def _within_budget(
         self, bank_id: str, hits: list[SearchHit], max_tokens: int, trace: SearchTrace | None = None

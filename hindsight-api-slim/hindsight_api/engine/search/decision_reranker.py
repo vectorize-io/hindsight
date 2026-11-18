@@ -97,6 +97,10 @@ class DecisionModelReranker(CrossEncoderModel):
     def provider_name(self) -> str:
         return PROVIDER_NAME
 
+    @property
+    def takes_images(self) -> bool:
+        return self._client.takes_images
+
     async def initialize(self) -> None:
         pass
 
@@ -125,8 +129,10 @@ class DecisionModelReranker(CrossEncoderModel):
         response = await self._client.ask(
             rerank.state(query), {"pick": question}, scope="decision_knowledge_pick", assets=used or None
         )
-        answer = response.answers["pick"]
-        return [answer.probabilities.get(f"item{n + 1}", 0.0) for n in range(len(docs))]
+        answer = response.answers.get("pick")
+        # No answer back: every doc even, so the caller keeps its own order.
+        probabilities = answer.probabilities if answer is not None else {}
+        return [probabilities.get(f"item{n + 1}", 0.0) for n in range(len(docs))]
 
     async def _rerank(
         self,
@@ -134,15 +140,13 @@ class DecisionModelReranker(CrossEncoderModel):
         docs: list[str],
         indices: list[int],
         scores: list[float],
-        assets: dict[str, DecisionAsset] | None = None,
-        scope: str = "decision_recall_rerank",
     ) -> None:
-        """Scores ``indices`` by position, best first; traced under ``scope``."""
+        """Scores ``indices`` by position, best first."""
         rerank = self._client.rerank_interface()
         options = rerank_options.get()
         subset = [docs[index] for index in indices]
         state = rerank.state(query, rerank_shared_context.get())
-        nouls = await self._judge(query, subset, assets, scope)
+        nouls = await self._judge(query, subset, None, "decision_recall_rerank")
         # Stable on the caller's input order, so equal answers keep their RRF order.
         ranked = rerank.pruned(nouls) if options.prune else rerank.scores(nouls)
         if options.dedup:

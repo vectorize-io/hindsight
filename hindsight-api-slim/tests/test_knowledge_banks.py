@@ -722,6 +722,7 @@ class _JudgeByPicture:
 
     max_request_tokens = 26_000
     tokenizer = None
+    takes_images = True
     rerank_interface = DecisionModel.rerank_interface
 
     def __init__(self) -> None:
@@ -806,6 +807,30 @@ async def test_a_decision_model_reranks_search_hits_by_their_pictures(api_client
     judge.pictures.clear()
     await _search(api_client, kb, query_image=base64.b64encode(_png((0, 0, 255))).decode())
     assert judge.pictures == {}
+
+
+async def test_a_picture_too_small_for_the_model_is_judged_by_its_text(api_client, kb, judge):
+    # 64x64: System One takes no side under 280 px, and one refused image fails the whole request.
+    await _upload(api_client, kb, [("icon.png", _png((0, 0, 255)), "image/png")], [{"document_id": "icon"}])
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "a blue icon"}]})
+    assert r.status_code == 200, r.text
+
+    hits = await _search(api_client, kb, query="blue icon")
+    assert {h["document_id"] for h in hits} == {"icon", "faq"}
+    assert judge.pictures == {}
+
+
+async def test_a_decision_model_without_images_judges_pages_by_their_text(api_client, kb, judge):
+    judge.takes_images = False
+    pdf = _text_pdf("Emergency exits are on floor nine")
+    await _upload(api_client, kb, [("exits.pdf", pdf, "application/pdf")], [{"document_id": "exits"}])
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "exits and floors"}]})
+    assert r.status_code == 200, r.text
+
+    r = await api_client.post(f"{KB}/{kb}/search", json={"query": "where are the exits"})
+    assert r.status_code == 200, r.text  # not a 503 for the picture it cannot take
+    assert judge.pictures == {}
+    assert "Emergency exits are on floor nine" in judge.texts
 
 
 async def test_a_page_with_a_picture_is_also_judged_by_its_text_alone(api_client, kb, judge):
@@ -937,6 +962,16 @@ def test_the_decision_models_order_is_fused_with_the_search_order():
     assert fused_order(3, {1: 0.2, 2: 0.8}) == [0, 2, 1]
     # Two neighbours the model sees the other way round: the model's side wins.
     assert fused_order(2, {0: 0.1, 1: 0.9}) == [1, 0]
+
+
+def test_the_pick_reorders_the_candidates_it_compared_and_leaves_a_video_in_place():
+    from hindsight_api.knowledge.service import picked_order
+
+    # A sure pick of the third climbs to the top; a split pick keeps the order.
+    assert picked_order([7, 8, 9], {7: 0.05, 8: 0.05, 9: 0.9}) == [9, 7, 8]
+    assert picked_order([7, 8, 9], {7: 0.3, 8: 0.35, 9: 0.35}) == [7, 8, 9]
+    # 5 is a video the pick did not compare: it keeps its slot, the others move around it.
+    assert picked_order([5, 8, 9], {8: 0.05, 9: 0.95}) == [5, 9, 8]
 
 
 def test_a_text_hit_is_judged_with_the_passages_around_it():

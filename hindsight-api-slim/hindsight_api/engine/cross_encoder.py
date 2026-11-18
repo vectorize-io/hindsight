@@ -9,7 +9,6 @@ Configuration via environment variables - see hindsight_api.config for all env v
 import asyncio
 import base64
 import contextvars
-import io
 import logging
 import os
 import threading
@@ -67,7 +66,13 @@ from ..config import (
 )
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import reranker_bank_attribution_headers
-from .decision_model import overflowed_window, record_decision_call
+from .decision_model import (
+    JEV_IMAGE_FORMATS,
+    JEV_IMAGES_HEADER,
+    jev_accepts,
+    overflowed_window,
+    record_decision_call,
+)
 from .decision_rerank_interface import EvidenceImage
 from .llm_trace import RERANK_SCOPE, trace_model_call
 from .local_device import (
@@ -1198,31 +1203,6 @@ _SUFFICIENCY_INSTRUCTIONS = (
     "not what could be guessed from it."
 )
 
-#: What System One takes as an image asset (docs.typesafe.ai/images): PNG or baseline JPEG, each side
-#: 280-1568 px, never resized for you. One image it refuses fails the whole request, so the rest are
-#: left out and the evidence names them in text only.
-_JEV_IMAGE_FORMATS = {"image/png": "png", "image/jpeg": "jpg"}
-_JEV_IMAGE_SIDE = (280, 1568)
-_JEV_IMAGE_MAX_BYTES = 16 * 1024 * 1024
-#: Required on every System One request that carries an image: images are a preview there.
-_JEV_IMAGES_HEADER = {"TypeSafe-Danger-Zone-Images": "true"}
-
-
-def _jev_accepts(image: EvidenceImage) -> bool:
-    if image.media_type not in _JEV_IMAGE_FORMATS or len(image.data) > _JEV_IMAGE_MAX_BYTES:
-        return False
-    from PIL import Image
-
-    try:
-        with Image.open(io.BytesIO(image.data)) as opened:  # reads the header only
-            width, height = opened.size
-            progressive = bool(opened.info.get("progressive"))
-    except Exception:
-        return False
-    low, high = _JEV_IMAGE_SIDE
-    return low <= width <= high and low <= height <= high and not progressive
-
-
 # The page-impact gate answers with the single most likely option, and anything but
 # "no" keeps the memory. With only yes/no, a memory that bears on the topic by
 # implication lost to "no": "the payment SDK vendor ends support on 1 September"
@@ -1557,13 +1537,13 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         ``vision`` is on, as image assets each referenced after its label; the ones Jev would refuse
         are left out.
         """
-        shown = [p for p in pictures if _jev_accepts(p)] if self.vision else []
+        shown = [p for p in pictures if jev_accepts(p.media_type, p.data)] if self.vision else []
         references = {f"[[picture-{i + 1}]]": picture for i, picture in enumerate(shown)}
         pictures_text = "".join(f"\n{p.label}: {ref}" for ref, p in references.items())
         assets = {
             ref: {
                 "type": "image",
-                "format": _JEV_IMAGE_FORMATS[p.media_type],
+                "format": JEV_IMAGE_FORMATS[p.media_type],
                 "data_base64": base64.b64encode(p.data).decode(),
             }
             for ref, p in references.items()
@@ -1595,7 +1575,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             # Retried as the page-impact question is: a rate limit read as "not enough" bought
             # the agent turns the decision model exists to save.
             return await acall_with_retry(
-                lambda: self._ask(body, "decision_evidence_sufficiency", _JEV_IMAGES_HEADER if assets else None),
+                lambda: self._ask(body, "decision_evidence_sufficiency", JEV_IMAGES_HEADER if assets else None),
                 policy=policy,
                 budget=policy.new_budget(),
                 provider=self.provider_name,

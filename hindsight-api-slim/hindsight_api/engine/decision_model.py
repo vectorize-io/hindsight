@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import io
 import json
 import logging
 import time
@@ -71,6 +72,32 @@ class DecisionAsset(BaseModel):
     type: Literal["image"] = "image"
     format: Literal["png", "jpg"]
     data_base64: str
+
+
+#: What System One takes as an image asset (docs.typesafe.ai/images): PNG or baseline JPEG, each side
+#: 280-1568 px, never resized for you. One image it refuses fails the whole request, so a caller leaves
+#: out what it would refuse (``jev_accepts``).
+JEV_IMAGE_FORMATS = {"image/png": "png", "image/jpeg": "jpg"}
+JEV_IMAGE_SIDE = (280, 1568)
+JEV_IMAGE_MAX_BYTES = 16 * 1024 * 1024
+#: Required on every System One request that carries an image: images are a preview there.
+JEV_IMAGES_HEADER = {"TypeSafe-Danger-Zone-Images": "true"}
+
+
+def jev_accepts(media_type: str, data: bytes) -> bool:
+    """Whether System One takes this image as an asset."""
+    if media_type not in JEV_IMAGE_FORMATS or len(data) > JEV_IMAGE_MAX_BYTES:
+        return False
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as opened:  # reads the header only
+            width, height = opened.size
+            progressive = bool(opened.info.get("progressive"))
+    except Exception:
+        return False
+    low, high = JEV_IMAGE_SIDE
+    return low <= width <= high and low <= height <= high and not progressive
 
 
 class DecisionAnswer(BaseModel):
@@ -255,6 +282,11 @@ class DecisionModel:
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         )
 
+    @property
+    def takes_images(self) -> bool:
+        """Whether its questions can look at images: System One's ``assets``; OpenAI's Decisions API has none."""
+        return self.provider != "openai"
+
     @classmethod
     def from_config(cls, config: DecisionModelConfig) -> DecisionModel:
         return cls(
@@ -429,8 +461,7 @@ class DecisionModel:
         headers: dict[str, str] = {}
         if assets:
             body["assets"] = {name: asset.model_dump() for name, asset in assets.items()}
-            # TypeSafe answers about images only for a caller that opts in to its preview.
-            headers["TypeSafe-Danger-Zone-Images"] = "true"
+            headers = dict(JEV_IMAGES_HEADER)
         if self.provider == "cloudflare":
             raw = await self._post(f"/@cf/cloudflare/{self.model}", body, headers)
             return _CloudflareEnvelope.model_validate(raw).result

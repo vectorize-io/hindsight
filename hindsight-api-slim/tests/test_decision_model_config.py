@@ -161,7 +161,7 @@ def test_unknown_provider_fails_at_startup(monkeypatch):
 
 def test_keys_and_endpoints_are_credentials():
     credentials = HindsightConfig.get_credential_fields()
-    for prefix in ("", "recall_", "reflect_", "consolidation_", "knowledge_"):
+    for prefix in ("", "recall_", "reflect_", "consolidation_", "kb_"):
         assert f"{prefix}decision_model_api_key" in credentials
         assert f"{prefix}decision_model_base_url" in credentials
 

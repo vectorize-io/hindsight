@@ -607,7 +607,8 @@ def l2_normalize(vector: list[float]) -> list[float]:
     return [v / norm for v in vector]
 
 
-#: Longest side of the picture a decision model judges a hit by: Jev refuses larger images.
+#: Longest side of the picture a decision model judges a hit by: the size ViDoRe V3 was measured at.
+#: System One takes up to 1568 (``JEV_IMAGE_SIDE``); a smaller picture is also a cheaper request.
 JUDGE_SIDE = 1024
 
 
