@@ -819,6 +819,11 @@ class WorkerPoller:
                 task_dict = json.loads(payload) if isinstance(payload, str) else payload
                 task_dict["_retry_count"] = row["retry_count"]
                 task_dict["_operation_id"] = str(row["operation_id"])
+                # The row says which bank and operation the job belongs to; the payload
+                # only carries its arguments. Every submitter writes the same values in
+                # both, so taking them from the row keeps one source of truth.
+                task_dict["bank_id"] = row["bank_id"]
+                task_dict["operation_id"] = str(row["operation_id"])
                 # The DB column is authoritative for operation_type — inject it
                 # into task_dict so in-flight tracking and slot accounting work.
                 db_op_type = row["operation_type"]
@@ -1350,8 +1355,12 @@ class WorkerPoller:
         try:
             schema_info = f", schema={task.schema}" if task.schema else ""
             logger.debug(f"Executing task {task.operation_id} (type={task_type}, bank={bank_id}{schema_info})")
+            # The job runs in the schema it was claimed from. The default schema is
+            # None here and its jobs never carry ``_schema``, so drop any the payload has.
             if task.schema:
                 task.task_dict["_schema"] = task.schema
+            else:
+                task.task_dict.pop("_schema", None)
             with worker_task(task.operation_id, task.queued_at):
                 await self._run_executor(task, task_type, holder)
             logger.debug(f"Task {task.operation_id} execution finished")
