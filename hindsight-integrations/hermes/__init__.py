@@ -862,6 +862,16 @@ class HindsightMemoryProvider(MemoryProvider):
                 "description": "Also auto-retain scheduled (cron) runs; off by default so job output stays out of the user's memory",
                 "default": False,
             },
+            {
+                "key": "retain_kanban",
+                "description": "Let kanban workers write to memory (auto-retain, the retain tool, built-in memory mirror); off by default so workers only read the shared bank",
+                "default": False,
+            },
+            {
+                "key": "recall_cron",
+                "description": "Also auto-recall in scheduled (cron) runs; off by default because the query would be Hermes' fixed cron notice, not the job",
+                "default": False,
+            },
             {"key": "retain_every_n_turns", "description": "Retain every N turns (1 = every turn)", "default": 1},
             {
                 "key": "retain_async",
@@ -1563,11 +1573,20 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def _apply_retain_policy(self, cfg: dict) -> None:
         """Pure-config retain knobs (no env/secret reads; ``{}`` yields the defaults)."""
-        # Hermes' provider contract: skip automatic writes for non-primary runs (#5555). retain_cron opts
-        # scheduled runs back in; sub-agents and kanban workers report to a parent that retains its own turns.
+        # Hermes' provider contract: skip automatic writes for non-primary runs (#5555). retain_cron and
+        # retain_kanban opt those runs back in; sub-agents report to a parent that retains its own turns.
         context = getattr(self, "_agent_context", "primary")
-        skip = context in ("subagent", "kanban") or (context == "cron" and not cfg.get("retain_cron", False))
+        retain_kanban = bool(cfg.get("retain_kanban", False))
+        skip = (
+            context == "subagent"
+            or (context == "kanban" and not retain_kanban)
+            or (context == "cron" and not cfg.get("retain_cron", False))
+        )
         self._auto_retain = bool(cfg.get("auto_retain", True)) and not skip
+        # A kanban worker shares its profile's bank to READ it. Skipping auto-retain alone still let the
+        # retain tool and the built-in memory mirror write task chatter into it, mostly duplicate reports
+        # the parent already retains (#6124). Unless retain_kanban opts it in (#6419), it writes nothing.
+        self._writes_disabled = context == "kanban" and not retain_kanban
         self._retain_every_n_turns = max(1, _parse_int_setting(cfg.get("retain_every_n_turns"), 1))
         self._retain_context = cfg.get("retain_context", _RETAIN_CONTEXT_DEFAULT)
         self._retain_async = cfg.get("retain_async", True)
@@ -1589,7 +1608,11 @@ class HindsightMemoryProvider(MemoryProvider):
         # so inheriting them would quietly narrow it for every install that sets them (#5170).
         self._reflect_tags = _normalize_string_list(cfg.get("reflect_tags")) or None
         self._reflect_tags_match = cfg.get("reflect_tags_match", "any")
-        self._auto_recall = cfg.get("auto_recall", True)
+        # A cron prompt opens with Hermes' fixed ~1.1k-char cron notice, so the first
+        # recall_max_input_chars of every cron query were that notice, not the job: each fire injected
+        # ~4k tokens of unrelated memories (#6145). recall_cron opts back in; the tools still work.
+        cron_skip = getattr(self, "_agent_context", "primary") == "cron" and not cfg.get("recall_cron", False)
+        self._auto_recall = cfg.get("auto_recall", True) and not cron_skip
         self._recall_sync = bool(cfg.get("recall_sync", False))
         self._recall_max_tokens = _parse_int_setting(cfg.get("recall_max_tokens"), 4096)
         self._recall_max_input_chars = _parse_int_setting(cfg.get("recall_max_input_chars"), 800)
@@ -1688,6 +1711,8 @@ class HindsightMemoryProvider(MemoryProvider):
         label = "" if mode == "hybrid" else f" ({mode} mode)"
         # With auto_recall off nothing is injected, so hybrid must not promise injected context.
         tail = _TOOL_GUIDANCE if mode == "hybrid" and not self._auto_recall else _SYSTEM_PROMPT_TAILS[mode]
+        if self._writes_disabled:  # the retain tool is not offered to a read-only kanban worker
+            tail = tail.replace(" Use hindsight_retain to store facts.", "")
         return f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{tail}"
 
     # -- recall ------------------------------------------------------------------
@@ -2104,7 +2129,7 @@ class HindsightMemoryProvider(MemoryProvider):
         """Retain built-in memory adds and replaces (``target``: memory | user) on the writer
         thread, so an entry the agent later prunes from the size-capped file stays in the bank.
         Removals are not retained."""
-        if action not in ("add", "replace") or not content or self._shutting_down.is_set():
+        if action not in ("add", "replace") or not content or self._shutting_down.is_set() or self._writes_disabled:
             return
         item = self._build_retain_kwargs(
             content,
@@ -2132,9 +2157,15 @@ class HindsightMemoryProvider(MemoryProvider):
     # -- tools -------------------------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [] if self._memory_mode == "context" else [RETAIN_SCHEMA, RECALL_SCHEMA, REFLECT_SCHEMA]
+        if self._memory_mode == "context":
+            return []
+        return (
+            [RECALL_SCHEMA, REFLECT_SCHEMA] if self._writes_disabled else [RETAIN_SCHEMA, RECALL_SCHEMA, REFLECT_SCHEMA]
+        )
 
     def _tool_retain(self, args: dict) -> str:
+        if self._writes_disabled:
+            return "hindsight_retain is disabled for kanban workers; set retain_kanban to allow it."
         content, context = args["content"], args.get("context")
         item = self._build_retain_kwargs(
             content, context=context, tags=args.get("tags"), occurred_at=args.get("occurred_at")
