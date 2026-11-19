@@ -111,6 +111,16 @@
       "text_contains": "277,017,622"
     },
     {
+      "id": "two-bodies-html",
+      "category": "text",
+      "file": "text/two-bodies.html",
+      "source": "Govdocs1 000740.html (a CBP newsletter page, public domain)",
+      "issue": "It opens <body> twice, the first time still inside <head> and empty; markitdown converts the first only, and 1,500 words failed 'nothing to search'.",
+      "expect": "ready",
+      "query": "unified to secure America's borders CBP newsletter",
+      "text_contains": "Unified to secure America"
+    },
+    {
       "id": "unsupported-codec",
       "category": "video",
       "file": "video/unsupported-codec.mp4",
