@@ -2800,3 +2800,15 @@ def test_an_office_converter_that_dies_fails_its_file_and_the_next_gets_a_new_on
     with pytest.raises(media.MediaError, match="converter died"):
         media.read_text(b"PK", "huge.xlsx")
     assert media._OFFICE_POOL is None
+
+
+def test_a_table_of_all_caps_rows_is_cut_into_passages_of_their_size():
+    # Each "| AARON | GA |" row reads as a heading; a run of headings waiting for content grew into one
+    # passage of 399k tokens (a Govdocs1 spreadsheet), which the embedder refused.
+    from hindsight_api.engine.token_encoding import count_tokens
+    from hindsight_api.knowledge.text_passages import split_into_passages
+
+    rows = "\n".join(f"| TOWN{n:05d} | GA |" for n in range(3000))
+    passages = split_into_passages(rows, passage_size=64)
+    assert len(passages) > 1 and max(count_tokens(p) for p in passages) <= 64
+    assert "\n".join(passages) == rows  # exact slices, in order, nothing lost

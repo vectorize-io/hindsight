@@ -220,6 +220,11 @@ def split_into_passages(text: str, *, passage_size: int) -> list[str]:
         heading = block.opens_section and "\n" not in chunk
         if block.opens_section and not bare:
             flush()
+        elif bare and heading and run_tokens + tokens > passage_size:
+            # Bare headings wait for content, but not past a passage's size: a spreadsheet's rows of
+            # all-caps cells ("| AARON | GA |") all read as headings, and 52k of them became one passage of
+            # 399k tokens, which an embedder refuses (EmbeddingGemma 2 reads 8,192).
+            flush()
         if tokens > passage_size or (bare and not heading and run_tokens + tokens > passage_size):
             # Cut by sentences. Waiting headings lead the first piece: the sentences come in groups
             # small enough to fit beside them, so the piece stays within passage_size.
