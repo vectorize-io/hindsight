@@ -40,7 +40,7 @@
         },
         {
           "type": "subtitle",
-          "text": "a decision model judges the best 100"
+          "text": "a reranker scores what fits in one request"
         }
       ],
       "minCardHeight": 118,
@@ -250,13 +250,13 @@
               {
                 "tag": "p.31",
                 "tone": "blue",
-                "text": "judged with its page around it",
+                "text": "sent with its page around it",
                 "mark": "✓"
               },
               {
                 "tag": "p.4",
                 "tone": "gray",
-                "text": "judged by its picture and its text",
+                "text": "sent as its picture and its text",
                 "mark": "✓"
               },
               {
@@ -266,7 +266,7 @@
               }
             ]
           },
-          "say": "Each candidate is scored from all its vectors, with keyword matches mixed in. With a decision model set, it judges the best 100: a text hit with the page around it, a page by its picture and its text. Its order is fused with the search's.",
+          "say": "Each candidate is scored from all its vectors, with keyword matches mixed in. With a reranker set, the best go to it in one request: a text hit with the page around it, a page as its picture and its text. Its scores reorder them.",
           "ms": 3800
         },
         {
