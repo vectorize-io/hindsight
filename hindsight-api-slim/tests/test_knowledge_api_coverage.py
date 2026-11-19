@@ -282,7 +282,10 @@ async def test_the_original_file_comes_back_typed_and_named(api_client, kb):
     r = await api_client.get(f"{KB}/{kb}/documents/n/file")
     assert r.status_code == 200 and r.content == b"red notes"
     assert r.headers["content-type"].startswith("text/markdown")
-    assert r.headers["content-disposition"] == "inline; filename*=UTF-8''my%20notes%20%C3%A9.md"
+    assert (
+        r.headers["content-disposition"]
+        == "inline; filename=\"my_notes__.md\"; filename*=UTF-8''my%20notes%20%C3%A9.md"
+    )
 
 
 async def test_a_range_request_on_a_file_gets_the_whole_file(api_client, kb):
