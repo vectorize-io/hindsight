@@ -345,7 +345,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "hindsight-client", specifier = ">=0.10.1,<2" },
-    { name = "hindsight-embed", specifier = ">=0.10.1,<2" },
+    { name = "hindsight-embed", specifier = ">=0.10.3,<2" },
 ]
 
 [package.metadata.requires-dev]
