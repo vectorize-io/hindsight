@@ -166,22 +166,19 @@ class LocalGemmaEmbedder(KnowledgeEmbedder):
         out: list[list[float]] = []
         # The lock is taken per model batch, not per call, so a search arriving during a long
         # ingest waits for one batch rather than the whole document.
-        for start in range(0, len(inputs), self._batch_size):
+        for batch in _model_batches(inputs, self._batch_size):
             with self._lock:
                 st = self._load()
                 processor = st[0].processor.image_processor
                 processor.max_soft_tokens = processor.image_seq_length = image_tokens or self._image_tokens
                 vectors = st.encode(
-                    inputs[start : start + self._batch_size],
-                    batch_size=self._batch_size,
+                    batch,
+                    batch_size=len(batch),
                     normalize_embeddings=True,
                     truncate_dim=self._truncate,
                     show_progress_bar=False,
                 )
-                if any(
-                    isinstance(i, dict) and ("video" in i or "audio" in i)
-                    for i in inputs[start : start + self._batch_size]
-                ):
+                if any(_is_clip(i) for i in batch):
                     # Every clip length allocates differently sized blocks and the caching allocator
                     # keeps them all: video ingest grew past 26GB on an M3 Max without this.
                     _release_device_cache()
@@ -230,6 +227,29 @@ class LocalGemmaEmbedder(KnowledgeEmbedder):
                 inp["text"] = f"{_QUERY_PREFIX}{text} {placeholders}"
         vectors = await asyncio.to_thread(self._encode, [inp])
         return vectors[0]
+
+
+def _is_clip(model_input: Any) -> bool:
+    return isinstance(model_input, dict) and ("video" in model_input or "audio" in model_input)
+
+
+def _model_batches(inputs: list[Any], size: int) -> Iterator[list[Any]]:
+    """``inputs`` in order, ``size`` at a time, but an audio or video clip alone: one 30 s clip took
+    2 GB on CPU, so the 32 a batch held ran a server to 42 GB and the machine out of memory."""
+    batch: list[Any] = []
+    for model_input in inputs:
+        if _is_clip(model_input):
+            if batch:
+                yield batch
+                batch = []
+            yield [model_input]
+            continue
+        batch.append(model_input)
+        if len(batch) == size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
 
 
 def _release_device_cache() -> None:

@@ -62,12 +62,41 @@ class Usage:
         return round(self.peak_rss_mb - self.start_rss_mb, 1)
 
 
-class ResourceMeter:
-    """Samples a process and its children (the API server and its worker) on a thread."""
+#: Where the server runs: its process id (one this run started), the name of the docker container it
+#: runs in (``--container``: memory capped, so a runaway kills the container, not the machine), or None.
+Server = int | str | None
 
-    def __init__(self, pid: int | None, interval: float = 0.2) -> None:
+
+def _container_rss_cpu(name: str) -> tuple[float, float]:
+    """The container's anonymous memory (what its processes hold; not the page cache its temp files fill)
+    and CPU seconds, from its cgroup."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [
+                "docker",
+                "exec",
+                name,
+                "sh",
+                "-c",
+                "grep '^anon ' /sys/fs/cgroup/memory.stat; grep usage_usec /sys/fs/cgroup/cpu.stat",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.split()
+        return int(out[1]) / 1048576, int(out[3]) / 1e6
+    except (IndexError, ValueError, OSError, subprocess.SubprocessError):
+        return 0.0, 0.0
+
+
+class ResourceMeter:
+    """Samples the server (a process and its children, or a container) on a thread."""
+
+    def __init__(self, pid: Server, interval: float = 0.2) -> None:
         self._pid = pid
-        self._interval = interval
+        self._interval = interval if not isinstance(pid, str) else 1.0  # a docker exec per sample
         self._peak = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -81,6 +110,8 @@ class ResourceMeter:
         return [root, *root.children(recursive=True)]
 
     def _rss_cpu(self) -> tuple[float, float]:
+        if isinstance(self._pid, str):
+            return _container_rss_cpu(self._pid)
         import psutil
 
         rss = cpu = 0.0
@@ -157,7 +188,7 @@ async def ingest_file(
     path: Path,
     *,
     document_id: str,
-    pid: int | None,
+    pid: Server,
     timeout: float = 900.0,
 ) -> FileOutcome:
     size = path.stat().st_size
@@ -218,9 +249,16 @@ async def rank_of(http: httpx.AsyncClient, bank_id: str, query: str, document_id
     return seen.index(document_id) + 1 if document_id in seen[:k] else None
 
 
-def server_alive(pid: int | None) -> bool:
+def server_alive(pid: Server) -> bool:
     if pid is None:
         return True
+    if isinstance(pid, str):
+        import subprocess
+
+        state = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Running}}", pid], capture_output=True, text=True, timeout=30
+        )
+        return state.stdout.strip() == "true"
     import psutil
 
     return psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
@@ -343,7 +381,7 @@ def _files(roots: list[Path], limit: int | None) -> list[Path]:
     return found[:limit] if limit else found
 
 
-async def _harvest(files: list[Path], out: Path, url: str, pid: int | None, timeout: float, concurrency: int) -> int:
+async def _harvest(files: list[Path], out: Path, url: str, pid: Server, timeout: float, concurrency: int) -> int:
     """Ingest ``files`` into one bank, ``concurrency`` at a time (then usage is the mix's, not one file's).
 
     Resumes: a file already in ``out`` is skipped, so a stopped sweep picks up where it was.
@@ -352,6 +390,7 @@ async def _harvest(files: list[Path], out: Path, url: str, pid: int | None, time
     todo = [p for p in files if str(p) not in done]
     bugs = 0
     gate = asyncio.Semaphore(concurrency)
+    in_flight: dict[Path, str] = {}
     async with httpx.AsyncClient(base_url=url, timeout=60) as http:
         bank_id = await create_bank(http)
         print(f"bank {bank_id}, {len(todo)} of {len(files)} files to go -> {out}")
@@ -363,12 +402,16 @@ async def _harvest(files: list[Path], out: Path, url: str, pid: int | None, time
                 async with gate:
                     if not server_alive(pid):
                         return
+                    in_flight[path] = doc_id
                     try:
                         outcome = await ingest_file(http, bank_id, path, document_id=doc_id, pid=pid, timeout=timeout)
                     except httpx.HTTPError as exc:
                         outcome = FileOutcome(
                             path.name, doc_id, path.stat().st_size, "error", 0, repr(exc), 0, None, 0, None
                         )
+                    if not server_alive(pid):
+                        return  # still in flight: recorded below, with the others when it died
+                    in_flight.pop(path, None)
                 sink.write(json.dumps(asdict(outcome) | {"path": str(path)}) + "\n")
                 sink.flush()
                 mark = "ok " if outcome.handled else "BUG"
@@ -382,7 +425,17 @@ async def _harvest(files: list[Path], out: Path, url: str, pid: int | None, time
 
             await asyncio.gather(*(one(n, p) for n, p in enumerate(todo, 1)))
     if not server_alive(pid):
-        print("the server died")
+        # Each file in flight when it died is recorded as such, so a resumed sweep skips them; one of them
+        # is the culprit, and is ingested alone to find out which.
+        died = [p for p in files if str(p) not in done and str(p) not in {json.loads(x)["path"] for x in out.open()}]
+        suspects = [p for p in died if p in in_flight] or died[:concurrency]
+        with out.open("a") as sink:
+            for p in suspects:
+                line = FileOutcome(
+                    p.name, in_flight.get(p, ""), p.stat().st_size, "died", 0, "the server died", 0, None, 0, None
+                )
+                sink.write(json.dumps(asdict(line) | {"path": str(p)}) + "\n")
+        print(f"the server died with in flight: {', '.join(p.name for p in suspects)}")
         return bugs + 1
     return bugs
 
@@ -397,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("--timeout", type=float, default=900.0, help="seconds a file may take")
     h.add_argument("--concurrency", type=int, default=1, help="files in flight at once")
     h.add_argument("--api-url", default=None, help="a server already running; else one is started")
+    h.add_argument("--container", default=None, help="with --api-url: the docker container it runs in, to measure")
     args = parser.parse_args(argv)
 
     from hindsight_system_evals.target import eval_target
@@ -404,9 +458,8 @@ def main(argv: list[str] | None = None) -> int:
     files = _files(args.roots, args.limit)
     # The server's log beside the results: a file that broke it is read about there.
     with eval_target(args.api_url, log_path=args.out.with_suffix(".server.log")) as target:
-        return (
-            1 if asyncio.run(_harvest(files, args.out, target.url, target.pid, args.timeout, args.concurrency)) else 0
-        )
+        server = args.container or target.pid
+        return 1 if asyncio.run(_harvest(files, args.out, target.url, server, args.timeout, args.concurrency)) else 0
 
 
 if __name__ == "__main__":

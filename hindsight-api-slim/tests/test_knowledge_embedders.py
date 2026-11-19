@@ -297,3 +297,19 @@ async def test_a_video_query_is_refused_by_a_model_without_video():
     )
     with pytest.raises(UnsupportedModalityError):
         await images_only.embed_query(None, None, MP4)
+
+
+def test_a_clip_is_embedded_alone_and_the_rest_in_batches():
+    # One 30 s video clip took 2 GB on CPU: 32 of them in one batch ran a server to 42 GB.
+    from hindsight_api.knowledge.embedders import _model_batches
+
+    clip = {"video": "frames"}
+    inputs = ["a", "b", "c", clip, "d", {"audio": "pcm"}, {"image": "pixels"}, "e"]
+    assert list(_model_batches(inputs, 2)) == [
+        ["a", "b"],
+        ["c"],
+        [clip],
+        ["d"],
+        [{"audio": "pcm"}],
+        [{"image": "pixels"}, "e"],
+    ]
