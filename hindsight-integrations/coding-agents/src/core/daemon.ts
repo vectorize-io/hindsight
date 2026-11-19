@@ -193,6 +193,9 @@ export function daemonEnv(
   return out;
 }
 
+/** Carries the spawning session's resolved config to the detached starter (daemon-start.ts). */
+export const DAEMON_CONFIG_ENV = "HINDSIGHT_CODING_AGENTS_DAEMON_CONFIG";
+
 /**
  * Launch the starter as a DETACHED process, the way seeding and the codebase survey are launched.
  *
@@ -215,6 +218,10 @@ export function startDaemonDetached(
       detached: true,
       stdio: "ignore",
       windowsHide: true,
+      // The caller's config is already resolved for its directory and bank. Re-reading the file in
+      // the starter lost `paths` / `banks` overrides, so a daemon enabled only there never started
+      // (#6334).
+      env: { ...process.env, [DAEMON_CONFIG_ENV]: JSON.stringify(cfg) },
     });
     // spawn() failures often surface ASYNCHRONOUSLY as an 'error' event; unhandled, that would
     // crash the hook.

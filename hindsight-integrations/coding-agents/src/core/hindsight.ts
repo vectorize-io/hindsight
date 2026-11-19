@@ -505,7 +505,9 @@ export class HindsightClient {
     }
     if (!r.ok && r.status !== 404 && !tolerate.includes(r.status))
       throw new Error(
-        `${method} ${url} -> ${r.status} ${await r.text()}${this.authHint(r.status)}`
+        // Query dropped: an encoded search query filled the 200-char error cap and pushed the
+        // status and the server's reason out of the tool error (#6341).
+        `${method} ${url.split("?")[0]} -> ${r.status} ${await r.text()}${this.authHint(r.status)}`
       );
     return r;
   }

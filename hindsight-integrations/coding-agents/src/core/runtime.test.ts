@@ -72,6 +72,23 @@ describe("RuntimeCore", () => {
     expect(runtime.getInjection(a)).toBeUndefined();
   });
 
+  it("sends the tool guide once on turn 1: the preamble, not also the roster refresh (#5977)", async () => {
+    const client = {
+      listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+      listPages: vi.fn(async () => ({ items: [] })),
+      reflect: vi.fn(async () => "a memory"),
+    } as unknown as HindsightClient;
+    const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+    const id = `session-guide-${randomUUID()}`;
+
+    await runtime.onPrompt(id, "first prompt");
+    expect(runtime.getInjection(id)).toContain("<hindsight_pages>");
+    expect(runtime.getInjection(id)).not.toContain("<hindsight_page_refresh>");
+
+    await runtime.onPrompt(id, "second prompt");
+    expect(runtime.getInjection(id)).toContain("<hindsight_page_refresh>");
+  });
+
   it("drops a host's injected tags from the prompt before reflecting on it (#6488)", async () => {
     const client = {
       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),

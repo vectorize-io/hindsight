@@ -1606,6 +1606,17 @@ describe("opencode2 installer", () => {
     expect(readJson(cfgPath(ctx)).plugin).toEqual([ctx.pkgRoot]);
   });
 
+  it("clears our entry from v2's `plugins` key on install and uninstall, keeping others (#6094)", () => {
+    const ctx = makeCtx();
+    writeJsonAt(cfgPath(ctx), { plugins: ["other-plugin", "/x/.hindsight/coding-agents"] });
+    run(["install", "opencode2"], ctx);
+    expect(readJson(cfgPath(ctx))).toEqual({ plugins: ["other-plugin"], plugin: [ctx.pkgRoot] });
+
+    writeJsonAt(cfgPath(ctx), { plugins: ["other-plugin", "/x/.hindsight/coding-agents"] });
+    run(["uninstall", "opencode2"], ctx);
+    expect(readJson(cfgPath(ctx))).toEqual({ plugins: ["other-plugin"] });
+  });
+
   it("detects on the binary alone — ~/.config/opencode must not sway it", () => {
     // That directory is v1's too. Keying on it (as the opencode installer legitimately does) would
     // make `install` — which wires every DETECTED agent — claim opencode2 on every machine that

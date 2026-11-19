@@ -6,8 +6,8 @@
  * Blocking here is the point: this process exists purely to own that wait, and exits once the
  * daemon answers /health. It writes only to the plugin log, so its stdio can be discarded.
  */
-import { loadConfig } from "./core/config";
-import { daemonEnv, isServerHealthy, preflightDaemon } from "./core/daemon";
+import { type Config, loadConfig } from "./core/config";
+import { DAEMON_CONFIG_ENV, daemonEnv, isServerHealthy, preflightDaemon } from "./core/daemon";
 import { diag } from "./core/diag";
 import { log, setLogLevel } from "./core/log";
 
@@ -18,7 +18,9 @@ function arg(name: string): string | undefined {
 
 async function main(): Promise<void> {
   const harness = arg("harness") ?? "coding-agent";
-  const cfg = loadConfig({ harness });
+  const passed = process.env[DAEMON_CONFIG_ENV];
+  // Started by a session: use its config, resolved for the session's directory and bank.
+  const cfg: Config = passed ? (JSON.parse(passed) as Config) : loadConfig({ harness });
   setLogLevel(cfg.logLevel);
 
   if (cfg.serverMode !== "daemon") return;

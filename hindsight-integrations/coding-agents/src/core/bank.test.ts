@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // id derived from it. Real repositories are covered by bank-bare-hub / bank-missing-dir.
 vi.mock("./git-layout", () => ({ probeGitLayout: vi.fn() }));
 
-import { deriveBankId } from "./bank";
+import { deriveBankId, isWithin } from "./bank";
 import { probeGitLayout } from "./git-layout";
 
 const mockProbe = vi.mocked(probeGitLayout);
@@ -144,5 +144,14 @@ describe("mapPathToBank ~ expansion", () => {
     const cfg = { mapPathToBank: { "~/scratch-zone": "scratch" } } as never;
     expect(deriveBankId(cfg, `${process.env.HOME}/scratch-zone/some/repo`)).toBe("scratch");
     expect(deriveBankId(cfg, "/elsewhere/scratch-zone")).not.toBe("scratch");
+  });
+});
+
+describe("isWithin", () => {
+  it("ignores letter case on Windows only (#6356)", () => {
+    expect(isWithin("/Work/App/src", "/work/app", "win32")).toBe(true);
+    expect(isWithin("/Work/App", "/work/app", "win32")).toBe(true);
+    expect(isWithin("/Work/App-other", "/work/app", "win32")).toBe(false);
+    expect(isWithin("/Work/App/src", "/work/app", "linux")).toBe(false);
   });
 });

@@ -423,17 +423,33 @@ function registerOpencodePlugin(c: InstallCtx, name: string): void {
   // writeJsonc, not writeJson: this config routinely carries comments, and re-serializing the
   // parsed object would strip every one of them even though the read succeeded.
   writeJsonc(path, "plugin", [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot]);
+  // v2 merges `plugins` with the legacy key, so an entry of ours there would load twice (#6094).
+  dropOursFromV2Plugins(path, cfg);
   c.log?.(`${name}: plugin registered in ${path}`);
+}
+
+/** Remove our entries from v2's `plugins` key (hand-added or user-migrated), keeping the rest. */
+function dropOursFromV2Plugins(path: string, cfg: Record<string, any>): boolean {
+  if (!Array.isArray(cfg.plugins)) return false;
+  const kept = cfg.plugins.filter((p: unknown) => !String(p).includes(MARKER));
+  if (kept.length === cfg.plugins.length) return false;
+  writeJsonc(path, "plugins", kept.length ? kept : undefined);
+  return true;
 }
 
 function unregisterOpencodePlugin(c: InstallCtx, name: string): void {
   const path = opencodeConfigPath(c);
   if (!existsSync(path)) return;
   const cfg = parseJsonc(readFileSync(path, "utf8"));
-  if (!cfg || !Array.isArray(cfg.plugin)) return;
-  const kept = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
-  writeJsonc(path, "plugin", kept.length ? kept : undefined);
-  c.log?.(`${name}: plugin entry removed`);
+  if (!cfg) return;
+  // An entry under v2's `plugins` key keeps memory wired just the same (#6094).
+  let removed = dropOursFromV2Plugins(path, cfg);
+  if (Array.isArray(cfg.plugin)) {
+    const kept = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
+    writeJsonc(path, "plugin", kept.length ? kept : undefined);
+    removed = true;
+  }
+  if (removed) c.log?.(`${name}: plugin entry removed`);
 }
 
 const opencode: HarnessInstaller = {

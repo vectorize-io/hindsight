@@ -236,6 +236,11 @@ export async function buildHookOutput(args: {
   cfg: Config;
   client: HookClient;
   cacheFile: string;
+  /** The caller injects the full page preamble on turn 1 (plugin hosts), which already carries
+   *  the roster and tool guide, so the turn-1 roster refresh would repeat it (#5977). Hook
+   *  harnesses leave it off: some (Grok) never hand the SessionStart text to the model, so the
+   *  turn-1 refresh is their only copy of the guide. */
+  preambleOnFirstTurn?: boolean;
 }): Promise<HookOutput> {
   const { harness, prompt, cfg, client, cacheFile } = args;
 
@@ -381,7 +386,7 @@ export async function buildHookOutput(args: {
   // hindsight_search_pages when a question warrants it — an unprompted injection on
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
-  if (cadence > 0 && turns % cadence === 0) {
+  if (cadence > 0 && turns % cadence === 0 && !(turns === 1 && args.preambleOnFirstTurn)) {
     blocks.push(
       buildRosterRefresh(pages, {
         reflectOnNewGoals: cfg.autoInject !== "reflect",

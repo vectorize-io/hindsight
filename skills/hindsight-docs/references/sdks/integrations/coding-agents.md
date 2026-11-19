@@ -94,9 +94,11 @@ command again** — it re-copies the runtime in place.
 
 Day to day you should not have to: once a day, a session start checks npm and re-stages a newer
 runtime in the background (`autoUpdate`, on by default — set it to `false` to pin the version you
-have). That is the `update` command above, which refreshes the copy every wired agent already
-points at and deliberately touches no host config; re-run `install` yourself after a release that
-adds a new hook, or to wire another agent.
+have). It only replaces a runtime that `npx` installed: a copy from `npm i -g`, a project dependency
+or a local checkout is left alone. Running `update` or `install` yourself is different — it re-stages
+the published release over whatever is installed, a local build included. `update` refreshes the copy
+every wired agent already points at and deliberately touches no host config; re-run `install`
+yourself after a release that adds a new hook, or to wire another agent.
 
 On a terminal it also asks **where memory should live** — Hindsight Cloud, a server you run, or a
 local daemon on this machine (see Where memory lives). Scripted installs pass
@@ -1192,6 +1194,9 @@ found), failed to launch or exited with an error leaves one `[survey]` line in t
 Delete its bank on the server. The bank is the **only** state this integration keeps, so the next
 session in that repo is a true first open — seed and survey run again from scratch. There are no
 client-side files to clean up.
+
+Deleting a bank cannot be undone, so an agent never does it on its own: it names the repo and what
+would be lost, and the owner deletes the bank themselves from the control plane.
 
 ### Marker documents you may notice
 

@@ -64,8 +64,10 @@ const TOOL_GUIDE =
   "    • you are implementing something new, or two parts have to fit together;\n" +
   "    • the user asks why something is the way it is, or what is left to do;\n" +
   "    • you are about to commit, and need to know what the change was supposed to honour.\n" +
-  "  It ranks the pages by relevance and returns the matching passage, which a page title cannot tell " +
-  "you. What it returns is a past record, not a live reading: a claim that something was fixed, " +
+  "  It ranks the pages by relevance and shows the opening of each; every page can come back, so " +
+  "the ranking, not the list, is the signal. Read the top page with hindsight_read_page before you " +
+  "rely on it — the opening is not the passage that matched. What it returns is a past record, " +
+  "not a live reading: a claim that something was fixed, " +
   "passes, or works is what someone said then — check it against the code before you rely on it, " +
   "and say so when the two disagree.\n" +
   "  CREDITING IS NOT OPTIONAL AND NOT A JUDGEMENT CALL. If you called this tool and anything it " +
