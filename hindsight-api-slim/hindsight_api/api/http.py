@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from hindsight_api.api.admission import AdmissionAbandoned, AdmissionRejected, build_controller_from_config
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
+from hindsight_api.api.gzip_offload import OffloadingGZipMiddleware
 from hindsight_api.api.observability import HttpObservabilityMiddleware
 from hindsight_api.api.passthrough_headers import collect_passthrough_headers
 from hindsight_api.api.unknown_params import UnknownParamsRoute, use_unknown_params_routes
@@ -46,8 +47,6 @@ from hindsight_api.engine.document_history import DocumentHistoryResponse
 from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse, LLMStatsSplit
 from hindsight_api.engine.observation_tree import TreeFolder
 from hindsight_api.extensions import AuthenticationError, PrecheckContext, PrecheckOperation
-
-from .gzip_offload import OffloadingGZipMiddleware
 
 
 def _parse_metadata(metadata: Any) -> dict[str, Any]:

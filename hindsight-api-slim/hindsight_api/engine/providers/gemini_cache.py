@@ -258,7 +258,7 @@ class _CacheNotEligible(Exception):
 # Schema class -> its serialised, title-stripped JSON. Building that JSON costs
 # 1-2 ms of event-loop CPU, and a document's chunks all share one schema class,
 # so without this a large document paid it once per chunk, back to back (#6667).
-# Weak keys: retain rebuilds the class per document, so entries die with it.
+# Weak keys: some extraction modes build a fresh class per call, so entries die with it.
 # Shared by every loop/thread in the process, hence the lock (held only for the
 # lookup and the store, never while serialising).
 _SCHEMA_KEYS: weakref.WeakKeyDictionary[type, bytes] = weakref.WeakKeyDictionary()

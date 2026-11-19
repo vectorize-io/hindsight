@@ -18,7 +18,7 @@ LARGE = (os.urandom(512).hex() * (4 * _OFFLOAD_MIN_BYTES // 1024)).encode()
 SMALL = b"x" * 1000
 
 
-def _app() -> Starlette:
+def _app(minimum_size: int) -> Starlette:
     async def large(request):
         return Response(LARGE, media_type="application/json")
 
@@ -39,7 +39,7 @@ def _app() -> Starlette:
     app = Starlette(
         routes=[Route(f"/{fn.__name__}", fn) for fn in (large, small, streamed, events)],
     )
-    app.add_middleware(OffloadingGZipMiddleware, minimum_size=500)
+    app.add_middleware(OffloadingGZipMiddleware, minimum_size=minimum_size)
     return app
 
 
@@ -57,8 +57,9 @@ def compress_threads(monkeypatch) -> list[int]:
     return threads
 
 
-async def _get(path: str) -> httpx.Response:
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=_app()), base_url="http://t") as client:
+async def _get(path: str, minimum_size: int = 500) -> httpx.Response:
+    app = _app(minimum_size)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as client:
         return await client.get(path, headers={"Accept-Encoding": "gzip"})
 
 
@@ -92,6 +93,16 @@ async def test_streamed_body_mixes_offloaded_and_inline_chunks_into_one_stream(c
 @pytest.mark.asyncio
 async def test_excluded_content_type_is_left_alone(compress_threads):
     resp = await _get("/events")
+    assert "content-encoding" not in resp.headers
+    assert resp.content == LARGE
+    assert compress_threads == []
+
+
+@pytest.mark.asyncio
+async def test_body_under_a_raised_minimum_size_is_not_compressed(compress_threads):
+    """A deployment can raise the floor past the offload size. A body between the two goes out
+    uncompressed, so it must not be fed to the gzip stream in a thread either."""
+    resp = await _get("/large", minimum_size=len(LARGE) + 1)
     assert "content-encoding" not in resp.headers
     assert resp.content == LARGE
     assert compress_threads == []

@@ -34,9 +34,11 @@ class _OffloadingGZipResponder(GZipResponder):
         body = message.get("body", b"")
         if (
             message["type"] == "http.response.body"
-            and len(body) >= _OFFLOAD_MIN_BYTES
-            # The parent passes these through uncompressed; a body this size always clears
-            # minimum_size, so these are the only cases it would not compress.
+            # Every body the parent would send uncompressed must be skipped here, or the
+            # gzip stream gets a body that never goes out. Clearing minimum_size (which a
+            # deployment can raise past the offload floor) and the two pass-through flags
+            # rules all of them out.
+            and len(body) >= max(_OFFLOAD_MIN_BYTES, self.minimum_size)
             and not (self.content_encoding_set or self.content_type_is_excluded)
         ):
             self._precompressed = await asyncio.to_thread(
