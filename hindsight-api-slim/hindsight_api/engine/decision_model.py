@@ -24,11 +24,13 @@ provider's wire format:
 from __future__ import annotations
 
 import asyncio
+import base64
 import dataclasses
 import io
 import json
 import logging
 import time
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -39,7 +41,7 @@ from .._cross_loop import CrossLoopSemaphore
 from ..config import DecisionModelConfig, DecisionModelOperation
 from ..tracing import get_span_recorder
 from .aiohttp_session import LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
-from .decision_rerank_interface import MAX_REQUEST_TOKENS, DecisionRerank
+from .decision_rerank_interface import MAX_REQUEST_TOKENS, DecisionRerank, EvidenceImage
 from .remote_retry import RetryPolicy, acall_with_retry
 from .token_encoding import count_tokens, truncate_to_tokens
 
@@ -102,6 +104,17 @@ def jev_accepts(media_type: str, data: bytes) -> bool:
         return False
     low, high = JEV_IMAGE_SIDE
     return low <= width <= high and low <= height <= high and not progressive
+
+
+def as_assets(pictures: Mapping[str, EvidenceImage]) -> dict[str, DecisionAsset]:
+    """Pictures by reference (as :meth:`DecisionModel.shown` returns them) as System One assets."""
+    return {
+        ref: DecisionAsset(
+            format="png" if JEV_IMAGE_FORMATS[picture.media_type] == "png" else "jpg",
+            data_base64=base64.b64encode(picture.data).decode(),
+        )
+        for ref, picture in pictures.items()
+    }
 
 
 class DecisionAnswer(BaseModel):
@@ -273,8 +286,11 @@ class DecisionModel:
         max_request_tokens: int | None,
         retry_policy: RetryPolicy | None = None,
         tokenizer: str | None = None,
+        vision: bool = False,
     ):
         self.provider = provider
+        # Whether it is shown pictures (HINDSIGHT_API_DECISION_MODEL_VISION); see shown().
+        self.vision = vision
         self.max_request_tokens = max_request_tokens
         # The vocabulary max_request_tokens is counted in: the model's own when known,
         # since it is the model that refuses a request past its window.
@@ -307,7 +323,20 @@ class DecisionModel:
             max_concurrent=config.max_concurrent,
             max_request_tokens=config.max_request_tokens,
             tokenizer=config.tokenizer,
+            vision=config.vision,
         )
+
+    def shown(self, pictures: Sequence[EvidenceImage]) -> dict[str, EvidenceImage]:
+        """The ``pictures`` this model is shown, keyed by the reference (``[[picture-1]]``, ...)
+        the state names each by; :func:`as_assets` turns them into :meth:`ask`'s ``assets``.
+
+        None unless vision is on and the provider takes images (:attr:`takes_images`), and
+        never one System One would refuse (``jev_accepts``), since that fails the whole request.
+        """
+        if not self.vision or not self.takes_images:
+            return {}
+        accepted = [picture for picture in pictures if jev_accepts(picture.media_type, picture.data)]
+        return {f"[[picture-{i + 1}]]": picture for i, picture in enumerate(accepted)}
 
     async def ask(
         self,
@@ -316,6 +345,7 @@ class DecisionModel:
         *,
         scope: str,
         assets: dict[str, DecisionAsset] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> DecisionResponse:
         """Ask ``questions`` (keyed by caller-chosen ids) about ``state`` in one request.
 
@@ -323,11 +353,12 @@ class DecisionModel:
         endpoint replica returns as soon as a few recalls overlap. A request the endpoint
         finds longer than its window is asked again in two halves, until one question
         alone is too long, which raises. Every attempt is traced under ``scope``, a
-        ``decision_*`` name for what the caller is deciding.
+        ``decision_*`` name for what the caller is deciding. ``headers`` go on this request
+        on top of the client's own (reflect's bank attribution).
         """
         try:
             return await acall_with_retry(
-                lambda: self._ask_traced(state, questions, scope, assets),
+                lambda: self._ask_traced(state, questions, scope, assets, headers),
                 policy=self.retry_policy,
                 budget=self.retry_policy.new_budget(),
                 provider=f"decision_model:{self.provider}",
@@ -339,8 +370,8 @@ class DecisionModel:
         half = len(items) // 2
         logger.warning(f"Decision model: {len(items)} questions overflowed the window, asking them in two halves")
         first, second = await asyncio.gather(
-            self.ask(state, dict(items[:half]), scope=scope, assets=assets),
-            self.ask(state, dict(items[half:]), scope=scope, assets=assets),
+            self.ask(state, dict(items[:half]), scope=scope, assets=assets, headers=headers),
+            self.ask(state, dict(items[half:]), scope=scope, assets=assets, headers=headers),
         )
         return DecisionResponse(
             answers={**first.answers, **second.answers},
@@ -415,12 +446,13 @@ class DecisionModel:
         questions: dict[str, DecisionQuestion],
         scope: str,
         assets: dict[str, DecisionAsset] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> DecisionResponse:
         started = time.monotonic()
         answer: DecisionResponse | None = None
         error: BaseException | None = None
         try:
-            answer = await self._ask_once(state, questions, assets)
+            answer = await self._ask_once(state, questions, assets, headers)
             return answer
         except BaseException as e:
             error = e
@@ -449,6 +481,7 @@ class DecisionModel:
         state: str | dict[str, Any],
         questions: dict[str, DecisionQuestion],
         assets: dict[str, DecisionAsset] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> DecisionResponse:
         if self.provider == "openai":
             if assets:
@@ -460,17 +493,18 @@ class DecisionModel:
                 "input": text,
                 "questions": [_openai_question(name, q).model_dump(exclude_none=True) for name, q in questions.items()],
             }
-            return _from_openai(_OpenAIResponse.model_validate(await self._post("/v1/decisions", body)))
+            raw = await self._post("/v1/decisions", body, dict(extra_headers) if extra_headers else None)
+            return _from_openai(_OpenAIResponse.model_validate(raw))
 
         body: dict[str, Any] = {
             "model": self.model,
             "state": state,
             "questions": {name: q.system_one() for name, q in questions.items()},
         }
-        headers: dict[str, str] = {}
+        headers: dict[str, str] = dict(extra_headers or {})
         if assets:
             body["assets"] = {name: asset.model_dump() for name, asset in assets.items()}
-            headers = dict(JEV_IMAGES_HEADER)
+            headers.update(JEV_IMAGES_HEADER)
         if self.provider == "cloudflare":
             raw = await self._post(f"/@cf/cloudflare/{self.model}", body, headers)
             return _CloudflareEnvelope.model_validate(raw).result
