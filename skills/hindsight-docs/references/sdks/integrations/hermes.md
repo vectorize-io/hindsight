@@ -178,7 +178,7 @@ which is what records the current pin.
 hermes memory setup    # select "hindsight"
 ```
 
-The setup wizard installs nothing (dependencies come with the plugin), walks you through configuration, and offers to seed the bank with a **starter memory template** (a curated set of dispositions/instructions for common agent roles) — you can skip it, and it warns before overwriting an already-configured bank.
+The setup wizard installs nothing (dependencies come with the plugin), walks you through configuration, and offers to seed the bank with a **starter memory template** (a curated set of dispositions/instructions for common agent roles) — you can skip it, and it warns before overwriting an already-configured bank. A template's mental models refresh once an hour, each at its own minute, rather than after every consolidation, and an hour with nothing new costs nothing. To move an existing bank to that schedule, set a `refresh_cron` on each mental model in the control plane.
 
 Or manually (cloud mode with defaults):
 ```bash

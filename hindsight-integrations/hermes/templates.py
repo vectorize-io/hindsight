@@ -6,6 +6,7 @@ Catalog source overridable with ``HINDSIGHT_TEMPLATES_URL`` (pin/mirror).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -51,6 +52,28 @@ def fetch_manifest(entry: dict, url: str | None = None) -> dict:
     """Fetch the BankTemplateManifest JSON for a catalog entry (``manifest_file`` is
     relative to the catalog, e.g. "templates/foo.json")."""
     return _get_json(urljoin(url or catalog_url(), entry["manifest_file"]))
+
+
+def _hourly_refresh_cron(bank_id: str, model_id: str) -> str:
+    """Hourly, at a minute of its own: hashing bank + model spreads refreshes instead of piling
+    every bank onto minute 0 (same policy as the coding-agents pages' ``H * * * *``)."""
+    digest = hashlib.sha256(f"{bank_id}\0{model_id}".encode()).digest()
+    return f"{int.from_bytes(digest[:4], 'big') % 60} * * * *"
+
+
+def schedule_refreshes(manifest: dict, bank_id: str) -> dict:
+    """Swap refresh-after-every-consolidation for an hourly schedule (#6471).
+
+    A busy bank consolidates every few turns, and each refresh is an LLM synthesis per mental
+    model: the catalog's triggers burned ~46M tokens in ~10h on a new personal bank. A scheduled
+    refresh is skipped server-side when nothing changed, so an idle bank pays nothing. A model the
+    template already schedules, or never refreshes automatically, is left as it is."""
+    for model in manifest.get("mental_models") or []:
+        trigger = model.get("trigger") or {}
+        if trigger.get("refresh_after_consolidation") and not trigger.get("refresh_cron"):
+            rest = {k: v for k, v in trigger.items() if k != "refresh_after_consolidation"}
+            model["trigger"] = {**rest, "refresh_cron": _hourly_refresh_cron(bank_id, model.get("id", ""))}
+    return manifest
 
 
 def _bank_request(api_url: str, bank_id: str, api_key: str | None, action: str, *, headers: dict, **kwargs):
@@ -127,7 +150,7 @@ def run_template_step(*, api_url: str, bank_id: str, api_key: str | None, select
 
     try:
         manifest = fetch_manifest(entry)
-        apply_template(api_url, bank_id, api_key, manifest)
+        apply_template(api_url, bank_id, api_key, schedule_refreshes(manifest, bank_id))
         log(f"  ✓ Applied '{entry.get('name', entry['id'])}' template to bank '{bank_id}'")
         return entry["id"]
     except Exception as e:

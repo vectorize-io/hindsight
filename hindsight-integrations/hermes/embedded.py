@@ -155,18 +155,34 @@ def _embed_scrubs_parent_env() -> bool:
         return False
 
 
+def _hermes_root() -> Path:
+    """The Hermes root that holds ``tools/``: honours HERMES_HOME (a profile home maps back to its
+    root) and the Windows default ``%LOCALAPPDATA%\\hermes`` (#6524). Hermes builds without
+    ``get_default_hermes_root`` fall back to ``~/.hermes``."""
+    try:
+        from hermes_constants import get_default_hermes_root
+
+        return Path(get_default_hermes_root())
+    except Exception:
+        return Path.home() / ".hermes"
+
+
 def _managed_uvx_dir(path: str) -> str | None:
     """Directory of the ``uvx`` Hermes installed for itself, when *path* has none.
 
     The daemon manager falls back to ``uvx hindsight-api`` when no server is installed, and a
-    package-manager Hermes keeps its uvx under ``~/.hermes/tools/uv-*/``, which is not always on
-    PATH (#5192). Only the helper's env gets it; the parent's PATH is left alone."""
+    package-manager Hermes keeps its uvx under ``<hermes root>/tools/uv-*/``, which is not always on
+    PATH (#5192). That root was hardcoded to ``~/.hermes`` until #6524, which missed HERMES_HOME
+    and Windows' ``%LOCALAPPDATA%\\hermes``. Only the helper's env gets it; the parent's PATH is
+    left alone."""
     if shutil.which("uvx", path=path):
         return None
     # The Docker image keeps its uv under the install root instead (/opt/hermes/tools, next to the
     # /opt/hermes/.venv this interpreter runs from) while HOME is /opt/data (#5580). Hermes' own
     # pm.install.uv_launcher would name it directly, but the plugin must not import pm.
-    for tools in (Path.home() / ".hermes" / "tools", Path(sys.prefix).parent / "tools"):
+    for tools in dict.fromkeys(
+        (_hermes_root() / "tools", Path.home() / ".hermes" / "tools", Path(sys.prefix).parent / "tools")
+    ):
         for candidate in sorted(tools.glob("uv-*"), reverse=True):
             if shutil.which("uvx", path=str(candidate)):
                 return str(candidate)
@@ -176,7 +192,9 @@ def _managed_uvx_dir(path: str) -> str | None:
 def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
     """Start the daemon from a short-lived child that never had our interpreter's PYTHONPATH.
 
-    Workaround for hindsight-embed <= 0.10.2, which copies ``os.environ`` into the daemon process.
+    Used for hindsight-embed <= 0.10.2, which copies ``os.environ`` into the daemon process, and on
+    any embed when uvx is reachable only through Hermes' managed copy, since this child's PATH is
+    the one place that copy is added (#6451).
     Hermes' package-manager install exports ``PYTHONPATH=<repo>:<its 3.14 generation>``
     (pm/environments.py), and the daemon usually runs through ``uvx hindsight-api`` on whatever
     Python uv picks. When those minor versions differ the server imports Hermes' pydantic and dies
@@ -202,6 +220,8 @@ def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
             capture_output=True,
             text=True,
             timeout=_DAEMON_START_TIMEOUT,
+            # A windowless Hermes on Windows would otherwise flash a console for the helper.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("Could not start the Hindsight daemon helper for profile %r: %s", profile, exc)
@@ -248,7 +268,10 @@ def _start_daemon(config: dict[str, str], profile: str) -> str:
     from hindsight_embed import get_embed_manager
 
     manager = get_embed_manager()
-    if _embed_scrubs_parent_env():
+    # A scrubbing embed can start the daemon in-process, but only when uvx is already on PATH: the
+    # manager's uvx fallback resolves against this process's PATH, and the managed uvx only ever
+    # reaches the helper child's env (#6451).
+    if _embed_scrubs_parent_env() and not _managed_uvx_dir(os.environ.get("PATH", "")):
         started = manager.ensure_running(config, profile)
     else:
         started = manager.is_running(profile) or _start_daemon_in_clean_child(config, profile)

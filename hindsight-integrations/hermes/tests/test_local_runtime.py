@@ -8,6 +8,7 @@ this venv keeps only a client plus the daemon manager.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -238,6 +239,40 @@ def test_the_helper_finds_the_uvx_under_the_hermes_install_root(tmp_path, monkey
     assert embedded._managed_uvx_dir(str(tmp_path / "empty")) == str(uv_dir)
 
 
+def test_a_new_embed_still_gets_the_managed_uvx_when_path_has_none(monkeypatch):
+    """#6451: a scrubbing embed (>= 0.10.3) used to start the daemon in-process, where its uvx
+    fallback only sees this process's PATH, so a Hermes whose uvx is off PATH never started it."""
+    calls = _fake_embed_module(monkeypatch, running=False, scrubs=True)
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setattr(embedded, "_managed_uvx_dir", lambda path: "/hermes/tools/uv-0.13.5")
+    recorded = {}
+
+    def _run(cmd, **kwargs):
+        recorded.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(embedded.subprocess, "run", _run)
+
+    assert embedded._start_daemon({}, "hermes") == "http://127.0.0.1:54321"
+    assert "ensure_running" not in calls  # the helper child starts it, with the managed uvx on PATH
+    assert recorded["env"]["PATH"].split(os.pathsep) == ["/hermes/tools/uv-0.13.5", "/usr/bin"]
+    assert os.environ["PATH"] == "/usr/bin"  # this process's PATH is left alone
+
+
+def test_the_helper_finds_the_uvx_under_the_hermes_root_hermes_names(tmp_path, monkeypatch):
+    """#6524: HERMES_HOME or Windows' %LOCALAPPDATA%\\hermes, which ~/.hermes never matched."""
+    root = tmp_path / "AppData" / "Local" / "hermes"
+    uv_dir = root / "tools" / "uv-0.13.5-win32-x64"
+    uv_dir.mkdir(parents=True)
+    (uv_dir / "uvx").write_text("#!/bin/sh\n")
+    (uv_dir / "uvx").chmod(0o755)
+    monkeypatch.setattr(embedded.Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "elsewhere" / ".venv"))
+    monkeypatch.setitem(sys.modules, "hermes_constants", SimpleNamespace(get_default_hermes_root=lambda: root))
+
+    assert embedded._managed_uvx_dir(str(tmp_path / "empty")) == str(uv_dir)
+
+
 def test_a_keyless_openai_compatible_server_gets_a_placeholder_key():
     """#5603: the daemon runs it as "openai", which the server refuses to start without a key."""
     config = {"llm_provider": "openai_compatible", "llm_model": "m", "llm_base_url": "http://localhost:8000/v1"}
@@ -247,6 +282,7 @@ def test_a_keyless_openai_compatible_server_gets_a_placeholder_key():
 
 def test_a_new_embed_is_left_to_scrub_the_env_itself(monkeypatch):
     calls = _fake_embed_module(monkeypatch, scrubs=True)
+    monkeypatch.setattr(embedded, "_managed_uvx_dir", lambda path: None)  # uvx already on PATH
     monkeypatch.setattr(
         embedded.subprocess, "run", lambda *a, **k: pytest.fail("must not spawn a helper when embed scrubs")
     )
