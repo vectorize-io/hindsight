@@ -90,6 +90,10 @@ class StatusUpdate:
     #: Only while the document still holds this file: an ingest of an older version must not overwrite
     #: the status of the newer one that replaced it meanwhile. None updates whatever is stored.
     storage_key: str | None = None
+    #: Forget the document's file (its storage key becomes NULL): a file that failed for good holds nothing
+    #: to search, and kept, it would sit in storage that nothing accounts for. The caller deletes the file
+    #: of each document ``set_statuses`` returns.
+    drop_file: bool = False
 
 
 @dataclass
@@ -283,9 +287,10 @@ class KnowledgeStore(ABC):
     ) -> DocumentPage: ...
 
     @abstractmethod
-    async def set_statuses(self, bank_id: str, updates: list[StatusUpdate]) -> None:
+    async def set_statuses(self, bank_id: str, updates: list[StatusUpdate]) -> list[str]:
         """Set each document's status and error (see ``StatusUpdate``). A document set to "failed" also
-        drops whatever it had staged (see ``PassageStage``): that version will never commit it."""
+        drops whatever it had staged (see ``PassageStage``): that version will never commit it. Returns the
+        documents updated (those still holding the update's ``storage_key``)."""
 
     @abstractmethod
     async def stage_passages(self, bank_id: str, items: list[PassageStage]) -> list[str]:
@@ -633,9 +638,9 @@ class PostgresKnowledgeStore(KnowledgeStore):
             )
         return DocumentPage(documents=[_document(r) for r in rows], total=int(total or 0))
 
-    async def set_statuses(self, bank_id: str, updates: list[StatusUpdate]) -> None:
+    async def set_statuses(self, bank_id: str, updates: list[StatusUpdate]) -> list[str]:
         if not updates:
-            return
+            return []
         async with acquire_with_retry(await self._pool()) as conn:
             table = fq_table("kb_documents")
             async with conn.transaction():
@@ -647,8 +652,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         SELECT document_id FROM {table}
                         WHERE bank_id = $1 AND document_id = ANY($2::text[]) ORDER BY document_id FOR UPDATE
                     )
-                    UPDATE {table} d SET status = u.status, error = u.error, updated_at = now()
-                    FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS u(document_id, status, error, key)
+                    UPDATE {table} d SET status = u.status, error = u.error, updated_at = now(),
+                        storage_key = CASE WHEN u.drop_file THEN NULL ELSE d.storage_key END
+                    FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::bool[])
+                        AS u(document_id, status, error, key, drop_file)
                     WHERE d.bank_id = $1 AND d.document_id = u.document_id
                         AND d.document_id IN (SELECT document_id FROM locked)
                         AND (u.key IS NULL OR d.storage_key = u.key)
@@ -659,6 +666,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     [u.status for u in updates],
                     [u.error for u in updates],
                     [u.storage_key for u in updates],
+                    [u.drop_file for u in updates],
                 )
                 # A document that failed for good will not commit what it staged, so the pieces go now
                 # (their vectors cascade). They used to stay until the document's next ingest started over,
@@ -675,6 +683,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         bank_id,
                         failed,
                     )
+        return [r["document_id"] for r in rows]
 
     async def _held(self, conn: Any, bank_id: str, document_ids: list[str]) -> dict[str, str | None]:
         """Each document's storage key, its row locked: an ingest of a newer version cannot swap the file

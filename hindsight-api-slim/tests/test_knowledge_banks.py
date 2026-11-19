@@ -1786,6 +1786,31 @@ async def test_an_ingest_of_many_documents_costs_a_fixed_number_of_calls(api_cli
     assert len(fake_embedder.calls) == math.ceil(100 / _EMBED_ROUND)
 
 
+async def test_a_file_that_fails_for_good_is_not_kept(api_client, memory, kb, monkeypatch):
+    deleted: list[str] = []
+    real_delete = memory._file_storage.delete
+
+    async def delete(key: str) -> None:
+        deleted.append(key)
+        await real_delete(key)
+
+    monkeypatch.setattr(memory._file_storage, "delete", delete)
+    assert (await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"max_pdf_pages": 1}})).is_success
+    await _upload(api_client, kb, [("two.pdf", _pdf((250, 0, 0), (0, 0, 250)), "application/pdf")], [{"document_id": "p"}])  # fmt: skip
+    # The document stays, failed, with why; its file is gone from storage, not kept unaccounted for.
+    detail = (await api_client.get(f"{KB}/{kb}/documents/p")).json()
+    assert detail["status"] == "failed" and "the limit is 1" in detail["error"], detail
+    assert (await api_client.get(f"{KB}/{kb}/documents/p/file")).status_code == 404
+    assert len(deleted) == 1
+    with pytest.raises(FileNotFoundError):
+        await memory._file_storage.retrieve(deleted[0])
+    # Uploading it again, once it fits, starts over.
+    assert (await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"max_pdf_pages": None}})).is_success
+    await _upload(api_client, kb, [("two.pdf", _pdf((250, 0, 0), (0, 0, 250)), "application/pdf")], [{"document_id": "p"}])  # fmt: skip
+    assert (await api_client.get(f"{KB}/{kb}/documents/p")).json()["status"] == "ready"
+    assert (await api_client.get(f"{KB}/{kb}/documents/p/file")).status_code == 200
+
+
 async def test_a_bad_document_fails_alone_and_a_sync_ingest_reports_it(api_client, kb):
     items = [
         {"document_id": "ok1", "text": "red"},
