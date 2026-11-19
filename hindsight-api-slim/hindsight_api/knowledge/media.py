@@ -303,10 +303,25 @@ _PDF_POOL: ProcessPoolExecutor | None = None
 _PDF_POOL_LOCK = threading.Lock()
 
 
+#: The longest one call to a PDF worker may take (a PDF's page text, or 8 of its pages rendered). pdf.js's
+#: tiling-pattern-tiny-steps*.pdf kept both workers at 100% CPU for over 10 minutes, and every PDF of every
+#: ingest waited behind them.
+_PDF_CALL_TIMEOUT = 180.0
+
+
+def _kill(pool: ProcessPoolExecutor) -> None:
+    """Stop ``pool`` now, its running calls too: ProcessPoolExecutor has no way to cancel a call that has
+    started, so its processes are killed (``_processes``, which it keeps privately)."""
+    for process in list((getattr(pool, "_processes", None) or {}).values()):
+        process.kill()
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
     """``fn(*args)`` in a PDF worker process. pdfium aborts the process on some files (a JPEG 2000 image in
     pdf.js's jpx_numcomps.pdf: SIGTRAP), and in the server that took the API down for everyone; in a worker
-    it fails that file, and the next one gets a fresh worker."""
+    it fails that file, and the next one gets a fresh worker. A call past ``_PDF_CALL_TIMEOUT`` fails its
+    file too, and its worker is killed."""
     global _PDF_POOL
     with _PDF_POOL_LOCK:
         if _PDF_POOL is None:
@@ -315,21 +330,31 @@ def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
             )
         pool = _PDF_POOL
     try:
-        return pool.submit(fn, *args).result()
+        return pool.submit(fn, *args).result(timeout=_PDF_CALL_TIMEOUT)
+    except TimeoutError:
+        with _PDF_POOL_LOCK:
+            if _PDF_POOL is pool:
+                _PDF_POOL = None
+        _kill(pool)  # the calls beside it break and are retried alone, below
+        raise MediaError(f"rendering this PDF took over {_PDF_CALL_TIMEOUT:.0f}s") from None
     except BrokenProcessPool:
         with _PDF_POOL_LOCK:
             if _PDF_POOL is pool:
                 _PDF_POOL = None
-    # A crash breaks every call in flight on the pool, not only the file's own: once again, alone in a
-    # worker of its own, so only the file that crashes it fails (a PDF rendering beside jpx_numcomps.pdf
+    # A crash (or a kill) breaks every call in flight on the pool, not only the file's own: once again, alone
+    # in a worker of its own, so only the file that crashes it fails (a PDF rendering beside jpx_numcomps.pdf
     # failed with it).
-    with ProcessPoolExecutor(
+    alone = ProcessPoolExecutor(
         max_workers=1, mp_context=multiprocessing.get_context("spawn"), initializer=_first_to_kill
-    ) as alone:
-        try:
-            return alone.submit(fn, *args).result()
-        except BrokenProcessPool as exc:
-            raise MediaError("the PDF renderer crashed on this file") from exc
+    )
+    try:
+        return alone.submit(fn, *args).result(timeout=_PDF_CALL_TIMEOUT)
+    except TimeoutError:
+        raise MediaError(f"rendering this PDF took over {_PDF_CALL_TIMEOUT:.0f}s") from None
+    except BrokenProcessPool as exc:
+        raise MediaError("the PDF renderer crashed on this file") from exc
+    finally:
+        _kill(alone)
 
 
 def _pdf_text(data: Source, max_pages: int) -> _PdfText:

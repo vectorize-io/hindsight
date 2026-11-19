@@ -2863,3 +2863,16 @@ def test_a_pdf_rendering_beside_one_that_crashes_the_renderer_still_succeeds():
         with pytest.raises(media.MediaError, match="renderer crashed"):
             crash.result()
         assert innocent.result() is None
+
+
+def test_a_pdf_that_renders_forever_fails_in_time_and_the_next_renders(monkeypatch):
+    # pdf.js's tiling-pattern-tiny-steps*.pdf held both PDF workers at 100% CPU for over 10 minutes, and every
+    # PDF waited behind them: a call past the limit fails its file, and its worker is killed.
+    import time
+
+    monkeypatch.setattr(media, "_PDF_CALL_TIMEOUT", 1.0)
+    started = time.monotonic()
+    with pytest.raises(media.MediaError, match="took over 1s"):
+        media._in_pdf_worker(time.sleep, 30)
+    assert time.monotonic() - started < 20
+    assert [d.page for d in media.split_pdf(_pdf((255, 0, 0)), page_pixels=128, max_pages=10)] == [1]
