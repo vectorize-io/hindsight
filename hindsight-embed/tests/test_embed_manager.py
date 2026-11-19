@@ -680,6 +680,7 @@ def test_listening_pids_windows_hides_netstat_console(monkeypatch):
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.subprocess.CREATE_NO_WINDOW", 0x08000000, raising=False)
     monkeypatch.setattr("hindsight_embed.daemon_embed_manager.subprocess.run", fake_run)
+    monkeypatch.setattr(DaemonEmbedManager, "_windows_native_listening_pids", staticmethod(lambda _port: None))
 
     assert DaemonEmbedManager._listening_pids(9177) == [4321]
     assert calls[0][1]["creationflags"] == 0x08000000
@@ -940,12 +941,13 @@ def test_run_probe_reads_output_that_is_not_utf8():
 
 
 def test_windows_listening_pids_parses_a_localized_netstat(monkeypatch):
-    """The existing parser needs no change: only the header carries non-ASCII."""
+    """A localized header does not stop the netstat fallback from reading the rows."""
     decoded = _CP936_NETSTAT.decode("utf-8", errors="replace")
     monkeypatch.setattr(
         "hindsight_embed.daemon_embed_manager.DaemonEmbedManager._run_probe",
         staticmethod(lambda cmd, timeout=None: decoded),
     )
+    monkeypatch.setattr(DaemonEmbedManager, "_windows_native_listening_pids", staticmethod(lambda _port: None))
 
     assert DaemonEmbedManager._windows_listening_pids(8642) == [4242]
     assert DaemonEmbedManager._windows_listening_pids(445) == [4]

@@ -760,12 +760,58 @@ class TestListeningPidDiscovery:
             "  TCP    127.0.0.1:29177        0.0.0.0:0              LISTENING       9999\n"
         )
         monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
+        _force_netstat(monkeypatch)
         monkeypatch.setattr(
             "hindsight_embed.daemon_embed_manager.subprocess.run",
             lambda cmd, **kwargs: Mock(returncode=0, stdout=netstat),
         )
 
         assert DaemonEmbedManager._listening_pids(19177) == [4321, 4322]
+
+    def test_windows_netstat_in_another_language_still_finds_the_listener(self, monkeypatch):
+        """A German netstat says ABHÖREN, not LISTENING; the listener must still be found (#6602)."""
+        netstat = (
+            "  TCP    127.0.0.1:9177         0.0.0.0:0              ABHÖREN         4321\n"
+            "  TCP    127.0.0.1:9177         127.0.0.1:50000        HERGESTELLT     7777\n"
+        )
+        monkeypatch.setattr("hindsight_embed.daemon_embed_manager.platform.system", lambda: "Windows")
+        _force_netstat(monkeypatch)
+        monkeypatch.setattr(
+            "hindsight_embed.daemon_embed_manager.subprocess.run",
+            lambda cmd, **kwargs: Mock(returncode=0, stdout=netstat),
+        )
+
+        assert DaemonEmbedManager._listening_pids(9177) == [4321]
+
+    def test_reads_listener_pids_from_a_kernel_tcp_table(self):
+        """The GetExtendedTcpTable rows are decoded at the right offsets, for both families."""
+        import socket
+        import struct
+
+        from hindsight_embed.daemon_embed_manager import _AF_INET, _AF_INET6, _listener_pids_from_tcp_table
+
+        def v4_row(port: int, pid: int) -> bytes:
+            return struct.pack("<6I", 2, 0x0100007F, socket.htons(port), 0, 0, pid)
+
+        def v6_row(port: int, pid: int) -> bytes:
+            return bytes(16) + struct.pack("<2I", 0, socket.htons(port)) + bytes(16) + struct.pack("<4I", 0, 0, 2, pid)
+
+        v4 = struct.pack("<I", 2) + v4_row(9177, 4321) + v4_row(8888, 9999)
+        v6 = struct.pack("<I", 2) + v6_row(8888, 9999) + v6_row(9177, 4322)
+
+        assert _listener_pids_from_tcp_table(v4, _AF_INET, 9177) == [4321]
+        assert _listener_pids_from_tcp_table(v6, _AF_INET6, 9177) == [4322]
+        assert _listener_pids_from_tcp_table(struct.pack("<I", 0), _AF_INET, 9177) == []
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="reads the Windows kernel")
+    def test_windows_native_lookup_finds_a_live_listener(self):
+        import socket
+
+        with socket.socket() as server:
+            server.bind(("127.0.0.1", 0))
+            server.listen()
+            port = server.getsockname()[1]
+            assert DaemonEmbedManager._windows_native_listening_pids(port) == [os.getpid()]
 
 
 class TestProcessOwnership:
@@ -844,6 +890,11 @@ class TestProcessOwnership:
                 from hindsight_embed.daemon_embed_manager import DAEMON_PROCESS_MARKERS
 
                 assert DaemonEmbedManager._process_matches(1, DAEMON_PROCESS_MARKERS) is True
+
+
+def _force_netstat(monkeypatch) -> None:
+    """Make the Windows lookup use its netstat fallback, as a Windows runner would not by default."""
+    monkeypatch.setattr(DaemonEmbedManager, "_windows_native_listening_pids", staticmethod(lambda _port: None))
 
 
 class TestStartDaemonLockTimeout:
