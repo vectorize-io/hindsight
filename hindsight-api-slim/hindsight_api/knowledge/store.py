@@ -183,7 +183,8 @@ class KnowledgeBankNotFound(Exception):
     """``search`` was asked for a bank that is not a knowledge bank: it checks that in its own statement."""
 
 
-#: The candidate searches: the passages' main vectors, their extra vectors, and keywords.
+#: The candidate searches: the passages' main vectors, their extra vectors, keywords, and every text
+#: passage of the documents the vector searches rank best (EXPAND_DOCUMENTS).
 ArmName = Literal["vector", "extra_vectors", "keyword", "document"]
 
 
@@ -1055,6 +1056,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
         # the termination fee?") finds the document by its cover, parties or contents, while the passage
         # that answers is worded unlike the question and is in no search's top rows: it was never scored.
         # LegalBench-RAG mergers: the answer reached the reranker for 41 of 50 questions, from 29.
+        # The filters need no repeating here: they are all on the document, and top_docs come from searches
+        # that applied them.
         ctes += [
             "found_arms AS (" + " UNION ALL ".join(f"({a})" for a in arms) + ")",
             "top_docs AS (SELECT document_id FROM found_arms WHERE arm <> 'keyword' GROUP BY document_id"

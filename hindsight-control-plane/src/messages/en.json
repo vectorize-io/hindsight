@@ -2738,6 +2738,8 @@
       "arm_extra_vectors_help": "A PDF page's bands, text and text units, searched the same way.",
       "arm_keyword": "Keywords",
       "arm_keyword_help": "Full-text matches of the query's rarer words, in every document and language.",
+      "arm_document": "Whole documents",
+      "arm_document_help": "Every text passage of the 3 documents the searches above rank best, so a part worded unlike the query is still scored.",
       "armScore": "Score in this search",
       "meaningTitle": "Meaning score",
       "meaningHelp": "Each of the {count} candidates, scored from all its vectors, then averaged with its document's best passage.",

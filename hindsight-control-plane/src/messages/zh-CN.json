@@ -2738,6 +2738,8 @@
       "arm_extra_vectors_help": "PDF 页的条带、文本和文本单元，以同样方式搜索。",
       "arm_keyword": "关键词",
       "arm_keyword_help": "查询中较稀有词的全文匹配（所有文档和语言）。",
+      "arm_document": "整篇文档",
+      "arm_document_help": "上方搜索排名最高的 3 篇文档的每个文本段落，措辞与查询不同的部分也会被评分。",
       "armScore": "本次搜索中的分数",
       "meaningTitle": "语义分数",
       "meaningHelp": "{count} 个候选逐一用全部向量评分，再与所在文档最佳段落取平均。",

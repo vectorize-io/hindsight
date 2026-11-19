@@ -278,7 +278,8 @@ class KnowledgeSearchTraceHit(BaseModel):
     snippet: str | None = Field(default=None, description="The start of the passage's own text")
     score: float = Field(description="The final score it was ranked by; comparable within this search only")
     found_by: list[str] = Field(
-        description="The candidate searches that found it: vector, extra_vectors, keyword, document (a passage of one of the best documents)"
+        description="The candidate searches that found it: vector, extra_vectors, keyword, document "
+        "(a text passage of one of the best documents)"
     )
     similarity: float = Field(description="Cosine similarity of the query and the passage's main vector")
     roles: dict[str, float] = Field(

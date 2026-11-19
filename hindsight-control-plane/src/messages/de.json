@@ -2738,6 +2738,8 @@
       "arm_extra_vectors_help": "Streifen, Text und Texteinheiten einer PDF-Seite, gleich durchsucht.",
       "arm_keyword": "Schlüsselwörter",
       "arm_keyword_help": "Volltexttreffer der selteneren Wörter der Anfrage, in jedem Dokument und jeder Sprache.",
+      "arm_document": "Ganze Dokumente",
+      "arm_document_help": "Jede Textpassage der 3 Dokumente, die die Suchen oben am besten einstufen, damit auch ein anders formulierter Teil bewertet wird.",
       "armScore": "Score in dieser Suche",
       "meaningTitle": "Bedeutungsscore",
       "meaningHelp": "Jeder der {count} Kandidaten, aus allen Vektoren bewertet und mit der besten Passage seines Dokuments gemittelt.",

@@ -1493,6 +1493,21 @@ async def test_an_untitled_text_is_embedded_under_its_opening_and_its_best_docum
     assert {r["index"] for r in arms["document"] if r["document_id"] == "deal"} == deal and len(deal) > 1
 
 
+async def test_a_question_word_rare_enough_on_its_own_stays_next_to_a_much_rarer_name(api_client, kb):
+    """In 300 passages a name in one has IDF ~5.3 and "termination", in 31, ~2.3: under half the name's,
+    so it was dropped and the search looked for the name alone. It clears KEYWORD_IDF_FLOOR (2.0)."""
+    docs = [("deal", "zorblat termination fee")]
+    docs += [(f"t-{n}", f"termination clause {n}") for n in range(30)]
+    docs += [(f"f-{n}", f"filler line {n}") for n in range(269)]
+    for start in range(0, len(docs), 100):  # an ingest takes at most 100 items
+        items = [{"document_id": d, "text": t} for d, t in docs[start : start + 100]]
+        r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+        assert r.status_code == 200, r.text
+    body = {"query": "zorblat termination", "trace": True}
+    terms = (await api_client.post(f"{KB}/{kb}/search", json=body)).json()["trace"]["keyword_terms"]
+    assert terms["zorblat"] > 2 * terms["termination"] and terms["termination"] >= 2.0
+
+
 async def test_a_search_needs_a_query_and_a_bank(api_client, kb):
     r = await api_client.post(f"{KB}/{kb}/search", json={})
     assert r.status_code == 400 and "query" in r.text

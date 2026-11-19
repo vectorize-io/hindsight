@@ -2738,6 +2738,8 @@
       "arm_extra_vectors_help": "Bandas, texto y unidades de texto de una página PDF, buscados igual.",
       "arm_keyword": "Palabras clave",
       "arm_keyword_help": "Coincidencias de texto completo de las palabras más raras de la consulta, en todo documento e idioma.",
+      "arm_document": "Documentos completos",
+      "arm_document_help": "Cada pasaje de texto de los 3 documentos mejor clasificados por las búsquedas de arriba, para puntuar también una parte redactada distinto de la consulta.",
       "armScore": "Puntuación en esta búsqueda",
       "meaningTitle": "Puntuación de significado",
       "meaningHelp": "Cada uno de los {count} candidatos, puntuado con todos sus vectores y promediado con el mejor pasaje de su documento.",

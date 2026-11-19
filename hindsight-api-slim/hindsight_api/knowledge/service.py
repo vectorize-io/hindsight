@@ -1614,7 +1614,7 @@ class KnowledgeService:
                         if doc.queued == 0 and doc.title is None and draft.modality == "text" and draft.text:
                             # A text document whose file name says nothing (an id, "lb-0605.txt") takes its
                             # opening words as its title, so every passage is embedded with what the document
-                            # is (its kind, its parties), not alone. LegalBench-RAG: CUAD 78 -> 89 recall@5.
+                            # is (its kind, its parties), not alone. LegalBench-RAG CUAD, first 50 questions: 78 -> 89 recall@5.
                             doc.title = " ".join(draft.text.split()[:OPENING_TITLE_WORDS])
                         cost = _passage_estimate(draft)
                         if budget.limit > 0 and doc.reserved + cost > budget.limit and doc.queued > doc.staged:
