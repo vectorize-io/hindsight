@@ -36,8 +36,9 @@ const LEGACY_CLAUDE_PLUGIN = "hindsight-memory";
  * so the session start is where the user finds out.
  *
  * Read from Claude's own files: `plugins/installed_plugins.json` for what is installed (user scope,
- * or a project/local scope whose `projectPath` contains `cwd`) and `enabledPlugins` in the
- * local, project and user `settings.json` (first one that sets it wins) for an explicit disable. Any read failure means "not detected" — this only ever adds a warning.
+ * or a project/local scope whose `projectPath` contains `cwd`) and `enabledPlugins` in the local,
+ * project and user `settings.json` (the first that sets it wins) for an explicit disable. Any read
+ * failure means "not detected" — this only ever adds a warning.
  */
 export function detectLegacyClaudePlugin(
   cwd: string,

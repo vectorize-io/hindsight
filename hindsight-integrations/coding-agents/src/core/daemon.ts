@@ -193,6 +193,9 @@ export function daemonEnv(
   return out;
 }
 
+/** Carries the spawning session's resolved config to the detached starter (daemon-start.ts). */
+export const DAEMON_CONFIG_ENV = "HINDSIGHT_CODING_AGENTS_DAEMON_CONFIG";
+
 /**
  * Launch the starter as a DETACHED process, the way seeding and the codebase survey are launched.
  *
@@ -204,9 +207,6 @@ export function daemonEnv(
  * The starter also re-checks health, so a spawn that slips through anyway leaves the daemon the
  * winner started alone — but racing starters are not free: they queue on the profile's file lock.
  */
-/** Carries the spawning session's resolved config to the detached starter (daemon-start.ts). */
-export const DAEMON_CONFIG_ENV = "HINDSIGHT_CODING_AGENTS_DAEMON_CONFIG";
-
 export function startDaemonDetached(
   cfg: Config,
   harness: string,
