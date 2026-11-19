@@ -2721,7 +2721,7 @@ Knowledge banks hold documents (PDF, Office, images, audio, video, text) for sea
 | `HINDSIGHT_API_KB_MAX_IMAGE_MEGAPIXELS` | Largest image, in megapixels, checked from its header before decoding: decoding costs memory by pixels (about 3–4 bytes each), and a few-MB PNG can declare 30000×30000. Covers HEIC too. Server-only. | `178` |
 | `HINDSIGHT_API_KB_MAX_MEDIA_SECONDS` | Longest audio or video file. *Per bank*. | `7200` |
 | `HINDSIGHT_API_KB_MAX_PDF_PAGES` | Most pages in one PDF. *Per bank*. | `2000` |
-| `HINDSIGHT_API_KB_TEXT_PASSAGE_TOKENS` | Size of a text passage, in tokens; passages follow the document's structure. *Per bank*. | `256` |
+| `HINDSIGHT_API_KB_TEXT_PASSAGE_TOKENS` | Size of a text passage, in tokens; passages follow the document's structure. *Per bank*. | `512` |
 | `HINDSIGHT_API_KB_IMAGE_TOKENS` | Vision tokens per image for the `local` embedder (70–1120). *Per bank*. | `280` |
 | `HINDSIGHT_API_KB_PDF_PAGE_PIXELS` | Longest side of a rendered PDF page, in pixels. *Per bank*. | `1536` |
 | `HINDSIGHT_API_KB_PDF_BANDS` | Also embed three horizontal bands of each PDF page: better search, half the ingest speed. *Per bank*. | `false` |
