@@ -1,16 +1,17 @@
 
+
 # Knowledge Banks
 
 Create knowledge banks, ingest files and text into them, and search their passages. For what a knowledge bank is and how ingest and search work, see [Knowledge Banks](../knowledge-banks.md).
 
-All endpoints live under `/v1/default/knowledge-banks`. The examples use `curl` against a local server.
+All endpoints live under `/v1/default/knowledge-banks`. The examples use `curl` against a local server: no SDK or CLI command covers knowledge banks yet.
 
 ---
 
 ## Create a Knowledge Bank
 
 ```bash
-curl -X POST http://localhost:8888/v1/default/knowledge-banks \
+curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks" \
   -H "Content-Type: application/json" \
   -d '{"bank_id": "product-manuals"}'
 ```
@@ -39,15 +40,15 @@ List banks with `GET /v1/default/knowledge-banks`, with `limit` (default 100), `
 
 ## Ingest Files
 
-Upload one or more files as `multipart/form-data`. Each file becomes one document. The call returns `202` right away and the files are processed in the background.
+Upload one or more files (PDFs, images, audio, video, text) as `multipart/form-data`. Each file becomes one document. The call returns `202` right away and the files are processed in the background.
 
 ```bash
-curl -X POST http://localhost:8888/v1/default/knowledge-banks/product-manuals/files/ingest \
+curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/files/ingest" \
   -F "files=@x200-manual.pdf" \
-  -F "files=@install-walkthrough.mp4" \
+  -F "files=@x200-quickstart.md" \
   -F 'request={"files": [
         {"document_id": "x200-manual", "tags": ["x200"]},
-        {"document_id": "x200-install", "tags": ["x200", "video"]}
+        {"document_id": "x200-quickstart", "tags": ["x200", "quickstart"]}
       ]}'
 ```
 
@@ -61,7 +62,7 @@ The optional `request` field is JSON with one entry per file, in the same order:
 
 ```json
 {
-  "document_ids": ["x200-manual", "x200-install"],
+  "document_ids": ["x200-manual", "x200-quickstart"],
   "operation_ids": ["6f1c...", "6f1c..."],
   "unchanged_document_ids": []
 }
@@ -79,7 +80,7 @@ The optional `request` field is JSON with one entry per file, in the same order:
 Send text as JSON, up to 100 items per call. By default the call returns once every document can be searched.
 
 ```bash
-curl -X POST http://localhost:8888/v1/default/knowledge-banks/product-manuals/ingest \
+curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/ingest" \
   -H "Content-Type: application/json" \
   -d '{
     "items": [
@@ -108,9 +109,9 @@ The response has the same shape as a file ingest. `operation_ids` is empty when 
 ## Search
 
 ```bash
-curl -X POST http://localhost:8888/v1/default/knowledge-banks/product-manuals/search \
+curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/search" \
   -H "Content-Type: application/json" \
-  -d '{"query": "X200 keeps losing pressure", "max_tokens": 2048}'
+  -d '{"query": "How long do I have to return an X200?", "max_tokens": 2048}'
 ```
 
 | Field | Description | Default |
@@ -159,7 +160,7 @@ Text, image and video can be sent together: they are embedded as one query. At l
 }
 ```
 
-- Results come **best first**. They carry no score: scores are only comparable within one search. With a decision model set for knowledge banks, the order is the [reranked](../knowledge-banks.md#searching) one.
+- Results come **best first**. They carry no score: scores are only comparable within one search. With a reranker set for knowledge banks, the order is the [reranked](../knowledge-banks.md#searching) one.
 - A text hit's `text` holds the matched passage together with the passages around it that fit the budget. `index` is the matched one.
 - `page` is set for PDF pages and images, `start_ms` and `end_ms` for audio and video.
 - `passage_url` streams the passage's page image or clip. `document_url` streams the original file.
@@ -183,7 +184,7 @@ With `"trace": true`, the response also has a `trace`:
 ## Tags
 
 ```bash
-curl "http://localhost:8888/v1/default/knowledge-banks/product-manuals/tags?q=x2*"
+curl "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/tags?q=x2*"
 ```
 
 Lists the tags on a bank's documents, with how many documents carry each. `q` is a wildcard pattern (`*`), case-insensitive. Paging: `limit` (default 100, up to 1000), `offset`.
@@ -247,7 +248,7 @@ A bank can change how its files are split. See [Per-Bank Settings](../knowledge-
 ## Delete a Knowledge Bank
 
 ```bash
-curl -X DELETE http://localhost:8888/v1/default/knowledge-banks/product-manuals
+curl -X DELETE "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals"
 ```
 
 Cancels the bank's ingests, then deletes every document, passage and file in it.

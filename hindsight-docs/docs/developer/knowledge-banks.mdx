@@ -5,6 +5,8 @@ sidebar_position: 9
 import Figure from '@site/src/components/Figure';
 import ingestFigure from '@site/figures/knowledge-bank-ingest.json';
 import searchFigure from '@site/figures/knowledge-bank-search.json';
+import CodeSnippet from '@site/src/components/CodeSnippet';
+import kbSh from '!!raw-loader!@site/examples/api/knowledge-banks.sh';
 import overviewFigure from '@site/figures/knowledge-bank-vs-memory-bank.json';
 
 # Knowledge Banks
@@ -93,13 +95,13 @@ A search takes text, an image, a short video, or any mix of them, embedded toget
 
 **2. Score them.** Each candidate is scored from all its vectors. On a PDF page, the text counts for 70% of the score and the page image for 30%. A text passage takes the better of its own score and its window's. Keyword matches are then mixed in at 20%.
 
-**3. Rerank them (optional).** With a [decision model](./decision-models) set for knowledge banks (`HINDSIGHT_API_KB_DECISION_MODEL_PROVIDER`), the best 100 candidates are judged again, one question each: does this help answer the query?
+**3. Rerank them (optional).** With a reranker set (`HINDSIGHT_API_KB_RERANKER_URL` and `_MODEL`: any service that speaks Cohere's rerank API), the best candidates go to it in one request, in search order, and its scores reorder them.
 
-- **What the model reads:** a text hit is judged with the text around it, up to 2048 tokens, so it sees the page and not just the passage. Hits that would show the model the same text (pieces of one short page) are judged once, as one candidate. An image or PDF page is judged by its picture (at most 1024 pixels a side) with any text it holds, and once more by its text alone; the two answers are averaged, since the picture alone misled on text-heavy pages. A video is not judged and keeps its place.
-- **How the order is set:** the model's order is not trusted outright. A yes or no per hit promotes deep hits it wrongly says yes to, so its rank is fused with the search's (reciprocal rank fusion, the model counting twice). Then one more question compares the best five side by side and reorders them: a clear pick moves up, a close call keeps the order.
-- **When it runs:** only for a query with text. A model that reads no images (an `openai` one) judges every hit by its text. A picture the model would refuse (a side under 280 pixels) is judged by its text instead. If the model can't be reached, the search fails with `503`.
+- **How deep it goes:** as many candidates as fit in `HINDSIGHT_API_KB_RERANKER_MAX_TOKENS` (120,000 tokens; at most 26,000 on a `low` budget), not a fixed count. The rest keep the search's order, and so do ties.
+- **What the reranker reads:** a text hit with the text around it, up to 2048 tokens, so it sees the page and not just the passage. Hits that would show it the same text (pieces of one short page) go once, as one candidate. An image or PDF page goes as its picture with its text; with `HINDSIGHT_API_KB_RERANKER_IMAGES=false`, or a picture under 280 or over 1568 pixels a side, it goes as its text. A video is not sent and keeps its place.
+- **When it runs:** for a query with text. A search by an image is reranked with the picture as the query too when `HINDSIGHT_API_KB_RERANKER_QUERY_IMAGES` is on (off by default: turn it on only for a reranker that takes an image query). A search by a video is reranked by its text alone. If the reranker can't be reached, the search fails with `503`.
 
-The candidates past the best 100 (`HINDSIGHT_API_KB_DECISION_MODEL_CANDIDATES`) keep the search's order. Reflect's search of [linked knowledge banks](#linking-to-a-memory-bank) is reranked the same way.
+Reflect's search of [linked knowledge banks](#linking-to-a-memory-bank) is reranked the same way.
 
 **4. Fit the budget.** Two settings decide how much comes back:
 
@@ -116,11 +118,7 @@ You can narrow a search by `tags`, with the same rules as memory recall (`tags_m
 
 A memory bank can read one or more knowledge banks. Add their ids to the memory bank's config:
 
-```bash
-curl -X PATCH http://localhost:8888/v1/default/banks/support-agent/config \
-  -H "Content-Type: application/json" \
-  -d '{"updates": {"knowledge_banks": ["product-manuals", "return-policy"]}}'
-```
+<CodeSnippet code={kbSh} section="link-memory-bank" language="bash" />
 
 From then on, when [reflect](./reflect) searches its memories, it also searches every linked knowledge bank at the same time, with the same search as above. Each bank's best hits are taken in turn, within the same `max_tokens`. The passages reach the agent next to the memories, marked as documents. **When a document and a memory disagree, the document wins**: the agent is told to answer from the document and say the memory is out of date.
 
@@ -178,11 +176,7 @@ export HINDSIGHT_API_KB_EMBEDDINGS_API_KEY=...
 
 A knowledge bank can change how its files are split, and nothing else: the embedder, keys, search weights and server limits stay the server's.
 
-```bash
-curl -X PATCH http://localhost:8888/v1/default/knowledge-banks/product-manuals/config \
-  -H "Content-Type: application/json" \
-  -d '{"updates": {"text_passage_tokens": 512, "disabled_media_types": ["video"]}}'
-```
+<CodeSnippet code={kbSh} section="bank-config" language="bash" />
 
 | Setting | What it changes | Range |
 |---|---|---|

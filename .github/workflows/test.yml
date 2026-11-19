@@ -5351,6 +5351,9 @@ jobs:
       HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
       HINDSIGHT_API_URL: http://localhost:8888
+      # Knowledge banks embed with the memory banks' embedder (texts, and PDFs by their text layer),
+      # so the examples don't download the default multimodal model.
+      HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER: text
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
