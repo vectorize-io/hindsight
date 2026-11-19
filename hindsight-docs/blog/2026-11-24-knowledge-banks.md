@@ -166,17 +166,13 @@ Search costs one query embedding: about 40 ms and a fraction of a cent per thous
 
 ### The trade-offs
 
-- **No reranker, yet.** Mixedbread with its own reranker reaches 69.9 on ViDoRe V3, above our 63.4. A knowledge bank doesn't rerank today; it's the next thing we're adding, with [`hs-rerank-1`](/blog/2026/11/03/hindsight-models).
+- **Our numbers are without a reranker.** Mixedbread with its own reranker reaches 69.9 on ViDoRe V3, above our 63.4. You can [plug in a reranker](/developer/knowledge-banks#searching) (any service that speaks Cohere's rerank API, pictures included), at a cost per search; we haven't published scores with one yet.
 - **Pick the embedder before you fill the bank.** Every passage is stored as a vector of the model's size. Switching to a model of another size means ingesting again.
 - **Video and audio take time to ingest.** Decoding clips is the slow part: a one-hour video takes about a minute on a GPU. You can turn either off per bank.
 
 ## Try it
 
-**Self-hosted Hindsight:**
-
-```bash
-export HINDSIGHT_API_ENABLE_KNOWLEDGE_BANKS=true
-```
+**Self-hosted Hindsight:** knowledge banks are on by default.
 
 ```bash
 # Create a bank, upload a PDF, search it
