@@ -2823,3 +2823,13 @@ def test_a_page_whose_first_body_is_empty_is_read_for_its_text():
     )
     text = media.read_text(page, "page.html")
     assert "Unified to secure the borders." in text and "color" not in text and "var x" not in text
+
+
+def test_a_pdf_that_crashes_the_renderer_fails_alone_and_the_next_renders():
+    # pdfium aborts the process on some files (a JPEG 2000 image: SIGTRAP), which took the API down with it;
+    # it runs in a worker now, so a crash fails that file and the next PDF gets a fresh worker.
+    import os
+
+    with pytest.raises(media.MediaError, match="renderer crashed"):
+        media._in_pdf_worker(os.abort)
+    assert [d.page for d in media.split_pdf(_pdf((255, 0, 0), (0, 0, 255)), page_pixels=128, max_pages=10)] == [1, 2]

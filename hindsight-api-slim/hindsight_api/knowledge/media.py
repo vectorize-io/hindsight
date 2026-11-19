@@ -14,7 +14,6 @@ the Docker image, a CI step); PyAV keeps the work in-process and needs nothing o
 
 from __future__ import annotations
 
-import collections
 import contextlib
 import io
 import math
@@ -23,14 +22,16 @@ import re
 import tempfile
 import threading
 from collections import Counter
-from collections.abc import Iterator
-from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
+from collections.abc import Callable, Iterator
+from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import numpy as np
+
+_T = TypeVar("_T")
 
 PCM_RATE = 16000  # EmbeddingGemma 2 takes mono 16 kHz audio
 
@@ -267,10 +268,6 @@ PDF_TEXT_UNIT_TOKENS = 128
 _PDF_BANDS = ((0.0, 0.5), (0.25, 0.75), (0.5, 1.0))
 
 
-_PDF_LOOKAHEAD = 4
-_PNG_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="kb-png")
-
-
 def _page_png(sharp: Any, page_pixels: int, bands: bool) -> bytes:
     image = sharp.copy() if bands else sharp  # with bands the full-size render is still being cropped
     image.thumbnail((page_pixels, page_pixels))
@@ -283,65 +280,115 @@ def _band_pngs(sharp: Any) -> tuple[bytes, ...]:
     )
 
 
-def split_pdf(data: Source, *, page_pixels: int, max_pages: int, bands: bool = False) -> Iterator[PassageDraft]:
-    """One PNG per page, the longest side rendered at ``page_pixels``."""
+@dataclass(frozen=True)
+class _PdfText:
+    page_count: int
+    #: Each page's own text layer, or None (a scan, or a page that cannot load).
+    texts: list[str | None]
+
+
+@dataclass(frozen=True)
+class _RenderedPage:
+    number: int
+    png: bytes
+    bands: tuple[bytes, ...]
+
+
+#: Pages rendered per call to a PDF worker: few enough to hold, enough to keep the call overhead small.
+_PDF_CHUNK = 8
+#: Processes rendering PDFs at once. Each is single-threaded (pdfium is not thread-safe), so PDFs of
+#: different ingests render in parallel instead of page by page under one process-wide lock.
+_PDF_WORKERS = 2
+_PDF_POOL: ProcessPoolExecutor | None = None
+_PDF_POOL_LOCK = threading.Lock()
+
+
+def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
+    """``fn(*args)`` in a PDF worker process. pdfium aborts the process on some files (a JPEG 2000 image in
+    pdf.js's jpx_numcomps.pdf: SIGTRAP), and in the server that took the API down for everyone; in a worker
+    it fails that file, and the next one gets a fresh worker."""
+    global _PDF_POOL
+    with _PDF_POOL_LOCK:
+        if _PDF_POOL is None:
+            _PDF_POOL = ProcessPoolExecutor(
+                max_workers=_PDF_WORKERS, mp_context=multiprocessing.get_context("spawn"), initializer=_first_to_kill
+            )
+        pool = _PDF_POOL
+    try:
+        return pool.submit(fn, *args).result()
+    except BrokenProcessPool as exc:
+        with _PDF_POOL_LOCK:
+            if _PDF_POOL is pool:
+                _PDF_POOL = None
+        raise MediaError("the PDF renderer crashed on this file") from exc
+
+
+def _pdf_text(data: Source, max_pages: int) -> _PdfText:
+    """In a worker: the page count and every page's text layer."""
     import pypdfium2 as pdfium
 
-    with _PDFIUM_LOCK:
-        try:
-            pdf = pdfium.PdfDocument(data)
-        except Exception as exc:
-            raise MediaError(f"unreadable PDF: {exc}") from exc
-        page_count = len(pdf)
     try:
+        pdf = pdfium.PdfDocument(data)
+    except Exception as exc:
+        raise MediaError(f"unreadable PDF: {exc}") from None  # pdfium's exceptions carry ctypes state
+    try:
+        page_count = len(pdf)
         if page_count > max_pages:
             raise MediaError(f"PDF has {page_count} pages; the limit is {max_pages}")
-        # The pages' own text layers, when they have one (not OCR: a scan has none). A page is
-        # scored on it too (whole page and 128-token units), and it is what a reader gets back.
-        texts = [_page_text(pdf, number) for number in range(page_count)]
-        embed_texts = strip_repeated_lines(texts)
-        # Rendering goes through pdfium, one page at a time under its lock; encoding the PNGs does not
-        # (Pillow lets go of the GIL), so it runs on a few threads while the next pages render. Page by
-        # page in order it was half of a PDF's ingest; up to _PDF_LOOKAHEAD pages are held at once.
-        pending: collections.deque[tuple[int, Future[bytes], Future[tuple[bytes, ...]] | None]] = collections.deque()
-        number, rendered = 0, 0
-        while number < page_count or pending:
-            while number < page_count and len(pending) < _PDF_LOOKAHEAD:
-                with _PDFIUM_LOCK:
-                    try:
-                        page = pdf[number]
-                        width, height = page.get_size()
-                        scale = (max(page_pixels, PDF_BAND_PIXELS) if bands else page_pixels) / max(width, height, 1)
-                        sharp = page.render(scale=scale).to_pil().convert("RGB")
-                        page.close()
-                    except Exception:  # noqa: BLE001 - see below
-                        # A damaged page (a broken page tree: "Failed to load page") is skipped, so the rest
-                        # of the PDF stays searchable; raised, it was retried three times and lost them all.
-                        number += 1
-                        continue
-                # Bands only when asked: they used to be cut and encoded for every page and then dropped,
-                # three PNGs per page for nothing (half of a PDF's ingest time with bands off).
-                crops = _PNG_POOL.submit(_band_pngs, sharp) if bands else None
-                pending.append((number, _PNG_POOL.submit(_page_png, sharp, page_pixels, bands), crops))
-                number += 1
-            if not pending:
-                break
-            done, page_png, crops = pending.popleft()
+        return _PdfText(page_count, [_page_text(pdf, number) for number in range(page_count)])
+    finally:
+        pdf.close()
+
+
+def _pdf_render(data: Source, numbers: list[int], page_pixels: int, bands: bool) -> list[_RenderedPage]:
+    """In a worker: pages ``numbers`` rendered and encoded. A damaged page (a broken page tree: "Failed to
+    load page") is left out, so the rest of the PDF stays searchable; raised, it was retried three times and
+    lost them all."""
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(data)
+    try:
+        out = []
+        for number in numbers:
+            try:
+                page = pdf[number]
+                width, height = page.get_size()
+                scale = (max(page_pixels, PDF_BAND_PIXELS) if bands else page_pixels) / max(width, height, 1)
+                sharp = page.render(scale=scale).to_pil().convert("RGB")
+                page.close()
+            except Exception:  # noqa: BLE001 - see the docstring
+                continue
+            # Bands only when asked: they used to be cut and encoded for every page and then dropped,
+            # three PNGs per page for nothing (half of a PDF's ingest time with bands off).
+            out.append(_RenderedPage(number, _page_png(sharp, page_pixels, bands), _band_pngs(sharp) if bands else ()))
+        return out
+    finally:
+        pdf.close()
+
+
+def split_pdf(data: Source, *, page_pixels: int, max_pages: int, bands: bool = False) -> Iterator[PassageDraft]:
+    """One PNG per page, the longest side rendered at ``page_pixels``. pdfium runs in worker processes
+    (``_in_pdf_worker``), a few pages per call."""
+    info = _in_pdf_worker(_pdf_text, data, max_pages)
+    # The pages' own text layers, when they have one (not OCR: a scan has none). A page is scored on it
+    # too (whole page and 128-token units), and it is what a reader gets back.
+    embed_texts = strip_repeated_lines(info.texts)
+    rendered = 0
+    for start in range(0, info.page_count, _PDF_CHUNK):
+        numbers = list(range(start, min(start + _PDF_CHUNK, info.page_count)))
+        for page in _in_pdf_worker(_pdf_render, data, numbers, page_pixels, bands):
             rendered += 1
             yield PassageDraft(
                 modality="image",
-                text=texts[done],
-                data=page_png.result(),
+                text=info.texts[page.number],
+                data=page.png,
                 mime="image/png",
-                page=done + 1,
-                bands=crops.result() if crops is not None else (),
-                embed_text=embed_texts[done],
+                page=page.number + 1,
+                bands=page.bands,
+                embed_text=embed_texts[page.number],
             )
-        if not rendered:
-            raise MediaError("no page of the PDF could be rendered")
-    finally:
-        with _PDFIUM_LOCK:
-            pdf.close()
+    if not rendered:
+        raise MediaError("no page of the PDF could be rendered")
 
 
 def _page_text(pdf: Any, number: int) -> str | None:
