@@ -38,7 +38,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import threading
 import time
+import weakref
 from dataclasses import dataclass
 from typing import Any
 
@@ -118,13 +120,7 @@ class GeminiCacheManager:
         if response_schema is None:
             hasher.update(b"none")
         elif hasattr(response_schema, "model_json_schema"):
-            try:
-                schema = response_schema.model_json_schema()
-                _strip_titles(schema)
-                hasher.update(json.dumps(schema, sort_keys=True).encode("utf-8"))
-            except Exception:
-                # Fall back to class identity if the schema can't be serialised.
-                hasher.update(repr(response_schema).encode("utf-8"))
+            hasher.update(_schema_key(response_schema))
         else:
             try:
                 hasher.update(json.dumps(response_schema, sort_keys=True).encode("utf-8"))
@@ -257,6 +253,37 @@ class _CacheNotEligible(Exception):
     """Raised when Gemini rejects the cache create because the prefix
     is below the model's minimum cacheable size. Treated as a soft
     fallback by the caller, not an error."""
+
+
+# Schema class -> its serialised, title-stripped JSON. Building that JSON costs
+# 1-2 ms of event-loop CPU, and a document's chunks all share one schema class,
+# so without this a large document paid it once per chunk, back to back (#6667).
+# Weak keys: retain rebuilds the class per document, so entries die with it.
+# Shared by every loop/thread in the process, hence the lock (held only for the
+# lookup and the store, never while serialising).
+_SCHEMA_KEYS: weakref.WeakKeyDictionary[type, bytes] = weakref.WeakKeyDictionary()
+_SCHEMA_KEYS_LOCK = threading.Lock()
+
+
+def _schema_key(response_schema: Any) -> bytes:
+    try:
+        with _SCHEMA_KEYS_LOCK:
+            return _SCHEMA_KEYS[response_schema]
+    except (KeyError, TypeError):
+        pass
+    try:
+        schema = response_schema.model_json_schema()
+        _strip_titles(schema)
+        key = json.dumps(schema, sort_keys=True).encode("utf-8")
+    except Exception:
+        # Fall back to class identity if the schema can't be serialised.
+        return repr(response_schema).encode("utf-8")
+    try:
+        with _SCHEMA_KEYS_LOCK:
+            _SCHEMA_KEYS[response_schema] = key
+    except TypeError:
+        pass  # not weak-referenceable: just don't memoise it
+    return key
 
 
 def _strip_titles(node: Any) -> None:

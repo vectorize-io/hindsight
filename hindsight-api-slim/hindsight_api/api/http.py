@@ -26,7 +26,6 @@ from urllib.parse import quote, unquote
 
 import orjson
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
-from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from hindsight_api.api.admission import AdmissionAbandoned, AdmissionRejected, build_controller_from_config
@@ -47,6 +46,8 @@ from hindsight_api.engine.document_history import DocumentHistoryResponse
 from hindsight_api.engine.llm_trace import LLMCallType, LLMRequestListResponse, LLMRequestStatsResponse, LLMStatsSplit
 from hindsight_api.engine.observation_tree import TreeFolder
 from hindsight_api.extensions import AuthenticationError, PrecheckContext, PrecheckOperation
+
+from .gzip_offload import OffloadingGZipMiddleware
 
 
 def _parse_metadata(metadata: Any) -> dict[str, Any]:
@@ -4669,7 +4670,7 @@ def create_app(
     # A negative floor drops the middleware entirely.
     gzip_min_size = get_config().gzip_min_size
     if gzip_min_size >= 0:
-        app.add_middleware(GZipMiddleware, minimum_size=gzip_min_size)
+        app.add_middleware(OffloadingGZipMiddleware, minimum_size=gzip_min_size)
 
     # ---------------------------------------------------------------------------
     # Patch OpenAPI schema: align ValidationError with Pydantic v2 error format
