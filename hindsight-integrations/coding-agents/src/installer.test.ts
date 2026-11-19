@@ -332,6 +332,29 @@ describe("kimi-code installer", () => {
     const mcp = JSON.parse(readFileSync(join(ctx.home, ".kimi-code", "mcp.json"), "utf8"));
     expect(mcp.mcpServers.hindsight).toBeUndefined();
   });
+
+  // #6557: with no `node` on PATH a bare `node` can never start, so this Node's path is written —
+  // and uninstall must still recognise those entries as ours.
+  it.skipIf(process.platform === "win32")(
+    "writes this Node's path when PATH has no node, and still uninstalls it",
+    () => {
+      const ctx = makeCtx();
+      vi.stubEnv("PATH", ctx.home); // a directory with no node in it
+      try {
+        expect(run(["install", "kimi-code"], ctx)).toBe(0);
+        const toml = readFileSync(join(ctx.home, ".kimi-code", "config.toml"), "utf8");
+        expect(toml).toContain(process.execPath);
+        const mcpPath = join(ctx.home, ".kimi-code", "mcp.json");
+        expect(JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers.hindsight.command).toBe(
+          process.execPath
+        );
+        expect(run(["uninstall", "kimi-code"], ctx)).toBe(0);
+        expect(JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers.hindsight).toBeUndefined();
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    }
+  );
 });
 
 describe("qwen-code installer", () => {

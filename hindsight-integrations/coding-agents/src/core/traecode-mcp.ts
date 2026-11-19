@@ -37,7 +37,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { diag } from "./diag";
-import { isOurMcpEntry } from "./util";
+import { hookNode, isOurMcpEntry } from "./util";
 
 const MCP_SERVER_NAME = "hindsight";
 const MCP_FILE_REL = join(".trae", "mcp.json");
@@ -261,7 +261,7 @@ export function registerTraecodeWorkspaceMcp(
     ) as Record<string, unknown>;
 
     const entry = {
-      command: "node",
+      command: hookNode(),
       args: [script],
       env: { HINDSIGHT_MCP_HARNESS: "traecode", HINDSIGHT_MCP_PROJECT_CWD: cwd },
     };
