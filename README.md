@@ -23,7 +23,7 @@
 
 Hindsight™ is an agent memory system built to create smarter agents that learn over time. Most agent memory systems focus on recalling conversation history. Hindsight is focused on making agents that learn, not just remember.
 
-<video src="https://github.com/user-attachments/assets/51fc5b78-e3e9-4f35-a25f-235af85a7a79" controls></video>
+<video src="https://github.com/user-attachments/assets/f24a7def-2e82-43f6-91d9-1c144874e23c" controls></video>
 
 It eliminates the shortcomings of alternative techniques such as RAG and knowledge graph and delivers state-of-the-art performance on long term memory tasks.
 
