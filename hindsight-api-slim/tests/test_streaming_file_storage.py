@@ -366,6 +366,41 @@ async def test_postgres_row_that_only_looks_like_a_manifest_is_a_plain_file(memo
     assert not await fs.exists(key)
 
 
+async def test_postgres_reads_several_files_in_one_statement(memory, monkeypatch):
+    """retrieve_many: plain and chunked files in one read; a missing one is an error, as with retrieve()."""
+    fs = memory._file_storage
+    plain, chunked = _pg_key("plain.bin"), _pg_key("chunked.bin")
+    big = b"Z" * (9 * 1024 * 1024)
+    try:
+        await fs.store(b"plain bytes", plain)
+        await fs.store_stream(chunked, _pieces(big))
+        plain_reads: list[str] = []
+        real_retrieve = fs.retrieve
+
+        async def spy(key: str) -> bytes:
+            plain_reads.append(key)
+            return await real_retrieve(key)
+
+        monkeypatch.setattr(fs, "retrieve", spy)
+        assert await fs.retrieve_many([plain, chunked, plain]) == {plain: b"plain bytes", chunked: big}
+        assert plain_reads == [chunked]  # only the chunked one is put together file by file
+        with pytest.raises(FileNotFoundError):
+            await fs.retrieve_many([plain, _pg_key("missing.bin")])
+    finally:
+        await fs.delete(plain)
+        await fs.delete(chunked)
+
+
+@pytest.mark.parametrize("cls", BACKENDS, ids=lambda c: c.__name__)
+async def test_cloud_storage_reads_several_files(cls):
+    fs = _backend_over_memory_store(cls)
+    await fs.store(b"a", "a.bin")
+    await fs.store(b"b", "b.bin")
+    assert await fs.retrieve_many(["a.bin", "b.bin"]) == {"a.bin": b"a", "b.bin": b"b"}
+    with pytest.raises(FileNotFoundError):
+        await fs.retrieve_many(["a.bin", "missing.bin"])
+
+
 async def test_zip_streamer_never_hands_on_more_than_one_chunk_at_a_time():
     """A source that yields a blob in one piece still leaves the writer as bounded pieces."""
     blob = bytes(range(256)) * (3 * CHUNK_SIZE // 256 + 7)

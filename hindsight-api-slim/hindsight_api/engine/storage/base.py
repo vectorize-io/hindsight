@@ -1,5 +1,6 @@
 """Abstract base class for file storage backends."""
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
@@ -66,6 +67,17 @@ class FileStorage(ABC):
             FileNotFoundError: If file does not exist
         """
         pass
+
+    async def retrieve_many(self, keys: list[str]) -> dict[str, bytes]:
+        """Several files at once, by storage key. Raises FileNotFoundError if any is missing.
+
+        Default implementation calls :meth:`retrieve` for each key concurrently. A backend
+        that can read them in one request (the database one) overrides this, so a knowledge
+        search's ~50 page pictures are one statement rather than one connection each.
+        """
+        unique = list(dict.fromkeys(keys))
+        found = await asyncio.gather(*(self.retrieve(k) for k in unique))
+        return dict(zip(unique, found, strict=True))
 
     async def retrieve_stream(self, key: str) -> AsyncIterator[bytes]:
         """Retrieve file as an async stream of bytes.

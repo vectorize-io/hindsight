@@ -251,6 +251,26 @@ class PostgreSQLFileStorage(FileStorage):
             return b"".join([chunk async for chunk in self.retrieve_stream(key)])
         return data
 
+    async def retrieve_many(self, keys: list[str]) -> dict[str, bytes]:
+        """Every key's bytes in one statement; a chunked file (rare: only a streamed upload past the chunk
+        size is one) is then put together by :meth:`retrieve`."""
+        unique = list(dict.fromkeys(keys))
+        if not unique:
+            return {}
+        async with acquire_with_retry(self._pool_getter()) as conn:
+            rows = await conn.fetch(
+                f"SELECT storage_key, data FROM {fq_table('file_storage', self._schema)} WHERE storage_key = ANY($1)",
+                unique,
+            )
+        found = {r["storage_key"]: bytes(r["data"]) for r in rows}
+        missing = [k for k in unique if k not in found]
+        if missing:
+            raise FileNotFoundError(f"File not found: {missing[0]}")
+        for key, data in found.items():
+            if data.startswith(_CHUNKED_MANIFEST_SIGNATURE):
+                found[key] = await self.retrieve(key)
+        return found
+
     async def retrieve_stream(self, key: str) -> AsyncIterator[bytes]:
         """Stream a file at most 4 MiB at a time.
 

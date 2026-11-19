@@ -12,7 +12,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import math
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -172,6 +171,18 @@ class StoreSearchTrace:
     scored: list[SearchHit] = field(default_factory=list)
 
 
+@dataclass
+class StoreSearchResult:
+    hits: list[SearchHit]
+    #: Every passage within ``around`` of a text hit, the hit's own included, by (document_id, index): the
+    #: text the reranker and the token budget show around a hit, read with the search.
+    nearby: dict[tuple[str, int], KnowledgePassage] = field(default_factory=dict)
+
+
+class KnowledgeBankNotFound(Exception):
+    """``search`` was asked for a bank that is not a knowledge bank: it checks that in its own statement."""
+
+
 #: The candidate searches: the passages' main vectors, their extra vectors, and keywords.
 ArmName = Literal["vector", "extra_vectors", "keyword"]
 
@@ -325,9 +336,12 @@ class KnowledgeStore(ABC):
         text_weight: float = 0.6,
         query_text: str | None = None,
         keyword_weight: float = 0.2,
+        around: int = 0,
         trace: StoreSearchTrace | None = None,
-    ) -> list[SearchHit]:
-        """Best passages, each scored from all its vectors (``page_score``), keyword matches fused in."""
+    ) -> StoreSearchResult:
+        """Best passages, each scored from all its vectors (``page_score``), keyword matches fused in, with
+        the passages within ``around`` of each text hit. Raises ``KnowledgeBankNotFound`` for a bank that is
+        not a knowledge bank."""
 
     @abstractmethod
     async def list_tags(self, bank_id: str, *, pattern: str | None, limit: int, offset: int) -> TagPage:
@@ -407,7 +421,6 @@ class PostgresKnowledgeStore(KnowledgeStore):
         self._backend_provider = backend_provider
         self._ready: dict[str, int] = {}
         self._dimension = 0
-        self._iterative_scan = False
 
     async def _pool(self) -> Any:
         return await self._backend_provider()
@@ -419,10 +432,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
         async with acquire_with_retry(await self._pool()) as conn:
             for table in ("kb_passages", "kb_passage_vectors"):
                 await self._pin_dimension(conn, schema, table, dimension)
-            version = await conn.fetchval("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
         self._ready[schema] = dimension
         self._dimension = dimension
-        self._iterative_scan = _version_at_least(version, (0, 8))
 
     async def _pin_dimension(self, conn: Any, schema: str, table_name: str, dimension: int) -> None:
         passages = fq_table(table_name)
@@ -860,16 +871,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
         if not ranges:
             return out
         async with acquire_with_retry(await self._pool()) as conn:
-            rows = await conn.fetch(
-                f"SELECT r.document_id AS range_document_id, r.first, r.last, {_PASSAGE_COLUMNS} "
-                "FROM unnest($2::text[], $3::int[], $4::int[]) AS r(document_id, first, last) "
-                f"JOIN {fq_table('kb_passages')} p ON p.bank_id = $1 AND p.document_id = r.document_id "
-                "AND p.idx BETWEEN r.first AND r.last ORDER BY p.idx",
-                bank_id,
-                [r[0] for r in ranges],
-                [r[1] for r in ranges],
-                [r[2] for r in ranges],
-            )
+            rows = await _fetch_ranges(conn, bank_id, ranges)
         for r in rows:
             out[(r["range_document_id"], r["first"], r["last"])].append(_passage(r))
         return out
@@ -942,13 +944,21 @@ class PostgresKnowledgeStore(KnowledgeStore):
         text_weight: float = 0.6,
         query_text: str | None = None,
         keyword_weight: float = 0.2,
+        around: int = 0,
         trace: StoreSearchTrace | None = None,
-    ) -> list[SearchHit]:
-        """Two stages. (1) Candidate passages: the nearest primary vectors, the nearest extra vectors
-        (a page's bands, text, text units), and the best keyword matches of the query's rarer words.
-        (2) Every candidate is scored from all its vectors with ``page_score``; keyword matches, when
-        any, are fused in as ``(1 - w) * dense + w * keyword`` after min-max scaling over the
-        candidates (PDF_GEMMA.md), a passage with no text by its dense score alone."""
+    ) -> StoreSearchResult:
+        """Two stages, in one statement. (1) Candidate passages: the nearest primary vectors, the nearest
+        extra vectors (a page's bands, text, text units), and the best keyword matches of the query's rarer
+        words. (2) Every candidate is scored from all its vectors with ``page_score``; keyword matches,
+        when any, are fused in as ``(1 - w) * dense + w * keyword`` after min-max scaling over the
+        candidates (PDF_GEMMA.md), a passage with no text by its dense score alone.
+
+        One connection, and at most three statements: the bank check, its passage count, the keyword
+        words' rarity, the candidate searches and their scoring are one; the best pages' sentence vectors
+        (stage 3) a second; the passages around the text hits (``around``) a third. It was six connections
+        and 17 statements or more a search (each connection set up, the scan settings set in a transaction
+        of their own, the context read again for the reranker and for each widening of the budget), and
+        under a busy pool every one of them waited for its connection."""
         params: list[Any] = [str(vector), bank_id]
         where = ""
         if filters.document_ids:
@@ -968,25 +978,39 @@ class PostgresKnowledgeStore(KnowledgeStore):
         # arm (top_k 100) stage 1 took 266 ms of a 410 ms ViDoRe hr search; at 300 it takes 10 ms.
         params.append(max(100, min(top_k * 10, CANDIDATE_POOL_CAP), top_k))
         pool = f"${len(params)}"
-        # Keyword words first: their rarity decides which take part. Plain words ('simple': no
-        # language, no stemming), in every document. It was gated on a detected language (stopwords
-        # of 6 languages, stemming per language): any other language never got keywords, and a name
-        # or code never matched a document in another language than its query.
-        docs = fq_table("kb_documents")
-        async with acquire_with_retry(await self._pool()) as conn:
-            bank_passages = int(
-                await conn.fetchval(f"SELECT coalesce(sum(passage_count), 0) FROM {docs} WHERE bank_id = $1", bank_id)
-            )
-            terms = (
-                await self._keyword_terms(conn, bank_id, query_text, bank_passages)
-                if query_text and keyword_weight > 0
-                else {}
-            )
-        if trace is not None:
-            trace.keyword_terms = terms
-        if terms:
-            params.append(list(terms))
-            tsquery = f"(SELECT to_tsquery('simple', string_agg(quote_literal(w), ' | ')) FROM unnest(${len(params)}::text[]) w)"
+        docs, passages = fq_table("kb_documents"), fq_table("kb_passages")
+        # The bank's own row: no row back means it is not a knowledge bank (KnowledgeBankNotFound).
+        ctes = [f"bank AS (SELECT 1 AS found FROM {fq_table('banks')} WHERE bank_id = $2 AND kind = 'knowledge')"]
+        keywords = bool(query_text) and keyword_weight > 0
+        if keywords:
+            # The words that take part in keyword search, each with its BM25 IDF in this bank:
+            # ln(1 + (N - df + 0.5) / (df + 0.5)) over the bank's passages, so rare words (names, codes)
+            # count and common ones barely. A word less than half as rare as the query's rarest one (IDF
+            # under KEYWORD_IDF_SHARE of the best) is left out: next to a name or a code, "the" and "of"
+            # say nothing about which passage answers, and matching them would pull in most of the bank.
+            # That drops them in any language and at any bank size, where a stopword list knew 6 languages.
+            # Plain words ('simple': no language, no stemming), in every document: gated on a detected
+            # language (stopwords of 6 languages, stemming per language), any other language never got
+            # keywords, and a name or code never matched a document in another language than its query.
+            # N comes from the documents' passage counts, not from counting passages: that count grew with
+            # the bank. Each df stops at _DF_CAP matches, so the GIN count of a common word stays bounded.
+            # This was worked out in Python between two statements; here it is part of the search's own.
+            params.append(query_text)
+            ctes += [
+                f"n AS (SELECT coalesce(sum(passage_count), 0)::float8 AS n FROM {docs} WHERE bank_id = $2)",
+                f"""df AS (
+                    SELECT w.w, df.df
+                    FROM (SELECT DISTINCT unnest(tsvector_to_array(to_tsvector('simple', ${len(params)}))) AS w) w,
+                      LATERAL (SELECT count(*)::float8 AS df FROM (
+                               SELECT 1 FROM {passages} x
+                               WHERE x.bank_id = $2 AND x.search_vector @@ to_tsquery('simple', quote_literal(w.w))
+                               LIMIT {_DF_CAP}) m) df
+                    WHERE df.df > 0)""",
+                "idf AS (SELECT df.w, ln(1 + greatest(n.n - df.df, 0) / (df.df + 0.5) + 0.5 / (df.df + 0.5)) AS idf"
+                " FROM df, n)",
+                f"terms AS (SELECT w, idf FROM idf WHERE idf >= {KEYWORD_IDF_SHARE} * (SELECT max(idf) FROM idf))",
+                "tq AS (SELECT to_tsquery('simple', string_agg(quote_literal(w), ' | ')) AS q FROM terms)",
+            ]
 
         def nearest(table: str) -> str:
             roles = f" AND {CANDIDATE_ROLES_SQL.replace('role', 'x.role')}" if table == "kb_passage_vectors" else ""
@@ -999,73 +1023,72 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 ORDER BY {self._distance("$1", "x")} LIMIT {pool}
             """
 
-        def keyword_arm() -> str:
-            return f"""
+        # Each bank's own HNSW index (_create_bank_index). One index spanning every bank, filtered to one,
+        # gave up after hnsw.max_scan_tuples and a small bank next to a big one found none of its passages
+        # (#6607); small banks were then scanned exactly, which this replaced. The scan's settings
+        # (hnsw.ef_search 200, iterative scan) are the ones every pool connection is set up with
+        # (_vector_index, high recall): they were set again here, SET LOCAL in a transaction of their own,
+        # four more round trips a search, and iterative scan in relaxed rather than strict order.
+        arms = [nearest("kb_passages"), nearest("kb_passage_vectors")]
+        if keywords:
+            # No words rare enough leave tq.q NULL, and `@@ NULL` matches nothing: no keyword candidates.
+            arms.append(f"""
                 SELECT x.document_id, x.idx, 'keyword' AS arm,
-                       ts_rank_cd(x.search_vector, {tsquery}) AS arm_score FROM {fq_table("kb_passages")} x
+                       ts_rank_cd(x.search_vector, (SELECT q FROM tq)) AS arm_score FROM {passages} x
                 JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
-                WHERE x.bank_id = $2{where} AND x.search_vector @@ {tsquery}
-                ORDER BY ts_rank_cd(x.search_vector, {tsquery}) DESC LIMIT {pool}
-            """
-
+                WHERE x.bank_id = $2{where} AND x.search_vector @@ (SELECT q FROM tq)
+                ORDER BY ts_rank_cd(x.search_vector, (SELECT q FROM tq)) DESC LIMIT {pool}
+            """)
+        ctes += [
+            "arms AS (" + " UNION ALL ".join(f"({a})" for a in arms) + ")",
+            # Each candidate once, with every search that found it and its score there (the trace's lists).
+            "c AS (SELECT document_id, idx, array_agg(arm || ':' || coalesce(arm_score, 0)::text) AS found"
+            " FROM arms GROUP BY document_id, idx)",
+        ]
+        # BM25's IDF per word: rare words (names, codes) count, common ones barely.
+        keyword = (
+            "(SELECT coalesce(sum(t.idf), 0) FROM terms t "
+            "WHERE p.search_vector @@ to_tsquery('simple', quote_literal(t.w)))"
+            if keywords
+            else "0"
+        )
+        ctes.append(f"""scored AS (
+            SELECT {", ".join(f"p.{col.strip()}" for col in _PASSAGE_COLUMNS.split(","))},
+                   {", ".join(f"d.{col.strip()}" for col in _DOC_COLUMNS.split(",") if col.strip() != "document_id")},
+                   p.document_id, 1 - {self._distance("$1")} AS score, {keyword} AS keyword, c.found,
+                   (SELECT array_agg(v.role || ':' || (1 - {self._distance("$1", "v")})::text)
+                    FROM {fq_table("kb_passage_vectors")} v
+                    WHERE v.bank_id = p.bank_id AND v.document_id = p.document_id AND v.idx = p.idx
+                      AND {CANDIDATE_ROLES_SQL.replace("role", "v.role")}) AS extra
+            FROM c
+            JOIN {passages} p ON p.bank_id = $2 AND p.document_id = c.document_id AND p.idx = c.idx
+            JOIN {docs} d ON d.bank_id = p.bank_id AND d.document_id = p.document_id)""")
+        terms_columns = (
+            "(SELECT array_agg(w ORDER BY w) FROM terms) AS term_words, "
+            "(SELECT array_agg(idf ORDER BY w) FROM terms) AS term_idfs"
+            if keywords
+            else "NULL::text[] AS term_words, NULL::float8[] AS term_idfs"
+        )
+        # One row per candidate, or a single row of NULLs for a knowledge bank with none; nothing at all
+        # for a bank that is not one.
+        sql = f"WITH {', '.join(ctes)} SELECT {terms_columns}, s.* FROM bank LEFT JOIN scored s ON true"
         async with acquire_with_retry(await self._pool()) as conn:
-            # Each bank's own HNSW index (_create_bank_index). One index spanning every bank, filtered
-            # to one, gave up after hnsw.max_scan_tuples and a small bank next to a big one found none
-            # of its passages (#6607); small banks were then scanned exactly, which this replaced.
-            arms = [nearest("kb_passages"), nearest("kb_passage_vectors")]
-            if terms:
-                arms.append(keyword_arm())
-            async with conn.transaction():
-                # A filtered HNSW scan otherwise stops at ef_search candidates and returns too few rows.
-                await conn.execute("SET LOCAL hnsw.ef_search = 200")
-                if self._iterative_scan:
-                    await conn.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
-                # Every search's own rows: the candidates are their union, and the trace shows each list.
-                arm_rows = await conn.fetch(" UNION ALL ".join(f"({a})" for a in arms), *params)
-            found_by: dict[tuple[str, int], list[str]] = {}
-            for r in arm_rows:
-                found_by.setdefault((r["document_id"], r["idx"]), []).append(r["arm"])
-            candidates = list(found_by)
+            rows = await conn.fetch(sql, *params)
+            if not rows:
+                raise KnowledgeBankNotFound(bank_id)
+            terms = dict(zip(rows[0]["term_words"] or [], rows[0]["term_idfs"] or [], strict=True))
+            rows = [r for r in rows if r["document_id"] is not None]
+            found_by = {(r["document_id"], r["idx"]): [f.partition(":") for f in r["found"]] for r in rows}
             if trace is not None:
-                trace.candidates, trace.keyword_weight = len(candidates), keyword_weight
-                for r in arm_rows:
-                    trace.arms.setdefault(r["arm"], []).append(
-                        ArmHit(r["document_id"], r["idx"], float(r["arm_score"] or 0.0))
-                    )
+                trace.keyword_terms = terms
+                trace.candidates, trace.keyword_weight = len(rows), keyword_weight
+                for (document_id, idx), arms_found in found_by.items():
+                    for arm, _, score in arms_found:
+                        trace.arms.setdefault(cast(ArmName, arm), []).append(ArmHit(document_id, idx, float(score)))
                 for arm_hits in trace.arms.values():
                     arm_hits.sort(key=lambda a: a.score, reverse=True)
-            if not candidates:
-                return []
-            stage_params: list[Any] = [
-                str(vector),
-                bank_id,
-                [document_id for document_id, _ in candidates],
-                [idx for _, idx in candidates],
-            ]
-            keyword = "0"
-            if terms:
-                # BM25's IDF per word: rare words (names, codes) count, common ones barely (_keyword_terms).
-                stage_params += [list(terms), list(terms.values())]
-                keyword = (
-                    "(SELECT coalesce(sum(t.idf), 0) FROM unnest($5::text[], $6::float8[]) t(w, idf) "
-                    "WHERE p.search_vector @@ to_tsquery('simple', quote_literal(t.w)))"
-                )
-            rows = await conn.fetch(
-                f"""
-                WITH c AS (SELECT * FROM unnest($3::text[], $4::int[]) AS c(document_id, idx))
-                SELECT {", ".join(f"p.{col.strip()}" for col in _PASSAGE_COLUMNS.split(","))},
-                       {", ".join(f"d.{col.strip()}" for col in _DOC_COLUMNS.split(",") if col.strip() != "document_id")},
-                       p.document_id, 1 - {self._distance("$1")} AS score, {keyword} AS keyword,
-                       (SELECT array_agg(v.role || ':' || (1 - {self._distance("$1", "v")})::text)
-                        FROM {fq_table("kb_passage_vectors")} v
-                        WHERE v.bank_id = p.bank_id AND v.document_id = p.document_id AND v.idx = p.idx
-                          AND {CANDIDATE_ROLES_SQL.replace("role", "v.role")}) AS extra
-                FROM c
-                JOIN {fq_table("kb_passages")} p ON p.bank_id = $2 AND p.document_id = c.document_id AND p.idx = c.idx
-                JOIN {docs} d ON d.bank_id = p.bank_id AND d.document_id = p.document_id
-                """,
-                *stage_params,
-            )
+            if not rows:
+                return StoreSearchResult([])
             roles = [_role_scores(r["extra"]) for r in rows]
             first = [
                 page_score(float(r["score"]), ro, page_text_weight(r["text"], text_weight))
@@ -1098,64 +1121,44 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         first[i] = page_score(
                             float(rows[i]["score"]), roles[i], page_text_weight(rows[i]["text"], text_weight)
                         )
-        dense = with_document_prior([r["document_id"] for r in rows], first)
-        keywords = [float(r["keyword"] or 0.0) for r in rows]
-        reference = [r["page"] is not None and is_reference_page(r["text"]) for r in rows]
-        has_text = [bool((r["text"] or "").strip()) for r in rows]
-        scores = final_scores(dense, keywords, keyword_weight, reference=reference, has_text=has_text)
-        hits = [
-            SearchHit(
-                passage=_passage(r),
-                document=_document(r),
-                score=scores[i],
-                explain=ScoreExplain(
-                    found_by=sorted(set(found_by.get((r["document_id"], r["idx"]), []))),
-                    similarity=float(r["score"]),
-                    roles={role: max(values) for role, values in roles[i].items() if values},
-                    passage_score=first[i],
-                    with_document=dense[i],
-                    keyword=keywords[i],
-                    reference_page=reference[i],
-                ),
-            )
-            for i, r in enumerate(rows)
-        ]
-        hits.sort(key=lambda h: h.score, reverse=True)
-        if trace is not None:
-            trace.scored = hits
-        return hits[:top_k]
-
-    async def _keyword_terms(self, conn: Any, bank_id: str, query_text: str, bank_passages: int) -> dict[str, float]:
-        """The query's words that take part in keyword search, each with its BM25 IDF in this bank:
-        ln(1 + (N - df + 0.5) / (df + 0.5)) over the bank's passages, so rare words (names, codes) count
-        and common ones barely. A word less than half as rare as the query's rarest one (IDF under
-        ``KEYWORD_IDF_SHARE`` of the best) is left out: next to a name or a code, "the" and "of" say
-        nothing about which passage answers, and matching them would pull in most of the bank. That
-        drops them in any language and at any bank size, where a stopword list knew 6 languages.
-        N (``bank_passages``) comes from the documents' passage counts, not from counting passages: that
-        count grew with the bank. Each df stops at ``_DF_CAP`` matches, so the GIN count of a common word
-        stays bounded too."""
-        rows = await conn.fetch(
-            f"""
-            WITH w AS (SELECT DISTINCT unnest(tsvector_to_array(to_tsvector('simple', $2))) AS w)
-            SELECT w.w, df.df FROM w,
-              LATERAL (SELECT count(*)::float8 AS df FROM (
-                       SELECT 1 FROM {fq_table("kb_passages")} x
-                       WHERE x.bank_id = $1 AND x.search_vector @@ to_tsquery('simple', quote_literal(w.w))
-                       LIMIT {_DF_CAP}) m) df
-            """,
-            bank_id,
-            query_text,
-        )
-        idf = {
-            r["w"]: math.log(
-                1 + max(bank_passages - float(r["df"]), 0) / (float(r["df"]) + 0.5) + 0.5 / (float(r["df"]) + 0.5)
-            )
-            for r in rows
-            if r["df"] > 0
-        }
-        best = max(idf.values(), default=0.0)
-        return {w: v for w, v in idf.items() if v >= KEYWORD_IDF_SHARE * best}
+            dense = with_document_prior([r["document_id"] for r in rows], first)
+            keyword_scores = [float(r["keyword"] or 0.0) for r in rows]
+            reference = [r["page"] is not None and is_reference_page(r["text"]) for r in rows]
+            has_text = [bool((r["text"] or "").strip()) for r in rows]
+            scores = final_scores(dense, keyword_scores, keyword_weight, reference=reference, has_text=has_text)
+            hits = [
+                SearchHit(
+                    passage=_passage(r),
+                    document=_document(r),
+                    score=scores[i],
+                    explain=ScoreExplain(
+                        found_by=sorted({arm for arm, _, _ in found_by[(r["document_id"], r["idx"])]}),
+                        similarity=float(r["score"]),
+                        roles={role: max(values) for role, values in roles[i].items() if values},
+                        passage_score=first[i],
+                        with_document=dense[i],
+                        keyword=keyword_scores[i],
+                        reference_page=reference[i],
+                    ),
+                )
+                for i, r in enumerate(rows)
+            ]
+            hits.sort(key=lambda h: h.score, reverse=True)
+            if trace is not None:
+                trace.scored = hits
+            hits = hits[:top_k]
+            # The text the reranker and the budget show around each text hit, read here once: it was read
+            # by the reranker, then again by the budget for each passage it widened a result by.
+            spans = [
+                (h.document.document_id, max(0, h.passage.index - around), h.passage.index + around)
+                for h in hits
+                if h.passage.modality == "text"
+            ]
+            nearby: dict[tuple[str, int], KnowledgePassage] = {}
+            if around > 0 and spans:
+                for r in await _fetch_ranges(conn, bank_id, _merged_ranges(spans)):
+                    nearby[(r["range_document_id"], r["idx"])] = _passage(r)
+        return StoreSearchResult(hits, nearby)
 
     async def timeseries(
         self, bank_id: str, *, since: datetime, trunc: str, media_type: str | None = None
@@ -1229,12 +1232,29 @@ class PostgresKnowledgeStore(KnowledgeStore):
         return stats
 
 
-def _version_at_least(version: str | None, minimum: tuple[int, int]) -> bool:
-    try:
-        major, minor = (int(x) for x in (version or "0.0").split(".")[:2])
-    except ValueError:
-        return False
-    return (major, minor) >= minimum
+async def _fetch_ranges(conn: Any, bank_id: str, ranges: list[tuple[str, int, int]]) -> list[Any]:
+    """The passages of each (document_id, first, last), each row with the range it answers."""
+    return await conn.fetch(
+        f"SELECT r.document_id AS range_document_id, r.first, r.last, {_PASSAGE_COLUMNS} "
+        "FROM unnest($2::text[], $3::int[], $4::int[]) AS r(document_id, first, last) "
+        f"JOIN {fq_table('kb_passages')} p ON p.bank_id = $1 AND p.document_id = r.document_id "
+        "AND p.idx BETWEEN r.first AND r.last ORDER BY p.idx",
+        bank_id,
+        [r[0] for r in ranges],
+        [r[1] for r in ranges],
+        [r[2] for r in ranges],
+    )
+
+
+def _merged_ranges(spans: list[tuple[str, int, int]]) -> list[tuple[str, int, int]]:
+    """``spans`` with the overlapping or touching ones of a document joined, so no passage is read twice."""
+    out: list[tuple[str, int, int]] = []
+    for document_id, first, last in sorted(spans):
+        if out and out[-1][0] == document_id and first <= out[-1][2] + 1:
+            out[-1] = (document_id, out[-1][1], max(out[-1][2], last))
+        else:
+            out.append((document_id, first, last))
+    return out
 
 
 def _role_scores(raw: list[str] | None) -> dict[str, list[float]]:

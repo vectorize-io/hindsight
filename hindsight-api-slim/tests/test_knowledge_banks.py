@@ -799,6 +799,78 @@ async def test_the_reranker_reranks_search_hits_by_their_pictures(api_client, kb
     assert judge.queries == ["red"]
 
 
+def _count_database_use(monkeypatch, memory) -> dict[str, int]:
+    """Connections the knowledge code takes, statements it runs on them, and file reads, as they happen."""
+    import contextlib
+
+    from hindsight_api.knowledge import service as service_module
+    from hindsight_api.knowledge import store as store_module
+
+    use = {"connections": 0, "statements": 0, "file_reads": 0, "file_batches": 0}
+    real_acquire = store_module.acquire_with_retry
+
+    class Counted:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def __getattr__(self, name):
+            attr = getattr(self._conn, name)
+            if name not in ("fetch", "fetchrow", "fetchval", "execute"):
+                return attr
+
+            async def counted(*args, **kwargs):
+                use["statements"] += 1
+                return await attr(*args, **kwargs)
+
+            return counted
+
+    @contextlib.asynccontextmanager
+    async def acquire(*args, **kwargs):
+        async with real_acquire(*args, **kwargs) as conn:
+            use["connections"] += 1
+            yield Counted(conn)
+
+    monkeypatch.setattr(store_module, "acquire_with_retry", acquire)
+    monkeypatch.setattr(service_module, "acquire_with_retry", acquire)
+    storage = memory._file_storage
+    real_retrieve, real_many = storage.retrieve, storage.retrieve_many
+
+    async def retrieve(key):
+        use["file_reads"] += 1
+        return await real_retrieve(key)
+
+    async def retrieve_many(keys):
+        use["file_batches"] += 1
+        return await real_many(keys)
+
+    monkeypatch.setattr(storage, "retrieve", retrieve)
+    monkeypatch.setattr(storage, "retrieve_many", retrieve_many)
+    return use
+
+
+async def test_a_search_takes_one_connection_and_reads_its_pictures_at_once(api_client, memory, kb, judge, monkeypatch):
+    # The bank check, the keyword words' rarity, the candidates and their scores are one statement, the best
+    # pages' sentence vectors a second, the text around the hits a third: one connection. It was six (and a
+    # transaction for the scan settings), plus one per page picture shown to the reranker, all at once.
+    await _upload(
+        api_client,
+        kb,
+        [("manual.pdf", _pdf((250, 10, 10), (10, 10, 250)), "application/pdf")],
+        [{"document_id": "manual"}],
+    )
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "faq", "text": "red pages"}]})
+    assert r.status_code == 200, r.text
+    use = _count_database_use(monkeypatch, memory)
+    hits = await _search(api_client, kb, query="red pages")
+    assert {h["document_id"] for h in hits} == {"manual", "faq"}
+    assert len(judge.pictures) == 2  # both pages shown by their pictures
+    assert use == {"connections": 1, "statements": 3, "file_reads": 0, "file_batches": 1}
+    # A bank that is not a knowledge bank is found out by the same statement.
+    use.update(connections=0, statements=0)
+    assert (await api_client.post(f"{KB}/kb-missing/search", json={"query": "x"})).status_code == 404
+    assert (use["connections"], use["statements"]) == (1, 1)
+
+
 async def test_a_search_by_an_image_sends_the_picture_as_the_query_even_without_text(api_client, kb, judge):
     await _upload(
         api_client,
@@ -1037,7 +1109,7 @@ async def _scored(memory, bank_id: str, query: str) -> list:
 
     request = SearchRequest(query=query, query_image=None, filters=SearchFilters())
     service = get_knowledge_service(memory)
-    return await service._search(bank_id, request, await service._embed_query(request))
+    return (await service._search(bank_id, request, await service._embed_query(request))).hits
 
 
 async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, memory, kb, monkeypatch):
@@ -1990,13 +2062,14 @@ async def test_each_hit_gets_its_own_result_and_none_holds_more_than_five_passag
     # Hits at 2 (best), 7, then 5: each is a result of its own with its free neighbours (5 gets 4, as 6 is
     # 7's). A window used to grow to take in a nearby hit and fold into the next: one whole-document result.
     hits = [SearchHit(passages[i], document, 1.0 - n / 10) for n, i in enumerate((2, 7, 5))]
-    items = (await service._within_budget(kb, hits, sum(weight[1:9]))).items
+    nearby = {("f", p.index): p for p in passages}
+    items = service._within_budget(hits, nearby, sum(weight[1:9])).items
     assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 3), (7, 6, 8), (5, 4, 5)]
     # A hit already inside a better result comes back there, and nothing grows.
-    items = (await service._within_budget(kb, [hits[0], SearchHit(passages[3], document, 0.5)], sum(weight[1:4]))).items
+    items = service._within_budget([hits[0], SearchHit(passages[3], document, 0.5)], nearby, sum(weight[1:4])).items
     assert [(i.hit.passage.index, i.context_first, i.context_last) for i in items] == [(2, 1, 3)]
     # Leftover budget widens a result to five passages at most, however much is left.
-    items = (await service._within_budget(kb, [hits[0]], sum(weight))).items
+    items = service._within_budget([hits[0]], nearby, sum(weight)).items
     assert [(i.context_first, i.context_last) for i in items] == [(0, 4)]
 
 
@@ -2529,3 +2602,12 @@ async def test_each_bank_has_its_own_vector_index_that_its_search_uses(api_clien
     assert (await api_client.delete(f"{KB}/{kb}")).status_code == 200
     assert await indexes(kb) == [] and len(await indexes(other)) == 2
     await api_client.delete(f"{KB}/{other}")
+
+
+def test_overlapping_ranges_around_hits_are_read_once():
+    from hindsight_api.knowledge.store import _merged_ranges
+
+    spans = [("b", 0, 2), ("a", 5, 9), ("a", 0, 4), ("a", 12, 14), ("a", 8, 11)]
+    # Touching (0-4, 5-9) and overlapping (5-9, 8-11) spans of one document join; another document's never do.
+    assert _merged_ranges(spans) == [("a", 0, 14), ("b", 0, 2)]
+    assert _merged_ranges([("a", 0, 2), ("a", 4, 6)]) == [("a", 0, 2), ("a", 4, 6)]

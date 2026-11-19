@@ -70,6 +70,7 @@ from .store import (
     BankStats,
     DocumentPage,
     DocumentStatus,
+    KnowledgeBankNotFound,
     KnowledgeDocument,
     KnowledgePassage,
     KnowledgeStore,
@@ -79,6 +80,7 @@ from .store import (
     SearchFilters,
     SearchHit,
     StatusUpdate,
+    StoreSearchResult,
     StoreSearchTrace,
     TagPage,
     TimeBucket,
@@ -705,6 +707,7 @@ class KnowledgeService:
         request_context: RequestContext,
         *,
         needs_vectors: bool = True,
+        check_exists: bool = True,
     ) -> None:
         # ``needs_vectors=False`` for an operation that never reads or writes a vector (a delete): the
         # store's first-use setup asks the embedder for its size, and an unreachable embedder must not
@@ -714,7 +717,9 @@ class KnowledgeService:
         else:
             await self._engine._authenticate_tenant(request_context)
         await self._authorize(bank_id, operation, request_context)
-        await self._require_bank(bank_id)
+        # A search checks it in its own statement (``KnowledgeStore.search``): one round trip fewer.
+        if check_exists:
+            await self._require_bank(bank_id)
 
     async def create_bank(self, bank_id: str, request_context: RequestContext) -> KnowledgeBankInfo:
         await self._ready(request_context)
@@ -1920,18 +1925,23 @@ class KnowledgeService:
             embedding = asyncio.ensure_future(self._embed_query(request))
             try:
                 async with _timing.timed("open_bank"):
-                    await self._open_bank(bank_id, KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK, request_context)
+                    await self._open_bank(
+                        bank_id, KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK, request_context, check_exists=False
+                    )
             except BaseException:
                 embedding.cancel()
                 raise
             vector = await embedding
             request = await self._with_exact_tag_groups(bank_id, request)
             async with _timing.timed("store.search"):
-                hits = await self._search(bank_id, request, vector, trace)
+                try:
+                    found = await self._search(bank_id, request, vector, trace)
+                except KnowledgeBankNotFound as exc:
+                    raise KnowledgeBankError(f"knowledge bank '{bank_id}' not found", 404) from exc
             async with _timing.timed("rerank"):
-                hits = await self._reranked(bank_id, request, hits)
+                hits = await self._reranked(request, found)
             async with _timing.timed("context"):
-                budgeted = await self._within_budget(bank_id, hits, request.max_tokens, trace)
+                budgeted = self._within_budget(hits, found.nearby, request.max_tokens, trace)
             if trace is not None:
                 trace.seconds = dict(timing.seconds)
             # Fires even with no results: a search is a search.
@@ -2008,7 +2018,7 @@ class KnowledgeService:
 
     async def _search(
         self, bank_id: str, request: SearchRequest, vector: list[float], trace: SearchTrace | None = None
-    ) -> list[SearchHit]:
+    ) -> StoreSearchResult:
         return await self.store.search(
             bank_id,
             vector,
@@ -2017,10 +2027,12 @@ class KnowledgeService:
             text_weight=get_config().kb_pdf_text_weight,
             query_text=request.query,
             keyword_weight=get_config().kb_keyword_weight,
+            # What the reranker shows around a text hit, or else what the budget may widen it by.
+            around=_JUDGE_SPAN if self.reranker is not None else MAX_CONTEXT_PASSAGES - 1,
             trace=trace.store if trace is not None else None,
         )
 
-    async def _reranked(self, bank_id: str, request: SearchRequest, hits: list[SearchHit]) -> list[SearchHit]:
+    async def _reranked(self, request: SearchRequest, found: StoreSearchResult) -> list[SearchHit]:
         """``hits`` with the best of them reordered by the knowledge reranker; the rest keep the search's order.
 
         Candidates go in search order into one request, as many as ``kb_reranker_max_tokens`` holds counted
@@ -2034,6 +2046,7 @@ class KnowledgeService:
         its search place. A search is reranked when it has text or a picture the reranker takes: the reranker
         scores the hits against it. A search by a video (alone or with text) is reranked by its text, never by
         the clip."""
+        hits = found.hits
         reranker = self.reranker
         text = (request.query or "").strip()
         config = get_config()
@@ -2050,7 +2063,7 @@ class KnowledgeService:
             if text:
                 query["text"] = text
         pool = hits[:_JUDGE_POOL]
-        texts = await self._judged_texts(bank_id, pool)
+        texts = _judged_texts(pool, found.nearby)
         # Candidates in search order, each the hits sharing what the reranker would read. On ViDoRe markdown
         # the best 100 hits held a median 43 distinct pages: the rest were pieces of those pages.
         groups: list[list[int]] = []
@@ -2093,9 +2106,7 @@ class KnowledgeService:
         # The query rides in the request too, its picture with it.
         query_cost = count_tokens(text, encoding) + _CANDIDATE_TOKENS + (JUDGE_PICTURE_TOKENS if query_picture else 0)
         seen = list(range(fitting(costs, window - query_cost)))
-        pictures = await asyncio.gather(
-            *(self._picture(pool[groups[shown[m]][0]]) if has_picture[m] else asyncio.sleep(0) for m in seen)
-        )
+        pictures = await self._pictures([pool[groups[shown[m]][0]] if has_picture[m] else None for m in seen])
         documents: list[str | dict[str, str]] = [
             shown_text[m]
             if picture is None
@@ -2119,24 +2130,6 @@ class KnowledgeService:
         order = reranked_order(head, score_of) + list(range(len(head), len(groups)))
         return [pool[i] for n in order for i in groups[n]] + hits[len(pool) :]
 
-    async def _judged_texts(self, bank_id: str, hits: list[SearchHit]) -> list[str]:
-        """The text each hit is judged by: a text passage with the passages around it, grown evenly on both
-        sides up to ``JUDGE_CONTEXT_TOKENS``; any other hit its own text."""
-
-        def span(hit: SearchHit) -> tuple[str, int, int]:
-            index = hit.passage.index
-            return hit.document.document_id, max(0, index - _JUDGE_SPAN), index + _JUDGE_SPAN
-
-        found = await self.store.passage_ranges(bank_id, [span(h) for h in hits if h.passage.modality == "text"])
-        out = []
-        for hit in hits:
-            own = hit.passage.text or ""
-            if hit.passage.modality != "text":
-                out.append(own)
-                continue
-            out.append(_around(found.get(span(hit), []), hit.passage.index, JUDGE_CONTEXT_TOKENS) or own)
-        return out
-
     async def _query_picture(self, request: SearchRequest) -> bytes | None:
         """The JPEG the reranker judges the hits against when the search is by an image, or None: no query
         image, a search by a video (its image, if any, is one of several inputs the reranker cannot take
@@ -2146,18 +2139,28 @@ class KnowledgeService:
         picture = await asyncio.to_thread(media.query_picture, request.query_image, *JEV_IMAGE_SIDE)
         return picture if picture is not None and jev_accepts("image/jpeg", picture) else None
 
-    async def _picture(self, hit: SearchHit) -> bytes | None:
-        """The JPEG the reranker judges an image or PDF page hit by, or None for a hit judged by its text: any
-        other hit, and a picture outside 280-1568 px a side (a small photo, or a long receipt shrunk to fit),
-        which image rerankers refuse, and one refused image fails the whole request."""
-        if hit.passage.modality != "image" or not hit.passage.media_key:
-            return None
-        data = await self._engine._file_storage.retrieve(hit.passage.media_key)
-        picture = await asyncio.to_thread(media.judge_picture, data)
-        return picture if jev_accepts("image/jpeg", picture) else None
+    async def _pictures(self, hits: list[SearchHit | None]) -> list[bytes | None]:
+        """The JPEG the reranker judges each image or PDF page hit by, or None for a hit judged by its text: any
+        other hit (and None), and a picture outside 280-1568 px a side (a small photo, or a long receipt shrunk
+        to fit), which image rerankers refuse, and one refused image fails the whole request. The files are
+        read in one request: one each was ~50 connections a PDF search, all at once."""
+        keys = [h.passage.media_key if h and h.passage.modality == "image" else None for h in hits]
+        data = await self._engine._file_storage.retrieve_many([k for k in keys if k])
 
-    async def _within_budget(
-        self, bank_id: str, hits: list[SearchHit], max_tokens: int, trace: SearchTrace | None = None
+        async def judged(key: str | None) -> bytes | None:
+            if not key:
+                return None
+            picture = await asyncio.to_thread(media.judge_picture, data[key])
+            return picture if jev_accepts("image/jpeg", picture) else None
+
+        return list(await asyncio.gather(*(judged(k) for k in keys)))
+
+    def _within_budget(
+        self,
+        hits: list[SearchHit],
+        passages: dict[tuple[str, int], KnowledgePassage],
+        max_tokens: int,
+        trace: SearchTrace | None = None,
     ) -> _Budgeted:
         """The ranked hits that fit in ``max_tokens``, each text hit with the passages around it as its
         ``context``. In rank order, a text hit comes with one passage on each side (the query-time step that
@@ -2165,19 +2168,9 @@ class KnowledgeService:
         another result already holds comes back there (merged), and that result does not grow. What is
         left then widens the best results, one passage a side at a time, up to ``MAX_CONTEXT_PASSAGES``. A hit with no text of its own costs
         ``MEDIA_HIT_TOKENS`` plus its text. This replaced ``top_k`` and ``neighbors``: a caller holds a token
-        budget, and a count of hits said nothing about how much text came back."""
-        text_hits = [h for h in hits if h.passage.modality == "text"]
-        passages: dict[tuple[str, int], KnowledgePassage] = {}
-
-        async def load(ranges: list[tuple[str, int, int]]) -> None:
-            wanted = [r for r in ranges if any((r[0], i) not in passages for i in range(r[1], r[2] + 1))]
-            if not wanted:
-                return
-            found = await self.store.passage_ranges(bank_id, wanted)
-            for (document_id, _first, _last), run in found.items():
-                for p in run:
-                    passages[(document_id, p.index)] = p
-
+        budget, and a count of hits said nothing about how much text came back. ``passages`` are the ones
+        around the text hits, read with the search (``KnowledgeStore.search``, ``around``): this read them
+        itself, once for the hits and again for each widening."""
         tokens: dict[tuple[str, int], int] = {}
 
         def cost(document_id: str, index: int) -> int:
@@ -2186,7 +2179,6 @@ class KnowledgeService:
                 tokens[key] = count_tokens(passages[key].text or "") if key in passages else 0
             return tokens[key]
 
-        await load([(h.document.document_id, max(0, h.passage.index - 1), h.passage.index + 1) for h in text_hits])
         items: list[SearchResultItem] = []
         windows: list[_Window] = []
         held: dict[str, set[int]] = {}  # per document, the passages some window already returns
@@ -2240,10 +2232,6 @@ class KnowledgeService:
             ]
             if not growing:
                 break
-            await load(
-                [(w.document_id, w.first - 1, w.first - 1) for w in growing if w.grows_before and w.first > 0]
-                + [(w.document_id, w.last + 1, w.last + 1) for w in growing if w.grows_after]
-            )
             for w in growing:  # rank order: the best hits widen first
                 for side in ("before", "after"):
                     if not (w.grows_before if side == "before" else w.grows_after):
@@ -2275,6 +2263,25 @@ class KnowledgeService:
             trace.tokens_used = used
             trace.hits = [_traced(hit, items, windows) for hit in hits]
         return _Budgeted(items, used)
+
+
+def _judged_texts(hits: list[SearchHit], nearby: dict[tuple[str, int], KnowledgePassage]) -> list[str]:
+    """The text each hit is judged by: a text passage with the passages around it (``nearby``, read with the
+    search), grown evenly on both sides up to ``JUDGE_CONTEXT_TOKENS``; any other hit its own text."""
+    out = []
+    for hit in hits:
+        own = hit.passage.text or ""
+        if hit.passage.modality != "text":
+            out.append(own)
+            continue
+        document_id, index = hit.document.document_id, hit.passage.index
+        run = [
+            nearby[(document_id, i)]
+            for i in range(max(0, index - _JUDGE_SPAN), index + _JUDGE_SPAN + 1)
+            if (document_id, i) in nearby
+        ]
+        out.append(_around(run, index, JUDGE_CONTEXT_TOKENS) or own)
+    return out
 
 
 def _traced(hit: SearchHit, items: list[SearchResultItem], windows: list[_Window]) -> TracedHit:
