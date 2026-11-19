@@ -139,6 +139,7 @@ def test_a_system_one_provider_drives_reflect(engine, monkeypatch, provider):
         timeout=5.0,
         max_concurrent=1,
         max_request_tokens=8192,
+        tokenizer="jev",
     )
     monkeypatch.setattr(
         "hindsight_api.engine.memory_engine.get_config",
@@ -151,3 +152,7 @@ def test_a_system_one_provider_drives_reflect(engine, monkeypatch, provider):
     # Its cut and verdict are retried like the shared decision model's calls: a single 429 used
     # to drop them, and that round answered like agent mode.
     assert client.retry_policy is not None
+    # Its questions are sized to the configured window, counted in the model's vocabulary (#6659):
+    # the class default (26k) refused every first request on a smaller window.
+    assert client.MAX_QUESTION_TOKENS == 8192
+    assert client.tokenizer == "jev"

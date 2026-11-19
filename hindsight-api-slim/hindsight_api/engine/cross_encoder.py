@@ -1331,9 +1331,18 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         shortlist: int | None = None,
         min_keep: int | None = None,
         vision: bool = False,
+        max_question_tokens: int | None = None,
+        tokenizer: str | None = None,
     ):
         if shortlist is not None:
             self.SHORTLIST = shortlist
+        # The window of the model the endpoint serves (HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS):
+        # a smaller one would otherwise refuse every first request and halve down from 26k (#6659).
+        if max_question_tokens is not None:
+            self.MAX_QUESTION_TOKENS = max_question_tokens
+        # The vocabulary those budgets are counted in (HINDSIGHT_API_DECISION_MODEL_TOKENIZER);
+        # None counts with HINDSIGHT_API_TOKENIZER_ENCODING.
+        self.tokenizer = tokenizer
         if min_keep is not None:
             self.MIN_KEEP = min_keep
         # Tolerate an unset-but-present value ("VAR=" in a compose file, or a config
@@ -1451,9 +1460,9 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             return []
 
         # Available token budget for candidate options in one choice question.
-        state_tokens = count_tokens(f"Question: {query}")
+        state_tokens = count_tokens(f"Question: {query}", self.tokenizer)
         # +30: cushion for the question's JSON framing (type, keys) around the instructions.
-        instr_tokens = count_tokens(f"{_RANK_INSTRUCTIONS_PREFIX}{query}") + 30
+        instr_tokens = count_tokens(f"{_RANK_INSTRUCTIONS_PREFIX}{query}", self.tokenizer) + 30
         net_budget = max(50, budget - state_tokens - instr_tokens)
 
         # Pre-truncate outlier documents that individually exceed the question budget,
@@ -1461,11 +1470,11 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         effective_docs = list(docs)
         doc_tokens: dict[int, int] = {}
         for index in indices:
-            t = count_tokens(effective_docs[index])
+            t = count_tokens(effective_docs[index], self.tokenizer)
             if t + _OPTION_KEY_OVERHEAD > net_budget:
                 cap = max(10, net_budget - _OPTION_KEY_OVERHEAD)
-                effective_docs[index] = truncate_to_tokens(effective_docs[index], cap).text
-                t = count_tokens(effective_docs[index])
+                effective_docs[index] = truncate_to_tokens(effective_docs[index], cap, self.tokenizer).text
+                t = count_tokens(effective_docs[index], self.tokenizer)
             doc_tokens[index] = t
 
         # Pack candidates into groups bounded by MAX_OPTIONS and net_budget.
@@ -1518,7 +1527,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             cap = max(10, (net_budget - len(finalists) * _OPTION_KEY_OVERHEAD) // len(finalists))
             for idx in finalists:
                 if doc_tokens[idx] > cap:
-                    effective_docs[idx] = truncate_to_tokens(effective_docs[idx], cap).text
+                    effective_docs[idx] = truncate_to_tokens(effective_docs[idx], cap, self.tokenizer).text
 
         ranked_finalists = await self._rank_once(query, effective_docs, finalists)
         return ranked_finalists + rest
@@ -1556,17 +1565,29 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             for ref, p in references.items()
         }
         overhead = (
-            count_tokens(_SUFFICIENCY_INSTRUCTIONS) + sum(count_tokens(level) for level in self.SUFFICIENCY_LEVELS) + 50
+            count_tokens(_SUFFICIENCY_INSTRUCTIONS, self.tokenizer)
+            + sum(count_tokens(level, self.tokenizer) for level in self.SUFFICIENCY_LEVELS)
+            + 50
         )
         prefix = f"Question: {query}\n\nEvidence:\n"
         policy = self.retry_policy or RetryPolicy()
 
         async def ask(question_budget: int) -> dict:
             # The pictures' own tokens are Jev's to count: a request it finds too long is rebuilt smaller.
-            budget = max(100, question_budget - overhead - count_tokens(prefix) - count_tokens(pictures_text))
+            budget = max(
+                100,
+                question_budget
+                - overhead
+                - count_tokens(prefix, self.tokenizer)
+                - count_tokens(pictures_text, self.tokenizer),
+            )
             # ponytail: keeps the head of the evidence; the agent's own results come
             # first (pages, then observations, then facts), so the tail is raw facts.
-            fitted = truncate_to_tokens(evidence, budget).text if count_tokens(evidence) > budget else evidence
+            fitted = (
+                truncate_to_tokens(evidence, budget, self.tokenizer).text
+                if count_tokens(evidence, self.tokenizer) > budget
+                else evidence
+            )
             body = {
                 "state": f"{prefix}{fitted}" + (f"\n\nPictures:{pictures_text}" if assets else ""),
                 **({"assets": assets} if assets else {}),
@@ -1611,9 +1632,9 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         """
         prefix = f"Page topic: {topic}\n\nNew memory: {memory}\n\nThe page as it reads now:\n"
         overhead = (
-            count_tokens(_PAGE_IMPACT_INSTRUCTIONS)
-            + sum(count_tokens(option) for option in _PAGE_IMPACT_OPTIONS.values())
-            + count_tokens(prefix)
+            count_tokens(_PAGE_IMPACT_INSTRUCTIONS, self.tokenizer)
+            + sum(count_tokens(option, self.tokenizer) for option in _PAGE_IMPACT_OPTIONS.values())
+            + count_tokens(prefix, self.tokenizer)
             + 50
         )
         policy = self.retry_policy or RetryPolicy()
@@ -1622,7 +1643,11 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             budget = max(100, question_budget - overhead)
             # ponytail: keeps the head of the page (its first sections); a page past
             # ~25k tokens is already far over its own budget.
-            fitted = truncate_to_tokens(page, budget).text if count_tokens(page) > budget else page
+            fitted = (
+                truncate_to_tokens(page, budget, self.tokenizer).text
+                if count_tokens(page, self.tokenizer) > budget
+                else page
+            )
             body = {
                 "state": f"{prefix}{fitted}",
                 "model": self.model,
@@ -1656,19 +1681,24 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
             return 0
 
         # Instructions and levels are fixed, plus a cushion for the request's JSON framing.
-        cut_overhead = count_tokens(_CUT_INSTRUCTIONS) + sum(count_tokens(c) for c in self.CUT_LEVELS) + 50
+        cut_overhead = (
+            count_tokens(_CUT_INSTRUCTIONS, self.tokenizer)
+            + sum(count_tokens(c, self.tokenizer) for c in self.CUT_LEVELS)
+            + 50
+        )
         prefix = f"Question: {query}\n\nCandidates, already ranked best first:\n"
-        prefix_tokens = count_tokens(prefix)
+        prefix_tokens = count_tokens(prefix, self.tokenizer)
         available_listing_tokens = max(100, budget - cut_overhead - prefix_tokens)
 
         # Truncate shortlist documents if they exceed the available listing budget
         shortlist_docs = [docs[index] for index in shortlist]
-        shortlist_tokens = [count_tokens(d) for d in shortlist_docs]
+        shortlist_tokens = [count_tokens(d, self.tokenizer) for d in shortlist_docs]
         total_shortlist_tokens = sum(shortlist_tokens) + len(shortlist) * _LISTING_ITEM_OVERHEAD
         if total_shortlist_tokens > available_listing_tokens:
             cap = max(10, (available_listing_tokens - len(shortlist) * _LISTING_ITEM_OVERHEAD) // len(shortlist))
             shortlist_docs = [
-                truncate_to_tokens(d, cap).text if t > cap else d for d, t in zip(shortlist_docs, shortlist_tokens)
+                truncate_to_tokens(d, cap, self.tokenizer).text if t > cap else d
+                for d, t in zip(shortlist_docs, shortlist_tokens)
             ]
 
         listing = "\n\n".join(f"[{position + 1}] {shortlist_docs[position]}" for position in range(len(shortlist)))
@@ -1697,8 +1727,8 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         # bounded query, preventing context overflow in _cut and eliminating semantic drift.
         max_allowed_query = max(50, (self.MAX_QUESTION_TOKENS - 200) // 2)
         effective_query_cap = min(_MAX_QUERY_TOKENS, max_allowed_query)
-        if count_tokens(query) > effective_query_cap:
-            query = truncate_to_tokens(query, effective_query_cap).text
+        if count_tokens(query, self.tokenizer) > effective_query_cap:
+            query = truncate_to_tokens(query, effective_query_cap, self.tokenizer).text
 
         order = await self._within_window(lambda budget: self._rank(query, docs, indices, budget))
         keep = (

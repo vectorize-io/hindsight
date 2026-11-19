@@ -15,6 +15,7 @@ import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
 from ...cancellation import OperationCancelledError
@@ -1998,13 +1999,32 @@ def _hide_lower_layers(tool_calls: list["LLMToolCall"], tool_results: list[Any])
     ]
 
 
+def _short_date(value: Any) -> str | None:
+    """A date as the decision model reads it: the day, plus ``HH:MM`` UTC unless the time is a day's edge.
+
+    A full ISO timestamp costs ~19 tokens; when the rank's finals cut every candidate to a few
+    dozen, a dated fact kept little but its dates and lost to undated ones (#6659).
+    """
+    if not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except ValueError:
+        return str(value)
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc)
+    day = moment.date().isoformat()
+    edge = (moment.hour, moment.minute) in ((0, 0), (23, 59))
+    return day if edge else f"{day} {moment:%H:%M}"
+
+
 def _evidence_line(item: dict[str, Any]) -> str:
     """One fact, observation or chunk as the decision model reads it: its dates, then its text.
 
     Both kinds of date: when it happened and when it was said. "Yesterday" in a chunk is
     read against the second, and a question about an event against the first.
     """
-    start, end, said = item.get("occurred_start"), item.get("occurred_end"), item.get("mentioned_at")
+    start, end, said = (_short_date(item.get(key)) for key in ("occurred_start", "occurred_end", "mentioned_at"))
     dates: list[str] = []
     if start:
         dates.append(f"occurred {start}" + (f" to {end}" if end and end != start else ""))

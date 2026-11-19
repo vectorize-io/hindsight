@@ -806,6 +806,26 @@ class TestOverflowingJevsWindow:
         assert len(session.refused) == 1 and len(session.posted) == 1
 
     @pytest.mark.asyncio
+    async def test_a_configured_window_is_taken_at_the_first_request(self):
+        """A model served with a small window: questions sized to it are not refused and halved (#6659)."""
+        size = 20
+        docs = [f"{i} " + "long document words " * 100 for i in range(size)]  # ~6k tokens
+        ranking = {f"c{i}": 1.0 / (i + 1) for i in range(size)}
+
+        default, default_session = _encoder(ranking)
+        default_session.window = 8_000
+        await default._predict([("q", doc) for doc in docs])
+        assert default_session.refused, "at the 26k default the first request overflows this window"
+
+        sized = TypeSafeCrossEncoder(api_key="k", max_question_tokens=3_500)
+        session = _FakeSession(ranking)
+        session.window = 8_000
+        sized._session = session
+        scores = await sized._predict([("q", doc) for doc in docs])
+        assert not session.refused
+        assert len(set(scores)) == size
+
+    @pytest.mark.asyncio
     async def test_a_request_that_never_fits_raises(self):
         encoder, session = _encoder({"c0": 0.6, "c1": 0.4})
         session.window = 100

@@ -16245,6 +16245,9 @@ class MemoryEngine(MemoryEngineInterface):
                 shortlist=25,
                 min_keep=15,
                 vision=setup.vision,
+                # None: the endpoint fits requests itself, so the class default stands.
+                max_question_tokens=setup.max_request_tokens,
+                tokenizer=setup.tokenizer,
             )
             # Retried like the shared decision model (DecisionModel.ask): without it a single 429
             # dropped the cut (every item kept) or the "is this enough?" verdict (an agent turn)
