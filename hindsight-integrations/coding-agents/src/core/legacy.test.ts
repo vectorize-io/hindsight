@@ -140,6 +140,27 @@ describe("detectLegacyClaudePlugin", () => {
     expect(detectLegacyClaudePlugin("/any/repo", dir)).toBeUndefined();
   });
 
+  it("honours a disable in the project's own settings, local over shared over user (#5729)", () => {
+    const key = "hindsight-memory@hindsight";
+    const dir = claudeDir(
+      { version: 2, plugins: { [key]: [userInstall] } },
+      { enabledPlugins: { [key]: false } }
+    );
+    const repo = mkdtempSync(join(tmpdir(), "hindsight-repo-"));
+    homes.push(repo);
+    mkdirSync(join(repo, ".claude"));
+    writeFileSync(
+      join(repo, ".claude", "settings.json"),
+      JSON.stringify({ enabledPlugins: { [key]: true } })
+    );
+    expect(detectLegacyClaudePlugin(repo, dir)).toBe(key);
+    writeFileSync(
+      join(repo, ".claude", "settings.local.json"),
+      JSON.stringify({ enabledPlugins: { [key]: false } })
+    );
+    expect(detectLegacyClaudePlugin(repo, dir)).toBeUndefined();
+  });
+
   it("counts a project-scope install only inside that project", () => {
     const dir = claudeDir({
       version: 2,

@@ -207,7 +207,8 @@ export function buildPageTools(
         "Search this repository's Hindsight pages for content relevant to a query — " +
         "hybrid full-text + semantic search, server-side. Call this when the user's question may " +
         "be answered by the project's accumulated knowledge (architecture, conventions, decisions, " +
-        "initiatives) rather than by reading code. Returns ranked pages with a relevance snippet; " +
+        "initiatives) rather than by reading code. Returns ranked pages, each with its opening text (not " +
+        "the passage that matched, and not filtered by relevance); " +
         // Same sentence the payload carries, from the same constant: two copies of a rule this
         // fiddly drift apart, and the description is what a host shows when the tool is listed.
         "read a full page with hindsight_read_page. " +

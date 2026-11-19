@@ -204,6 +204,9 @@ export function daemonEnv(
  * The starter also re-checks health, so a spawn that slips through anyway leaves the daemon the
  * winner started alone — but racing starters are not free: they queue on the profile's file lock.
  */
+/** Carries the spawning session's resolved config to the detached starter (daemon-start.ts). */
+export const DAEMON_CONFIG_ENV = "HINDSIGHT_CODING_AGENTS_DAEMON_CONFIG";
+
 export function startDaemonDetached(
   cfg: Config,
   harness: string,
@@ -215,6 +218,10 @@ export function startDaemonDetached(
       detached: true,
       stdio: "ignore",
       windowsHide: true,
+      // The caller's config is already resolved for its directory and bank. Re-reading the file in
+      // the starter lost `paths` / `banks` overrides, so a daemon enabled only there never started
+      // (#6334).
+      env: { ...process.env, [DAEMON_CONFIG_ENV]: JSON.stringify(cfg) },
     });
     // spawn() failures often surface ASYNCHRONOUSLY as an 'error' event; unhandled, that would
     // crash the hook.

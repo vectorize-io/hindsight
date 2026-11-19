@@ -79,7 +79,8 @@ export function readAntigravityPromptTurn(path: string | undefined): string | un
       if (!role || role === "CHECKPOINT" || role === "EPHEMERAL_MESSAGE") continue;
       lastRole = role;
       if (role === "user" || role === "USER_INPUT") {
-        const content = event.content ?? event.text ?? event.message?.content ?? event.message?.text;
+        const content =
+          event.content ?? event.text ?? event.message?.content ?? event.message?.text;
         const text = typeof content === "string" ? stripInjectedMemory(content) : "";
         const clean = unwrapUserRequest(text).trim();
         lastUserPrompt = clean || undefined;

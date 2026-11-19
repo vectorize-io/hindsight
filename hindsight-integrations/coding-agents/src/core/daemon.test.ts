@@ -3,7 +3,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
-import { daemonEnv, detectLlm, ensureDaemon, startDaemonDetached } from "./daemon";
+import {
+  DAEMON_CONFIG_ENV,
+  daemonEnv,
+  detectLlm,
+  ensureDaemon,
+  startDaemonDetached,
+} from "./daemon";
 
 // A daemon-mode ensure has to clear `preflightDaemon`, which shells out to `uvx` and `cargo`.
 // Neither is guaranteed on a test runner, so stub the subprocess layer; every
@@ -261,8 +267,10 @@ describe("startDaemonDetached", () => {
     const [cmd, args, opts] = spawn.mock.calls[0] as unknown as [
       string,
       string[],
-      { detached: boolean; stdio: string; windowsHide: boolean },
+      { detached: boolean; stdio: string; windowsHide: boolean; env: NodeJS.ProcessEnv },
     ];
+    // The starter gets the caller's resolved config, `paths` overrides included (#6334).
+    expect(JSON.parse(opts.env[DAEMON_CONFIG_ENV]!).serverMode).toBe("daemon");
     expect(cmd).toBe("node");
     expect(args[0]).toMatch(/daemon-start\.js$/);
     expect(opts.detached).toBe(true);

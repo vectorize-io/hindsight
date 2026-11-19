@@ -193,6 +193,7 @@ export class RuntimeCore {
       cfg: this.cfg,
       client: this.client,
       cacheFile,
+      preambleOnFirstTurn: true,
     });
 
     const blocks: string[] = [];
