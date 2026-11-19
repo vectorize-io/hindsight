@@ -717,7 +717,7 @@ class KnowledgeService:
         else:
             await self._engine._authenticate_tenant(request_context)
         await self._authorize(bank_id, operation, request_context)
-        # A search checks it in its own statement (``KnowledgeStore.search``): one round trip fewer.
+        # ``check_exists=False`` for a search, which checks it in its own statement (``KnowledgeStore.search``).
         if check_exists:
             await self._require_bank(bank_id)
 
@@ -1925,8 +1925,14 @@ class KnowledgeService:
             embedding = asyncio.ensure_future(self._embed_query(request))
             try:
                 async with _timing.timed("open_bank"):
+                    # The store's search finds out in its own statement that the bank is not a knowledge
+                    # bank, except when fuzzy tags must first be resolved against the bank's tags: a
+                    # missing bank has none, and that would answer 422 where it is a 404.
                     await self._open_bank(
-                        bank_id, KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK, request_context, check_exists=False
+                        bank_id,
+                        KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK,
+                        request_context,
+                        check_exists=needs_resolution(request.filters.tag_groups),
                     )
             except BaseException:
                 embedding.cancel()

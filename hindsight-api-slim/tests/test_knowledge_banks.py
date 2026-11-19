@@ -869,6 +869,9 @@ async def test_a_search_takes_one_connection_and_reads_its_pictures_at_once(api_
     use.update(connections=0, statements=0)
     assert (await api_client.post(f"{KB}/kb-missing/search", json={"query": "x"})).status_code == 404
     assert (use["connections"], use["statements"]) == (1, 1)
+    # Fuzzy tags are resolved against the bank's tags first: the bank is checked before, still a 404.
+    fuzzy = {"query": "x", "tag_groups": [{"tags": ["clouds"], "match": "any", "resolve": "fuzzy"}]}
+    assert (await api_client.post(f"{KB}/kb-missing/search", json=fuzzy)).status_code == 404
 
 
 async def test_a_search_by_an_image_sends_the_picture_as_the_query_even_without_text(api_client, kb, judge):
