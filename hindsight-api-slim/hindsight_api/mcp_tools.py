@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, Literal, get_args
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware import Middleware, MiddlewareContext
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationInfo, field_validator, model_validator
 
@@ -841,6 +842,53 @@ def register_mcp_tools(
 
     _apply_bank_tool_filtering(mcp, memory, config)
     _apply_audit_logging(mcp, memory, config)
+    if not config.include_bank_id_param:
+        # Only a single-bank connection has one bank whose instructions describe it; a
+        # multi-bank connection reaches every bank, so no single bank's text applies.
+        mcp.add_middleware(BankServerInstructionsMiddleware(memory, config))
+
+
+class BankServerInstructionsMiddleware(Middleware):
+    """Send the bank's ``mcp_server_instructions`` as the initialize response's instructions.
+
+    The MCP SDK builds a session's initialization options, instructions included,
+    when the session starts, and the initialize response is sent from them before
+    any middleware sees it. So the bank's text is written onto the session's options
+    here, before the handler runs. ``_init_options`` is private to the SDK's
+    ``ServerSession``; ``test_mcp_server_instructions.py`` drives a real initialize
+    so an SDK change that moves it fails there rather than silently sending nothing.
+
+    The options are copied, not mutated: they may be shared, and one bank's text must
+    never reach another bank's session.
+    """
+
+    def __init__(self, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+        self._memory = memory
+        self._config = config
+
+    async def on_initialize(self, context: MiddlewareContext, call_next):
+        instructions = await self._bank_instructions()
+        session = context.fastmcp_context.session if context.fastmcp_context is not None else None
+        options = getattr(session, "_init_options", None)
+        if instructions and options is not None:
+            session._init_options = options.model_copy(update={"instructions": instructions})
+        return await call_next(context)
+
+    async def _bank_instructions(self) -> str | None:
+        bank_id = self._config.bank_id_resolver()
+        if not bank_id:
+            return None
+        try:
+            bank_cfg = await self._memory._config_resolver.get_bank_config(bank_id, _get_request_context(self._config))
+        except Exception:
+            # Instructions are guidance, not access: a lookup that fails must not
+            # fail the connection. The tools still work without them.
+            logger.warning("Could not load MCP server instructions for bank %r", bank_id, exc_info=True)
+            return None
+        instructions = bank_cfg.get("mcp_server_instructions")
+        if not isinstance(instructions, str):
+            return None
+        return instructions.strip() or None
 
 
 def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:

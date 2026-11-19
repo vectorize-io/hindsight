@@ -142,6 +142,7 @@ async def test_hierarchical_fields_categorization():
     assert "reflect_source_facts_max_tokens" in configurable
     assert "llm_gemini_safety_settings" in configurable
     assert "mcp_enabled_tools" in configurable
+    assert "mcp_server_instructions" in configurable
     assert "retain_chunk_batch_size" in configurable
     assert "enable_auto_consolidation" in configurable
     assert "consolidation_use_decision_model" in configurable
@@ -164,7 +165,7 @@ async def test_hierarchical_fields_categorization():
     assert "reflect_kb_search_apply_tags" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 63
+    assert len(configurable) == 64
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials

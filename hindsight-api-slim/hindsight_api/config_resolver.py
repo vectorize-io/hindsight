@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from hindsight_api.config import (
+    MCP_SERVER_INSTRUCTIONS_MAX_CHARS,
     RECALL_BUDGET_FUNCTIONS,
     HindsightConfig,
     _get_raw_config,
@@ -627,6 +628,14 @@ class ConfigResolver:
 
         # Validate recall budget fields
         _validate_recall_budget_updates(normalized_updates)
+
+        # Clients put these instructions in the model's context on every connection.
+        instructions = normalized_updates.get("mcp_server_instructions")
+        if isinstance(instructions, str) and len(instructions) > MCP_SERVER_INSTRUCTIONS_MAX_CHARS:
+            raise ValueError(
+                f"mcp_server_instructions must be at most {MCP_SERVER_INSTRUCTIONS_MAX_CHARS} characters, "
+                f"got {len(instructions)}"
+            )
 
         # A zone name nothing can load would break every retain on the bank.
         if normalized_updates.get("default_timezone") is not None:

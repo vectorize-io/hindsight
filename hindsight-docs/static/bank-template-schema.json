@@ -341,6 +341,19 @@
           "description": "MCP tool allowlist for this bank (None = all tools)",
           "title": "Mcp Enabled Tools"
         },
+        "mcp_server_instructions": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Instructions sent to MCP clients in the initialize response when they connect to this bank",
+          "title": "Mcp Server Instructions"
+        },
         "knowledge_banks": {
           "anyOf": [
             {

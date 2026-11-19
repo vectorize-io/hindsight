@@ -96,6 +96,7 @@ _SAMPLE_VALUES: dict[str, Any] = {
     "retain_chunk_batch_size": 7,
     "retain_max_attachments_per_chunk": 3,
     "mcp_enabled_tools": ["recall", "retain"],
+    "mcp_server_instructions": "Read the house-rules document first.",
     "knowledge_banks": ["product-docs"],
     "reflect_kb_search_media_types": ["document", "text"],
     "reflect_kb_search_apply_tags": False,

@@ -44,6 +44,7 @@ type BankTemplateConfig struct {
 	RetainChunkBatchSize NullableInt32 `json:"retain_chunk_batch_size,omitempty"`
 	RetainMaxAttachmentsPerChunk NullableInt32 `json:"retain_max_attachments_per_chunk,omitempty"`
 	McpEnabledTools []string `json:"mcp_enabled_tools,omitempty"`
+	McpServerInstructions NullableString `json:"mcp_server_instructions,omitempty"`
 	KnowledgeBanks []string `json:"knowledge_banks,omitempty"`
 	ReflectKbSearchMediaTypes []string `json:"reflect_kb_search_media_types,omitempty"`
 	ReflectKbSearchApplyTags NullableBool `json:"reflect_kb_search_apply_tags,omitempty"`
@@ -1123,6 +1124,48 @@ func (o *BankTemplateConfig) HasMcpEnabledTools() bool {
 // SetMcpEnabledTools gets a reference to the given []string and assigns it to the McpEnabledTools field.
 func (o *BankTemplateConfig) SetMcpEnabledTools(v []string) {
 	o.McpEnabledTools = v
+}
+
+// GetMcpServerInstructions returns the McpServerInstructions field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetMcpServerInstructions() string {
+	if o == nil || IsNil(o.McpServerInstructions.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.McpServerInstructions.Get()
+}
+
+// GetMcpServerInstructionsOk returns a tuple with the McpServerInstructions field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetMcpServerInstructionsOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.McpServerInstructions.Get(), o.McpServerInstructions.IsSet()
+}
+
+// HasMcpServerInstructions returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasMcpServerInstructions() bool {
+	if o != nil && o.McpServerInstructions.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetMcpServerInstructions gets a reference to the given NullableString and assigns it to the McpServerInstructions field.
+func (o *BankTemplateConfig) SetMcpServerInstructions(v string) {
+	o.McpServerInstructions.Set(&v)
+}
+// SetMcpServerInstructionsNil sets the value for McpServerInstructions to be an explicit nil
+func (o *BankTemplateConfig) SetMcpServerInstructionsNil() {
+	o.McpServerInstructions.Set(nil)
+}
+
+// UnsetMcpServerInstructions ensures that no value is present for McpServerInstructions, not even an explicit nil
+func (o *BankTemplateConfig) UnsetMcpServerInstructions() {
+	o.McpServerInstructions.Unset()
 }
 
 // GetKnowledgeBanks returns the KnowledgeBanks field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2766,6 +2809,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.McpEnabledTools != nil {
 		toSerialize["mcp_enabled_tools"] = o.McpEnabledTools
+	}
+	if o.McpServerInstructions.IsSet() {
+		toSerialize["mcp_server_instructions"] = o.McpServerInstructions.Get()
 	}
 	if o.KnowledgeBanks != nil {
 		toSerialize["knowledge_banks"] = o.KnowledgeBanks
