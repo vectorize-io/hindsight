@@ -1639,7 +1639,7 @@ async def test_metadata_only_re_put_keeps_no_text_for_a_bank_that_keeps_none(mon
         log_buffer=[],
         start_time=0.0,
         outbox_callback=None,
-        config=SimpleNamespace(store_document_text=False),
+        config=SimpleNamespace(store_document_text=False, default_observation_scopes=None),
     )
 
     assert result is not None
