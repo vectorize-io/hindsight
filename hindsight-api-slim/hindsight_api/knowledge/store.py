@@ -793,8 +793,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 # then whatever is left staged for these documents is dropped.
                 with_staged = [i for i in items if i.staged]
                 moved: list[Any] = []
-                if with_staged:
-                    moved = await conn.fetch(
+                # In windows of passage numbers, each one statement inside the command timeout: moved in
+                # one, a big spreadsheet's thousands (indexed for keywords as they go) ran past it.
+                for lo in range(0, max((i.staged for i in with_staged), default=0), _MOVE_WINDOW):
+                    moved += await conn.fetch(
                         f"""
                         INSERT INTO {table} (bank_id, document_id, idx, modality, text, page, start_ms, end_ms,
                             media_key, embedding, search_vector)
@@ -803,12 +805,14 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         FROM {staged_table} s
                         JOIN unnest($2::text[], $3::int[]) AS u(document_id, staged)
                           ON s.document_id = u.document_id AND s.idx < u.staged
-                        WHERE s.bank_id = $1
+                        WHERE s.bank_id = $1 AND s.idx >= $4 AND s.idx < $5
                         RETURNING document_id, media_key
                         """,
                         bank_id,
                         [i.document_id for i in with_staged],
                         [i.staged for i in with_staged],
+                        lo,
+                        lo + _MOVE_WINDOW,
                     )
                     await conn.execute(
                         f"""
@@ -817,11 +821,13 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         FROM {fq_table("kb_staged_passage_vectors")} v
                         JOIN unnest($2::text[], $3::int[]) AS u(document_id, staged)
                           ON v.document_id = u.document_id AND v.idx < u.staged
-                        WHERE v.bank_id = $1
+                        WHERE v.bank_id = $1 AND v.idx >= $4 AND v.idx < $5
                         """,
                         bank_id,
                         [i.document_id for i in with_staged],
                         [i.staged for i in with_staged],
+                        lo,
+                        lo + _MOVE_WINDOW,
                     )
                 await conn.execute(
                     f"DELETE FROM {staged_table} WHERE bank_id = $1 AND document_id = ANY($2::text[])",
@@ -1407,6 +1413,8 @@ def load_knowledge_store(backend_provider: Any, extension_path: str | None) -> K
 #: document's passages went in one call that a 1.6 MB numeric table (thousands of passages) ran past, three
 #: times; in pieces, each is well inside it, and the transaction around them still commits them together.
 _INSERT_CHUNK = 256
+#: Staged passages moved per statement when a version commits (server-side, so more than an insert's chunk).
+_MOVE_WINDOW = 1000
 
 
 def _chunks(rows: list[Any]) -> Iterator[list[Any]]:

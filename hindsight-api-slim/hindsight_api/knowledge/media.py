@@ -18,12 +18,14 @@ import collections
 import contextlib
 import io
 import math
+import multiprocessing
 import re
 import tempfile
 import threading
 from collections import Counter
 from collections.abc import Iterator
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -374,16 +376,49 @@ def strip_repeated_lines(pages: list[str | None]) -> list[str | None]:
 # --- text --------------------------------------------------------------------------------------
 
 
+#: Office files convert in a worker process, one at a time. They take about 100x their size in memory (a 27 MB
+#: .xls peaked at 3.2 GB: the whole sheet as a table, then as one Markdown string), so concurrent conversions ran
+#: a 6 GB server out of memory; and the converter is pure Python, so in a thread it held the GIL for minutes and
+#: the API answered nobody. A worker the kernel kills for its memory fails that file, not the server.
+_OFFICE_POOL: ProcessPoolExecutor | None = None
+_OFFICE_POOL_LOCK = threading.Lock()
+
+
+def _convert_office(data: bytes, ext: str) -> str:
+    from markitdown import MarkItDown
+
+    try:
+        return MarkItDown(enable_plugins=False).convert_stream(io.BytesIO(data), file_extension=ext).text_content
+    except Exception as exc:
+        # Back to the server as text: markitdown's exceptions carry tracebacks, which do not pickle, and the
+        # reason reached the document as "cannot pickle 'traceback' object".
+        raise ValueError(str(exc)) from None
+
+
+def _office_text(data: bytes, ext: str) -> str:
+    global _OFFICE_POOL
+    with _OFFICE_POOL_LOCK:
+        if _OFFICE_POOL is None:
+            # spawn, not fork: the server has threads, and a forked child inherits their locks held.
+            _OFFICE_POOL = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+        pool = _OFFICE_POOL
+    try:
+        return pool.submit(_convert_office, data, ext).result()
+    except BrokenProcessPool as exc:
+        with _OFFICE_POOL_LOCK:
+            if _OFFICE_POOL is pool:
+                _OFFICE_POOL = None  # the next file gets a fresh worker
+        raise MediaError(f"the {ext} converter died on this file (out of memory?)") from exc
+
+
 def read_text(source: Source, filename: str | None) -> str:
     """The text of a text-like file. Office and HTML files are read for their text layer (no OCR)."""
     # ponytail: a text file is read whole (its passages are all held anyway); the size limit bounds it.
     data = _bytes(source)
     ext = Path(filename or "").suffix.lower()
     if ext in _OFFICE_EXTENSIONS:
-        from markitdown import MarkItDown
-
         try:
-            return MarkItDown(enable_plugins=False).convert_stream(io.BytesIO(data), file_extension=ext).text_content
+            return _office_text(data, ext)
         except Exception as exc:
             raise MediaError(f"unreadable {ext} file: {exc}") from exc
     return data.decode("utf-8", errors="replace")

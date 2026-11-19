@@ -1846,6 +1846,10 @@ async def test_one_document_over_the_memory_budget_goes_in_staged_pieces(
     api_client, memory, kb, fake_embedder, memory_budget_mb, caplog, monkeypatch
 ):
     memory_budget_mb(1)
+    from hindsight_api.knowledge import store as store_module
+
+    # Moved into place a few at a time (one statement once ran past the command timeout): all must arrive.
+    monkeypatch.setattr(store_module, "_MOVE_WINDOW", 3)
     store = get_knowledge_service(memory).store
     pieces: list[int] = []
     real = store.stage_passages
@@ -2682,3 +2686,21 @@ async def test_a_document_with_more_passages_than_one_insert_holds_is_stored_who
     detail = (await api_client.get(f"{KB}/{kb}/documents/manual")).json()
     assert detail["passage_count"] > 3 and len(detail["passages"]) == detail["passage_count"]
     assert [p["index"] for p in detail["passages"]] == list(range(detail["passage_count"]))
+
+
+def test_an_office_converter_that_dies_fails_its_file_and_the_next_gets_a_new_one(monkeypatch):
+    # The converter runs in a worker process: killed for its memory on one huge spreadsheet, it fails that
+    # file for good (no retry would fare better) and the next file starts a fresh worker.
+    from concurrent.futures import Future
+    from concurrent.futures.process import BrokenProcessPool
+
+    class DeadPool:
+        def submit(self, *args):
+            future: Future = Future()
+            future.set_exception(BrokenProcessPool("killed"))
+            return future
+
+    monkeypatch.setattr(media, "_OFFICE_POOL", DeadPool())
+    with pytest.raises(media.MediaError, match="converter died"):
+        media.read_text(b"PK", "huge.xlsx")
+    assert media._OFFICE_POOL is None
