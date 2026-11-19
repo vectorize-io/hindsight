@@ -56,8 +56,9 @@ export async function GET(request: NextRequest) {
 
     // Stream the body through without parsing it: on a big bank it is several
     // MB, and parsing it only to serialize it again costs the user half a second.
-    // Next gzips it on the way out when the browser accepts that (graph JSON
-    // shrinks ~13x, #5548); gzipping it here too would send it gzipped twice (#6707).
+    // Next (16.4.6+) gzips it on the way out when the browser accepts that (graph
+    // JSON shrinks ~13x, #5548). This route used to gzip it itself; on 16.4.6 that
+    // sent it gzipped twice and every memories tab read "No data available" (#6707).
     return new NextResponse(response.body, {
       status: 200,
       headers: { "Content-Type": "application/json" },
