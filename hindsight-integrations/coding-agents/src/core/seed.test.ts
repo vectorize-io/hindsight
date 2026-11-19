@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
 import { startBackgroundSeed, seedControl, DEFAULT_SEED_LIMIT } from "./seed";
+import { nodeBinary } from "./util";
 
 describe("startBackgroundSeed", () => {
   function fakeSpawn() {
@@ -11,7 +12,7 @@ describe("startBackgroundSeed", () => {
     const spawn = fakeSpawn();
     startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn });
     expect(spawn).toHaveBeenCalledWith(
-      "node",
+      nodeBinary(),
       ["/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", String(DEFAULT_SEED_LIMIT)],
       { detached: true, stdio: expect.anything(), windowsHide: true }
     );
@@ -36,7 +37,7 @@ describe("startBackgroundSeed", () => {
     const spawn = fakeSpawn();
     startBackgroundSeed("/some/repo", { enginePath: "/dist/deepen.js", spawn, limit: 50 });
     expect(spawn).toHaveBeenCalledWith(
-      "node",
+      nodeBinary(),
       ["/dist/deepen.js", "--repo", "/some/repo", "--gitlog-limit", "50"],
       { detached: true, stdio: expect.anything(), windowsHide: true }
     );
@@ -50,7 +51,7 @@ describe("startBackgroundSeed", () => {
       spawn,
     });
     expect(spawn).toHaveBeenCalledWith(
-      "node",
+      nodeBinary(),
       [
         "/dist/deepen.js",
         "--repo",

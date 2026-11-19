@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MIN_IDEMPOTENT_RETAIN_VERSION } from "./hindsight";
-import { binOnPath, semverGte } from "./util";
+import { binOnPath, nodeBinary, semverGte } from "./util";
 
 describe("binOnPath", () => {
   let dir: string;
@@ -76,5 +76,25 @@ describe("semverGte", () => {
   it("treats a missing patch component as zero", () => {
     expect(semverGte("0.9", "0.8.6")).toBe(true);
     expect(semverGte("0.8", "0.8.6")).toBe(false);
+  });
+});
+
+describe("nodeBinary", () => {
+  const versions = process.versions as Record<string, string | undefined>;
+  afterEach(() => {
+    delete versions.bun;
+    delete versions.electron;
+  });
+
+  it("reuses the running Node, so background jobs don't need node on PATH (#6557)", () => {
+    expect(nodeBinary()).toBe(process.execPath);
+  });
+
+  it("falls back to `node` inside Bun or Electron, whose binary is not Node", () => {
+    versions.bun = "1.2.0";
+    expect(nodeBinary()).toBe("node");
+    delete versions.bun;
+    versions.electron = "33.0.0";
+    expect(nodeBinary()).toBe("node");
   });
 });

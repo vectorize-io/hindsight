@@ -11,6 +11,7 @@ import { spawn as realSpawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { nodeBinary } from "./util";
 
 export const DEFAULT_SEED_LIMIT = 300;
 
@@ -30,7 +31,7 @@ export function startBackgroundSeed(
     // The engine writes the leveled plugin.log itself (core/log.ts), so the child's stdio can be
     // fully detached — no fd redirect to manage.
     const child = spawnFn(
-      "node",
+      nodeBinary(),
       [
         enginePath,
         "--repo",

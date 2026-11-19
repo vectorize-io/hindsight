@@ -10,6 +10,7 @@ import {
   ensureDaemon,
   startDaemonDetached,
 } from "./daemon";
+import { nodeBinary } from "./util";
 
 // A daemon-mode ensure has to clear `preflightDaemon`, which shells out to `uvx` and `cargo`.
 // Neither is guaranteed on a test runner, so stub the subprocess layer; every
@@ -271,7 +272,7 @@ describe("startDaemonDetached", () => {
     ];
     // The starter gets the caller's resolved config, `paths` overrides included (#6334).
     expect(JSON.parse(opts.env[DAEMON_CONFIG_ENV]!).serverMode).toBe("daemon");
-    expect(cmd).toBe("node");
+    expect(cmd).toBe(nodeBinary());
     expect(args[0]).toMatch(/daemon-start\.js$/);
     expect(opts.detached).toBe(true);
     expect(opts.stdio).toBe("ignore");

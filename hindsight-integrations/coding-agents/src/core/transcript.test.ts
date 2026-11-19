@@ -118,6 +118,43 @@ describe("readClaudeTranscript", () => {
     ]);
   });
 
+  it("keeps the user's AskUserQuestion answers, and still drops other tool results (#6421)", () => {
+    const answer =
+      'Your questions have been answered: "Open a PR?"="Full fix + PR". You can now continue.';
+    const lines = [
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "toolu_q", name: "AskUserQuestion", input: {} },
+            { type: "tool_use", id: "toolu_b", name: "Bash", input: { command: "ls" } },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "user",
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_q",
+              content: [{ type: "text", text: answer }],
+            },
+            { type: "tool_result", tool_use_id: "toolu_b", content: "README.md" },
+          ],
+        },
+      }),
+    ];
+    writeFileSync(file, lines.join("\n"));
+
+    const result = readClaudeTranscript(file);
+
+    expect(result.filter((t) => t.role === "user")).toEqual([{ role: "user", content: answer }]);
+    expect(JSON.stringify(result)).not.toContain("README.md");
+  });
+
   it("keeps the text of a memory note the agent wrote, and only the target of any other file write", () => {
     const note =
       "prc in items_g2 is cents; prc_usd is NULL for 13,654 of 20,000 rows. Use prc/100.0.";

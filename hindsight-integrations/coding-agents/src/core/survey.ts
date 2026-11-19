@@ -44,7 +44,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stringify as tomlStringify } from "smol-toml";
 import { describeError, log } from "./log";
-import { binOnPath } from "./util";
+import { binOnPath, nodeBinary } from "./util";
 import { resolveHostConfig } from "./host-client";
 import {
   acquireLease,
@@ -238,7 +238,7 @@ function buildSurveyPlan(
       const mcpConfig = JSON.stringify({
         mcpServers: {
           hindsight: {
-            command: "node",
+            command: nodeBinary(),
             args: [opts.mcpServerPath],
             // HINDSIGHT_MCP_HARNESS names the agent whose CLI this recipe drives — the survey's
             // ingests are its writes. mcp-server.js REQUIRES it (it used to default to
@@ -284,7 +284,7 @@ function buildSurveyPlan(
           "--sandbox",
           "read-only",
           "-c",
-          `mcp_servers.hindsight.command="node"`,
+          `mcp_servers.hindsight.command=${tomlValue(nodeBinary())}`,
           "-c",
           `mcp_servers.hindsight.args=${tomlValue([opts.mcpServerPath])}`,
           "-c",
@@ -436,7 +436,7 @@ export async function startCodebaseSurvey(
       try {
         // The agent inherits the supervisor's cwd and env. The spec rides in the environment,
         // never argv — see SURVEY_SPEC_ENV for the endpoint-security kill that argv triggers.
-        const child = spawnFn("node", [supervisorPath], {
+        const child = spawnFn(nodeBinary(), [supervisorPath], {
           cwd: repoDir,
           detached: true,
           stdio: "ignore",
