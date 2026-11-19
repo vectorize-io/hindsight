@@ -49,7 +49,7 @@ I built the Worker with `@cloudflare/workers-oauth-provider`, which handles most
 
 ## Getting them to store memories
 
-Both OpenClaw and Claude Code's CLI already have native hook systems that Hindsight can latch onto. The [hindsight-openclaw plugin](/sdks/integrations/openclaw) auto-retains after each turn and auto-recalls before each response. The [hindsight-memory plugin for Claude Code](/sdks/integrations/claude-code) does the same thing using Claude Code's hook architecture: `SessionStart` for health checks, `UserPromptSubmit` for auto-recall, and `Stop` for auto-retain. No prompting needed. Memory just happens.
+Both OpenClaw and Claude Code's CLI already have native hook systems that Hindsight can latch onto. The [hindsight-openclaw plugin](/sdks/integrations/openclaw) auto-retains after each turn and auto-recalls before each response. The [hindsight-memory plugin for Claude Code](/sdks/integrations/coding-agents) does the same thing using Claude Code's hook architecture: `SessionStart` for health checks, `UserPromptSubmit` for auto-recall, and `Stop` for auto-retain. No prompting needed. Memory just happens.
 
 But for Claude outside of the Claude Code CLI, I can't benefit from those hooks directly. Instead, I use instructions. For Claude Code and the VS Code extension, a user-level `CLAUDE.md` file tells them how and when to use recall, retain, and reflect. For the Claude desktop and mobile apps and browser, the same instructions go into "user preferences" in the app settings.
 
@@ -66,7 +66,7 @@ The multi-client, single-bank pattern is where Hindsight has a real edge. Hindsi
 The easiest way to try this pattern is [Hindsight Cloud](https://ui.hindsight.vectorize.io) — no infrastructure, no OAuth proxy, connects directly to all cloud clients. Self-hosters can use the Worker reference once it's published.
 
 - **Get started with Hindsight Cloud**: [ui.hindsight.vectorize.io](https://ui.hindsight.vectorize.io)
-- **Claude Code integration**: [/sdks/integrations/claude-code](/sdks/integrations/claude-code)
+- **Claude Code integration**: [/sdks/integrations/coding-agents](/sdks/integrations/coding-agents)
 - **OpenClaw integration**: [/sdks/integrations/openclaw](/sdks/integrations/openclaw)
 - **Self-hosting quickstart**: [/developer/api/quickstart](/developer/api/quickstart)
 
