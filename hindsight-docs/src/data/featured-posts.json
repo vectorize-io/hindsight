@@ -2,6 +2,11 @@
   "max": 4,
   "posts": [
     {
+      "href": "/blog/2026/11/24/knowledge-banks",
+      "label": "Introducing Knowledge Banks",
+      "cover": "/img/blog/knowledge-banks/cover.png"
+    },
+    {
       "href": "/blog/2026/11/03/hindsight-models",
       "label": "Introducing Hindsight Models",
       "cover": "/img/blog/hindsight-models/cover.png"
@@ -10,11 +15,6 @@
       "href": "/blog/2026/10/13/memlake",
       "label": "Introducing Hindsight Memlake",
       "cover": "/img/blog/memlake/cover.png"
-    },
-    {
-      "href": "/blog/2026/09/03/hindsight-cloud-enterprise-features",
-      "label": "Enterprise Features in Hindsight Cloud",
-      "cover": "/img/blog/hindsight-cloud-enterprise-features.png"
     }
   ]
 }
