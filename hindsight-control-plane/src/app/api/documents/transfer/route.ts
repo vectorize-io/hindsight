@@ -119,13 +119,15 @@ export async function GET(request: NextRequest) {
     }
 
     const body = await response.arrayBuffer();
+    // Same shape as the dataplane's header: an ASCII stand-in plus the exact name (RFC 5987).
+    const name = `${bankId}-documents.zip`;
     return new NextResponse(body, {
       status: 200,
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition":
           response.headers.get("content-disposition") ||
-          `attachment; filename="documents.zip"; filename*=UTF-8''${encodeURIComponent(`${bankId}-documents.zip`)}`,
+          `attachment; filename="${name.replace(/[^A-Za-z0-9._-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`,
       },
     });
   } catch (error) {
