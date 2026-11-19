@@ -212,6 +212,11 @@ ENV_LLM_STRUCTURED_OUTPUT_IN_PROMPT = "HINDSIGHT_API_LLM_STRUCTURED_OUTPUT_IN_PR
 # identify — and the off switch for an endpoint that rejects images despite its
 # model name.
 ENV_LLM_VISION = "HINDSIGHT_API_LLM_VISION"
+# Whether the LiteLLM-backed providers (``litellm``, ``litellmrouter``, ``bedrock``) mark the
+# prompt for the provider's prompt cache and keep one reply shape across a tool conversation.
+# Tri-state like ENV_LLM_VISION: unset turns it on for a model named "claude"; true/false
+# overrides that, e.g. true for a Bedrock application inference profile ARN of a Claude model.
+ENV_LLM_LITELLM_PROMPT_CACHE = "HINDSIGHT_API_LLM_LITELLM_PROMPT_CACHE"
 # Whether the backend honours OpenAI's ``response_format={"type": "json_object"}``.
 # Tri-state like ENV_LLM_VISION: unset lets the provider decide (LM Studio, Ollama,
 # Volcano and z.ai say no; llama.cpp follows HINDSIGHT_API_LLAMACPP_NO_GRAMMAR; the
@@ -3651,6 +3656,9 @@ class HindsightConfig:
     # Tri-state override for "can this LLM read images?". None defers to the
     # provider's own answer; True/False overrides it. See ENV_LLM_VISION.
     llm_vision: bool | None = field(default=None, kw_only=True)
+    # Tri-state override for "mark the prompt for the cache?" on LiteLLM. None defers to the
+    # model name. See ENV_LLM_LITELLM_PROMPT_CACHE.
+    llm_litellm_prompt_cache: bool | None = field(default=None, kw_only=True)
     # Tri-state override for "does the backend honour json_object?". None defers to
     # the provider's default. See ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE.
     llm_openai_compatible_json_mode: bool | None = field(default=None, kw_only=True)
@@ -5073,6 +5081,9 @@ class HindsightConfig:
             llm_send_bank_as_user=os.getenv(ENV_LLM_SEND_BANK_AS_USER, str(DEFAULT_LLM_SEND_BANK_AS_USER)).lower()
             in ("true", "1"),
             llm_vision=_parse_tristate_bool(ENV_LLM_VISION, os.getenv(ENV_LLM_VISION)),
+            llm_litellm_prompt_cache=_parse_tristate_bool(
+                ENV_LLM_LITELLM_PROMPT_CACHE, os.getenv(ENV_LLM_LITELLM_PROMPT_CACHE)
+            ),
             llm_openai_compatible_json_mode=_parse_tristate_bool(
                 ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE, os.getenv(ENV_LLM_OPENAI_COMPATIBLE_JSON_MODE)
             ),

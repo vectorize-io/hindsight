@@ -290,6 +290,18 @@ class LLMInterface(ABC):
 
     # ── Prompt prefix caching (optional, per-provider) ─────────────────────────
 
+    def caches_marked_prefix(self) -> bool:
+        """Whether this provider caches the prompt up to a ``cache_control`` marker on a
+        content part, and keeps that cache only while the response schema stays the same.
+
+        Claude does both (Anthropic API, and Bedrock or Vertex through LiteLLM). For such a
+        provider a tool conversation holds every turn to one reply shape and marks the end of
+        what the next turn will resend (see ``LLMProvider.call_with_tools``): a reflect's
+        turns then read the conversation so far back from the cache instead of resending it at
+        the full input rate.
+        """
+        return False
+
     def supports_prompt_caching(self) -> bool:
         """Whether this provider can cache a reusable prompt prefix.
 

@@ -590,6 +590,10 @@ class AnthropicLLM(LLMInterface):
         """Every Claude model this provider can reach accepts image blocks."""
         return True
 
+    def caches_marked_prefix(self) -> bool:
+        """Claude caches up to a ``cache_control`` part, passed through by ``_to_anthropic_content``."""
+        return True
+
     # ── Message Batches API (50% token discount) ─────────────────────────────
 
     async def supports_batch_api(self) -> bool:
