@@ -174,3 +174,56 @@ async def test_observation_tree_is_serialised_off_the_event_loop(
     assert response.headers["content-type"] == "application/json"
     assert response.json()["observation_count"] == 3
     assert threads and loop_thread not in threads
+
+
+@pytest.mark.asyncio
+async def test_observation_tree_of_a_store_owned_bank_reads_each_observation_once(
+    api_client: httpx.AsyncClient, memory: MemoryEngine, request_context: RequestContext, monkeypatch
+):
+    """A store that owns its memories returns each observation with its entity ids, so the tree
+    resolves names only and never re-reads the observations, and comes out the same."""
+    from hindsight_api.engine.memories import get_memories
+
+    bank_id = f"test-observation-tree-owned-{uuid.uuid4().hex[:8]}"
+    await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        for subject, entity in [("redis", "Redis"), ("gpu", "GPU"), ("s3", "S3"), ("kafka", "Kafka")]:
+            await _seed(conn, bank_id, subject, [entity], 4)
+    url = f"/v1/default/banks/{bank_id}/observations/tree"
+    expected = (await api_client.get(url)).json()
+
+    # Stand the SQL store in for one that owns its memories: scanned observations carry their
+    # (inherited) entity ids, as such a store writes them.
+    # The engine hands a store-owned bank no Postgres connection, so the stand-in opens its own.
+    store = get_memories()
+    scan_all = store.scan_all_memories
+    entity_map = store.entity_map_for_units
+    resolve_names = store.resolve_entity_names
+
+    async def scan_with_ids(**kw):
+        async with pool.acquire() as conn:
+            units = await scan_all(**{**kw, "conn": conn})
+            ids = await entity_map(
+                conn=conn, fq_table=kw["fq_table"], bank_id=kw["bank_id"], unit_ids=[u.unit_id for u in units]
+            )
+        for u in units:
+            u.entity_ids = [e["entity_id"] for e in ids.get(u.unit_id, [])]
+        return units
+
+    async def names_on_own_conn(**kw):
+        async with pool.acquire() as conn:
+            return await resolve_names(**{**kw, "conn": conn})
+
+    async def no_reread(**kw):
+        raise AssertionError("the tree re-read the observations for their entity ids")
+
+    monkeypatch.setattr(store, "scan_all_memories", scan_with_ids)
+    monkeypatch.setattr(store, "entity_map_for_units", no_reread)
+    monkeypatch.setattr(store, "resolve_entity_names", names_on_own_conn)
+    monkeypatch.setattr(store, "store_owned_for", lambda _bank_id: True)
+
+    response = await api_client.get(url)
+    assert response.status_code == 200, response.text
+    assert response.json() == expected
+    assert any(f["about"] for f in _files(expected) if f["kind"] == "topic")

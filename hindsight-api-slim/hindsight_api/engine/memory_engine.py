@@ -17076,10 +17076,27 @@ class MemoryEngine(MemoryEngineInterface):
                 tags_match=tags_match,
                 tag_groups=tag_groups or None,
             )
-            # An observation inherits its source memories' entities.
-            entity_map = await store.entity_map_for_units(
-                conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[u.unit_id for u in units]
-            )
+            if store.store_owned_for(bank_id):
+                # A store that owns its memories returns each one with its full entity ids, an
+                # observation's included (unioned from its sources when written), as export
+                # relies on. So only the names are left to look up: `entity_map_for_units` would
+                # read every observation a second time to recover ids already in hand, which
+                # on a bank with ~16k observations is about half the entity step. The map is
+                # built the way recall builds it from ids in hand, in the SQL path's shape.
+                ids_by_unit = {u.unit_id: u.entity_ids for u in units}
+                names = await store.resolve_entity_names(
+                    conn=conn,
+                    fq_table=fq_table,
+                    bank_id=bank_id,
+                    entity_ids=list({e for ids in ids_by_unit.values() for e in ids}),
+                )
+                entity_map = _entity_map_from_results(ids_by_unit, names)
+            else:
+                # SQL stores leave `entity_ids` empty on a scanned row, and an observation
+                # inherits its source memories' entities, which this resolves.
+                entity_map = await store.entity_map_for_units(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[u.unit_id for u in units]
+                )
         observations = [
             TreeObservation(
                 id=u.unit_id,
