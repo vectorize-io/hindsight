@@ -171,8 +171,10 @@ def _managed_uvx_dir(path: str) -> str | None:
     """Directory of the ``uvx`` Hermes installed for itself, when *path* has none.
 
     The daemon manager falls back to ``uvx hindsight-api`` when no server is installed, and a
-    package-manager Hermes keeps its uvx under ``~/.hermes/tools/uv-*/``, which is not always on
-    PATH (#5192). Only the helper's env gets it; the parent's PATH is left alone."""
+    package-manager Hermes keeps its uvx under ``<hermes root>/tools/uv-*/``, which is not always on
+    PATH (#5192). That root was hardcoded to ``~/.hermes`` until #6524, which missed HERMES_HOME
+    and Windows' ``%LOCALAPPDATA%\\hermes``. Only the helper's env gets it; the parent's PATH is
+    left alone."""
     if shutil.which("uvx", path=path):
         return None
     # The Docker image keeps its uv under the install root instead (/opt/hermes/tools, next to the
@@ -190,7 +192,9 @@ def _managed_uvx_dir(path: str) -> str | None:
 def _start_daemon_in_clean_child(config: dict[str, str], profile: str) -> bool:
     """Start the daemon from a short-lived child that never had our interpreter's PYTHONPATH.
 
-    Workaround for hindsight-embed <= 0.10.2, which copies ``os.environ`` into the daemon process.
+    Used for hindsight-embed <= 0.10.2, which copies ``os.environ`` into the daemon process, and on
+    any embed when uvx is reachable only through Hermes' managed copy, since this child's PATH is
+    the one place that copy is added (#6451).
     Hermes' package-manager install exports ``PYTHONPATH=<repo>:<its 3.14 generation>``
     (pm/environments.py), and the daemon usually runs through ``uvx hindsight-api`` on whatever
     Python uv picks. When those minor versions differ the server imports Hermes' pydantic and dies
