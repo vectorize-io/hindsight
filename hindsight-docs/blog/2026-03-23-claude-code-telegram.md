@@ -160,8 +160,7 @@ This is completely automatic. Once installed, every conversation builds your age
 ### Step 7: Install the Hindsight Plugin
 
 ```bash
-claude plugin marketplace add vectorize-io/hindsight
-claude plugin install hindsight-memory
+npx @vectorize-io/hindsight-coding-agents install claude-code
 ```
 
 ### Step 8: Configure Your LLM Provider

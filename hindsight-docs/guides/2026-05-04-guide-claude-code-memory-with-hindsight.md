@@ -14,7 +14,7 @@ If you want **Claude Code persistent memory with Hindsight**, the cleanest setup
 
 The plugin is a strong fit for coding work because it wires memory directly into Claude Code's session lifecycle. Recall runs before prompts, retain runs after responses, and dynamic bank IDs let you decide whether memory should be shared across projects or isolated per repo.
 
-If you want the underlying reference open while you work, keep [the Claude Code integration docs](https://hindsight.vectorize.io/docs/integrations/claude-code), [the docs home](https://hindsight.vectorize.io/docs), [the quickstart guide](https://hindsight.vectorize.io/docs/quickstart), [Hindsight's recall API](https://hindsight.vectorize.io/docs/api/recall), and [Hindsight's retain API](https://hindsight.vectorize.io/docs/api/retain) nearby.
+If you want the underlying reference open while you work, keep [the Claude Code integration docs](https://hindsight.vectorize.io/sdks/integrations/coding-agents), [the docs home](https://hindsight.vectorize.io/docs), [the quickstart guide](https://hindsight.vectorize.io/docs/quickstart), [Hindsight's recall API](https://hindsight.vectorize.io/docs/api/recall), and [Hindsight's retain API](https://hindsight.vectorize.io/docs/api/retain) nearby.
 
 <!-- truncate -->
 
@@ -39,8 +39,7 @@ The Claude Code plugin uses hook events that already exist in the runtime. `User
 ## Step 1: Install the integration
 
 ```bash
-claude plugin marketplace add vectorize-io/hindsight
-claude plugin install hindsight-memory
+npx @vectorize-io/hindsight-coding-agents install claude-code
 ```
 
 ## Step 2: Connect Claude Code to Hindsight
