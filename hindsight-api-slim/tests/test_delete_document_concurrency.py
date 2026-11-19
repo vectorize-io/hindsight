@@ -628,3 +628,25 @@ async def test_tag_update_and_delete_of_documents_sharing_an_observation_both_co
     assert [(u["document_id"], u["fact_type"], u["tags"]) for u in units["items"]] == [(retagged, "world", ["team"])]
     pending = await first.list_memory_units(bank, consolidation_state="pending", request_context=request_context)
     assert [u["document_id"] for u in pending["items"]] == [retagged]
+
+
+async def test_tag_update_drops_the_deleted_observations_history(
+    delete_race: DeleteRace, request_context: RequestContext
+) -> None:
+    # Catches the tag update's own copy of the observation sweep (#6653): it deleted the
+    # observation but left its history rows, which no longer cascade from memory_units.
+    race = delete_race
+    first = race.engines[0]
+    bank = race.banks[0]
+    obs_id = await race.setup.fetchval("SELECT id FROM memory_units WHERE bank_id=$1 AND fact_type='observation'", bank)
+    await race.setup.execute(
+        "INSERT INTO observation_history (observation_id, bank_id, content, changed_at) "
+        "VALUES ($1, $2, '{}'::jsonb, now())",
+        obs_id,
+        bank,
+    )
+    assert await first.update_document("a", bank, tags=["team-a"], request_context=request_context) is True
+    units = await first.list_memory_units(bank, request_context=request_context)
+    assert [u["fact_type"] for u in units["items"]] == ["world", "world"]
+    # Raw SQL: the engine's history read needs the observation itself, which is gone by now.
+    assert await race.setup.fetchval("SELECT count(*) FROM observation_history WHERE observation_id=$1", obs_id) == 0
