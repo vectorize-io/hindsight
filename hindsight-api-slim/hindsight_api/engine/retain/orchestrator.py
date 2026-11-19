@@ -46,6 +46,7 @@ from ..memory_engine import count_tokens
 from ..schema import fq_table
 
 if TYPE_CHECKING:
+    from ...config import HindsightConfig
     from ...extensions.operation_validator import OperationValidatorExtension
     from ...models import RequestContext
     from ..memories.base import EntityResolverHandle
@@ -660,7 +661,7 @@ async def _record_retain_event(
 _RETAIN_PARAMS_NOT_REPLAYED = frozenset({"content", "document_id", "update_mode", "tags", "force_reextract"})
 
 
-def _relabel_observation_scopes(retain_params: dict, config) -> list | str | None:
+def _relabel_observation_scopes(retain_params: dict[str, Any], config: "HindsightConfig") -> list | str | None:
     """The scope a re-retain writes onto the facts it keeps: the request's, else the bank default.
 
     Freshly extracted facts get the same fallback (``_apply_default_observation_scopes``), so a
