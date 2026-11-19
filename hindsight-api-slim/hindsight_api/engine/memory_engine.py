@@ -4378,17 +4378,19 @@ class MemoryEngine(MemoryEngineInterface):
         transfer on one instance, so stashing it in file storage would only add a
         round trip and a blob to clean up.
 
-        Architecture note on clone vs export strategy:
-        Unlike external export which streams chunks across short-lived connections
-        to prevent connection pool starvation during long network transfers, a live
-        clone loads the source bank under a single read transaction (conn.transaction())
-        to maintain snapshot consistency and prevent point-in-time relational smears
-        while the source bank is actively being written to.
+        The source is read exactly like an export: in short reads, each on its own
+        pooled connection, streamed into a local temp file that the restore then
+        reads entry by entry. It used to be one transaction around the whole read,
+        which on a large bank stayed open for tens of minutes until a pooler or
+        proxy cut the connection and failed the clone (#6666) — and, at READ
+        COMMITTED, never gave a single snapshot anyway. A bank written to during
+        the clone gets the same guarantees an export gives (see
+        :func:`transfer.stream_export_bank`).
         """
         import json
 
         from .memories import get_memories
-        from .transfer import TransferScope, build_bank_archive, load_bank_export
+        from .transfer import TransferScope, stream_export_bank
 
         source_bank_id = task_dict.get("bank_id")
         target_bank_id = task_dict.get("target_bank_id")
@@ -4413,29 +4415,24 @@ class MemoryEngine(MemoryEngineInterface):
         )
 
         backend = await self._get_backend()
-        # One transaction for the whole read: a bank is assembled from a dozen
-        # queries, and without this the clone is a smear of whatever was being
-        # written meanwhile — a fact whose document the copy never got, an
-        # observation citing it. The source stays writable throughout, and the
-        # connection goes back to the pool before the archive is built.
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                payload = await load_bank_export(
-                    conn,
-                    source_bank_id,
-                    scope=scope,
-                    memories=get_memories(),
-                    file_storage=self._file_storage,
-                )
-        archive_bytes = await build_bank_archive(payload)
-
-        result = await self.import_bank_async(
-            archive_bytes,
-            context,
-            target_bank_id=target_bank_id,
-            scope=scope,
-            operation_id=operation_id,
-        )
+        with tempfile.TemporaryFile() as archive:
+            async for chunk in stream_export_bank(
+                backend,
+                source_bank_id,
+                scope=scope,
+                memories=get_memories(),
+                file_storage=self._file_storage,
+            ):
+                archive.write(chunk)
+            archive_byte_size = archive.tell()
+            archive.seek(0)
+            result = await self.import_bank_async(
+                archive,
+                context,
+                target_bank_id=target_bank_id,
+                scope=scope,
+                operation_id=operation_id,
+            )
 
         if operation_id:
             counts = {
@@ -4453,7 +4450,7 @@ class MemoryEngine(MemoryEngineInterface):
                 "directives_imported": result.directives_imported,
                 "webhooks_imported": result.webhooks_imported,
                 "history_rows_imported": result.history_rows_imported,
-                "archive_byte_size": len(archive_bytes),
+                "archive_byte_size": archive_byte_size,
             }
             async with acquire_with_retry(backend) as conn:
                 await conn.execute(

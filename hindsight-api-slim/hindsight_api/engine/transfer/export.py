@@ -11,10 +11,8 @@ is set, in which case they are written to ``observations.json``.
 from __future__ import annotations
 
 import base64
-import io
 import json
 import logging
-import zipfile
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -22,7 +20,6 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-import anyio.to_thread
 import pydantic_core
 
 from ..db_utils import as_connection, iter_keyset_pages
@@ -474,11 +471,6 @@ async def _iter_bank_row_pages(conn_or_backend: Any, table: str, bank_id: str) -
         yield [{k: v for k, v in dict(row).items() if k not in _DERIVED_COLUMNS} for row in rows]
 
 
-async def _collect(pages: AsyncIterator[list[dict]]) -> list[dict]:
-    """Paged rows read whole, in the order the streamed export writes them (the clone path)."""
-    return [row async for page in pages for row in page]
-
-
 async def _load_pages(conn: Any, bank_id: str) -> list[TransferPage]:
     """Load the page tree (folders + pages) as typed rows.
 
@@ -545,9 +537,9 @@ async def stream_export_bank(
 ) -> AsyncIterator[bytes]:
     """Stream a whole bank as the chunks of a portable ZIP archive (no embeddings).
 
-    ``scope`` decides what travels — see :class:`TransferScope`. Writes the same
-    entries as :func:`load_bank_export` + :func:`build_bank_archive` (the clone
-    path); ``test_streamed_bank_archive_matches_the_built_one`` holds the two to it.
+    ``scope`` decides what travels — see :class:`TransferScope`. The one way a
+    whole bank is read: the export endpoint, the admin CLI and the clone all go
+    through here.
 
     Memory: documents are read ``batch_size`` at a time, attachment bytes are
     streamed from file storage, and the operation log, the maintenance queues, the
@@ -563,8 +555,9 @@ async def stream_export_bank(
     The price is that a bank written to during the export is read at several
     points in time: observations are filtered to the facts that were exported,
     but a mental model can cite a document that arrived after the documents were
-    read. The clone path reads inside one transaction instead, because it copies
-    a live bank and never leaves the process.
+    read. The clone takes the same reads: it once read under one transaction
+    instead, which on a large bank stayed open until a pooler cut it (#6666) and,
+    at READ COMMITTED, never gave a single snapshot anyway.
     """
     scope = scope or TransferScope()
     memories = _resolve_memories(memories)
@@ -729,9 +722,10 @@ async def _stream_attachments(
 ) -> AsyncIterator[bytes]:
     """Stream each attachment's bytes into ``blobs/``, then ``attachments.json`` naming them.
 
-    Appends every carried attachment to ``exported``. Same rules as
-    :func:`_dump_attachments`: a bank with attachments and no ``file_storage``
-    raises, and an attachment whose bytes are gone is left out with a warning.
+    Appends every carried attachment to ``exported``. A bank with attachments and
+    no ``file_storage`` raises — the alternative is an archive that looks complete
+    and silently is not — and an attachment whose bytes are gone is left out with
+    a warning.
     """
     async with as_connection(conn_or_backend) as conn:
         rows = await conn.fetch(
@@ -829,292 +823,6 @@ async def export_bank(
     ):
         chunks.append(chunk)
     return b"".join(chunks)
-
-
-@dataclass
-class BankExportPayload:
-    """Everything a whole-bank archive is built from, already read out of the bank.
-
-    Loading and building are separate so the CPU-bound half — Pydantic JSON for
-    every document plus DEFLATE over the whole bank — can run off the event loop
-    *and* outside the read transaction. Before the split, ``export_bank`` did both
-    while the caller held an open transaction, so a large bank's compression both
-    stalled the loop and pinned a pooled connection for its duration. That was
-    harmless while the only caller was the admin CLI (its own short-lived
-    process); it stopped being harmless when the transfer and clone endpoints
-    started calling it inside the API/worker process.
-    """
-
-    bank_id: str
-    scope: TransferScope
-    bank_rows_json_encoding: BankRowsJSONEncoding = "serialized"
-    documents: list[TransferDocument] = field(default_factory=list)
-    observations: list[TransferObservation] = field(default_factory=list)
-    attachments: list[TransferAttachment] = field(default_factory=list)
-    #: archive entry name -> attachment bytes
-    blobs: dict[str, bytes] = field(default_factory=dict)
-    data_rows: dict[str, list[dict]] = field(default_factory=dict)
-    bank_rows: dict[str, list[dict]] = field(default_factory=dict)
-    knowledge_pages: list[TransferPage] = field(default_factory=list)
-    history_rows: dict[str, list[dict]] = field(default_factory=dict)
-
-
-async def load_bank_export(
-    conn: Any,
-    bank_id: str,
-    *,
-    scope: TransferScope | None = None,
-    bank_rows_json_encoding: BankRowsJSONEncoding = "serialized",
-    memories: Any = None,
-    file_storage: Any = None,
-) -> BankExportPayload:
-    """Read everything ``scope`` asks for out of the bank, without building anything.
-
-    Every query lives here, so a caller that wants a point-in-time archive wraps
-    only this call in a transaction and lets the connection go before handing the
-    payload to :func:`build_bank_archive`.
-    """
-    scope = scope or TransferScope()
-    memories = _resolve_memories(memories)
-    documents: list[TransferDocument] = []
-    observations: list[TransferObservation] = []
-    attachments: list[TransferAttachment] = []
-    blobs: dict[str, bytes] = {}
-    data_rows: dict[str, list[dict]] = {}
-
-    if scope.data:
-        # Whole-bank export always carries observations (they're bank-level state)
-        # and, with them, the per-fact consolidation lifecycle so the target restores
-        # exact eligibility instead of re-consolidating historical facts (#2965).
-        #
-        # Only the memories move to the store. Everything below — bank config, mental models,
-        # directives, webhooks, pages, the history tails — lives in Postgres for every
-        # deployment, so `conn` stays the source for all of it.
-        loaded = await memories.load_transfer_documents(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, document_ids=None, include_lifecycle=True
-        )
-        documents = loaded.documents
-        observations = await memories.load_transfer_observations(
-            conn=conn, fq_table=fq_table, bank_id=bank_id, unit_index=loaded.unit_index
-        )
-        exported_attachments = await _dump_attachments(conn, bank_id, file_storage)
-        attachments, blobs = exported_attachments.rows, exported_attachments.blobs
-        for table in ("async_operations", "graph_maintenance_queue"):
-            data_rows[table] = await _collect(_iter_bank_row_pages(conn, table, bank_id))
-        data_rows["entity_maintenance_queue"] = await _collect(
-            memories.iter_entity_maintenance_queue(
-                backend=conn, fq_table=fq_table, bank_id=bank_id, page_size=_ROW_PAGE
-            )
-        )
-        data_rows["invalidated_memory_units"] = await _collect(_iter_invalidated_units(conn, bank_id, memories))
-
-    bank_rows: dict[str, list[dict]] = {}
-    knowledge_pages: list[TransferPage] = []
-    if scope.data:
-        # Synthesized knowledge travels with the memories it was synthesized from:
-        # a mental model reads the bank's facts and cites them by id, and a
-        # page is a view over a mental model.
-        for table in _SYNTHESIZED_ROW_TABLES:
-            bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
-        for table in CARRIED_HISTORY_TABLES:
-            bank_rows[table] = await _collect(_iter_history_row_pages(conn, table, bank_id))
-        knowledge_pages = await _load_pages(conn, bank_id)
-    if scope.bank_config:
-        for table in _CONFIG_ROW_TABLES:
-            bank_rows[table] = await _dump_bank_rows(conn, table, bank_id)
-
-    history_rows: dict[str, list[dict]] = {}
-    if scope.history:
-        history_rows = {table: await _collect(_iter_bank_row_pages(conn, table, bank_id)) for table in HISTORY_TABLES}
-
-    return BankExportPayload(
-        bank_id=bank_id,
-        scope=scope,
-        bank_rows_json_encoding=bank_rows_json_encoding,
-        documents=documents,
-        observations=observations,
-        attachments=attachments,
-        blobs=blobs,
-        data_rows=data_rows,
-        bank_rows=bank_rows,
-        knowledge_pages=knowledge_pages,
-        history_rows=history_rows,
-    )
-
-
-async def build_bank_archive(payload: BankExportPayload) -> bytes:
-    """Serialise a loaded bank into its ZIP archive, off the event loop.
-
-    Needs no database connection — everything it writes is already in ``payload``
-    — which is the point: the caller's read transaction is closed by the time the
-    compression starts. Mirrors what the document export does for the same reason
-    (issue #3321).
-    """
-    archive_bytes = await anyio.to_thread.run_sync(_build_bank_archive_bytes, payload)
-    scope = payload.scope
-    logger.info(
-        "[transfer] Exported bank %s (data=%s, bank_config=%s, history=%s): %d document(s), "
-        "%d observation(s), %d attachment(s), %d operation(s), %d mental model(s), %d page(s), "
-        "%d directive(s), %d webhook(s), %d byte(s)",
-        payload.bank_id,
-        scope.data,
-        scope.bank_config,
-        scope.history,
-        len(payload.documents),
-        len(payload.observations),
-        len(payload.attachments),
-        len(payload.data_rows.get("async_operations", [])),
-        len(standalone_mental_models(payload.bank_rows.get("mental_models", []), payload.knowledge_pages)),
-        len(payload.knowledge_pages),
-        len(payload.bank_rows.get("directives", [])),
-        len(payload.bank_rows.get("webhooks", [])),
-        len(archive_bytes),
-    )
-    return archive_bytes
-
-
-def _build_bank_archive_bytes(payload: BankExportPayload) -> bytes:
-    """Assemble the whole-bank ZIP. Pure CPU, no I/O — runs in a worker thread."""
-    bank_id = payload.bank_id
-    scope = payload.scope
-    documents = payload.documents
-    observations = payload.observations
-    attachments = payload.attachments
-    blobs = payload.blobs
-    data_rows = payload.data_rows
-    bank_rows = payload.bank_rows
-    knowledge_pages = payload.knowledge_pages
-    history_rows = payload.history_rows
-    bank_rows_json_encoding = payload.bank_rows_json_encoding
-
-    archive = io.BytesIO()
-    fact_total = 0
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
-        for index, document in enumerate(documents):
-            fact_total += len(document.facts)
-            zf.writestr(f"documents/{index:06d}.json", document.model_dump_json(indent=2, exclude_none=False))
-
-        if observations:
-            section = "[\n" + ",\n".join(o.model_dump_json(indent=2) for o in observations) + "\n]\n"
-            zf.writestr("observations.json", section)
-
-        if attachments:
-            section = "[\n" + ",\n".join(a.model_dump_json(indent=2) for a in attachments) + "\n]\n"
-            zf.writestr("attachments.json", section)
-            for entry, data in blobs.items():
-                # Stored, not deflated: attachment bytes are images/PDFs that are
-                # already compressed, so DEFLATE would burn CPU for nothing.
-                zf.writestr(zipfile.ZipInfo(entry), data, compress_type=zipfile.ZIP_STORED)
-
-        for table, rows in data_rows.items():
-            zf.writestr(f"data/{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
-
-        for table, rows in bank_rows.items():
-            zf.writestr(f"{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
-        # Typed page tree (parent-first). Written even when empty so the
-        # importer can distinguish "no pages" from a pre-tree archive.
-        if scope.data:
-            zf.writestr(
-                "knowledge_pages.json",
-                "[\n" + ",\n".join(p.model_dump_json(indent=2) for p in knowledge_pages) + "\n]\n"
-                if knowledge_pages
-                else "[]\n",
-            )
-        for table, rows in history_rows.items():
-            zf.writestr(f"history/{table}.json", json.dumps(rows, indent=2, default=_row_json_default))
-
-        manifest = TransferManifest(
-            schema_version=SCHEMA_VERSION,
-            source_bank_id=bank_id,
-            exported_at=datetime.now(UTC),
-            document_count=len(documents),
-            fact_count=fact_total,
-            observation_count=len(observations),
-            archive_type="bank",
-            mental_model_count=len(standalone_mental_models(bank_rows.get("mental_models", []), knowledge_pages)),
-            knowledge_page_count=len(knowledge_pages),
-            directive_count=len(bank_rows.get("directives", [])),
-            webhook_count=len(bank_rows.get("webhooks", [])),
-            includes_history=scope.history,
-            scope=TransferScopeManifest(data=scope.data, bank_config=scope.bank_config, history=scope.history),
-            attachment_count=len(attachments),
-            operation_count=len(data_rows.get("async_operations", [])),
-            invalidated_memory_count=len(data_rows.get("invalidated_memory_units", [])),
-            bank_rows_json_encoding=bank_rows_json_encoding,
-        )
-        zf.writestr("manifest.json", manifest.model_dump_json(indent=2))
-
-    return archive.getvalue()
-
-
-@dataclass
-class _ExportedAttachments:
-    """Attachment rows paired with the archive entries carrying their bytes."""
-
-    rows: list[TransferAttachment] = field(default_factory=list)
-    #: archive entry name -> the bytes written under it
-    blobs: dict[str, bytes] = field(default_factory=dict)
-
-
-async def _dump_attachments(conn: Any, bank_id: str, file_storage: Any) -> _ExportedAttachments:
-    """Attachment rows plus their bytes, read out of file storage.
-
-    The bytes are the point: ``attachments`` rows only name a storage key, and a
-    target instance has neither that key nor the blob behind it. Without the
-    bytes an imported bank keeps facts extracted *from* an attachment while the
-    attachment itself resolves to nothing.
-
-    Raises when a bank has attachments and no ``file_storage`` was supplied — the
-    alternative is an archive that looks complete and silently is not.
-    """
-    rows = await conn.fetch(
-        f"SELECT bank_id, document_id, attachment_hash, short_id, media_type, byte_size, storage_key, kind, "
-        f"filename, created_at "
-        f"FROM {fq_table('attachments')} WHERE bank_id = $1 ORDER BY document_id, attachment_hash",
-        bank_id,
-    )
-    if not rows:
-        return _ExportedAttachments()
-    if file_storage is None:
-        raise ValueError(
-            f"Bank '{bank_id}' has {len(rows)} attachment(s) but no file storage was supplied to the export; "
-            f"their bytes cannot be carried."
-        )
-    attachments: list[TransferAttachment] = []
-    blobs: dict[str, bytes] = {}
-    for index, row in enumerate(rows):
-        entry = f"blobs/{index:06d}.bin"
-        try:
-            data = await file_storage.retrieve(row["storage_key"])
-        except FileNotFoundError:
-            # The row outlived its blob (an interrupted reclaim, a storage
-            # migration). Carrying the row alone reproduces the dangling state on
-            # the target, so drop it: the facts keep their text either way.
-            # (This used to test for a `None` return, which no backend gives — a
-            # missing blob raised and failed the whole export instead.)
-            logger.warning(
-                "[transfer] Attachment %s of bank %s has no bytes at %s; not carried",
-                row["short_id"],
-                bank_id,
-                row["storage_key"],
-            )
-            continue
-        blobs[entry] = bytes(data)
-        attachments.append(
-            TransferAttachment(
-                bank_id=row["bank_id"],
-                document_id=row["document_id"],
-                attachment_hash=row["attachment_hash"],
-                short_id=row["short_id"],
-                media_type=row["media_type"],
-                byte_size=row["byte_size"],
-                kind=row["kind"],
-                filename=row["filename"],
-                created_at=row["created_at"],
-                entry=entry,
-            )
-        )
-    return _ExportedAttachments(rows=attachments, blobs=blobs)
 
 
 async def _iter_invalidated_units(conn_or_backend: Any, bank_id: str, memories: Any) -> AsyncIterator[list[dict]]:
