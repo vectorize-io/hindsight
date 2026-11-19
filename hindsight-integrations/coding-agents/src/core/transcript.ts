@@ -48,7 +48,8 @@ interface RenderedLine {
 /**
  * Render one message's `content` into turns: text blocks join into one prose turn
  * (injected-memory stripped); each `tool_use` becomes its own compact `role:"action"` turn
- * (name + primary target, via `actionLine`); `tool_result` blocks are dropped.
+ * (name + primary target, via `actionLine`); `tool_result` blocks are dropped, except the result
+ * of an AskUserQuestion call seen earlier (`questionIds`), which is the user's answer.
  */
 function renderLine(
   content: string | ContentBlock[] | undefined,
