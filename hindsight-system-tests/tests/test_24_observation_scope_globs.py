@@ -107,3 +107,22 @@ async def test_a_client_that_declares_its_scopes_keeps_them(client, bank_id, set
     await settled(bank_id)
 
     assert await _observation_tags(client, bank_id) == [["source:agent-a", "topic:billing"]]
+
+
+async def test_storing_the_same_notes_again_keeps_the_bank_scope(client, bank_id, settled, consolidate_calls):
+    """A re-retain that names no scope keeps the bank default on the facts it keeps (#6672).
+
+    The second retain changes nothing, so every fact survives and is relabelled. Relabelled
+    with no scope, each memory fell out of its topic: its observation was deleted and it was
+    consolidated again on its own tags, one call per memory.
+    """
+    await _topic_bank(client, bank_id)
+    items = [{"content": text, "document_id": name, "tags": [f"session:{name}"]} for name, (text, _) in NOTES.items()]
+    for _ in range(2):
+        await client.aretain_batch(bank_id=bank_id, items=items)
+        await settled(bank_id)
+        await client.banks.trigger_consolidation(bank_id)
+        await settled(bank_id)
+
+    assert await _observation_tags(client, bank_id) == [["topic:auth"], ["topic:billing"]]
+    assert len(consolidate_calls) == 2, "The unchanged notes were not consolidated a second time"

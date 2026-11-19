@@ -660,6 +660,17 @@ async def _record_retain_event(
 _RETAIN_PARAMS_NOT_REPLAYED = frozenset({"content", "document_id", "update_mode", "tags", "force_reextract"})
 
 
+def _relabel_observation_scopes(retain_params: dict, config) -> list | str | None:
+    """The scope a re-retain writes onto the facts it keeps: the request's, else the bank default.
+
+    Freshly extracted facts get the same fallback (``_apply_default_observation_scopes``), so a
+    request that names no scope leaves kept and re-extracted facts agreeing, as a full replace
+    would (#6672).
+    """
+    scopes = retain_params.get("observation_scopes")
+    return config.default_observation_scopes if scopes is None else scopes
+
+
 def _build_retain_params(contents_dicts, document_tags=None, doc_contents=None):
     """Build retain_params and merged_tags from content dicts."""
     if doc_contents is not None:
@@ -1411,7 +1422,7 @@ async def _delta_store_owned_write(
                     effective_doc_id,
                     merged_tags,
                     retain_params.get("metadata", {}),
-                    observation_scopes=retain_params.get("observation_scopes"),
+                    observation_scopes=_relabel_observation_scopes(retain_params, config),
                     label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
                     previous_document_tags=doc_tags_at_load,
                     ops=pool.ops,
@@ -4560,7 +4571,7 @@ async def _try_delta_retain(
                             effective_doc_id,
                             merged_tags,
                             retain_params.get("metadata", {}),
-                            observation_scopes=retain_params.get("observation_scopes"),
+                            observation_scopes=_relabel_observation_scopes(retain_params, config),
                             label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
                             previous_document_tags=doc_tags_at_load,
                             ops=pool.ops,
@@ -4744,7 +4755,7 @@ async def _delta_metadata_only(
                     document_id,
                     merged_tags,
                     retain_params.get("metadata", {}),
-                    observation_scopes=retain_params.get("observation_scopes"),
+                    observation_scopes=_relabel_observation_scopes(retain_params, config),
                     label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
                     previous_document_tags=previous_document_tags,
                     ops=pool.ops,
@@ -4794,7 +4805,7 @@ async def _delta_metadata_only(
                     document_id,
                     merged_tags,
                     retain_params.get("metadata", {}),
-                    observation_scopes=retain_params.get("observation_scopes"),
+                    observation_scopes=_relabel_observation_scopes(retain_params, config),
                     label_tag_keys=label_tag_keys(getattr(config, "entity_labels", None)),
                     previous_document_tags=previous_document_tags,
                     ops=pool.ops,
