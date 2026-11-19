@@ -8,15 +8,16 @@ license = { text = "MIT" }
 # every `hermes update`. Keep upper bounds: Hermes pins its own deps exactly and refuses a
 # plugin whose requirements cannot resolve against them.
 dependencies = [
-    # Floor is 0.10.1, not the 0.6.1 this plugin actually needs at the API level:
-    # hindsight-embed 0.10.0 shipped a probe that ran `asyncio.run` on the caller's
-    # thread, clearing its event loop, so the next hindsight-client call hit an aiohttp
-    # session bound to a dead loop ("Timeout context manager should be used inside a
-    # task"). That breaks local_embedded outright. Anyone who installed between
-    # 2026-09-14 and 2026-09-21 is pinned to the broken release until a floor moves them
-    # off it, so keep these at >=0.10.1 rather than widening them back.
+    # Neither floor is the 0.6.1 this plugin needs at the API level:
+    # - 0.10.1: hindsight-embed 0.10.0 shipped a probe that ran `asyncio.run` on the caller's
+    #   thread, clearing its event loop, so the next hindsight-client call hit an aiohttp session
+    #   bound to a dead loop ("Timeout context manager should be used inside a task"), which broke
+    #   local_embedded outright. Keep hindsight-client at >=0.10.1 rather than widening it back.
+    # - hindsight-embed 0.10.3: the first release that keeps our PYTHONPATH out of the daemon and
+    #   starts it without a visible console window on Windows. Hermes env rebuilds keep whatever
+    #   already satisfies the floor, so 0.10.1 stayed installed until the floor moved (#6506).
     "hindsight-client>=0.10.1,<2",
-    "hindsight-embed>=0.10.1,<2",
+    "hindsight-embed>=0.10.3,<2",
 ]
 
 # The plugin is loaded from a directory by Hermes, not installed as a distribution.

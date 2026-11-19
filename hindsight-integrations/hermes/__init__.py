@@ -90,6 +90,15 @@ _EXTRA_BANK_TIMEOUT_SHARE = 0.8
 _EXTRA_BANK_COOLDOWN = 300.0
 _RETAIN_CONTEXT_DEFAULT = "conversation between Hermes Agent and the User"
 
+# Injected instead of nothing when recall raises, so the agent can tell "memory is down" from
+# "nothing found" (#6482). Fixed text, never the exception: errors can carry hosts and URLs. It is
+# worded so a customer-facing agent need not announce an outage, only not read the gap as fact.
+_RECALL_FAILED_NOTE = (
+    "# Hindsight Memory\n"
+    "Memory lookup failed this turn, so context from earlier sessions is missing. Don't conclude "
+    "the user never told you something just because it is not here."
+)
+
 
 def _plugin_version() -> str:
     """Read the version from plugin.yaml — Hermes loads this directory, not a pip package."""
@@ -531,7 +540,6 @@ class HindsightMemoryProvider(MemoryProvider):
         self._api_url, self._mode = _DEFAULT_API_URL, "cloud"
         self._timeout, self._idle_timeout = _DEFAULT_TIMEOUT, _DEFAULT_IDLE_TIMEOUT
         self._bank_id, self._budget, self._bank_id_template = "hermes", "mid", ""
-        self._bank_mission, self._bank_retain_mission = "", None
         self._mirror_to_own_bank = False
         self._static_bank_id = "hermes"
         self._project, self._bank_source = "", "bank_id"
@@ -611,9 +619,9 @@ class HindsightMemoryProvider(MemoryProvider):
             # fail; a gateway started before the install runs without it (#6063).
             if not _check_local_runtime(_CLIENT_MODULES).available:
                 return False
-            return mode == "local_external" or bool(
-                _cloud_api_key(cfg) or cfg.get("api_url") or get_secret("HINDSIGHT_API_URL", "")
-            )
+            # Cloud needs a key: a URL alone used to pass, and every request then went out
+            # unauthenticated (#6438). A keyless self-hosted server is what local_external is for.
+            return mode == "local_external" or bool(_cloud_api_key(cfg))
         except Exception:
             logger.debug("Hindsight availability check failed", exc_info=True)
             return False
@@ -627,11 +635,20 @@ class HindsightMemoryProvider(MemoryProvider):
         guidance here, where agent_init warns about an unavailable provider.
         """
         try:
-            local = _load_config().get("mode", "cloud") in _LOCAL_MODES
+            cfg = _load_config()
         except Exception:
             return ""
-        status = _check_local_runtime() if local else _check_local_runtime(_CLIENT_MODULES)
-        return "" if status.available else _local_runtime_hint(status.reason).strip()
+        mode = cfg.get("mode", "cloud")
+        status = _check_local_runtime() if mode in _LOCAL_MODES else _check_local_runtime(_CLIENT_MODULES)
+        if not status.available:
+            return _local_runtime_hint(status.reason).strip()
+        if mode == "cloud" and not _cloud_api_key(cfg):
+            return (
+                "Hindsight cloud mode needs an API key: set HINDSIGHT_API_KEY (or api_key in "
+                "hindsight/config.json), or run `hermes memory setup`. For a self-hosted server "
+                "without a key, use mode local_external."
+            )
+        return ""
 
     def save_config(self, values, hermes_home):
         """Merge *values* into $HERMES_HOME/hindsight/config.json."""
@@ -731,8 +748,6 @@ class HindsightMemoryProvider(MemoryProvider):
                 "description": "Optional template to derive bank_id dynamically. Placeholders: {profile}, {workspace}, {project}, {platform}, {user}, {session}. {project} is the git repository name (shared across worktrees, empty outside a repository). Example: hermes-{project}",
                 "default": "",
             },
-            {"key": "bank_mission", "description": "Mission/purpose description for the memory bank"},
-            {"key": "bank_retain_mission", "description": "Custom extraction prompt for memory retention"},
             {
                 "key": "recall_budget",
                 "description": "Recall thoroughness",
@@ -1507,8 +1522,6 @@ class HindsightMemoryProvider(MemoryProvider):
         self._memory_mode = memory_mode if memory_mode in _SYSTEM_PROMPT_TAILS else "hybrid"
         prefetch_method = cfg.get("recall_prefetch_method") or cfg.get("prefetch_method", "recall")
         self._prefetch_method = prefetch_method if prefetch_method in {"recall", "reflect"} else "recall"
-        self._bank_mission = cfg.get("bank_mission", "")
-        self._bank_retain_mission = cfg.get("bank_retain_mission") or None
 
     def _apply_retain_settings(self, cfg: dict) -> None:
         def _cfg_or_env(key: str, env_var: str, default: str = "") -> Any:
@@ -1760,7 +1773,8 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def _do_recall(self, query: str) -> tuple[str, int]:
         """One recall/reflect for *query* (background prefetch and ``recall_sync`` paths)
-        -> (text, memory count); the count is 0 for reflect (synthesis) and on error."""
+        -> (text, memory count); the count is 0 for reflect (synthesis) and on error, where the text
+        is ``_RECALL_FAILED_NOTE``."""
         if self._recall_max_input_chars:
             query = query[: self._recall_max_input_chars]
         try:
@@ -1775,10 +1789,13 @@ class HindsightMemoryProvider(MemoryProvider):
             return "\n".join(f"- {r.text}" for r in results if r.text), len(results)
         except Exception as e:
             logger.warning("Hindsight recall failed: %s", e, exc_info=True)
-            return "", 0
+            return _RECALL_FAILED_NOTE, 0
 
     def _finish_prefetch(self, result: str, count: int) -> str:
         """Record indicator state (cleared on empty turns, never a stale count); format the block."""
+        if result == _RECALL_FAILED_NOTE:
+            self._last_recall_returned, self._last_recall_count = False, 0
+            return result
         self._last_recall_returned, self._last_recall_count = bool(result), count if result else 0
         if not result:
             logger.debug("Prefetch: no results available")
@@ -2157,7 +2174,8 @@ class HindsightMemoryProvider(MemoryProvider):
         if not args.get(required, ""):
             return tool_error(f"Missing required parameter: {required}")
         try:
-            return json.dumps({"result": handler(self, args)})
+            # ensure_ascii=False: escaped CJK costs ~3x the tokens in the tool result (#6561).
+            return json.dumps({"result": handler(self, args)}, ensure_ascii=False)
         except Exception as e:
             logger.warning("%s failed: %s", tool_name, e, exc_info=True)
             return tool_error(f"{failure}: {str(e) or type(e).__name__}")

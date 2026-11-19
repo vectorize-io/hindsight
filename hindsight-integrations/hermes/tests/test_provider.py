@@ -791,7 +791,8 @@ def test_a_client_that_cannot_import_makes_the_provider_unavailable(hermes_env, 
     """#6063: a gateway started before the install has no hindsight_client. The provider said it was
     available and every recall and retain then failed; it now says why it isn't."""
     (hermes_env / "hindsight").mkdir(parents=True, exist_ok=True)
-    (hermes_env / "hindsight" / "config.json").write_text(json.dumps({"mode": mode, "api_url": "http://hs.test"}))
+    config = {"mode": mode, "api_url": "http://hs.test", "api_key": "hsk-1"}
+    (hermes_env / "hindsight" / "config.json").write_text(json.dumps(config))
     provider = plugin.HindsightMemoryProvider()
     assert provider.is_available() is True and provider.unavailable_reason() == ""
 
@@ -972,3 +973,61 @@ def test_an_async_turn_retain_is_resent_under_its_operation_id(provider):
     instance.sync_turn("one", "1")
     instance.shutdown()
     assert len(fake.retains) == 1 and fake.retains[0]["operation_id"]
+
+
+class _DownClient(FakeClient):
+    async def arecall(self, **kwargs):
+        raise ConnectionError("connect to https://hs.internal:8888 failed")
+
+
+def test_a_failed_recall_tells_the_agent_memory_is_down(provider):
+    """#6482: a failed recall injected nothing, the same as an empty one, so the agent read the
+    gap as "the user never told me". The note is fixed text: the error's host never reaches it."""
+    instance, _ = provider({"recall_sync": True}, client=_DownClient())
+    block = instance.prefetch("what's my dog's name?")
+    assert block == plugin._RECALL_FAILED_NOTE
+    assert "hs.internal" not in block
+    assert instance.recall_status() is None  # no "0 memories" indicator for an outage
+    instance.shutdown()
+
+
+def test_an_empty_recall_still_injects_nothing(provider):
+    instance, _ = provider({"recall_sync": True}, client=FakeClient(recall_texts=[]))
+    assert instance.prefetch("what's my dog's name?") == ""
+    instance.shutdown()
+
+
+def test_a_failed_background_recall_reaches_the_next_turn(provider):
+    instance, _ = provider({"prefetch_waits_for_retain": False}, client=_DownClient())
+    instance.queue_prefetch("what's my dog's name?")
+    assert instance.prefetch("next turn") == plugin._RECALL_FAILED_NOTE
+    instance.shutdown()
+
+
+def test_tool_results_keep_non_ascii_text(provider):
+    """#6561: \\uXXXX escapes cost ~3x the tokens for CJK text."""
+    instance, _ = provider({}, client=FakeClient(recall_texts=["用户喜欢咖啡"]))
+    raw = instance.handle_tool_call("hindsight_recall", {"query": "咖啡"})
+    assert "用户喜欢咖啡" in raw and "\\u" not in raw
+    instance.shutdown()
+
+
+def _write_config(hermes_env, config):
+    (hermes_env / "hindsight").mkdir(parents=True, exist_ok=True)
+    (hermes_env / "hindsight" / "config.json").write_text(json.dumps(config))
+
+
+def test_cloud_mode_without_a_key_is_unavailable_and_says_so(hermes_env):
+    """#6438: a URL alone passed the gate, and every request then went out unauthenticated."""
+    _write_config(hermes_env, {"mode": "cloud", "api_url": "https://api.example.test"})
+    provider = plugin.HindsightMemoryProvider()
+    assert provider.is_available() is False
+    assert "HINDSIGHT_API_KEY" in provider.unavailable_reason()
+
+
+def test_cloud_mode_with_a_key_or_a_keyless_external_server_is_available(hermes_env):
+    _write_config(hermes_env, {"mode": "cloud", "api_key": "hsk-1"})
+    assert plugin.HindsightMemoryProvider().is_available() is True
+    _write_config(hermes_env, {"mode": "local_external", "api_url": "http://localhost:8888"})
+    provider = plugin.HindsightMemoryProvider()
+    assert provider.is_available() is True and provider.unavailable_reason() == ""
