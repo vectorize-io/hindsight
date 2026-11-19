@@ -2667,3 +2667,18 @@ def test_a_size_limit_per_media_type_is_read_from_the_server_setting():
     for bad in ("pictures=5", "video=lots", "video=0", "video"):
         with pytest.raises(ValueError, match="MAX_FILE_MB_BY_MEDIA_TYPE"):
             _parse_kb_size_limits(bad)
+
+
+async def test_a_document_with_more_passages_than_one_insert_holds_is_stored_whole(api_client, kb, monkeypatch):
+    # Passages go in in chunks: one insert of a big table's thousands ran past the command timeout.
+    from hindsight_api.knowledge import store
+
+    monkeypatch.setattr(store, "_INSERT_CHUNK", 3)
+    r = await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"text_passage_tokens": 32}})
+    assert r.status_code == 200, r.text
+    text = "\n\n".join(f"Section {n}. " + ("Unrelated filler words. " * 20) for n in range(8))
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "manual", "text": text}]})
+    assert r.status_code == 200, r.text
+    detail = (await api_client.get(f"{KB}/{kb}/documents/manual")).json()
+    assert detail["passage_count"] > 3 and len(detail["passages"]) == detail["passage_count"]
+    assert [p["index"] for p in detail["passages"]] == list(range(detail["passage_count"]))

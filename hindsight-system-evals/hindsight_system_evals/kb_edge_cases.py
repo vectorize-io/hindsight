@@ -193,14 +193,8 @@ async def ingest_file(
 ) -> FileOutcome:
     size = path.stat().st_size
     started = time.monotonic()
-    # Sent from the open file, not read first: a heavy case is gigabytes, and this process is not under test.
-    with ResourceMeter(pid) as meter, path.open("rb") as upload:
-        r = await http.post(
-            f"{KB}/{bank_id}/files/ingest",
-            files={"files": (path.name, upload)},
-            data={"request": json.dumps({"files": [{"document_id": document_id}]})},
-            timeout=timeout,
-        )
+    with ResourceMeter(pid) as meter:
+        r = await _upload(http, bank_id, path, document_id, timeout)
         doc: dict = {}
         if r.status_code < 400:
             deadline = time.monotonic() + timeout
@@ -229,6 +223,27 @@ async def ingest_file(
         seconds=round(time.monotonic() - started, 2),
         usage=meter.usage(),
     )
+
+
+async def _upload(
+    http: httpx.AsyncClient, bank_id: str, path: Path, document_id: str, timeout: float
+) -> httpx.Response:
+    """The upload, sent again once if the connection drops before any answer: a kept-alive connection the
+    server closed as idle just as it was reused (a client race, not the file). Re-sending is an upsert."""
+    for attempt in (1, 2):
+        # From the open file, not read first: a heavy case is gigabytes, and this process is not under test.
+        with path.open("rb") as upload:
+            try:
+                return await http.post(
+                    f"{KB}/{bank_id}/files/ingest",
+                    files={"files": (path.name, upload)},
+                    data={"request": json.dumps({"files": [{"document_id": document_id}]})},
+                    timeout=timeout,
+                )
+            except (httpx.ReadError, httpx.RemoteProtocolError):
+                if attempt == 2:
+                    raise
+    raise AssertionError("unreachable")
 
 
 def _detail(r: httpx.Response) -> str:
@@ -381,7 +396,9 @@ def _files(roots: list[Path], limit: int | None) -> list[Path]:
     return found[:limit] if limit else found
 
 
-async def _harvest(files: list[Path], out: Path, url: str, pid: Server, timeout: float, concurrency: int) -> int:
+async def _harvest(
+    files: list[Path], out: Path, url: str, pid: Server, timeout: float, concurrency: int, bank_config: dict
+) -> int:
     """Ingest ``files`` into one bank, ``concurrency`` at a time (then usage is the mix's, not one file's).
 
     Resumes: a file already in ``out`` is skipped, so a stopped sweep picks up where it was.
@@ -393,6 +410,8 @@ async def _harvest(files: list[Path], out: Path, url: str, pid: Server, timeout:
     in_flight: dict[Path, str] = {}
     async with httpx.AsyncClient(base_url=url, timeout=60) as http:
         bank_id = await create_bank(http)
+        if bank_config:
+            (await http.patch(f"{KB}/{bank_id}/config", json={"updates": bank_config})).raise_for_status()
         print(f"bank {bank_id}, {len(todo)} of {len(files)} files to go -> {out}")
         with out.open("a") as sink:
 
@@ -450,6 +469,12 @@ def main(argv: list[str] | None = None) -> int:
     h.add_argument("--timeout", type=float, default=900.0, help="seconds a file may take")
     h.add_argument("--concurrency", type=int, default=1, help="files in flight at once")
     h.add_argument("--api-url", default=None, help="a server already running; else one is started")
+    h.add_argument(
+        "--bank-config",
+        type=json.loads,
+        default={},
+        help="the sweep bank's own settings, e.g. '{\"image_tokens\": 70}': cheaper pictures on a CPU embedder",
+    )
     h.add_argument("--container", default=None, help="with --api-url: the docker container it runs in, to measure")
     args = parser.parse_args(argv)
 
@@ -459,7 +484,13 @@ def main(argv: list[str] | None = None) -> int:
     # The server's log beside the results: a file that broke it is read about there.
     with eval_target(args.api_url, log_path=args.out.with_suffix(".server.log")) as target:
         server = args.container or target.pid
-        return 1 if asyncio.run(_harvest(files, args.out, target.url, server, args.timeout, args.concurrency)) else 0
+        return (
+            1
+            if asyncio.run(
+                _harvest(files, args.out, target.url, server, args.timeout, args.concurrency, args.bank_config)
+            )
+            else 0
+        )
 
 
 if __name__ == "__main__":

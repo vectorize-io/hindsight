@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -725,18 +725,19 @@ class PostgresKnowledgeStore(KnowledgeStore):
             if keyword_index:
                 columns += ", search_vector"
                 values += ", to_tsvector('simple', coalesce($5, ''))"
-            await conn.executemany(f"INSERT INTO {table} ({columns}) VALUES ({values})", rows)
+            for chunk in _chunks(rows):
+                await conn.executemany(f"INSERT INTO {table} ({columns}) VALUES ({values})", chunk)
         extras = [
             (bank_id, i.document_id, p.index, v.role, v.n, v.embedding)
             for i in items
             for p in i.passages
             for v in p.extra_vectors
         ]
-        if extras:
+        for chunk in _chunks(extras):
             await conn.executemany(
                 f"INSERT INTO {vectors_table} (bank_id, document_id, idx, role, n, embedding) "
                 "VALUES ($1, $2, $3, $4, $5, $6::real[]::vector)",
-                extras,
+                chunk,
             )
 
     async def stage_passages(self, bank_id: str, items: list[PassageStage]) -> list[str]:
@@ -1400,3 +1401,14 @@ def load_knowledge_store(backend_provider: Any, extension_path: str | None) -> K
         if k.startswith(prefix) and k != "HINDSIGHT_API_KB_STORE_EXTENSION"
     }
     return cls(config)
+
+
+#: Rows per insert. The command timeout (HINDSIGHT_API_DB_COMMAND_TIMEOUT, 60s) bounds one executemany, so a
+#: document's passages went in one call that a 1.6 MB numeric table (thousands of passages) ran past, three
+#: times; in pieces, each is well inside it, and the transaction around them still commits them together.
+_INSERT_CHUNK = 256
+
+
+def _chunks(rows: list[Any]) -> Iterator[list[Any]]:
+    for start in range(0, len(rows), _INSERT_CHUNK):
+        yield rows[start : start + _INSERT_CHUNK]
