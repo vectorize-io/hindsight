@@ -190,3 +190,45 @@ Fired when a bank's [Memory Defense](../memory-defense/index.md) policy acts on 
 **Notes:**
 - A `redact` event means the secret was scrubbed and the redacted memory was still stored. A `block` event means the item was dropped; if every item in the retain request is blocked, the retain call returns `422`.
 
+
+---
+
+### `mental_model.refreshed`
+
+Fired once per mental model refresh when it finishes, whatever started it: a manual refresh, a refresh schedule, or a refresh after consolidation.
+
+**Payload:**
+
+```json
+{
+  "event_id": "3f6c2a9e-8d41-4b7a-9c0e-5e2f1d7a6b48",
+  "event": "mental_model.refreshed",
+  "bank_id": "my-bank",
+  "operation_id": "a1b2c3d4e5f6",
+  "status": "completed",
+  "timestamp": "2026-03-04T12:00:03Z",
+  "data": {
+    "mental_model_id": "team-preferences",
+    "name": "Team preferences",
+    "outcome": "content_written"
+  }
+}
+```
+
+**`data` fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mental_model_id` | `string` | The mental model that was refreshed |
+| `name` | `string \| null` | The mental model's name. `null` on failed refreshes. |
+| `outcome` | `string \| null` | What the refresh did: `content_written`, `content_unchanged`, `content_preserved_no_new_facts`, or a `refresh_failed_*` value when it did not write |
+| `failure_reason` | `string \| null` | Why the refresh did not write. Set when `status` is `"failed"` |
+| `error_message` | `string \| null` | Set when `status` is `"failed"` |
+
+**`status` values:** `"completed"` or `"failed"`
+
+**Notes:**
+- `operation_id` matches the `operation_id` returned by the refresh API.
+- A refresh that is retried sends one event, after its last attempt. On failure, the previous content of the mental model is kept.
+- `outcome` and `failure_reason` are the same values the refresh operation records in its result metadata.
+- Fields that are not set are left out of `data`.

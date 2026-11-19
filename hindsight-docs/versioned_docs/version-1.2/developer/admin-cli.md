@@ -210,7 +210,7 @@ Each row is rewritten once. To lower the load on a busy database, use a smaller 
 
 #### If it stops halfway
 
-Run the same command again: it continues where it stopped. A schema that is already swapped is reported `already swapped` and left alone. Running it with a different model than the interrupted run starts that schema's fill over.
+Run the same command again: it continues where it stopped. A schema that is already swapped is reported `already swapped` and left alone. Running it with a different model than the interrupted run starts that schema's fill over. After the swap, a run with a different model is refused until you run `reembed --finish`.
 
 A deployment where a custom memories store owns the memories must re-embed inside that store; the command refuses to run there.
 
