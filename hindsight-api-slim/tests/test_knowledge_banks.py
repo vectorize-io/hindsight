@@ -2833,3 +2833,33 @@ def test_a_pdf_that_crashes_the_renderer_fails_alone_and_the_next_renders():
     with pytest.raises(media.MediaError, match="renderer crashed"):
         media._in_pdf_worker(os.abort)
     assert [d.page for d in media.split_pdf(_pdf((255, 0, 0), (0, 0, 255)), page_pixels=128, max_pages=10)] == [1, 2]
+
+
+def test_a_page_with_no_sentence_ends_is_embedded_in_pieces_the_model_reads():
+    # pdf.js's perf_text_labels.pdf is thousands of labels with no full stop: one "sentence" of 14k tokens,
+    # which the embedder refused (EmbeddingGemma 2 reads 8,192).
+    from hindsight_api.engine.token_encoding import count_tokens
+
+    labels = " ".join(f"label{n}" for n in range(5000))
+    pieces = media.sentences(labels)
+    assert len(pieces) > 1 and max(count_tokens(p) for p in pieces) <= media._MAX_SENTENCE_TOKENS
+    assert " ".join(pieces) == labels
+    assert media.sentences("A short sentence of more than eight words here. And another one.") == [
+        "A short sentence of more than eight words here. And another one."
+    ]
+
+
+def test_a_pdf_rendering_beside_one_that_crashes_the_renderer_still_succeeds():
+    # A crash breaks every call in flight on the worker pool: the innocent one is retried alone.
+    import os
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    media._in_pdf_worker(time.sleep, 0)  # the pool is up before the race
+    with ThreadPoolExecutor(2) as threads:
+        innocent = threads.submit(media._in_pdf_worker, time.sleep, 2)
+        time.sleep(0.5)
+        crash = threads.submit(media._in_pdf_worker, os.abort)
+        with pytest.raises(media.MediaError, match="renderer crashed"):
+            crash.result()
+        assert innocent.result() is None

@@ -316,11 +316,20 @@ def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
         pool = _PDF_POOL
     try:
         return pool.submit(fn, *args).result()
-    except BrokenProcessPool as exc:
+    except BrokenProcessPool:
         with _PDF_POOL_LOCK:
             if _PDF_POOL is pool:
                 _PDF_POOL = None
-        raise MediaError("the PDF renderer crashed on this file") from exc
+    # A crash breaks every call in flight on the pool, not only the file's own: once again, alone in a
+    # worker of its own, so only the file that crashes it fails (a PDF rendering beside jpx_numcomps.pdf
+    # failed with it).
+    with ProcessPoolExecutor(
+        max_workers=1, mp_context=multiprocessing.get_context("spawn"), initializer=_first_to_kill
+    ) as alone:
+        try:
+            return alone.submit(fn, *args).result()
+        except BrokenProcessPool as exc:
+            raise MediaError("the PDF renderer crashed on this file") from exc
 
 
 def _pdf_text(data: Source, max_pages: int) -> _PdfText:
@@ -539,7 +548,33 @@ def sentences(text: str) -> list[str]:
             out[-1] = f"{out[-1]} {current}"
         else:
             out.append(current)
-    return out
+    # A page with no sentence ends (pdf.js's perf_text_labels.pdf: thousands of labels) was one "sentence"
+    # of 14k tokens, which the embedder refused (EmbeddingGemma 2 reads 8,192): cut at words.
+    return [piece for sentence in out for piece in _cut_words(sentence, _MAX_SENTENCE_TOKENS)]
+
+
+#: The longest a sentence is embedded as: past it, it is cut at words. A real sentence is far shorter.
+_MAX_SENTENCE_TOKENS = 256
+
+
+def _cut_words(text: str, tokens: int) -> list[str]:
+    """``text`` as pieces of whole words of about ``tokens`` at most, counting each word once (linear: a
+    piece re-counted per word was quadratic on a 14k-token line)."""
+    from ..engine.token_encoding import count_tokens
+
+    if count_tokens(text) <= tokens:
+        return [text]
+    pieces, current, size = [], [], 0
+    for word in text.split():
+        n = count_tokens(" " + word)
+        if current and size + n > tokens:
+            pieces.append(" ".join(current))
+            current, size = [], 0
+        current.append(word)
+        size += n
+    if current:
+        pieces.append(" ".join(current))
+    return pieces
 
 
 def pack_lines(text: str, *, tokens: int) -> list[str]:
