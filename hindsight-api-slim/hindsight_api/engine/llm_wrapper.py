@@ -1618,7 +1618,12 @@ class LLMProvider:
         # below instead: with a schema per turn kind, no reflect turn read a cache back on Bedrock.
         # Elsewhere a forced turn keeps its own schema, which small models need to follow it
         # (Gemma 4 made 1/12 forced searches without it, see tools_via_schema).
-        shared_shape = getattr(self._provider_impl, "caches_marked_prefix", lambda: False)()
+        # The price on Claude: the reply schema no longer holds a turn's own limits. A forced or
+        # narrowed turn is checked below, and the closing ``done``'s cited-handle limits
+        # (reflect's ``_with_cited_handles``) go: an invented handle is dropped when the answer
+        # is read (``_cited_ids``), and a reply that runs to the token cap fails the closing
+        # call, which falls back to the standalone synthesis prompt.
+        shared_shape = self._provider_impl.caches_marked_prefix()
         reply_choice = LLM_TOOL_CHOICE_REQUIRED if shared_shape else tool_choice
         held = tools_via_schema.response_schema(declared if shared_shape else tools, reply_choice)
         request = tools_via_schema.turn_request(tools, tool_choice, as_call=shared_shape)

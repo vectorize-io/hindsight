@@ -922,7 +922,10 @@ async def _run_reflect_agent_inner(
                 ],
                 tools=_with_cited_handles(tools, presenter),
                 # The handle limits hold the reply only; the prompt declares what every loop
-                # turn declared, so this call rides the prefix the provider already holds.
+                # turn declared, so this call rides the prefix the provider already holds. On a
+                # provider that shares one reply shape across turns (Claude, see
+                # ``LLMProvider.call_with_tools``) the limits are not enforced, and an invented
+                # handle is dropped by ``_cited_ids`` instead.
                 declared_tools=tools,
                 scope="reflect",
                 tool_choice=LLMToolChoice.named("done"),

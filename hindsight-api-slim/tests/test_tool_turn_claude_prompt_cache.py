@@ -47,11 +47,11 @@ def _reply(name: str, arguments: dict[str, Any]) -> LLMCallResult:
     )
 
 
-def _claude(*replies: LLMCallResult) -> tuple[LLMProvider, AsyncMock]:
+def _claude(*replies: LLMCallResult) -> LLMProvider:
+    """A Claude provider whose model calls answer with ``replies``; read them on ``_provider_impl.call``."""
     llm = LLMProvider(provider="anthropic", api_key="k", base_url="", model="claude-haiku-4-5")
-    call = AsyncMock(side_effect=list(replies))
-    llm._provider_impl.call = call  # type: ignore[method-assign]
-    return llm, call
+    llm._provider_impl.call = AsyncMock(side_effect=list(replies))  # type: ignore[method-assign]
+    return llm
 
 
 def _without_markers(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -77,11 +77,12 @@ def _marked(messages: list[dict[str, Any]]) -> list[tuple[int, int]]:
 
 @pytest.mark.asyncio
 async def test_forced_free_and_closing_turns_share_one_reply_schema():
-    llm, call = _claude(
+    llm = _claude(
         _reply("search_observations", {"query": "q"}),
         _reply("recall", {"query": "q"}),
         _reply("done", {"answer": "a"}),
     )
+    call = llm._provider_impl.call
     messages = [{"role": "user", "content": "Who is on call?"}]
     for choice, tools in (
         (LLMToolChoice.named("search_observations"), LOOP_TOOLS),
@@ -103,7 +104,8 @@ async def test_forced_free_and_closing_turns_share_one_reply_schema():
 
 @pytest.mark.asyncio
 async def test_a_forced_turn_answered_with_another_function_is_corrected_once():
-    llm, call = _claude(_reply("recall", {"query": "q"}), _reply("search_observations", {"query": "q"}))
+    llm = _claude(_reply("recall", {"query": "q"}), _reply("search_observations", {"query": "q"}))
+    call = llm._provider_impl.call
 
     result = await llm.call_with_tools(
         messages=[{"role": "user", "content": "Who is on call?"}],
@@ -117,9 +119,26 @@ async def test_a_forced_turn_answered_with_another_function_is_corrected_once():
 
 
 @pytest.mark.asyncio
+async def test_a_free_turn_names_its_functions_and_refuses_one_it_leaves_out():
+    """Reflect's free turns leave ``done`` out; under the shared schema the request says so."""
+    llm = _claude(_reply("done", {"answer": "a"}), _reply("recall", {"query": "q"}))
+    call = llm._provider_impl.call
+
+    result = await llm.call_with_tools(
+        messages=[{"role": "user", "content": "Who is on call?"}], tools=LOOP_TOOLS, declared_tools=TOOLS
+    )
+
+    assert [c.name for c in result.tool_calls] == ["recall"]
+    first, correction = (c.kwargs["messages"][-1]["content"] for c in call.await_args_list)
+    assert "(`search_observations`, `recall`)" in first[-1]["text"]
+    assert "`done` can't be called on this turn" in correction
+
+
+@pytest.mark.asyncio
 async def test_each_turn_resends_the_last_turns_cached_prefix_unchanged():
     """What a turn marked is, part for part, the start of what the next turn sends."""
-    llm, call = _claude(_reply("recall", {"query": "q"}), _reply("done", {"answer": "a"}))
+    llm = _claude(_reply("recall", {"query": "q"}), _reply("done", {"answer": "a"}))
+    call = llm._provider_impl.call
     messages: list[dict[str, Any]] = [{"role": "system", "content": "Mission."}, {"role": "user", "content": "Q?"}]
     await llm.call_with_tools(messages=messages, tools=LOOP_TOOLS, declared_tools=TOOLS)
     messages += [
@@ -173,7 +192,9 @@ async def test_other_providers_keep_a_schema_per_forced_turn():
         ("azure/gpt-4o", False),
     ],
 )
-def test_litellm_marks_only_claude_models(model: str, marks: bool):
+def test_litellm_marks_only_claude_models(monkeypatch, model: str, marks: bool):
+    monkeypatch.delenv(ENV_LLM_LITELLM_PROMPT_CACHE, raising=False)
+    clear_config_cache()
     llm = LiteLLMLLM(provider="litellm", api_key="", base_url="", model=model)
     assert llm.caches_marked_prefix() is marks
 
@@ -189,5 +210,4 @@ def test_the_setting_overrides_the_model_name(monkeypatch, setting: str, marks: 
         claude = "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"
         assert LiteLLMLLM(provider="bedrock", api_key="", base_url="", model=claude).caches_marked_prefix() is marks
     finally:
-        monkeypatch.delenv(ENV_LLM_LITELLM_PROMPT_CACHE)
-        clear_config_cache()
+        clear_config_cache()  # read lazily, after monkeypatch has put the env back

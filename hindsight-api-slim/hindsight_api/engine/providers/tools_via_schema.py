@@ -151,9 +151,13 @@ def turn_request(tools: list[dict[str, Any]], tool_choice: LLMToolChoice, *, as_
             f"Call `{function['name']}` now{f' ({purpose})' if purpose else ''}. "
             "Reply with only its arguments, as one JSON object."
         )
+    # Held to the shared schema, a free turn's reply may name any declared function, so the
+    # ones this turn allows are named here (reflect leaves ``done`` out of its free turns).
+    names = ", ".join(f"`{_function(t)['name']}`" for t in tools)
+    allowed = f" ({names})" if as_call else ""
     return (
-        "Decide your next step: call exactly ONE of the declared functions. Reply with one JSON object, "
-        '{"call": {"name": <function name>, "arguments": {...}}}.'
+        f"Decide your next step: call exactly ONE of the functions this turn allows{allowed}. "
+        'Reply with one JSON object, {"call": {"name": <function name>, "arguments": {...}}}.'
     )
 
 
@@ -204,7 +208,8 @@ def reply_violation(content: str | None, calls: list[LLMToolCall], tools: list[d
     call = calls[0]
     tool = next((t for t in tools if _function(t).get("name") == call.name), None)
     if tool is None:
-        return f"`{call.name}` is not one of the declared functions"
+        allowed = ", ".join(f"`{_function(t).get('name')}`" for t in tools)
+        return f"`{call.name}` can't be called on this turn; call one of {allowed}"
     if set(call.arguments) == {"_raw"}:
         try:
             json.loads(content or "")
