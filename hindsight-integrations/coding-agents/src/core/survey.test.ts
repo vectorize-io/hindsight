@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { resolveHostConfig } from "./host-client";
 import { resolveConfig } from "./config";
+import { nodeBinary } from "./util";
 
 vi.mock("./host-client", () => ({ resolveHostConfig: vi.fn() }));
 let lockDir: string;
@@ -86,7 +87,7 @@ describe("startCodebaseSurvey", () => {
    *  from the supervisor's spec; the options are the real spawn's (the agent inherits them). */
   function launched(spawn: ReturnType<typeof fakeSpawn>, i = 0) {
     const [node, argv, options] = spawn.mock.calls[i];
-    expect(node).toBe("node");
+    expect(node).toBe(nodeBinary());
     // Only the script path on the command line: the payload rides in the environment (#4255).
     expect(argv).toEqual(["/x/survey-supervisor.js"]);
     const spec = JSON.parse(options.env[SURVEY_SPEC_ENV]) as SurveySupervisorSpec;
@@ -166,7 +167,7 @@ describe("startCodebaseSurvey", () => {
     expect(bin).toBe("codex");
     expect(argv.slice(0, 3)).toEqual(["exec", "--sandbox", "read-only"]);
     expect(argv).toContain(SURVEY_PROMPT);
-    expect(argv).toContain(`mcp_servers.hindsight.command="node"`);
+    expect(argv).toContain(`mcp_servers.hindsight.command=${JSON.stringify(nodeBinary())}`);
     expect(argv).toContain(`mcp_servers.hindsight.args=[ "/x/mcp-server.js" ]`);
     // Without this the survey's findings were stamped harness:claude-code and landed in Claude
     // Code's bank even though Codex ran the survey (#3603).

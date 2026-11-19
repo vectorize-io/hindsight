@@ -43,6 +43,7 @@ import type { Config } from "./config";
 import { USER_AGENT } from "./hindsight";
 import { diag } from "./diag";
 import { log } from "./log";
+import { nodeBinary } from "./util";
 
 /**
  * How long each hook is willing to block waiting for a cold daemon. Both sit well inside the
@@ -214,7 +215,7 @@ export function startDaemonDetached(
 ): void {
   try {
     const starter = join(dirname(fileURLToPath(import.meta.url)), "daemon-start.js");
-    const child = spawnFn("node", [starter, "--harness", harness], {
+    const child = spawnFn(nodeBinary(), [starter, "--harness", harness], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,

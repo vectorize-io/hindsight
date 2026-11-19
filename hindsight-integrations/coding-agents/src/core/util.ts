@@ -90,6 +90,17 @@ export async function pool<T>(
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
 }
 
+/**
+ * The Node binary to launch our own background scripts with. `node` from PATH failed on setups
+ * where hooks run with a PATH that has no node on it (Nix, GUI-launched editors), so every detached
+ * seed, survey and daemon start died with ENOENT, silently (#6557). The binary running this code is
+ * Node itself in a hook process, so reuse it — except inside Bun (opencode) or Electron (desktop
+ * hosts), where `process.execPath` is the host's own binary, not Node.
+ */
+export function nodeBinary(): string {
+  return process.versions.bun || process.versions.electron ? "node" : process.execPath;
+}
+
 /** Name ownership alone is insufficient: users can legitimately register another server as
  * `hindsight`. Match the exact script shape this package has emitted under its source, npm, and
  * staged directory names; an incidental "coding-agents" string must not grant ownership. */
