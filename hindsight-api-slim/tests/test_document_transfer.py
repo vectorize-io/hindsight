@@ -1820,8 +1820,10 @@ async def test_clone_survives_a_pooler_cutting_a_long_held_connection(memory, re
         status = await memory.get_operation_status(source, submission["operation_id"], request_context=request_context)
         assert status["status"] == "completed", status
         assert read_pids, "the clone never read the bank's own rows"
+        source_facts = await memory.list_memory_units(source, limit=100, request_context=request_context)
         clone_facts = await memory.list_memory_units(target, limit=100, request_context=request_context)
-        assert clone_facts["total"] > 0
+        assert source_facts["total"] > 0
+        assert sorted(u["text"] for u in clone_facts["items"]) == sorted(u["text"] for u in source_facts["items"])
     finally:
         await memory.delete_bank(source, request_context=request_context)
         await memory.delete_bank(target, request_context=request_context)
