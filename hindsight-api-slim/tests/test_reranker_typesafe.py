@@ -102,9 +102,7 @@ def _encoder(
     max_question_tokens: int | None = None,
     **kwargs,
 ):
-    encoder = TypeSafeCrossEncoder(api_key="k", **kwargs)
-    if max_question_tokens is not None:
-        encoder.MAX_QUESTION_TOKENS = max_question_tokens
+    encoder = TypeSafeCrossEncoder(api_key="k", max_question_tokens=max_question_tokens, **kwargs)
     session = _FakeSession(ranking, cut_level)
     encoder._session = session
     return encoder, session
@@ -817,10 +815,8 @@ class TestOverflowingJevsWindow:
         await default._predict([("q", doc) for doc in docs])
         assert default_session.refused, "at the 26k default the first request overflows this window"
 
-        sized = TypeSafeCrossEncoder(api_key="k", max_question_tokens=3_500)
-        session = _FakeSession(ranking)
+        sized, session = _encoder(ranking, max_question_tokens=3_500)
         session.window = 8_000
-        sized._session = session
         scores = await sized._predict([("q", doc) for doc in docs])
         assert not session.refused
         assert len(set(scores)) == size

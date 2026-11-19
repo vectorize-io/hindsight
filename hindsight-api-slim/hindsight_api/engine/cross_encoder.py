@@ -1297,7 +1297,8 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     # absorbs JSON framing and most cross-tokenizer divergence, but not all of it: on
     # mixed-script text Jev counts twice what we do (#5715). A request Jev still finds
     # too long is rebuilt at half the budget (see _within_window), down to
-    # MIN_QUESTION_TOKENS.
+    # MIN_QUESTION_TOKENS. The default only: reflect passes the configured window
+    # (max_question_tokens), since a smaller one refused every first request (#6659).
     MAX_QUESTION_TOKENS = 26_000
     # Three halvings: 26k -> 3.25k covers an 8x divergence, well past the 2x measured.
     # A request still refused there will never fit, so it fails rather than retrying on.
@@ -1336,6 +1337,8 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
     ):
         if shortlist is not None:
             self.SHORTLIST = shortlist
+        if min_keep is not None:
+            self.MIN_KEEP = min_keep
         # The window of the model the endpoint serves (HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS):
         # a smaller one would otherwise refuse every first request and halve down from 26k (#6659).
         if max_question_tokens is not None:
@@ -1343,8 +1346,6 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
         # The vocabulary those budgets are counted in (HINDSIGHT_API_DECISION_MODEL_TOKENIZER);
         # None counts with HINDSIGHT_API_TOKENIZER_ENCODING.
         self.tokenizer = tokenizer
-        if min_keep is not None:
-            self.MIN_KEEP = min_keep
         # Tolerate an unset-but-present value ("VAR=" in a compose file, or a config
         # built with every field zeroed) by falling back to the default.
         self.model = model or DEFAULT_RERANKER_TYPESAFE_MODEL

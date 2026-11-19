@@ -16245,7 +16245,7 @@ class MemoryEngine(MemoryEngineInterface):
                 shortlist=25,
                 min_keep=15,
                 vision=setup.vision,
-                # None: the endpoint fits requests itself, so the class default stands.
+                # None (Hindsight Inference, which fits requests itself): the class default, sized for Jev.
                 max_question_tokens=setup.max_request_tokens,
                 tokenizer=setup.tokenizer,
             )
