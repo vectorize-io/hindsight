@@ -11,6 +11,8 @@ import os
 import platform
 import re
 import signal
+import socket
+import struct
 import subprocess
 import sys
 import sysconfig
@@ -191,6 +193,39 @@ def _strip_parent_interpreter_env(env: dict[str, str]) -> dict[str, str]:
     is foreign.
     """
     return {key: value for key, value in env.items() if key not in _PARENT_INTERPRETER_ENV}
+
+
+_AF_INET = 2
+_AF_INET6 = 23
+_ERROR_INSUFFICIENT_BUFFER = 122
+
+
+@dataclass(frozen=True)
+class _TcpRowLayout:
+    """Where the fields sit in one GetExtendedTcpTable row (TCP_TABLE_OWNER_PID_*)."""
+
+    size: int
+    port_offset: int
+    pid_offset: int
+
+
+# MIB_TCPROW_OWNER_PID is six DWORDs; MIB_TCP6ROW_OWNER_PID puts a 16-byte address
+# and a scope id before the port.
+_TCP_ROW_LAYOUT = {_AF_INET: _TcpRowLayout(24, 8, 20), _AF_INET6: _TcpRowLayout(56, 20, 52)}
+
+
+def _listener_pids_from_tcp_table(table: bytes, family: int, port: int) -> list[int]:
+    """Owning PIDs of the rows bound to `port` in a raw GetExtendedTcpTable buffer."""
+    layout = _TCP_ROW_LAYOUT[family]
+    (count,) = struct.unpack_from("<I", table, 0)
+    pids: list[int] = []
+    for index in range(count):
+        row = 4 + index * layout.size
+        (raw_port,) = struct.unpack_from("<I", table, row + layout.port_offset)
+        # The port sits in network byte order in the DWORD's low 16 bits.
+        if socket.ntohs(raw_port & 0xFFFF) == port:
+            pids.append(struct.unpack_from("<I", table, row + layout.pid_offset)[0])
+    return pids
 
 
 def _detach_popen_kwargs(log_handle: IO[bytes]) -> dict:
@@ -610,8 +645,8 @@ class DaemonEmbedManager(EmbedManager):
         host that has plenty.
 
         `errors="replace"` is the half that makes it deterministic; `encoding` alone
-        still raises. Only the localized header carries non-ASCII, so every line the
-        parsers read survives intact and neither needed changing.
+        still raises. A replaced character can land in the netstat state column too
+        ("ABHÖREN"), which is why `_windows_listening_pids` does not read that column.
         """
         try:
             result = subprocess.run(
@@ -629,15 +664,25 @@ class DaemonEmbedManager(EmbedManager):
 
     @staticmethod
     def _windows_listening_pids(port: int) -> list[int]:
-        """PIDs listening on `port` according to netstat."""
+        """PIDs listening on `port`: asked from the kernel, netstat only as a fallback.
+
+        netstat prints its state column in the display language ("ABHÖREN" on a
+        German Windows) and is a subprocess that a loaded machine can push past the
+        probe deadline. Either way the caller got no PID for a daemon that was up,
+        and `daemon stop` / the stale-daemon restart refused to act (#6602).
+        """
+        native = DaemonEmbedManager._windows_native_listening_pids(port)
+        if native is not None:
+            return native
         output = DaemonEmbedManager._run_probe(["netstat", "-ano", "-p", "TCP"])
         if output is None:
             return []
         pids: list[int] = []
         for line in output.splitlines():
             fields = line.split()
-            # proto, local address, foreign address, state, pid
-            if len(fields) < 5 or fields[-2] != "LISTENING":
+            # proto, local address, foreign address, state, pid. The state is
+            # localized ("ABHÖREN"), so a listener is told by its foreign port 0.
+            if len(fields) < 5 or fields[0] != "TCP" or not fields[2].endswith(":0"):
                 continue
             # Match on the local address' port only: the daemon binds 127.0.0.1
             # but the UI can bind 0.0.0.0 or [::1] (issue #3527), and an
@@ -649,6 +694,48 @@ class DaemonEmbedManager(EmbedManager):
                 pids.append(int(fields[-1]))
             except ValueError:
                 continue
+        return pids
+
+    @staticmethod
+    def _windows_native_listening_pids(port: int) -> list[int] | None:
+        """PIDs listening on `port` from GetExtendedTcpTable, or None if it can't be read.
+
+        The table carries the state as a number and the owning PID, so nothing here
+        depends on the display language, and it answers without a subprocess.
+        """
+        import ctypes
+        from ctypes import wintypes
+
+        win_dll = getattr(ctypes, "WinDLL", None)  # only defined on Windows
+        if win_dll is None:
+            return None
+        try:
+            get_table = win_dll("iphlpapi").GetExtendedTcpTable
+        except (OSError, AttributeError):
+            return None
+        get_table.restype = wintypes.DWORD
+        get_table.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.BOOL,
+            wintypes.ULONG,
+            ctypes.c_int,  # TCP_TABLE_CLASS
+            wintypes.ULONG,
+        ]
+        tcp_table_owner_pid_listener = 3
+        pids: list[int] = []
+        for family in (_AF_INET, _AF_INET6):
+            size = wintypes.DWORD(0)
+            # The first call only reports the size the table needs. The table can
+            # grow between the two calls, so retry while it says the buffer is short.
+            for _attempt in range(3):
+                buffer = ctypes.create_string_buffer(max(size.value, 4))
+                status = get_table(buffer, ctypes.byref(size), False, family, tcp_table_owner_pid_listener, 0)
+                if status != _ERROR_INSUFFICIENT_BUFFER:
+                    break
+            if status != 0:
+                return None
+            pids.extend(_listener_pids_from_tcp_table(buffer.raw, family, port))
         return pids
 
     @staticmethod
