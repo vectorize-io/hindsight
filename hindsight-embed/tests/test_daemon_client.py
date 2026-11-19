@@ -892,8 +892,8 @@ class TestProcessOwnership:
                 assert DaemonEmbedManager._process_matches(1, DAEMON_PROCESS_MARKERS) is True
 
 
-def _force_netstat(monkeypatch) -> None:
-    """Make the Windows lookup use its netstat fallback, as a Windows runner would not by default."""
+def _force_netstat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Send the Windows lookup to its netstat fallback. A real Windows runner would ask the kernel."""
     monkeypatch.setattr(DaemonEmbedManager, "_windows_native_listening_pids", staticmethod(lambda _port: None))
 
 
