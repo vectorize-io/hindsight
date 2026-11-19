@@ -153,11 +153,15 @@ def turn_request(tools: list[dict[str, Any]], tool_choice: LLMToolChoice, *, as_
         )
     # Held to the shared schema, a free turn's reply may name any declared function, so the
     # ones this turn allows are named here (reflect leaves ``done`` out of its free turns).
-    names = ", ".join(f"`{_function(t)['name']}`" for t in tools)
-    allowed = f" ({names})" if as_call else ""
+    if as_call:
+        names = ", ".join(f"`{_function(t)['name']}`" for t in tools)
+        return (
+            f"Decide your next step: call exactly ONE of the functions this turn allows ({names}). "
+            'Reply with one JSON object, {"call": {"name": <function name>, "arguments": {...}}}.'
+        )
     return (
-        f"Decide your next step: call exactly ONE of the functions this turn allows{allowed}. "
-        'Reply with one JSON object, {"call": {"name": <function name>, "arguments": {...}}}.'
+        "Decide your next step: call exactly ONE of the declared functions. Reply with one JSON object, "
+        '{"call": {"name": <function name>, "arguments": {...}}}.'
     )
 
 
