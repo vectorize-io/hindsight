@@ -202,3 +202,27 @@ async def test_bank_config_rejects_a_malformed_default(memory, request_context):
             )
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_text_changes", [False, True])
+async def test_re_retain_without_scopes_keeps_bank_default(memory, request_context, second_text_changes):
+    """A re-retain that names no scope relabels kept facts with the bank default, not None (#6672)."""
+    bank_id = f"test_default_scopes_reretain_{uuid.uuid4().hex[:8]}"
+    first = "Alice prefers dark roast coffee every morning.\n\n" + "Bob plays tennis on Sundays. " * 400
+    second = first + " Carol moved to Rome." if second_text_changes else first
+    try:
+        await memory.update_bank_config(
+            bank_id,
+            {"default_observation_scopes": "shared", "enable_auto_consolidation": False},
+            request_context=request_context,
+        )
+        for text in (first, second):
+            await memory.retain_batch_async(
+                bank_id=bank_id, contents=[{"content": text, "document_id": "doc"}], request_context=request_context
+            )
+        facts = await _scan(memory, bank_id, ["experience", "world"])
+        assert facts
+        assert {str(f.observation_scopes) for f in facts} == {"shared"}
+    finally:
+        await memory.delete_bank(bank_id, request_context=request_context)
