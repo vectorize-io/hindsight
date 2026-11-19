@@ -81,12 +81,26 @@ describe("middleware matcher", () => {
   });
 
   it("still skips static assets and Next.js internals", () => {
-    for (const path of ["/logo.png", "/fonts/inter.woff2", "/_next/static/chunk.js", "/robots.txt"]) {
+    for (const path of [
+      "/logo.png",
+      "/manifest.json",
+      "/img/harness/claude-code.png",
+      "/fonts/inter.woff2",
+      "/_next/static/chunk.js",
+      "/robots.txt",
+    ]) {
       expect(matches(path), path).toBe(false);
     }
   });
 
-  it("still runs on pages, including bank ids with dots", () => {
-    expect(matches("/banks/SX.Products.GovComply.Build")).toBe(true);
+  it("still runs on pages, including bank ids with dots or a file extension", () => {
+    for (const path of [
+      "/banks/SX.Products.GovComply.Build",
+      "/banks/mybank.txt",
+      "/banks/notes.json",
+      "/knowledge-banks/kb.png",
+    ]) {
+      expect(matches(path), path).toBe(true);
+    }
   });
 });

@@ -109,12 +109,12 @@ export const config = {
   // Every API route, whatever its last segment looks like: a bank id or alias
   // may end in ".json" or ".js", and the asset exclusion below must not skip
   // the access check for it.
-  // Then all other paths except Next.js internals and static assets.
-  // - Use an explicit file extension allowlist instead of .*\..* so that
-  //   dynamic segments containing dots (e.g. bank IDs like
-  //   "SX.Products.GovComply.Build") still get the i18n locale rewrite.
+  // Then all other paths except Next.js internals and static assets. A static
+  // asset is a file at the root (/logo.png, /robots.txt) or under /img or /fonts;
+  // a deeper path is a page, so a bank id like "notes.txt" or
+  // "SX.Products.GovComply.Build" still gets the i18n locale rewrite.
   matcher: [
     "/api/:path*",
-    "/((?!_next|_vercel|.*\\.(?:png|jpe?g|gif|svg|webp|ico|css|js|map|woff2?|ttf|eot|txt|xml|json)$).*)",
+    "/((?!_next|_vercel|img/|fonts/|[^/]+\\.(?:png|jpe?g|gif|svg|webp|ico|css|js|map|woff2?|ttf|eot|txt|xml|json)$).*)",
   ],
 };
