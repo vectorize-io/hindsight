@@ -184,7 +184,7 @@ class KnowledgeBankNotFound(Exception):
 
 
 #: The candidate searches: the passages' main vectors, their extra vectors, and keywords.
-ArmName = Literal["vector", "extra_vectors", "keyword"]
+ArmName = Literal["vector", "extra_vectors", "keyword", "document"]
 
 
 @dataclass
@@ -995,6 +995,9 @@ class PostgresKnowledgeStore(KnowledgeStore):
             # count and common ones barely. A word less than half as rare as the query's rarest one (IDF
             # under KEYWORD_IDF_SHARE of the best) is left out: next to a name or a code, "the" and "of"
             # say nothing about which passage answers, and matching them would pull in most of the bank.
+            # Unless it is rare enough on its own (KEYWORD_IDF_FLOOR): next to a party's name, the share
+            # dropped every word of the question itself ("Consider the merger of Eidos and BridgeBio; what
+            # is the termination fee?" searched for the names alone).
             # That drops them in any language and at any bank size, where a stopword list knew 6 languages.
             # Plain words ('simple': no language, no stemming), in every document: gated on a detected
             # language (stopwords of 6 languages, stemming per language), any other language never got
@@ -1015,7 +1018,8 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     WHERE df.df > 0)""",
                 "idf AS (SELECT df.w, ln(1 + greatest(n.n - df.df, 0) / (df.df + 0.5) + 0.5 / (df.df + 0.5)) AS idf"
                 " FROM df, n)",
-                f"terms AS (SELECT w, idf FROM idf WHERE idf >= {KEYWORD_IDF_SHARE} * (SELECT max(idf) FROM idf))",
+                f"terms AS (SELECT w, idf FROM idf WHERE idf >= least({KEYWORD_IDF_SHARE} * (SELECT max(idf) FROM idf), "
+                f"{KEYWORD_IDF_FLOOR}))",
                 "tq AS (SELECT to_tsquery('simple', string_agg(quote_literal(w), ' | ')) AS q FROM terms)",
             ]
 
@@ -1046,8 +1050,19 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 WHERE x.bank_id = $2{where} AND x.search_vector @@ (SELECT q FROM tq)
                 ORDER BY ts_rank_cd(x.search_vector, (SELECT q FROM tq)) DESC LIMIT {pool}
             """)
+        # Every text passage of the EXPAND_DOCUMENTS documents the vector searches rank best joins the
+        # candidates. A question about one part of a long document ("in the merger of X and Y, what is
+        # the termination fee?") finds the document by its cover, parties or contents, while the passage
+        # that answers is worded unlike the question and is in no search's top rows: it was never scored.
+        # LegalBench-RAG mergers: the answer reached the reranker for 41 of 50 questions, from 29.
         ctes += [
-            "arms AS (" + " UNION ALL ".join(f"({a})" for a in arms) + ")",
+            "found_arms AS (" + " UNION ALL ".join(f"({a})" for a in arms) + ")",
+            "top_docs AS (SELECT document_id FROM found_arms WHERE arm <> 'keyword' GROUP BY document_id"
+            f" ORDER BY max(arm_score) DESC LIMIT {EXPAND_DOCUMENTS})",
+            f"""arms AS (SELECT * FROM found_arms UNION ALL (
+                SELECT x.document_id, x.idx, 'document' AS arm, NULL::float8 AS arm_score FROM {passages} x
+                WHERE x.bank_id = $2 AND x.modality = 'text' AND x.document_id IN (SELECT document_id FROM top_docs)
+                ORDER BY x.document_id, x.idx LIMIT {EXPAND_PASSAGES_CAP}))""",
             # Each candidate once, with every search that found it and its score there (the trace's lists).
             "c AS (SELECT document_id, idx, array_agg(arm || ':' || coalesce(arm_score, 0)::text) AS found"
             " FROM arms GROUP BY document_id, idx)",
@@ -1347,6 +1362,11 @@ def with_document_prior(document_ids: list[str], scores: list[float]) -> list[fl
 
 #: A query word takes part in keyword search when its IDF is at least this share of its rarest word's.
 KEYWORD_IDF_SHARE = 0.5
+#: ... or when its IDF reaches this on its own: in under ~13% of the bank's passages.
+KEYWORD_IDF_FLOOR = 2.0
+#: How many of the best documents have every text passage scored, and the most passages that adds.
+EXPAND_DOCUMENTS = 3
+EXPAND_PASSAGES_CAP = 3000
 #: Where a query word's document frequency stops being counted (see the IDF in ``search``).
 _DF_CAP = 50_000
 

@@ -1472,6 +1472,27 @@ async def test_keywords_match_rare_words_in_every_language(api_client, kb):
     assert body["results"][0]["document_id"] == "en-hit"
 
 
+async def test_an_untitled_text_is_embedded_under_its_opening_and_its_best_documents_are_scored_whole(
+    api_client, kb, fake_embedder
+):
+    """A text with no file name gets its first words as its title (each passage then says what document it
+    is from), a named file keeps its name; every text passage of the best documents is a candidate."""
+    long = "\n\n".join(["Merger agreement between Acme and Beta."] + [f"Section {n}: the red box." for n in range(6)])
+    items = [
+        {"document_id": "deal", "text": long},
+        {"document_id": "named", "text": "a blue key", "filename": "keys.md"},
+    ]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.status_code == 200, r.text
+    titles = {i.title for call in fake_embedder.calls for i in call}
+    assert "keys" in titles and any(t and t.startswith("Merger agreement between Acme and Beta.") for t in titles)
+
+    trace = (await api_client.post(f"{KB}/{kb}/search", json={"query": "red", "trace": True})).json()["trace"]
+    arms = {a["name"]: a["results"] for a in trace["candidate_searches"]}
+    deal = {h["index"] for h in trace["hits"] if h["document_id"] == "deal"}
+    assert {r["index"] for r in arms["document"] if r["document_id"] == "deal"} == deal and len(deal) > 1
+
+
 async def test_a_search_needs_a_query_and_a_bank(api_client, kb):
     r = await api_client.post(f"{KB}/{kb}/search", json={})
     assert r.status_code == 400 and "query" in r.text
