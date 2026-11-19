@@ -9,6 +9,13 @@ import PageHero from '@site/src/components/PageHero';
 This page covers the Hindsight core (API, CLI, control plane). Each integration is released on its own
 cadence and has its own changelog — find it on the integration's page.
 
+## [1.2.3](https://github.com/vectorize-io/hindsight/releases/tag/v1.2.3)
+
+**Bug Fixes**
+
+- Fixed the control plane's Memories, Experience and Observations tabs showing "No data available" since 1.2.2 (the graph response was gzipped twice).<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/4a6de2667" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>4a6de2667</a>
+- Improved knowledge-file ingestion so malformed, unusual, and large files do not fail, retry unnecessarily, or exhaust memory.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/7b45dfd6e" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>7b45dfd6e</a>
+
 ## [1.2.2](https://github.com/vectorize-io/hindsight/releases/tag/v1.2.2)
 
 **Features**
