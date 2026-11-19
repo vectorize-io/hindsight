@@ -255,6 +255,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `recall_budget` | `mid` | Recall thoroughness: `low` / `mid` / `high` |
+| `reflect_budget` | same as `recall_budget` | Reflect thoroughness for the `hindsight_reflect` tool and `recall_prefetch_method: reflect`: `low` / `mid` / `high`. Keep it `low` on a large bank where a `mid` reflect runs past the server's timeout, while recall stays `mid`. |
 | `recall_prefetch_method` | `recall` | Auto-recall method: `recall` (raw facts) or `reflect` (LLM synthesis) |
 | `recall_max_tokens` | `4096` | Maximum tokens for recall results |
 | `recall_max_input_chars` | `800` | Maximum input query length for auto-recall |
@@ -389,6 +390,7 @@ These are used **only when there is no config file at all**. Once `hermes memory
 |----------|-------------|
 | `HINDSIGHT_MODE` | Mode: `cloud`, `local_embedded` or `local_external` (`mode`) |
 | `HINDSIGHT_BUDGET` | Recall budget (`recall_budget`) |
+| `HINDSIGHT_REFLECT_BUDGET` | Reflect budget (`reflect_budget`) |
 | `HINDSIGHT_RETAIN_CONTEXT` | Label stored with each retained conversation (`retain_context`) |
 | `HINDSIGHT_RETAIN_INDICATOR` | `false` hides the "saving to memory" status line (`retain_indicator`) |
 | `HINDSIGHT_RECALL_INDICATOR` | `false` hides the "recalled N memories" status line (`recall_indicator`) |

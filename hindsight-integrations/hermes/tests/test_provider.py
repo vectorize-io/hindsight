@@ -1031,3 +1031,26 @@ def test_cloud_mode_with_a_key_or_a_keyless_external_server_is_available(hermes_
     _write_config(hermes_env, {"mode": "local_external", "api_url": "http://localhost:8888"})
     provider = plugin.HindsightMemoryProvider()
     assert provider.is_available() is True and provider.unavailable_reason() == ""
+
+
+def test_reflect_budget_is_set_apart_from_recall(provider):
+    """#6246: raising recall to mid dragged reflect to mid too, past the server timeout on a big bank."""
+    instance, fake = provider(
+        {"recall_budget": "mid", "reflect_budget": "low", "recall_sync": True, "recall_prefetch_method": "reflect"},
+        client=FakeClient(recall_texts=["fact"], reflect_text="synthesis"),
+    )
+    instance.handle_tool_call("hindsight_recall", {"query": "q"})
+    instance.handle_tool_call("hindsight_reflect", {"query": "q"})
+    instance.prefetch("q")
+    assert fake.recalls[0]["budget"] == "mid"
+    assert [call["budget"] for call in fake.reflects] == ["low", "low"]  # tool and reflect prefetch
+    instance.shutdown()
+
+
+@pytest.mark.parametrize("reflect_budget", [None, "", "huge"])
+def test_an_unset_or_invalid_reflect_budget_follows_recall(provider, reflect_budget):
+    config = {"recall_budget": "high"} | ({} if reflect_budget is None else {"reflect_budget": reflect_budget})
+    instance, fake = provider(config, client=FakeClient(reflect_text="synthesis"))
+    instance.handle_tool_call("hindsight_reflect", {"query": "q"})
+    assert fake.reflects[0]["budget"] == "high"
+    instance.shutdown()

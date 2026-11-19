@@ -454,6 +454,7 @@ def _load_config() -> dict:
                 "enabled": True,
             }
         },
+        "reflect_budget": os.environ.get("HINDSIGHT_REFLECT_BUDGET", ""),
     }
 
 
@@ -540,6 +541,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._api_url, self._mode = _DEFAULT_API_URL, "cloud"
         self._timeout, self._idle_timeout = _DEFAULT_TIMEOUT, _DEFAULT_IDLE_TIMEOUT
         self._bank_id, self._budget, self._bank_id_template = "hermes", "mid", ""
+        self._reflect_budget = "mid"
         self._mirror_to_own_bank = False
         self._static_bank_id = "hermes"
         self._project, self._bank_source = "", "bank_id"
@@ -752,6 +754,11 @@ class HindsightMemoryProvider(MemoryProvider):
                 "key": "recall_budget",
                 "description": "Recall thoroughness",
                 "default": "mid",
+                "choices": ["low", "mid", "high"],
+            },
+            {
+                "key": "reflect_budget",
+                "description": "Reflect thoroughness (unset = same as recall_budget)",
                 "choices": ["low", "mid", "high"],
             },
             {
@@ -1518,6 +1525,11 @@ class HindsightMemoryProvider(MemoryProvider):
         )
         budget = cfg.get("recall_budget") or cfg.get("budget") or banks.get("budget", "mid")
         self._budget = budget if budget in _VALID_BUDGETS else "mid"
+        # Reflect runs an agentic loop per budget step, so the recall budget that suits search can
+        # push reflect past the server's timeout on a big bank (#6246). Unset follows recall_budget,
+        # which is what reflect used before this setting existed.
+        reflect_budget = cfg.get("reflect_budget")
+        self._reflect_budget = reflect_budget if reflect_budget in _VALID_BUDGETS else self._budget
         memory_mode = cfg.get("memory_mode", "hybrid")
         self._memory_mode = memory_mode if memory_mode in _SYSTEM_PROMPT_TAILS else "hybrid"
         prefetch_method = cfg.get("recall_prefetch_method") or cfg.get("prefetch_method", "recall")
@@ -1760,7 +1772,7 @@ class HindsightMemoryProvider(MemoryProvider):
         return results
 
     def _reflect(self, query: str) -> str | None:
-        kwargs: Dict[str, Any] = {"bank_id": self._bank_id, "query": query, "budget": self._budget}
+        kwargs: Dict[str, Any] = {"bank_id": self._bank_id, "query": query, "budget": self._reflect_budget}
         if self._reflect_tags:
             kwargs.update(tags=self._reflect_tags, tags_match=self._reflect_tags_match)
         try:
@@ -2154,7 +2166,7 @@ class HindsightMemoryProvider(MemoryProvider):
     def _tool_reflect(self, args: dict) -> str:
         query = args["query"]
         logger.debug(
-            "Tool hindsight_reflect: bank=%s, query_len=%d, budget=%s", self._bank_id, len(query), self._budget
+            "Tool hindsight_reflect: bank=%s, query_len=%d, budget=%s", self._bank_id, len(query), self._reflect_budget
         )
         text = self._reflect(query) or ""
         logger.debug("Tool hindsight_reflect: response_len=%d", len(text))
