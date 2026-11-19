@@ -1101,6 +1101,10 @@ async def test_a_long_page_is_shown_capped_to_the_context_it_gets(api_client, kb
 
 
 async def test_pieces_of_one_short_document_are_judged_once(api_client, kb, judge):
+    # Sized for 256-token passages (this test is about how passages combine, not their size).
+    assert (
+        await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"text_passage_tokens": 256}})
+    ).status_code == 200
     # A guide long enough for several passages, short enough to be judged whole: every passage would show
     # the reranker the same text, so it is one candidate.
     guide = "\n\n".join(f"Step {i}. Rotate the red key in the console. " + "detail " * 60 for i in range(6))
@@ -1324,7 +1328,11 @@ async def test_an_unreachable_remote_embedder_is_a_503_not_a_crash(api_client, k
 
 
 async def test_text_hits_come_back_with_neighbours_and_overlapping_windows_merge(api_client, kb):
-    # Each paragraph fills one passage at the default size (256 tokens), so passage i is paragraph i.
+    # Sized for 256-token passages (this test is about how passages combine, not their size).
+    assert (
+        await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"text_passage_tokens": 256}})
+    ).status_code == 200
+    # Each paragraph fills one 256-token passage, so passage i is paragraph i.
     paragraphs = [f"Paragraph {i}: " + ("invoice " if i in (4, 5) else "filler ") * 180 for i in range(10)]
     r = await api_client.post(
         f"{KB}/{kb}/ingest",
@@ -2564,6 +2572,10 @@ def test_a_heading_waits_for_its_content_instead_of_standing_alone():
 
 
 async def test_a_traced_search_explains_every_rank_and_what_the_budget_kept(api_client, kb):
+    # Sized for 256-token passages (this test is about how passages combine, not their size).
+    assert (
+        await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"text_passage_tokens": 256}})
+    ).status_code == 200
     paragraphs = [
         f"Paragraph {i}: " + ("the invoice is in the box " if i == 4 else "this is the filler of it ") * 30
         for i in range(10)
