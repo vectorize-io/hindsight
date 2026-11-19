@@ -213,12 +213,37 @@ def fitting(costs: list[int], window: int) -> int:
     return len(costs)
 
 
-def reranked_order(head: list[int], scores: dict[int, float]) -> list[int]:
-    """``head`` (candidates in search order) reordered by the reranker's ``scores``, the search's order
-    breaking ties. Only scored candidates move, among their own positions: one the reranker was not shown
-    (a video) stays where it was."""
+#: How the reranker's order and the search's are fused (reciprocal rank fusion): a candidate scores
+#: 1/(K + its rerank place) + DOC_WEIGHT/(K + its document's place in the search).
+RERANK_FUSION_K = 10
+RERANK_DOCUMENT_WEIGHT = 2.0
+
+
+def reranked_order(head: list[int], scores: dict[int, float], documents: list[str]) -> list[int]:
+    """``head`` (candidates in search order) reordered by the reranker's ``scores`` fused with the search's
+    order of their documents (``documents[n]``: candidate n's document). Only scored candidates move, among
+    their own positions: one the reranker was not shown (a video) stays where it was.
+
+    Search and reranker are right about different things. The search finds which document a question is
+    about (it embeds each passage under its document's title); a reranker judges each passage alone and
+    picks the same clause from a document of the same kind just as readily. Its order alone put other
+    NDAs' clauses over the asked one's on LegalBench-RAG (NDA recall@5 64.1, search alone 97.6), while it
+    finds the passage inside a long document that search cannot (mergers 72.6, search alone 18.5).
+    Fusing its passage order with the search's document order: 87.2 recall@5, 79.4 by the reranker alone.
+    Fused with the search's passage order instead (each hit's own place), mergers fell to 40.7."""
     slots = [m for m, n in enumerate(head) if n in scores]
-    ranked = sorted(slots, key=lambda m: -scores[head[m]])
+    by_rerank = sorted(slots, key=lambda m: -scores[head[m]])  # stable: the search's order breaks ties
+    place = {m: r for r, m in enumerate(by_rerank)}
+    document_place: dict[str, int] = {}
+    for m in slots:
+        document_place.setdefault(documents[head[m]], len(document_place))
+
+    def fused(m: int) -> float:
+        return 1 / (RERANK_FUSION_K + place[m]) + RERANK_DOCUMENT_WEIGHT / (
+            RERANK_FUSION_K + document_place[documents[head[m]]]
+        )
+
+    ranked = sorted(slots, key=lambda m: -fused(m))
     out = list(head)
     for slot, m in zip(slots, ranked, strict=True):
         out[slot] = head[m]
@@ -2174,7 +2199,11 @@ class KnowledgeService:
                 return text
             return truncate_to_tokens(text, JUDGE_CONTEXT_TOKENS, encoding).text
 
-        shown_text = [capped(texts[groups[n][0]]) for n in shown]
+        # Each candidate under its document's title, as its passages were embedded ("title: ... | text:").
+        # Alone, a clause every contract of a kind has ("the Recipient shall return or destroy ...") cannot be
+        # told from the same clause in another one: on LegalBench-RAG's NDAs the reranker put other NDAs'
+        # clauses over the asked one's (recall@5 26.3) while search alone had it first.
+        shown_text = [capped(_titled(pool[groups[n][0]], texts[groups[n][0]])) for n in shown]
         has_picture = [
             config.kb_reranker_images
             and pool[groups[n][0]].passage.modality == "image"
@@ -2212,7 +2241,9 @@ class KnowledgeService:
         score_of = {shown[m]: score for m, score in zip(seen, scores, strict=True)}
         # The head is every candidate up to the last one shown, videos among them in their places.
         head = list(range(max(score_of) + 1))
-        order = reranked_order(head, score_of) + list(range(len(head), len(groups)))
+        order = reranked_order(head, score_of, [pool[g[0]].document.document_id for g in groups]) + list(
+            range(len(head), len(groups))
+        )
         return [pool[i] for n in order for i in groups[n]] + hits[len(pool) :]
 
     async def _query_picture(self, request: SearchRequest) -> bytes | None:
@@ -2348,6 +2379,13 @@ class KnowledgeService:
             trace.tokens_used = used
             trace.hits = [_traced(hit, items, windows) for hit in hits]
         return _Budgeted(items, used)
+
+
+def _titled(hit: SearchHit, text: str) -> str:
+    """A text candidate under its document's title (``_title_hint``); alone when the name says nothing, and a
+    page or other media hit as it is (only text was measured)."""
+    title = _title_hint(hit.document) if hit.passage.modality == "text" else None
+    return f"Document: {title}\n\n{text}" if title else text
 
 
 def _judged_texts(hits: list[SearchHit], nearby: dict[tuple[str, int], KnowledgePassage]) -> list[str]:
