@@ -306,6 +306,32 @@ async def test_a_media_type_can_have_its_own_size_limit(api_client, kb, monkeypa
         clear_config_cache()
 
 
+# pdf.js's test/pdfs/Pages-tree-refs.pdf: page 2's page tree loops back on itself ("Failed to load page").
+_BROKEN_PAGE_PDF = (
+    "JVBERi0xLjcKCjEgMCBvYmoKICA8PCAvVHlwZSAvQ2F0YWxvZwogICAgIC9QYWdlcyAyIDAgUgogID4+CmVuZG9iagoKMiAwIG9i"
+    "agogIDw8IC9UeXBlIC9QYWdlcwogICAgIC9LaWRzIFs2IDAgUiAzIDAgUl0KICAgICAvQ291bnQgMgogICAgIC9NZWRpYUJveCBb"
+    "MCAwIDU5NSA4NDJdCiAgPj4KZW5kb2JqCgozIDAgb2JqCiAgPDwgL1R5cGUgL1BhZ2VzCiAgICAgL0tpZHMgWzQgMCBSXQogICAg"
+    "IC9Db3VudCAxCiAgICAgL01lZGlhQm94IFswIDAgNTk1IDg0Ml0KICA+PgplbmRvYmoKCjQgMCBvYmoKICA8PCAvVHlwZSAvUGFn"
+    "ZXMKICAgICAvS2lkcyBbNSAwIFJdCiAgICAgL0NvdW50IDEKICAgICAvTWVkaWFCb3ggWzAgMCA1OTUgODQyXQogID4+CmVuZG9i"
+    "agoKNSAwIG9iagogIDw8IC9UeXBlIC9QYWdlcwogICAgIC9LaWRzIFszIDAgUl0KICAgICAvQ291bnQgMQogICAgIC9NZWRpYUJv"
+    "eCBbMCAwIDU5NSA4NDJdCiAgPj4KZW5kb2JqCgo2IDAgb2JqCiAgPDwgL1R5cGUgL1BhZ2UKICAgICAvUGFyZW50IDIgMCBSCiAg"
+    "ICAgL1Jlc291cmNlcwogICAgICA8PCAvRm9udAogICAgICAgICAgPDwgL0YxCiAgICAgICAgICAgICAgPDwgL1R5cGUgL0ZvbnQK"
+    "ICAgICAgICAgICAgICAgICAvU3VidHlwZSAvVHlwZTEKICAgICAgICAgICAgICAgICAvQmFzZUZvbnQgL0NvdXJpZXIKICAgICAg"
+    "ICAgICAgICA+PgogICAgICAgICAgPj4KICAgICAgPj4KICAgICAvQ29udGVudHMgWzcgMCBSXQogID4+CmVuZG9iagoKNyAwIG9i"
+    "agogIDw8IC9MZW5ndGggNjkgPj4Kc3RyZWFtCiAgQlQKICAgIC9GMSAyMiBUZgogICAgMzAgODAwIFRkCiAgICAoVGVzdGNhc2U6"
+    "ICdQYWdlcyBsb29wJykgVGoKICBFVAplbmRzdHJlYW0KZW5kb2JqCgp4cmVmCjAgOAowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAw"
+    "MDAwMTAgMDAwMDAgbiAKMDAwMDAwMDA2OSAwMDAwMCBuIAowMDAwMDAwMTc2IDAwMDAwIG4gCjAwMDAwMDAyNzcgMDAwMDAgbiAK"
+    "MDAwMDAwMDM3OCAwMDAwMCBuIAowMDAwMDAwNDc5IDAwMDAwIG4gCjAwMDAwMDA3NDQgMDAwMDAgbiAKdHJhaWxlcgogIDw8IC9S"
+    "b290IDEgMCBSCiAgICAgL1NpemUgOAogID4+CnN0YXJ0eHJlZgo4NjYKJSVFT0YK"
+)
+
+
+def test_a_pdf_page_that_cannot_load_is_skipped_and_the_rest_kept():
+    # Raised, the page error was retried three times and lost page 1 with it.
+    pages = list(media.split_pdf(base64.b64decode(_BROKEN_PAGE_PDF), page_pixels=256, max_pages=10))
+    assert [p.page for p in pages] == [1] and pages[0].data
+
+
 def test_unreadable_media_is_a_media_error():
     with pytest.raises(media.MediaError, match="unreadable media"):
         list(media.split_media(b"not a video", "video", window_seconds=30, overlap_seconds=5, max_seconds=60))

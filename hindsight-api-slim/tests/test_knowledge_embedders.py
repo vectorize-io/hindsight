@@ -313,3 +313,12 @@ def test_a_clip_is_embedded_alone_and_the_rest_in_batches():
         [{"audio": "pcm"}],
         [{"image": "pixels"}, "e"],
     ]
+
+
+def test_long_texts_are_batched_by_their_size_not_only_their_count(monkeypatch):
+    # 32 windows of a dense table ran a CPU embedder past 10 GB: a batch is capped by its characters too.
+    from hindsight_api.knowledge import embedders
+
+    monkeypatch.setattr(embedders, "_TEXT_BATCH_CHARS", 10)
+    batches = list(embedders._model_batches(["aaaa", "bbbb", "cccc", "dd", "e" * 30, "f"], 32))
+    assert batches == [["aaaa", "bbbb"], ["cccc", "dd"], ["e" * 30], ["f"]]

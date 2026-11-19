@@ -101,6 +101,16 @@
       "text_contains": "Cool it overnight"
     },
     {
+      "id": "census-csv",
+      "category": "text",
+      "file": "text/census-table.csv",
+      "source": "Govdocs1 000565.csv, its first 10 KB",
+      "issue": "Dense numeric text: each window is thousands of tokens, and 32 windows of the whole file ran a CPU embedder past 10 GB. Text batches are capped by size now.",
+      "expect": "ready",
+      "query": "total population of the United States census profile",
+      "text_contains": "277,017,622"
+    },
+    {
       "id": "unsupported-codec",
       "category": "video",
       "file": "video/unsupported-codec.mp4",
@@ -144,6 +154,16 @@
       "issue": "Control: a broken Office file is reported.",
       "expect": "failed",
       "error_contains": "unreadable .docx"
+    },
+    {
+      "id": "visa-form-docx",
+      "category": "office",
+      "file": "office/visa-form.docx",
+      "source": "Apache POI test-data/document/form_footnotes.docx",
+      "issue": "Control: a real Word form (tables, footnotes, an embedded picture) is read for its text.",
+      "expect": "ready",
+      "query": "visa application form consulate",
+      "text_contains": "VISA APPLICATION FORM"
     },
     {
       "id": "empty-file",

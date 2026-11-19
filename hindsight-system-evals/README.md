@@ -611,13 +611,18 @@ worker took for a transient one was retried a minute apart, three times, before 
 The categories are the media types (`video`, `audio`, `image`, `pdf`, `text`, `office`); every
 case names its source and the bug it reproduces, or says it is a control.
 
-**Heavy files** (`test_heavy_file`, `--full`): common uploads, only big — 3 minutes of 4K at 60 fps, a
-108 MP photo, an hour of audio, a 1500-page PDF, a 50 MB CSV — built with `ffmpeg` at run time into
-`~/.cache/hindsight-evals/kb-heavy` (reused) and never committed. Each must become ready and be found.
+**Heavy files** (`test_heavy_file`, `--full`): common uploads, only big — a minute of 4K at 60 fps and
+50 Mb/s (~375 MB), a 108 MP photo, an hour of audio, a 1500-page PDF, a 50 MB CSV — built with `ffmpeg` at
+run time into `~/.cache/hindsight-evals/kb-heavy` (reused) and never committed. Each must become ready and
+be found. And one 3 GB upload, over the size limit, must be refused **without the server's memory growing by
+more than 300 MB**: before uploads were streamed, refusing it cost 2.4 GB.
 
 Every file is ingested **alone** while the server's process tree is sampled, so each line reports its
 peak memory, CPU seconds and wall time; `HINDSIGHT_EVAL_KB_USAGE=FILE` appends them as JSON lines,
-to compare two runs. They are reported, not asserted: numbers from a loaded laptop are not a budget.
+to compare two runs. They are reported, not asserted (but for that one ceiling): numbers from a loaded laptop
+are not a budget. On a CPU-only machine the local embedder takes about 2 GB and a minute or more per 30 s
+video clip, so run a sweep in a memory-capped container (`--api-url` with `--container NAME`, which the
+sweep then measures), or with a remote embedder.
 
 **Finding the next case.** `harvest` sweeps any folder through a server and writes one JSON line per
 file — `ready`, `failed`, `rejected`, or the bugs: `error` (a 5xx) and `timeout`. A `failed` file is

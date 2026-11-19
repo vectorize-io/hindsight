@@ -7,8 +7,9 @@ so the suite runs with ``HINDSIGHT_EVAL_LLM_PROVIDER=none``.
   issue a corpus sweep (``python -m hindsight_system_evals.kb_edge_cases harvest``) found. Each must
   end as the manifest says (``ready``, or ``failed`` / ``rejected`` with its reason), and a ready one
   must come back from a search for its query, among every other case in the same bank.
-* ``test_heavy_file`` (``--full``) — common uploads, only big (4K video, a 108 MP photo, an hour of
-  audio, a 1500-page PDF, a 50 MB CSV), built at run time with ffmpeg. Each must become ready and be
+* ``test_heavy_file`` (``--full``) — common uploads, only big (a minute of 4K video, a 108 MP photo, an hour
+  of audio, a 1500-page PDF, a 50 MB CSV), built at run time with ffmpeg; and a 3 GB file over the size
+  limit, refused without the server's memory growing by it. Each common one must become ready and be
   found; what it cost the server (peak memory, CPU seconds, wall time) is printed, and appended as
   JSON lines to ``HINDSIGHT_EVAL_KB_USAGE`` when set, so two runs can be compared.
 """
@@ -19,7 +20,7 @@ import asyncio
 import json
 import os
 import shutil
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import httpx
@@ -30,10 +31,12 @@ from hindsight_system_evals.kb_edge_cases import (
     FIXTURES,
     HEAVY_CASES,
     KB,
+    EdgeCase,
     FileOutcome,
     build_heavy,
     create_bank,
     ingest_file,
+    load_manifest,
     rank_of,
     server_alive,
 )
@@ -42,8 +45,15 @@ from hindsight_system_evals.kb_edge_cases import (
 FAIL_FAST_SECONDS = 45
 #: The stored passage text of every case with ``text_contains``, read back after its ingest.
 TEXTS: dict[str, str] = {}
-MANIFEST = json.loads((FIXTURES / "manifest.json").read_text())["cases"]
+MANIFEST = load_manifest()
 HEAVY_DIR = Path(os.getenv("HINDSIGHT_EVAL_KB_HEAVY_DIR", Path.home() / ".cache" / "hindsight-evals" / "kb-heavy"))
+
+
+@dataclass(frozen=True)
+class CaseResult:
+    outcome: FileOutcome
+    #: Where the document came back for its query (1-based), or None.
+    rank: int | None
 
 
 def _record(case_id: str, outcome: FileOutcome, rank: int | None) -> None:
@@ -58,27 +68,27 @@ def _record(case_id: str, outcome: FileOutcome, rank: int | None) -> None:
 
 
 @pytest.fixture(scope="module")
-def sample(target: Target) -> dict[str, tuple[FileOutcome, int | None]]:
+def sample(target: Target) -> dict[str, CaseResult]:
     """Every committed case ingested into ONE bank, so each search has the others as distractors."""
 
-    async def run() -> dict[str, tuple[FileOutcome, int | None]]:
+    async def run() -> dict[str, CaseResult]:
         async with httpx.AsyncClient(base_url=target.url, timeout=120, headers=_auth(target)) as http:
             bank = await create_bank(http)
             outcomes = {}
             for case in MANIFEST:
-                path = FIXTURES / case["file"]
-                outcomes[case["id"]] = await ingest_file(http, bank, path, document_id=case["id"], pid=target.pid)
-                assert server_alive(target.pid), f"the server died ingesting {case['file']}"
+                path = FIXTURES / case.file
+                outcomes[case.id] = await ingest_file(http, bank, path, document_id=case.id, pid=target.pid)
+                assert server_alive(target.pid), f"the server died ingesting {case.file}"
             ranks = {
-                case["id"]: await rank_of(http, bank, case["query"], case["id"])
+                case.id: await rank_of(http, bank, case.query, case.id)
                 for case in MANIFEST
-                if case.get("query") and outcomes[case["id"]].status == "ready"
+                if case.query and outcomes[case.id].status == "ready"
             }
             for case in MANIFEST:
-                if case.get("text_contains") and outcomes[case["id"]].status == "ready":
-                    detail = (await http.get(f"{KB}/{bank}/documents/{case['id']}")).json()
-                    TEXTS[case["id"]] = "\n".join(p.get("text") or "" for p in detail["passages"])
-            return {cid: (o, ranks.get(cid)) for cid, o in outcomes.items()}
+                if case.text_contains and outcomes[case.id].status == "ready":
+                    detail = (await http.get(f"{KB}/{bank}/documents/{case.id}")).json()
+                    TEXTS[case.id] = "\n".join(p.get("text") or "" for p in detail["passages"])
+            return {cid: CaseResult(o, ranks.get(cid)) for cid, o in outcomes.items()}
 
     return asyncio.run(run())
 
@@ -87,25 +97,25 @@ def _auth(target: Target) -> dict[str, str]:
     return {"Authorization": f"Bearer {target.api_key}"} if target.api_key else {}
 
 
-@pytest.mark.parametrize("case", MANIFEST, ids=[f"{c['category']}/{c['id']}" for c in MANIFEST])
-def test_edge_case(case: dict, sample: dict[str, tuple[FileOutcome, int | None]]) -> None:
-    outcome, rank = sample[case["id"]]
-    _record(case["id"], outcome, rank)
-    assert outcome.handled, f"{case['file']}: {outcome.status} ({outcome.http_status}) {outcome.error}"
-    assert outcome.status == case["expect"], f"{case['file']}: expected {case['expect']}, got {outcome}"
-    if case["expect"] == "ready":
+@pytest.mark.parametrize("case", MANIFEST, ids=[f"{c.category}/{c.id}" for c in MANIFEST])
+def test_edge_case(case: EdgeCase, sample: dict[str, CaseResult]) -> None:
+    outcome, rank = sample[case.id].outcome, sample[case.id].rank
+    _record(case.id, outcome, rank)
+    assert outcome.handled, f"{case.file}: {outcome.status} ({outcome.http_status}) {outcome.error}"
+    assert outcome.status == case.expect, f"{case.file}: expected {case.expect}, got {outcome}"
+    if case.expect == "ready":
         assert outcome.passage_count > 0, outcome
-        if case.get("query"):
-            assert rank is not None, f"{case['file']} is ready but not in the top 10 for {case['query']!r}"
-        if case.get("text_contains"):
+        if case.query:
+            assert rank is not None, f"{case.file} is ready but not in the top 10 for {case.query!r}"
+        if case.text_contains:
             # Found is not enough: garbled text (UTF-16 read as UTF-8) still ranked among a few files.
-            assert case["text_contains"] in TEXTS.get(case["id"], ""), TEXTS.get(case["id"], "")[:300]
+            assert case.text_contains in TEXTS.get(case.id, ""), TEXTS.get(case.id, "")[:300]
     else:
         # For good, at once: a file that cannot be read fails the same way every time, and an error
         # the worker took for a transient one was retried a minute apart, three times.
-        assert outcome.seconds < FAIL_FAST_SECONDS, f"{case['file']} took {outcome.seconds}s to fail: retried?"
-        if case.get("error_contains"):
-            assert case["error_contains"] in (outcome.error or ""), outcome.error
+        assert outcome.seconds < FAIL_FAST_SECONDS, f"{case.file} took {outcome.seconds}s to fail: retried?"
+        if case.error_contains:
+            assert case.error_contains in (outcome.error or ""), outcome.error
 
 
 @pytest.fixture(scope="module")
@@ -130,14 +140,15 @@ def test_heavy_file(case, target: Target, warm: None) -> None:
     HEAVY_DIR.mkdir(parents=True, exist_ok=True)
     path = build_heavy(case, HEAVY_DIR)
 
-    async def run() -> tuple[FileOutcome, int | None]:
+    async def run() -> CaseResult:
         async with httpx.AsyncClient(base_url=target.url, timeout=600, headers=_auth(target)) as http:
             bank = await create_bank(http)
             outcome = await ingest_file(http, bank, path, document_id=case.id, pid=target.pid, timeout=3600)
             ready = outcome.status == "ready" and case.query
-            return outcome, await rank_of(http, bank, case.query, case.id) if ready else None
+            return CaseResult(outcome, await rank_of(http, bank, case.query, case.id) if ready else None)
 
-    outcome, rank = asyncio.run(run())
+    result = asyncio.run(run())
+    outcome, rank = result.outcome, result.rank
     _record(case.id, outcome, rank)
     assert server_alive(target.pid), f"the server died ingesting {path.name}"
     assert outcome.status == case.expect, outcome

@@ -233,21 +233,33 @@ def _is_clip(model_input: Any) -> bool:
     return isinstance(model_input, dict) and ("video" in model_input or "audio" in model_input)
 
 
+#: Characters of text in one model batch. A batch's memory grows with its tokens, not its count: 32 windows of
+#: a 43 KB census table (5,000 digits each, thousands of tokens) ran past 10 GB on CPU, where 8 took 3.4 GB.
+_TEXT_BATCH_CHARS = 16_000
+
+
 def _model_batches(inputs: list[Any], size: int) -> Iterator[list[Any]]:
-    """``inputs`` in order, ``size`` at a time, but an audio or video clip alone: one 30 s clip took
-    2 GB on CPU, so the 32 a batch held ran a server to 42 GB and the machine out of memory."""
+    """``inputs`` in order: ``size`` at a time and at most ``_TEXT_BATCH_CHARS`` of text, an audio or video
+    clip alone. One 30 s clip took 2 GB on CPU, so the 32 a batch held ran a server to 42 GB and the machine
+    out of memory."""
     batch: list[Any] = []
+    chars = 0
     for model_input in inputs:
         if _is_clip(model_input):
             if batch:
                 yield batch
-                batch = []
+                batch, chars = [], 0
             yield [model_input]
             continue
+        length = len(model_input) if isinstance(model_input, str) else 0
+        if batch and chars + length > _TEXT_BATCH_CHARS:
+            yield batch
+            batch, chars = [], 0
         batch.append(model_input)
+        chars += length
         if len(batch) == size:
             yield batch
-            batch = []
+            batch, chars = [], 0
     if batch:
         yield batch
 

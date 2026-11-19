@@ -384,6 +384,13 @@ _OFFICE_POOL: ProcessPoolExecutor | None = None
 _OFFICE_POOL_LOCK = threading.Lock()
 
 
+def _first_to_kill() -> None:
+    """In the worker: when memory runs out, the kernel kills this process, not the server it works for (it
+    picked the server once, a 2.5 GB process over a 3 GB worker). Linux only; anywhere else nothing to do."""
+    with contextlib.suppress(OSError):
+        Path("/proc/self/oom_score_adj").write_text("1000")
+
+
 def _convert_office(data: bytes, ext: str) -> str:
     from markitdown import MarkItDown
 
@@ -400,7 +407,9 @@ def _office_text(data: bytes, ext: str) -> str:
     with _OFFICE_POOL_LOCK:
         if _OFFICE_POOL is None:
             # spawn, not fork: the server has threads, and a forked child inherits their locks held.
-            _OFFICE_POOL = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+            _OFFICE_POOL = ProcessPoolExecutor(
+                max_workers=1, mp_context=multiprocessing.get_context("spawn"), initializer=_first_to_kill
+            )
         pool = _OFFICE_POOL
     try:
         return pool.submit(_convert_office, data, ext).result()

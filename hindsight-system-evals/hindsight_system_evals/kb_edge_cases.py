@@ -31,6 +31,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -67,7 +68,13 @@ class Usage:
 Server = int | str | None
 
 
-def _container_rss_cpu(name: str) -> tuple[float, float]:
+@dataclass(frozen=True)
+class _Sample:
+    rss_mb: float
+    cpu_seconds: float
+
+
+def _container_rss_cpu(name: str) -> _Sample:
     """The container's anonymous memory (what its processes hold; not the page cache its temp files fill)
     and CPU seconds, from its cgroup."""
     import subprocess
@@ -86,9 +93,9 @@ def _container_rss_cpu(name: str) -> tuple[float, float]:
             text=True,
             timeout=10,
         ).stdout.split()
-        return int(out[1]) / 1048576, int(out[3]) / 1e6
+        return _Sample(int(out[1]) / 1048576, int(out[3]) / 1e6)
     except (IndexError, ValueError, OSError, subprocess.SubprocessError):
-        return 0.0, 0.0
+        return _Sample(0.0, 0.0)
 
 
 class ResourceMeter:
@@ -109,7 +116,7 @@ class ResourceMeter:
         root = psutil.Process(self._pid)
         return [root, *root.children(recursive=True)]
 
-    def _rss_cpu(self) -> tuple[float, float]:
+    def _rss_cpu(self) -> _Sample:
         if isinstance(self._pid, str):
             return _container_rss_cpu(self._pid)
         import psutil
@@ -122,16 +129,17 @@ class ResourceMeter:
                 cpu += t.user + t.system
             except psutil.Error:
                 continue
-        return rss / 1048576, cpu
+        return _Sample(rss / 1048576, cpu)
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            self._peak = max(self._peak, self._rss_cpu()[0])
+            self._peak = max(self._peak, self._rss_cpu().rss_mb)
             self._stop.wait(self._interval)
 
     def __enter__(self) -> ResourceMeter:
         if self._pid is not None:
-            self._start, self._cpu_start = self._rss_cpu()
+            first = self._rss_cpu()
+            self._start, self._cpu_start = first.rss_mb, first.cpu_seconds
             self._peak = self._start
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
@@ -145,7 +153,8 @@ class ResourceMeter:
     def usage(self) -> Usage | None:
         if self._pid is None:
             return None
-        rss, cpu = self._rss_cpu()
+        now = self._rss_cpu()
+        rss, cpu = now.rss_mb, now.cpu_seconds
         return Usage(
             start_rss_mb=round(self._start, 1),
             peak_rss_mb=round(max(self._peak, rss), 1),
@@ -175,6 +184,43 @@ class FileOutcome:
         return self.status in ("ready", "failed", "rejected")
 
 
+@dataclass(frozen=True)
+class _DocStatus:
+    """The fields of a knowledge document this module reads (``GET .../documents/{id}``)."""
+
+    status: str | None = None
+    error: str | None = None
+    passage_count: int = 0
+    media_type: str | None = None
+
+    @classmethod
+    def of(cls, body: dict[str, Any]) -> _DocStatus:
+        return cls(body.get("status"), body.get("error"), body.get("passage_count") or 0, body.get("media_type"))
+
+
+@dataclass(frozen=True)
+class EdgeCase:
+    """One committed sample file and what the server must do with it (``fixtures/kb-edge-cases/manifest.json``)."""
+
+    id: str
+    category: str
+    file: str
+    source: str
+    issue: str
+    #: ``ready``, ``failed`` or ``rejected``.
+    expect: str
+    #: A ready one must come back in the top 10 for this search.
+    query: str | None = None
+    #: A ready one's passages must hold this text.
+    text_contains: str | None = None
+    #: A refused one's reason must hold this text.
+    error_contains: str | None = None
+
+
+def load_manifest() -> list[EdgeCase]:
+    return [EdgeCase(**case) for case in json.loads((FIXTURES / "manifest.json").read_text())["cases"]]
+
+
 async def create_bank(http: httpx.AsyncClient, bank_id: str | None = None) -> str:
     bank_id = bank_id or f"syseval-kb-{uuid.uuid4().hex[:10]}"
     r = await http.post(KB, json={"bank_id": bank_id})
@@ -195,13 +241,13 @@ async def ingest_file(
     started = time.monotonic()
     with ResourceMeter(pid) as meter:
         r = await _upload(http, bank_id, path, document_id, timeout)
-        doc: dict = {}
+        doc = _DocStatus()
         if r.status_code < 400:
             deadline = time.monotonic() + timeout
             while True:
                 d = await http.get(f"{KB}/{bank_id}/documents/{document_id}")
-                doc = d.json() if d.status_code == 200 else {}
-                if doc.get("status") in ("ready", "failed") or time.monotonic() > deadline:
+                doc = _DocStatus.of(d.json()) if d.status_code == 200 else _DocStatus()
+                if doc.status in ("ready", "failed") or time.monotonic() > deadline:
                     break
                 await asyncio.sleep(0.25)
     if r.status_code >= 500:
@@ -209,8 +255,8 @@ async def ingest_file(
     elif r.status_code >= 400:
         status, error = "rejected", _detail(r)
     else:
-        status = doc.get("status") if doc.get("status") in ("ready", "failed") else "timeout"
-        error = doc.get("error")
+        status = doc.status if doc.status in ("ready", "failed") else "timeout"
+        error = doc.error
     return FileOutcome(
         name=path.name,
         document_id=document_id,
@@ -218,8 +264,8 @@ async def ingest_file(
         status=status,
         http_status=r.status_code,
         error=error,
-        passage_count=doc.get("passage_count", 0),
-        media_type=doc.get("media_type"),
+        passage_count=doc.passage_count,
+        media_type=doc.media_type,
         seconds=round(time.monotonic() - started, 2),
         usage=meter.usage(),
     )
