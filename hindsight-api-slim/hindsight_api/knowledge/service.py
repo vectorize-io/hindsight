@@ -1274,6 +1274,7 @@ class KnowledgeService:
                 window_seconds=window,
                 overlap_seconds=s.media_overlap_seconds,
                 max_seconds=s.max_media_seconds,
+                max_video_work_seconds=get_config().kb_max_video_work_seconds,
             )
         text = media.read_text(data, document.filename)
         return iter(media.split_text(text, tokens=s.text_passage_tokens))

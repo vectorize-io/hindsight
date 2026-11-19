@@ -2722,7 +2722,7 @@
         },
         "media_overlap_seconds": {
           "label": "Chevauchement (secondes)",
-          "description": "Combien de secondes un passage partage avec le suivant, pour ne rien perdre à une coupure ; doit être plus court que les deux durées."
+          "description": "Combien de secondes un passage partage avec le suivant, pour ne rien perdre à une coupure ; au plus la moitié des deux durées."
         },
         "max_media_seconds": {
           "label": "Fichier le plus long (secondes)",

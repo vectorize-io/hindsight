@@ -2722,7 +2722,7 @@
         },
         "media_overlap_seconds": {
           "label": "重叠（秒）",
-          "description": "每个段落与下一段共享的秒数，避免在切分处丢失内容；必须短于两种时长。"
+          "description": "每个段落与下一段共享的秒数，避免在切分处丢失内容；最多为两种时长的一半。"
         },
         "max_media_seconds": {
           "label": "最长文件（秒）",

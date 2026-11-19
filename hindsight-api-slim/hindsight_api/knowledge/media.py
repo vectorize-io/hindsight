@@ -73,6 +73,10 @@ class MediaError(ValueError):
     """A file that cannot be split: unsupported type, unreadable, or over a limit."""
 
 
+class MediaWorkError(MediaError):
+    """A video that took more work to cut than its limit allows: the whole file fails, not one window."""
+
+
 @dataclass(frozen=True)
 class PassageDraft:
     modality: Literal["text", "image", "audio", "video"]
@@ -546,6 +550,12 @@ class MediaInfo:
     duration: float
     has_video: bool
     has_audio: bool
+    #: The first video track's frame size and rate as its header declares them (0 when unknown or no video).
+    width: int = 0
+    height: int = 0
+    fps: float = 0.0
+    #: False for a file without a seek index: each window is then decoded from the start of the file.
+    seekable: bool = True
 
 
 @dataclass(frozen=True)
@@ -555,7 +565,9 @@ class Window:
 
 
 def probe(data: Source) -> MediaInfo:
-    """Duration and tracks of a media file."""
+    """Duration, tracks and (for video) frame size, rate and seekability of a media file, from its header."""
+    import av
+
     with _open(data) as container:
         duration = container.duration / 1_000_000 if container.duration else 0.0
         if not duration:
@@ -563,9 +575,106 @@ def probe(data: Source) -> MediaInfo:
                 (float(s.duration * s.time_base) for s in container.streams if s.duration and s.time_base),
                 default=0.0,
             )
+        width = height = 0
+        fps = 0.0
+        if container.streams.video:
+            v = container.streams.video[0]
+            width, height = v.codec_context.width or 0, v.codec_context.height or 0
+            rate = v.average_rate or v.guessed_rate
+            fps = float(rate) if rate else 0.0
+        seekable = True
+        if duration > 0 and container.streams.video:
+            # A file without an index refuses the seek (EPERM), or takes it and goes back to its start (an
+            # AVI with no idx1): either way each window is then decoded from the start. The keyframe a seek
+            # lands on can be well before the target, but not before half of it.
+            target = duration / 2
+            try:
+                container.seek(int(target * 1_000_000), any_frame=False)
+                landed = next(
+                    (p.pts * p.time_base for p in container.demux(video=0) if p.pts is not None and p.time_base),
+                    None,
+                )
+                seekable = landed is not None and float(landed) >= target / 2
+            except av.FFmpegError:
+                seekable = False
         return MediaInfo(
-            duration=duration, has_video=bool(container.streams.video), has_audio=bool(container.streams.audio)
+            duration=duration,
+            has_video=bool(container.streams.video),
+            has_audio=bool(container.streams.audio),
+            width=width,
+            height=height,
+            fps=fps,
+            seekable=seekable,
         )
+
+
+# --- the work of cutting a video ---------------------------------------------------------------
+# Cutting costs CPU by frames and their pixels: each frame is decoded at its own size, then scaled and
+# re-encoded at 480p. Measured with the cut below (one core, libx264 veryfast): 1080p at 30 fps took
+# 13 CPU-seconds per minute of video, 4K at 60 fps 40, so a frame costs a fixed part (the re-encode)
+# plus a part by its pixels (the decode), the fixed part as much as decoding ~9.5 megapixels. Neither
+# length nor file size says which: a 500 MB file holds two hours of 4K at 60 fps as easily as of 1080p.
+
+#: The per-frame part of the work, in megapixels decoded.
+_FRAME_WORK_MEGAPIXELS = 9.5
+#: The unit a limit is given in: one second of 1080p at 30 fps.
+REFERENCE_SECOND_WORK = 30 * (1 + 1920 * 1080 / 1e6 / _FRAME_WORK_MEGAPIXELS)
+#: How far decoding may run past the estimate before the cut stops: a seek lands on the keyframe before a
+#: window, and the frames from there to the window's start are decoded too.
+_WORK_HEADROOM = 1.5
+
+
+def _span(seconds: float) -> str:
+    if seconds < 90:
+        return f"{seconds:.0f} s"
+    return f"{seconds / 60:.0f} min" if seconds < 5400 else f"{seconds / 3600:.1f} h"
+
+
+def _frame_work(width: int, height: int) -> float:
+    return 1 + width * height / 1e6 / _FRAME_WORK_MEGAPIXELS
+
+
+def video_work(info: MediaInfo, spans: list[Window]) -> float:
+    """The work of cutting ``spans`` of a video, in seconds of 1080p 30 fps video. Each window decodes its
+    own span, or everything from the start of the file when the file cannot seek, and overlapping
+    windows decode their overlap twice."""
+    fps = info.fps or 30.0  # A header without a rate: the decode below counts what is really there.
+    decoded = sum(w.end - (w.start if info.seekable else 0.0) for w in spans)
+    return decoded * fps * _frame_work(info.width, info.height) / REFERENCE_SECOND_WORK
+
+
+class _WorkMeter:
+    """Counts the frames a cut really decodes, so a header that understates the size or rate cannot
+    take more than the limit allows."""
+
+    def __init__(self, limit_seconds: float) -> None:
+        self.limit_seconds = limit_seconds
+        self._left = limit_seconds * REFERENCE_SECOND_WORK * _WORK_HEADROOM
+
+    def spend(self, width: int, height: int) -> None:
+        self._left -= _frame_work(width, height)
+        if self._left < 0:
+            raise MediaWorkError(
+                "the video took more work to cut than its header showed (more frames than it declares, or a "
+                f"file that does not seek), past the limit of "
+                f"{_span(self.limit_seconds)} of 1080p 30 fps video (HINDSIGHT_API_KB_MAX_VIDEO_WORK_SECONDS)"
+            )
+
+
+def _check_video_work(info: MediaInfo, spans: list[Window], limit_seconds: float) -> None:
+    work = video_work(info, spans)
+    if work <= limit_seconds:
+        return
+    shape = f"{info.width}x{info.height} at {info.fps or 30:.0f} fps for {_span(info.duration)}"
+    if not info.seekable:
+        hint = "the file has no seek index, so every window is decoded from its start; saving it again as MP4 adds one"
+    else:
+        fits = info.duration * limit_seconds / work
+        hint = f"at this size and frame rate about {_span(fits)} fits; a lower resolution or frame rate fits more"
+    raise MediaWorkError(
+        f"video is {shape}: cutting it is the work of {_span(work)} of 1080p 30 fps video, and the limit "
+        f"is {_span(limit_seconds)} (HINDSIGHT_API_KB_MAX_VIDEO_WORK_SECONDS); {hint}"
+    )
 
 
 def windows(duration: float, window: float, overlap: float) -> list[Window]:
@@ -591,8 +700,12 @@ def split_media(
     window_seconds: int,
     overlap_seconds: int,
     max_seconds: int,
+    max_video_work_seconds: float = 0,
 ) -> Iterator[PassageDraft]:
-    """Cut audio into m4a windows and video into mp4 windows (480p, with sound)."""
+    """Cut audio into m4a windows and video into mp4 windows (480p, with sound).
+
+    ``max_video_work_seconds`` bounds the work of cutting a video (``video_work``), checked from the header
+    before anything is decoded and counted again while decoding; 0 leaves it unbounded."""
     info = probe(data)
     if info.duration <= 0:
         raise MediaError("could not read the media duration")
@@ -608,9 +721,18 @@ def split_media(
     # one the codec refuses, is skipped. Only a file with no window left fails, and for good (a
     # MediaError): an ffmpeg error escaping here was retried as if it were transient, three times.
     cut_any, last_error = False, None
-    for w in windows(info.duration, window_seconds, min(overlap_seconds, window_seconds - 1)):
+    # At most half a window of overlap, so a moment of the file is cut at most twice: with a one-second
+    # step, a 1800 s window over two hours of media was cut 5,401 times, 2,700 hours of video.
+    spans = windows(info.duration, window_seconds, min(overlap_seconds, window_seconds // 2))
+    meter = None
+    if kind == "video" and max_video_work_seconds > 0:
+        _check_video_work(info, spans, max_video_work_seconds)
+        meter = _WorkMeter(max_video_work_seconds)
+    for w in spans:
         try:
-            clip = _cut(data, w, video=kind == "video", audio=info.has_audio)
+            clip = _cut(data, w, video=kind == "video", audio=info.has_audio, meter=meter)
+        except MediaWorkError:
+            raise
         except av.FFmpegError as exc:
             clip, last_error = None, exc
         except Exception as exc:  # noqa: BLE001 - a codec PyAV only half supports (MPEG-H audio, uncompressed
@@ -631,12 +753,12 @@ def split_media(
         raise MediaError(f"no decodable {kind} in the file" + (f": {last_error}" if last_error else ""))
 
 
-def _cut(data: Source, w: Window, *, video: bool, audio: bool) -> bytes | None:
+def _cut(data: Source, w: Window, *, video: bool, audio: bool, meter: _WorkMeter | None = None) -> bytes | None:
     """One window re-encoded as mp4: H.264 at most 480p high, and/or mono 64 kb/s AAC; None if it is empty."""
     # A temp file, not a buffer: "+faststart" moves the index to the front by re-reading the file by name.
     with tempfile.TemporaryDirectory(prefix="hs-kb-") as tmp:
         out = str(Path(tmp) / "clip.mp4")
-        if not _encode_window(data, w, out, video=video, audio=audio):
+        if not _encode_window(data, w, out, video=video, audio=audio, meter=meter):
             return None
         return Path(out).read_bytes()
 
@@ -679,7 +801,9 @@ def _seeked(data: Source, start: float) -> Iterator[Any]:
         src.close()
 
 
-def _encode_window(data: Source, w: Window, out: str, *, video: bool, audio: bool) -> int:
+def _encode_window(
+    data: Source, w: Window, out: str, *, video: bool, audio: bool, meter: _WorkMeter | None = None
+) -> int:
     """Encode window ``w`` of ``data`` into ``out``; how many frames it wrote (0: nothing decoded there)."""
     from fractions import Fraction
 
@@ -716,6 +840,8 @@ def _encode_window(data: Source, w: Window, out: str, *, video: bool, audio: boo
         )
         audio_samples, video_frames, finished = 0, 0, set()
         for frame in _decoded(src, streams):
+            if meter is not None and isinstance(frame, av.VideoFrame):
+                meter.spend(frame.width, frame.height)  # every frame decoded, before the window too
             t = frame.time
             if t is None or t < w.start:
                 continue

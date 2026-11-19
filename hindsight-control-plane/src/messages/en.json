@@ -2722,7 +2722,7 @@
         },
         "media_overlap_seconds": {
           "label": "Overlap (seconds)",
-          "description": "How many seconds each passage shares with the next, so nothing on a cut is lost; it must be shorter than both lengths."
+          "description": "How many seconds each passage shares with the next, so nothing on a cut is lost; at most half of both lengths."
         },
         "max_media_seconds": {
           "label": "Longest file (seconds)",

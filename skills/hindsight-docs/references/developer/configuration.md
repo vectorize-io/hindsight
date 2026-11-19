@@ -2710,6 +2710,7 @@ Knowledge banks hold documents (PDF, Office, images, audio, video, text) for sea
 | `HINDSIGHT_API_KB_MAX_FILE_MB_BY_MEDIA_TYPE` | Per media type, in place of `HINDSIGHT_API_KB_MAX_FILE_MB`: `<type>=<MB>` pairs, comma-separated (`document`, `image`, `audio`, `video`, `text`), e.g. `video=2000,image=50,text=100`. A type not listed uses the global limit. Server-only. Set `document` when Office files are accepted: a spreadsheet converts at about 100× its size in memory (a 27 MB `.xls` took 3.2 GB), one at a time per server. | - |
 | `HINDSIGHT_API_KB_MAX_IMAGE_MEGAPIXELS` | Largest image, in megapixels, checked from its header before decoding: decoding costs memory by pixels (about 3–4 bytes each), and a few-MB PNG can declare 30000×30000. Covers HEIC too. Server-only. | `178` |
 | `HINDSIGHT_API_KB_MAX_MEDIA_SECONDS` | Longest audio or video file. *Per bank*. | `7200` |
+| `HINDSIGHT_API_KB_MAX_VIDEO_WORK_SECONDS` | Most work one video may take to cut, in seconds of 1080p 30 fps video: cutting costs CPU by frames and their pixels, not by length or file size, so 4K at 60 fps counts about 3× per second and a file without a seek index (decoded from its start for every passage) far more. Checked from the header before decoding, and counted again while decoding. `0` turns it off. Server-only. | `7200` |
 | `HINDSIGHT_API_KB_MAX_PDF_PAGES` | Most pages in one PDF. *Per bank*. | `2000` |
 | `HINDSIGHT_API_KB_TEXT_PASSAGE_TOKENS` | Size of a text passage, in tokens; passages follow the document's structure. *Per bank*. | `256` |
 | `HINDSIGHT_API_KB_IMAGE_TOKENS` | Vision tokens per image for the `local` embedder (70–1120). *Per bank*. | `280` |
@@ -2717,7 +2718,7 @@ Knowledge banks hold documents (PDF, Office, images, audio, video, text) for sea
 | `HINDSIGHT_API_KB_PDF_BANDS` | Also embed three horizontal bands of each PDF page: better search, half the ingest speed. *Per bank*. | `false` |
 | `HINDSIGHT_API_KB_AUDIO_WINDOW_SECONDS` | Length of one audio passage. *Per bank*. | `60` |
 | `HINDSIGHT_API_KB_VIDEO_WINDOW_SECONDS` | Length of one video passage. *Per bank*. | `30` |
-| `HINDSIGHT_API_KB_MEDIA_OVERLAP_SECONDS` | Overlap between consecutive audio or video passages. *Per bank*. | `5` |
+| `HINDSIGHT_API_KB_MEDIA_OVERLAP_SECONDS` | Overlap between consecutive audio or video passages, at most half of each passage length (more is cut at half). *Per bank*. | `5` |
 | `HINDSIGHT_API_KB_PDF_TEXT_WEIGHT` | Search: a PDF page's score is `(1 - w)` × its image score + `w` × its best text score. | `0.7` |
 | `HINDSIGHT_API_KB_KEYWORD_WEIGHT` | Search: weight of the keyword match, fused in for a query with a word rare enough in the bank. | `0.2` |
 | `HINDSIGHT_API_KB_INGEST_CHILD_BYTES` | An async ingest is split into worker tasks of about this many bytes of files, so a big upload spreads across workers. | `1048576` |

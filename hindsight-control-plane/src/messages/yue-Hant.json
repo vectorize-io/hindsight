@@ -2722,7 +2722,7 @@
         },
         "media_overlap_seconds": {
           "label": "重疊（秒）",
-          "description": "每個段落同下一段共用幾多秒，等切開嗰度唔會漏嘢；一定要短過兩個長度。"
+          "description": "每個段落同下一段共用幾多秒，等切開嗰度唔會漏嘢；最多係兩個長度嘅一半。"
         },
         "max_media_seconds": {
           "label": "最長檔案（秒）",
