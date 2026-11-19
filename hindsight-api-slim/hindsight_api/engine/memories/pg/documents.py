@@ -16,14 +16,12 @@ Postgres, so the caller no longer acquires a connection it would not use.
 from __future__ import annotations
 
 import json
-import logging
 import uuid
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any
 
 from ...db_utils import acquire_with_retry
-from ...document_history import note_observations_removed
 from ...search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
 from ...time_filter import DOCUMENT_TIME_FIELDS, build_time_clause
 from ..base import (
@@ -36,9 +34,7 @@ from ..base import (
     StoredMemory,
 )
 from . import counts
-
-logger = logging.getLogger(__name__)
-
+from .writes import delete_stale_observations
 
 # ------------------------------------------------------------------ uploaded file
 
@@ -441,9 +437,9 @@ async def retag_document_memories(
     retagged: Callable[[list[str] | None], list[str]],
     rescoped: Callable[[Any], str | None],
 ) -> RetagResult:
-    """Retag the document's units, then delete the observations built on the units whose
-    observation scopes that moves and requeue their sources (the document's and every co-source)
-    for re-consolidation. Units whose scopes stay put keep their observations (#5593).
+    """Delete the observations built on the units whose observation scopes the retag moves,
+    requeue their sources (the document's and every co-source) for re-consolidation, then
+    retag the document's units. Units whose scopes stay put keep their observations (#5593).
 
     ``tags`` is ``None`` for a change of observation scopes alone (#5309): no unit's tags are
     written, and only the units whose scopes move are stamped as edited.
@@ -451,7 +447,6 @@ async def retag_document_memories(
     Every unit that moved is requeued, whether or not it had an observation: it was consolidated
     under scopes it no longer writes to (the same rule a re-retain follows).
     """
-    invalidated_obs = 0
     # `tags` as well as `id`: the projection each unit must keep is read
     # here, before the blanket write below overwrites it.
     unit_rows = await conn.fetch(
@@ -460,19 +455,6 @@ async def retag_document_memories(
         document_id,
         bank_id,
     )
-    _by_scopes: dict[str, list] = {}
-    for _row in unit_rows:
-        _scopes_json = rescoped(_row["observation_scopes"])
-        if _scopes_json is not None:
-            _by_scopes.setdefault(_scopes_json, []).append(_row["id"])
-    for _scopes_json, _ids in _by_scopes.items():
-        await conn.execute(
-            f"UPDATE {fq_table('memory_units')} SET observation_scopes = $1 "
-            f"WHERE bank_id = $2 AND id = ANY($3::uuid[])",
-            _scopes_json,
-            bank_id,
-            _ids,
-        )
     from ...consolidation.consolidator import write_scopes_changed
 
     # Only the units whose observation scopes actually move: under `shared` or an explicit
@@ -489,6 +471,33 @@ async def retag_document_memories(
             row["observation_scopes"] if new_scopes is None else new_scopes,
         ):
             unit_ids.append(str(row["id"]))
+
+    _by_scopes: dict[str, list] = {}
+    for _row in unit_rows:
+        _scopes_json = rescoped(_row["observation_scopes"])
+        if _scopes_json is not None:
+            _by_scopes.setdefault(_scopes_json, []).append(_row["id"])
+
+    # Sweep BEFORE any write, the way the delete path does: it locks the units this writes, the
+    # observations over the units that move and their co-sources in OTHER documents in one id
+    # order, then deletes those observations and requeues the co-sources. Writing the own units
+    # first and reaching for the shared rows after deadlocked two tag updates of documents that
+    # share an observation, or one and a document delete (#6653).
+    own_written = (
+        [row["id"] for row in unit_rows] if tags is not None else [i for ids in _by_scopes.values() for i in ids]
+    )
+    invalidated_obs = await delete_stale_observations(
+        conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, fact_ids=unit_ids, also_lock=own_written
+    )
+
+    for _scopes_json, _ids in _by_scopes.items():
+        await conn.execute(
+            f"UPDATE {fq_table('memory_units')} SET observation_scopes = $1 "
+            f"WHERE bank_id = $2 AND id = ANY($3::uuid[])",
+            _scopes_json,
+            bank_id,
+            _ids,
+        )
 
     if tags is None:
         # A scope change alone writes no tags, so nothing above stamped the units that moved.
@@ -536,73 +545,6 @@ async def retag_document_memories(
 
     if unit_ids:
         unit_uuids = [uuid.UUID(uid) for uid in unit_ids]
-        unit_uuid_set = {str(u) for u in unit_uuids}
-        if ops.uses_observation_sources_table:
-            affected_obs = await conn.fetch(
-                f"""
-                SELECT mu.id, mu.source_memory_ids
-                FROM {fq_table("memory_units")} mu
-                WHERE mu.bank_id = $1
-                  AND mu.fact_type = 'observation'
-                  AND EXISTS (
-                      SELECT 1 FROM {fq_table("observation_sources")} os
-                      WHERE os.observation_id = mu.id
-                        AND os.source_id = ANY($2::uuid[])
-                  )
-                """,
-                bank_id,
-                unit_uuids,
-            )
-        else:
-            affected_obs = await conn.fetch(
-                f"""
-                SELECT id, source_memory_ids
-                FROM {fq_table("memory_units")}
-                WHERE bank_id = $1
-                  AND fact_type = 'observation'
-                  AND source_memory_ids && $2::uuid[]
-                """,
-                bank_id,
-                unit_uuids,
-            )
-        if affected_obs:
-            obs_ids = [obs["id"] for obs in affected_obs]
-            note_observations_removed(
-                {str(obs["id"]): [str(src) for src in obs["source_memory_ids"] or []] for obs in affected_obs}, unit_ids
-            )
-
-            seen: set[str] = set()
-            other_source_uuids: list[uuid.UUID] = []
-            for obs in affected_obs:
-                for src_id in obs["source_memory_ids"] or []:
-                    src_str = str(src_id)
-                    if src_str not in unit_uuid_set and src_str not in seen:
-                        other_source_uuids.append(src_id)
-                        seen.add(src_str)
-
-            await conn.execute(
-                f"DELETE FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[])",
-                obs_ids,
-            )
-            # Requeue the co-sources the deleted observations strand: bookkeeping only, so
-            # `updated_at` stays put (see META_UPDATED_AT).
-            if other_source_uuids:
-                await conn.execute(
-                    f"""
-                    UPDATE {fq_table("memory_units")}
-                    SET consolidated_at = NULL
-                    WHERE id = ANY($1::uuid[])
-                      AND fact_type IN ('experience', 'world')
-                    """,
-                    other_source_uuids,
-                )
-            invalidated_obs = len(obs_ids)
-            logger.info(
-                f"[OBSERVATIONS] Deleted {invalidated_obs} observations, reset "
-                f"{len(unit_ids)} document source memories and "
-                f"{len(other_source_uuids)} co-source memories for re-consolidation "
-                f"after document update on '{document_id}' in bank {bank_id}"
-            )
         # Requeue every unit that moved — bookkeeping only, so `updated_at` stays put (see
         # META_UPDATED_AT); the write above is what stamped these rows.
         await conn.execute(

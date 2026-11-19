@@ -246,7 +246,8 @@ async def delete_stale_observations(
     ops,
     fq_table: Callable[[str], str],
     bank_id: str,
-    fact_ids: list[str | uuid.UUID],
+    fact_ids: Sequence[str | uuid.UUID],
+    also_lock: Sequence[uuid.UUID] = (),
 ) -> int:
     """Delete observations whose source memories are about to be removed.
 
@@ -266,20 +267,23 @@ async def delete_stale_observations(
     Must be called within an active transaction, before the source memories
     are deleted.
 
+    ``also_lock`` are rows the caller writes next (a tag update's own units, #6653): they join
+    the one id-ordered lock pass below, so the caller never takes a lock outside that order.
+
     Returns the number of observations deleted.
     """
-    if not fact_ids:
+    if not fact_ids and not also_lock:
         return 0
 
     fact_uuids = [uuid.UUID(str(fid)) if not isinstance(fid, uuid.UUID) else fid for fid in fact_ids]
 
-    affected_obs = await observations_for_sources(
-        conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, unit_ids=fact_uuids
+    affected_obs = (
+        await observations_for_sources(conn=conn, ops=ops, fq_table=fq_table, bank_id=bank_id, unit_ids=fact_uuids)
+        if fact_uuids
+        else []
     )
     # The rows go for good below; the change history keeps their ids (#5638).
     note_observations_removed({obs.unit_id: list(obs.source_memory_ids) for obs in affected_obs}, fact_uuids)
-    if not affected_obs:
-        return 0
 
     deleted_set = {str(uid) for uid in fact_uuids}
     obs_ids = [uuid.UUID(obs.unit_id) for obs in affected_obs]
@@ -292,8 +296,8 @@ async def delete_stale_observations(
                 seen_remaining.add(src_str)
 
     # Lock every row this sweep touches — the outgoing facts, the observations and their
-    # surviving co-sources, which belong to OTHER documents — in one id order before writing
-    # any of them. Two sweeps over a shared observation otherwise each hold rows the other
+    # surviving co-sources, which belong to OTHER documents, plus the caller's `also_lock`
+    # rows — in one id order before writing any of them. Two sweeps over a shared observation otherwise each hold rows the other
     # writes next and deadlock (#4251). The engine's delete, edit and invalidate paths, which
     # write their facts first, therefore also sweep before that write, so their locks are
     # taken in this order too.
@@ -303,12 +307,19 @@ async def delete_stale_observations(
     # next enqueues, forming a cross-table deadlock. NO KEY UPDATE still excludes
     # concurrent sweeps and consolidation's FOR SHARE, but lets those FK guards
     # finish; actual DELETEs acquire the stronger lock when they remove a row.
-    await conn.fetch(
-        f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2::uuid[]) "
-        "ORDER BY id FOR NO KEY UPDATE",
-        bank_id,
-        sorted({*fact_uuids, *obs_ids, *remaining_source_ids}),
-    )
+    # In sorted groups of 1,000, each above the one before, so the order holds across them:
+    # Oracle expands `= ANY` into an IN list, which caps at 1,000 (ORA-01795), and a tag
+    # update's own units are every unit of the document.
+    to_lock = sorted({*fact_uuids, *also_lock, *obs_ids, *remaining_source_ids})
+    for start in range(0, len(to_lock), 1000):
+        await conn.fetch(
+            f"SELECT id FROM {fq_table('memory_units')} WHERE bank_id = $1 AND id = ANY($2::uuid[]) "
+            "ORDER BY id FOR NO KEY UPDATE",
+            bank_id,
+            to_lock[start : start + 1000],
+        )
+    if not obs_ids:
+        return 0
 
     await conn.execute(
         f"DELETE FROM {fq_table('memory_units')} WHERE id = ANY($1::uuid[])",

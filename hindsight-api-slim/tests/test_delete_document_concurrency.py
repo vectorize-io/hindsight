@@ -1,4 +1,4 @@
-"""Schedule real SQL interleavings through the engine's delete methods (#4251).
+"""Schedule real SQL interleavings through the engine's delete and tag-update methods (#4251).
 
 The LLM cannot prescribe exact co-source IDs or transaction interleavings, so seed
 that internal state directly. Only authentication and post-commit background work
@@ -520,3 +520,133 @@ async def test_document_delete_redoes_its_transaction_after_losing_a_deadlock(de
     result = await engine.delete_document("a", race.banks[0], request_context=request_context)
     assert result == {"document_deleted": 1, "memory_units_deleted": 1}
     assert await engine.get_document("a", race.banks[0], request_context=request_context) is None
+
+
+def hold_retag_after_its_own_units(
+    monkeypatch: pytest.MonkeyPatch, bank: str, document_id: str, paused: asyncio.Event, release: asyncio.Event
+) -> None:
+    """Pause a tag update of ``document_id`` once it has written its own units, before the observations."""
+    execute = PostgresConnection.execute
+
+    async def pause_after_own_units(conn, query, *args, **kwargs):
+        result = await execute(conn, query, *args, **kwargs)
+        if "SET tags = $1, updated_at = now() WHERE document_id = $2" in query and args[1:] == (document_id, bank):
+            paused.set()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(PostgresConnection, "execute", pause_after_own_units)
+
+
+async def mark_sources_consolidated(race: DeleteRace, bank: str) -> None:
+    # The fixture's facts were never stamped; a retag's requeue is only observable on ones that were.
+    await race.setup.execute(
+        "UPDATE memory_units SET consolidated_at = now() WHERE bank_id=$1 AND fact_type='world'", bank
+    )
+
+
+async def test_tag_updates_of_documents_sharing_an_observation_both_complete(
+    delete_race: DeleteRace, request_context: RequestContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Catches the retag deadlock (#6653): each tag update wrote its own document's units and then
+    # reached for the shared observation and the other document's unit, so two of them held
+    # what the other wrote next and Postgres killed one with "deadlock detected".
+    race = delete_race
+    first, second = race.engines
+    bank = race.banks[0]
+    await mark_sources_consolidated(race, bank)
+    paused, release = asyncio.Event(), asyncio.Event()
+    hold_retag_after_its_own_units(monkeypatch, bank, "a", paused, release)
+    tasks = [asyncio.create_task(first.update_document("a", bank, tags=["team-a"], request_context=request_context))]
+    try:
+        await asyncio.wait_for(paused.wait(), STEP_TIMEOUT)
+        tasks.append(
+            asyncio.create_task(second.update_document("b", bank, tags=["team-b"], request_context=request_context))
+        )
+        await wait_for_lock(race)
+    finally:
+        release.set()
+        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 20)
+    assert results == [True, True], [getattr(r, "detail", r) for r in results]
+    units = await first.list_memory_units(bank, request_context=request_context)
+    assert {(u["document_id"], u["fact_type"], tuple(u["tags"])) for u in units["items"]} == {
+        ("a", "world", ("team-a",)),
+        ("b", "world", ("team-b",)),
+    }
+    pending = await first.list_memory_units(bank, consolidation_state="pending", request_context=request_context)
+    assert {u["document_id"] for u in pending["items"]} == {"a", "b"}
+
+
+async def test_tag_update_and_delete_of_documents_sharing_an_observation_both_complete(
+    delete_race: DeleteRace, request_context: RequestContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Catches the same cycle against a document delete: the delete's sweep locks the shared
+    # rows in id order, and a tag update holding its own unit while reaching for the rest
+    # deadlocked with it.
+    race = delete_race
+    first, second = race.engines
+    bank = race.banks[0]
+    await mark_sources_consolidated(race, bank)
+    # The sweep takes its locks in id order, so it only holds something the tag update needs
+    # when the retagged document's unit is not the first id. Which document that is depends on
+    # the fixture's random ids, an internal precondition the public API cannot arrange.
+    by_id = await race.setup.fetch(
+        "SELECT document_id FROM memory_units WHERE bank_id=$1 AND fact_type='world' ORDER BY id", bank
+    )
+    deleted, retagged = (row["document_id"] for row in by_id)
+    # Postgres aborts whichever side's deadlock check fires first. Released at once, that is the
+    # delete, which redoes its transaction and returns as if nothing happened (#6283); a delete
+    # that waited longer than deadlock_timeout leaves the tag update to fail instead. Record the
+    # delete's lost deadlocks so the cycle fails this test whichever side pays for it.
+    lost: list[asyncpg.DeadlockDetectedError] = []
+    sweep = second._delete_stale_observations_for_memories
+
+    async def record_lost_deadlock(conn, bank_id, fact_ids):
+        try:
+            return await sweep(conn, bank_id, fact_ids)
+        except asyncpg.DeadlockDetectedError as e:
+            lost.append(e)
+            raise
+
+    second._delete_stale_observations_for_memories = record_lost_deadlock
+    paused, release = asyncio.Event(), asyncio.Event()
+    hold_retag_after_its_own_units(monkeypatch, bank, retagged, paused, release)
+    tasks = [asyncio.create_task(first.update_document(retagged, bank, tags=["team"], request_context=request_context))]
+    try:
+        await asyncio.wait_for(paused.wait(), STEP_TIMEOUT)
+        tasks.append(asyncio.create_task(second.delete_document(deleted, bank, request_context=request_context)))
+        await wait_for_lock(race)
+    finally:
+        release.set()
+        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 20)
+    assert [e.detail for e in lost] == []
+    assert results == [True, {"document_deleted": 1, "memory_units_deleted": 1}], [
+        getattr(r, "detail", r) for r in results
+    ]
+    assert await first.get_document(deleted, bank, request_context=request_context) is None
+    units = await first.list_memory_units(bank, request_context=request_context)
+    assert [(u["document_id"], u["fact_type"], u["tags"]) for u in units["items"]] == [(retagged, "world", ["team"])]
+    pending = await first.list_memory_units(bank, consolidation_state="pending", request_context=request_context)
+    assert [u["document_id"] for u in pending["items"]] == [retagged]
+
+
+async def test_tag_update_drops_the_deleted_observations_history(
+    delete_race: DeleteRace, request_context: RequestContext
+) -> None:
+    # Catches the tag update's own copy of the observation sweep (#6653): it deleted the
+    # observation but left its history rows, which no longer cascade from memory_units.
+    race = delete_race
+    first = race.engines[0]
+    bank = race.banks[0]
+    obs_id = await race.setup.fetchval("SELECT id FROM memory_units WHERE bank_id=$1 AND fact_type='observation'", bank)
+    await race.setup.execute(
+        "INSERT INTO observation_history (observation_id, bank_id, content, changed_at) "
+        "VALUES ($1, $2, '{}'::jsonb, now())",
+        obs_id,
+        bank,
+    )
+    assert await first.update_document("a", bank, tags=["team-a"], request_context=request_context) is True
+    units = await first.list_memory_units(bank, request_context=request_context)
+    assert [u["fact_type"] for u in units["items"]] == ["world", "world"]
+    # Raw SQL: the engine's history read needs the observation itself, which is gone by now.
+    assert await race.setup.fetchval("SELECT count(*) FROM observation_history WHERE observation_id=$1", obs_id) == 0
