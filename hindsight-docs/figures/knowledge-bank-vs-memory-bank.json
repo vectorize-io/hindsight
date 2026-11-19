@@ -1,0 +1,635 @@
+{
+  "title": "Memory Banks and Knowledge Banks",
+  "speed": 2400,
+  "elements": [
+    {
+      "id": "chat",
+      "type": "rectangle",
+      "width": 230,
+      "minCardHeight": 120,
+      "content": [
+        {
+          "type": "title",
+          "text": "Conversations"
+        },
+        {
+          "type": "subtitle",
+          "text": "chats · notes · events"
+        }
+      ]
+    },
+    {
+      "id": "retain",
+      "type": "rectangle",
+      "width": 250,
+      "minCardHeight": 120,
+      "content": [
+        {
+          "type": "title",
+          "text": "Retain"
+        },
+        {
+          "type": "subtitle",
+          "text": "an LLM pulls out facts"
+        }
+      ]
+    },
+    {
+      "id": "mbank",
+      "type": "cylinder",
+      "width": 270,
+      "minCardHeight": 120,
+      "content": [
+        {
+          "type": "title",
+          "text": "Memory Bank"
+        },
+        {
+          "type": "subtitle",
+          "text": "what the bank learned"
+        }
+      ]
+    },
+    {
+      "id": "files",
+      "type": "rectangle",
+      "width": 230,
+      "minCardHeight": 120,
+      "content": [
+        {
+          "type": "title",
+          "text": "Files"
+        },
+        {
+          "type": "subtitle",
+          "text": "PDF · audio · video · text"
+        }
+      ]
+    },
+    {
+      "id": "ingest",
+      "type": "rectangle",
+      "width": 250,
+      "minCardHeight": 120,
+      "content": [
+        {
+          "type": "title",
+          "text": "Ingest"
+        },
+        {
+          "type": "subtitle",
+          "text": "split + embed, no LLM"
+        }
+      ]
+    },
+    {
+      "id": "kbank",
+      "type": "cylinder",
+      "width": 270,
+      "minCardHeight": 120,
+      "content": [
+        {
+          "type": "title",
+          "text": "Knowledge Bank"
+        },
+        {
+          "type": "subtitle",
+          "text": "the files, word for word"
+        }
+      ]
+    },
+    {
+      "id": "lanes",
+      "type": "group",
+      "children": [
+        "chat",
+        "retain",
+        "mbank",
+        "files",
+        "ingest",
+        "kbank"
+      ],
+      "layout": {
+        "direction": "grid",
+        "columns": 3,
+        "gap": 56,
+        "align": "center"
+      }
+    },
+    {
+      "id": "reflect",
+      "type": "rectangle",
+      "width": 300,
+      "minCardHeight": 200,
+      "content": [
+        {
+          "type": "title",
+          "text": "Reflect"
+        },
+        {
+          "type": "subtitle",
+          "text": "reads both, documents win"
+        }
+      ]
+    },
+    {
+      "id": "all",
+      "type": "group",
+      "children": [
+        "lanes",
+        "reflect"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 90,
+        "align": "center"
+      }
+    },
+    {
+      "id": "a-retain",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "chat"
+      },
+      "end": {
+        "id": "retain"
+      },
+      "label": {
+        "text": "retain"
+      }
+    },
+    {
+      "id": "a-facts",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "retain"
+      },
+      "end": {
+        "id": "mbank"
+      },
+      "label": {
+        "text": "facts"
+      }
+    },
+    {
+      "id": "a-ingest",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "files"
+      },
+      "end": {
+        "id": "ingest"
+      },
+      "label": {
+        "text": "ingest"
+      }
+    },
+    {
+      "id": "a-pass",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "ingest"
+      },
+      "end": {
+        "id": "kbank"
+      },
+      "label": {
+        "text": "passages"
+      }
+    },
+    {
+      "id": "a-mem",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "mbank"
+      },
+      "end": {
+        "id": "reflect"
+      },
+      "label": {
+        "text": "memories"
+      },
+      "labelAt": 0.4
+    },
+    {
+      "id": "a-docs",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "kbank"
+      },
+      "end": {
+        "id": "reflect"
+      },
+      "label": {
+        "text": "documents"
+      },
+      "labelAt": 0.6
+    }
+  ],
+  "scenes": [
+    {
+      "label": "each on its own",
+      "beats": [
+        {
+          "edit": {
+            "remove": [
+              "reflect"
+            ],
+            "add": [
+              {
+                "id": "recall",
+                "type": "rectangle",
+                "width": 300,
+                "minCardHeight": 120,
+                "content": [
+                  {
+                    "type": "title",
+                    "text": "Recall"
+                  },
+                  {
+                    "type": "subtitle",
+                    "text": "what the bank learned"
+                  }
+                ]
+              },
+              {
+                "id": "search",
+                "type": "rectangle",
+                "width": 300,
+                "minCardHeight": 120,
+                "content": [
+                  {
+                    "type": "title",
+                    "text": "Search"
+                  },
+                  {
+                    "type": "subtitle",
+                    "text": "the exact page or clip"
+                  }
+                ]
+              },
+              {
+                "id": "a-recall",
+                "type": "arrow",
+                "route": "curved",
+                "start": {
+                  "id": "mbank"
+                },
+                "end": {
+                  "id": "recall"
+                },
+                "label": {
+                  "text": "facts"
+                }
+              },
+              {
+                "id": "a-search",
+                "type": "arrow",
+                "route": "curved",
+                "start": {
+                  "id": "kbank"
+                },
+                "end": {
+                  "id": "search"
+                },
+                "label": {
+                  "text": "passages"
+                }
+              }
+            ],
+            "update": [
+              {
+                "id": "lanes",
+                "children": [
+                  "chat",
+                  "retain",
+                  "mbank",
+                  "recall",
+                  "files",
+                  "ingest",
+                  "kbank",
+                  "search"
+                ],
+                "layout": {
+                  "direction": "grid",
+                  "columns": 4,
+                  "gap": 56,
+                  "align": "center"
+                }
+              }
+            ]
+          },
+          "show": {
+            "chat": [
+              {
+                "tag": "Sam",
+                "tone": "gray",
+                "text": "“I'm vegetarian, and I'd rather get emails than calls.”"
+              }
+            ],
+            "files": [
+              {
+                "tag": "PDF",
+                "tone": "blue",
+                "text": "x200-manual.pdf · 40 pages"
+              },
+              {
+                "tag": "MP4",
+                "tone": "blue",
+                "text": "x200-setup.mp4 · 4 min"
+              }
+            ]
+          },
+          "say": "On their own, each bank has its own job. A personal assistant remembers Sam. A help center searches its manuals.",
+          "ms": 3200
+        },
+        {
+          "edges": [
+            {
+              "edge": "a-retain",
+              "data": "the chat"
+            },
+            {
+              "edge": "a-ingest",
+              "data": "2 files"
+            }
+          ],
+          "show": {
+            "retain": [
+              {
+                "tag": "LLM",
+                "tone": "purple",
+                "text": "reads the chat, writes facts"
+              }
+            ],
+            "ingest": [
+              {
+                "text": "PDF → one passage per page",
+                "mark": "✓"
+              },
+              {
+                "text": "video → 30 s clips",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Retain sends the chat to an LLM. Ingest splits the files and embeds the pieces, with no LLM."
+        },
+        {
+          "edges": [
+            {
+              "edge": "a-facts",
+              "data": "2 facts"
+            },
+            {
+              "edge": "a-pass",
+              "data": "passages"
+            }
+          ],
+          "show": {
+            "mbank": [
+              {
+                "tag": "fact",
+                "tone": "blue",
+                "text": "Sam is vegetarian"
+              },
+              {
+                "tag": "fact",
+                "tone": "blue",
+                "text": "Sam prefers email to calls"
+              }
+            ],
+            "kbank": [
+              {
+                "tag": "p.12",
+                "tone": "green",
+                "text": "“Hold the power button for 10 seconds…”"
+              },
+              {
+                "tag": "1:20",
+                "tone": "green",
+                "text": "setup video, the reset step"
+              }
+            ]
+          },
+          "say": "The memory bank keeps what it learned about Sam. The knowledge bank keeps the files word for word.",
+          "ms": 3000
+        },
+        {
+          "show": {
+            "recall": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“book dinner for Sam”"
+              }
+            ],
+            "search": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“how do I reset it?”"
+              }
+            ]
+          },
+          "say": "The assistant recalls what it knows about Sam. The help center searches its files."
+        },
+        {
+          "edges": [
+            {
+              "edge": "a-recall",
+              "data": "2 facts"
+            },
+            {
+              "edge": "a-search",
+              "data": "p.12 · 1:20"
+            }
+          ],
+          "show": {
+            "recall": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“book dinner for Sam”"
+              },
+              {
+                "tag": "fact",
+                "tone": "blue",
+                "text": "Sam is vegetarian"
+              },
+              {
+                "tag": "fact",
+                "tone": "blue",
+                "text": "Sam prefers email to calls"
+              }
+            ],
+            "search": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“how do I reset it?”"
+              },
+              {
+                "tag": "p.12",
+                "tone": "green",
+                "text": "“Hold the power button for 10 seconds…”"
+              },
+              {
+                "tag": "1:20",
+                "tone": "green",
+                "text": "setup video, the reset step"
+              }
+            ]
+          },
+          "light": [
+            "recall",
+            "search"
+          ],
+          "say": "Recall returns facts the bank learned. Search returns the exact page and the second of the video.",
+          "ms": 3800
+        }
+      ]
+    },
+    {
+      "label": "together",
+      "beats": [
+        {
+          "show": {
+            "chat": [
+              {
+                "tag": "user",
+                "tone": "gray",
+                "text": "“I bought the X200 in March. Your rep promised me a 90-day refund.”"
+              }
+            ],
+            "files": [
+              {
+                "tag": "PDF",
+                "tone": "blue",
+                "text": "refund-policy.pdf · 6 pages"
+              }
+            ]
+          },
+          "say": "A support agent needs both: one memory bank per customer, linked to one knowledge bank of policies.",
+          "ms": 3200
+        },
+        {
+          "edges": [
+            {
+              "edge": "a-retain",
+              "data": "the chat"
+            },
+            {
+              "edge": "a-ingest",
+              "data": "1 file"
+            }
+          ],
+          "show": {
+            "retain": [
+              {
+                "tag": "LLM",
+                "tone": "purple",
+                "text": "reads the chat, writes facts"
+              }
+            ],
+            "ingest": [
+              {
+                "text": "PDF → one passage per page",
+                "mark": "✓"
+              }
+            ]
+          }
+        },
+        {
+          "edges": [
+            {
+              "edge": "a-facts",
+              "data": "2 facts"
+            },
+            {
+              "edge": "a-pass",
+              "data": "passages"
+            }
+          ],
+          "show": {
+            "mbank": [
+              {
+                "tag": "fact",
+                "tone": "blue",
+                "text": "User bought an X200 in March 2026"
+              },
+              {
+                "tag": "fact",
+                "tone": "blue",
+                "text": "User says a rep promised a 90-day refund"
+              }
+            ],
+            "kbank": [
+              {
+                "tag": "p.2",
+                "tone": "green",
+                "text": "“Refunds are accepted within 30 days of purchase.”"
+              }
+            ]
+          },
+          "say": "The memory bank keeps what the customer said, true or not. The knowledge bank keeps the policy as written.",
+          "ms": 3400
+        },
+        {
+          "show": {
+            "reflect": [
+              {
+                "tag": "asks",
+                "tone": "gray",
+                "text": "“Can I still get my refund?”"
+              }
+            ]
+          },
+          "say": "The customer asks. Reflect reads both banks."
+        },
+        {
+          "edges": [
+            {
+              "edge": "a-mem",
+              "data": "bought in March · 90-day claim"
+            },
+            {
+              "edge": "a-docs",
+              "data": "policy p.2 · 30 days"
+            }
+          ],
+          "say": "Memories bring the customer's context. The documents bring the rules.",
+          "ms": 3000
+        },
+        {
+          "show": {
+            "reflect": [
+              {
+                "tag": "asks",
+                "tone": "gray",
+                "text": "“Can I still get my refund?”"
+              },
+              {
+                "tag": "answer",
+                "tone": "green",
+                "text": "Your X200 was bought in March, past the 30-day window in the refund policy (p.2)."
+              }
+            ]
+          },
+          "light": [
+            "reflect",
+            "kbank"
+          ],
+          "say": "When they disagree, the document wins. The customer can't talk the agent out of the policy.",
+          "ms": 3800
+        }
+      ]
+    }
+  ]
+}

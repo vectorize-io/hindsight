@@ -555,13 +555,10 @@ def _require_config_writes() -> None:
 
 
 def build_router(get_request_context: Callable[..., RequestContext]) -> APIRouter:
-    # Out of the OpenAPI spec while knowledge banks are a hidden feature: no generated client,
-    # CLI command or API reference page names them. Back in the spec at launch.
     router = APIRouter(
         prefix=PREFIX,
         tags=["Knowledge Banks"],
         dependencies=[Depends(_require_enabled)],
-        include_in_schema=False,
     )
 
     def service(request: Request) -> KnowledgeService:

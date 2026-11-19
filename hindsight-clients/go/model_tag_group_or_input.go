@@ -21,7 +21,7 @@ var _ MappedNullable = &TagGroupOrInput{}
 
 // TagGroupOrInput Compound OR group: at least one child filter must match.
 type TagGroupOrInput struct {
-	Or []MentalModelTriggerInputTagGroupsInner `json:"or"`
+	Or []KnowledgeSearchRequestTagGroupsInner `json:"or"`
 }
 
 type _TagGroupOrInput TagGroupOrInput
@@ -30,7 +30,7 @@ type _TagGroupOrInput TagGroupOrInput
 // This constructor will assign default values to properties that have it defined,
 // and makes sure properties required by API are set, but the set of arguments
 // will change when the set of required properties is changed
-func NewTagGroupOrInput(or []MentalModelTriggerInputTagGroupsInner) *TagGroupOrInput {
+func NewTagGroupOrInput(or []KnowledgeSearchRequestTagGroupsInner) *TagGroupOrInput {
 	this := TagGroupOrInput{}
 	this.Or = or
 	return &this
@@ -45,9 +45,9 @@ func NewTagGroupOrInputWithDefaults() *TagGroupOrInput {
 }
 
 // GetOr returns the Or field value
-func (o *TagGroupOrInput) GetOr() []MentalModelTriggerInputTagGroupsInner {
+func (o *TagGroupOrInput) GetOr() []KnowledgeSearchRequestTagGroupsInner {
 	if o == nil {
-		var ret []MentalModelTriggerInputTagGroupsInner
+		var ret []KnowledgeSearchRequestTagGroupsInner
 		return ret
 	}
 
@@ -56,7 +56,7 @@ func (o *TagGroupOrInput) GetOr() []MentalModelTriggerInputTagGroupsInner {
 
 // GetOrOk returns a tuple with the Or field value
 // and a boolean to check if the value has been set.
-func (o *TagGroupOrInput) GetOrOk() ([]MentalModelTriggerInputTagGroupsInner, bool) {
+func (o *TagGroupOrInput) GetOrOk() ([]KnowledgeSearchRequestTagGroupsInner, bool) {
 	if o == nil {
 		return nil, false
 	}
@@ -64,7 +64,7 @@ func (o *TagGroupOrInput) GetOrOk() ([]MentalModelTriggerInputTagGroupsInner, bo
 }
 
 // SetOr sets field value
-func (o *TagGroupOrInput) SetOr(v []MentalModelTriggerInputTagGroupsInner) {
+func (o *TagGroupOrInput) SetOr(v []KnowledgeSearchRequestTagGroupsInner) {
 	o.Or = v
 }
 

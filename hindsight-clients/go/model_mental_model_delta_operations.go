@@ -20,9 +20,9 @@ var _ MappedNullable = &MentalModelDeltaOperations{}
 // MentalModelDeltaOperations Structured operations a delta refresh emitted against the existing document.
 type MentalModelDeltaOperations struct {
 	// Operations applied to the document, in order.
-	Applied []map[string]interface{} `json:"applied,omitempty"`
+	Applied []*map[string]interface{} `json:"applied,omitempty"`
 	// Operations dropped as invalid, each with a reason.
-	Skipped []map[string]interface{} `json:"skipped,omitempty"`
+	Skipped []*map[string]interface{} `json:"skipped,omitempty"`
 }
 
 // NewMentalModelDeltaOperations instantiates a new MentalModelDeltaOperations object
@@ -43,9 +43,9 @@ func NewMentalModelDeltaOperationsWithDefaults() *MentalModelDeltaOperations {
 }
 
 // GetApplied returns the Applied field value if set, zero value otherwise.
-func (o *MentalModelDeltaOperations) GetApplied() []map[string]interface{} {
+func (o *MentalModelDeltaOperations) GetApplied() []*map[string]interface{} {
 	if o == nil || IsNil(o.Applied) {
-		var ret []map[string]interface{}
+		var ret []*map[string]interface{}
 		return ret
 	}
 	return o.Applied
@@ -53,7 +53,7 @@ func (o *MentalModelDeltaOperations) GetApplied() []map[string]interface{} {
 
 // GetAppliedOk returns a tuple with the Applied field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *MentalModelDeltaOperations) GetAppliedOk() ([]map[string]interface{}, bool) {
+func (o *MentalModelDeltaOperations) GetAppliedOk() ([]*map[string]interface{}, bool) {
 	if o == nil || IsNil(o.Applied) {
 		return nil, false
 	}
@@ -69,15 +69,15 @@ func (o *MentalModelDeltaOperations) HasApplied() bool {
 	return false
 }
 
-// SetApplied gets a reference to the given []map[string]interface{} and assigns it to the Applied field.
-func (o *MentalModelDeltaOperations) SetApplied(v []map[string]interface{}) {
+// SetApplied gets a reference to the given []*map[string]interface{} and assigns it to the Applied field.
+func (o *MentalModelDeltaOperations) SetApplied(v []*map[string]interface{}) {
 	o.Applied = v
 }
 
 // GetSkipped returns the Skipped field value if set, zero value otherwise.
-func (o *MentalModelDeltaOperations) GetSkipped() []map[string]interface{} {
+func (o *MentalModelDeltaOperations) GetSkipped() []*map[string]interface{} {
 	if o == nil || IsNil(o.Skipped) {
-		var ret []map[string]interface{}
+		var ret []*map[string]interface{}
 		return ret
 	}
 	return o.Skipped
@@ -85,7 +85,7 @@ func (o *MentalModelDeltaOperations) GetSkipped() []map[string]interface{} {
 
 // GetSkippedOk returns a tuple with the Skipped field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *MentalModelDeltaOperations) GetSkippedOk() ([]map[string]interface{}, bool) {
+func (o *MentalModelDeltaOperations) GetSkippedOk() ([]*map[string]interface{}, bool) {
 	if o == nil || IsNil(o.Skipped) {
 		return nil, false
 	}
@@ -101,8 +101,8 @@ func (o *MentalModelDeltaOperations) HasSkipped() bool {
 	return false
 }
 
-// SetSkipped gets a reference to the given []map[string]interface{} and assigns it to the Skipped field.
-func (o *MentalModelDeltaOperations) SetSkipped(v []map[string]interface{}) {
+// SetSkipped gets a reference to the given []*map[string]interface{} and assigns it to the Skipped field.
+func (o *MentalModelDeltaOperations) SetSkipped(v []*map[string]interface{}) {
 	o.Skipped = v
 }
 

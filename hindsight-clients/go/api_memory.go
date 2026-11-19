@@ -551,7 +551,7 @@ type ApiGetGraphRequest struct {
 	type_ *string
 	limit *int32
 	q *string
-	tags *[]*string
+	tags *[]string
 	tagsMatch *string
 	documentId *string
 	chunkId *string
@@ -574,7 +574,7 @@ func (r ApiGetGraphRequest) Q(q string) ApiGetGraphRequest {
 	return r
 }
 
-func (r ApiGetGraphRequest) Tags(tags []*string) ApiGetGraphRequest {
+func (r ApiGetGraphRequest) Tags(tags []string) ApiGetGraphRequest {
 	r.tags = &tags
 	return r
 }

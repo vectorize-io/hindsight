@@ -1,0 +1,324 @@
+{
+  "title": "Searching a Knowledge Bank",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "agent",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your AI Agent"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 230
+    },
+    {
+      "id": "find",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Find candidates"
+        },
+        {
+          "type": "subtitle",
+          "text": "meaning · keywords"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 300
+    },
+    {
+      "id": "rerank",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Rerank (optional)"
+        },
+        {
+          "type": "subtitle",
+          "text": "a reranker scores what fits in one request"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 300,
+      "strokeStyle": "dashed"
+    },
+    {
+      "id": "fit",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Fit the budget"
+        },
+        {
+          "type": "subtitle",
+          "text": "best hits with the text around them"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 300
+    },
+    {
+      "id": "work",
+      "type": "group",
+      "children": [
+        "find",
+        "rerank",
+        "fit"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 44,
+        "align": "stretch"
+      },
+      "label": {
+        "title": "Search"
+      }
+    },
+    {
+      "id": "bank",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Knowledge Bank"
+        },
+        {
+          "type": "subtitle",
+          "text": "passages · vectors"
+        }
+      ],
+      "minCardHeight": 88,
+      "width": 210
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "agent",
+        "work",
+        "bank"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 56,
+        "align": "center"
+      }
+    },
+    {
+      "id": "ask",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "agent"
+      },
+      "end": {
+        "id": "find"
+      },
+      "label": {
+        "text": "search"
+      }
+    },
+    {
+      "id": "read",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "find"
+      },
+      "end": {
+        "id": "bank"
+      }
+    },
+    {
+      "id": "pool",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "find"
+      },
+      "end": {
+        "id": "rerank"
+      },
+      "label": {
+        "text": "scored"
+      }
+    },
+    {
+      "id": "reply",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "fit"
+      },
+      "end": {
+        "id": "agent"
+      },
+      "label": {
+        "text": "passages"
+      }
+    },
+    {
+      "id": "judged",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "rerank"
+      },
+      "end": {
+        "id": "fit"
+      },
+      "label": {
+        "text": "reordered"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "search",
+      "beats": [
+        {
+          "edges": {
+            "edge": "ask",
+            "data": "“X200 pump keeps losing pressure”"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "query",
+                "tone": "gray",
+                "text": "“X200 pump keeps losing pressure”"
+              }
+            ]
+          },
+          "say": "A search takes text, an image, a short video, or several together. They become one query."
+        },
+        {
+          "edges": "read",
+          "show": {
+            "find": [
+              {
+                "text": "nearest passages by meaning",
+                "mark": "✓"
+              },
+              {
+                "text": "rare words: “X200”, “pressure”",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Two searches run: one by meaning, one by keywords. Only the query's rarer words count as keywords, in any language."
+        },
+        {
+          "edges": {
+            "edge": "read",
+            "back": true,
+            "data": "candidates"
+          },
+          "show": {
+            "find": [
+              {
+                "tag": "p.31",
+                "tone": "blue",
+                "text": "Troubleshooting: pressure drop"
+              },
+              {
+                "tag": "2:40",
+                "tone": "blue",
+                "text": "walkthrough clip: checking the seal"
+              },
+              {
+                "tag": "p.4",
+                "tone": "gray",
+                "text": "X200 product overview"
+              }
+            ]
+          }
+        },
+        {
+          "edges": {
+            "edge": "pool",
+            "data": "scored candidates"
+          },
+          "show": {
+            "rerank": [
+              {
+                "tag": "p.31",
+                "tone": "blue",
+                "text": "sent with its page around it",
+                "mark": "✓"
+              },
+              {
+                "tag": "p.4",
+                "tone": "gray",
+                "text": "sent as its picture and its text",
+                "mark": "✓"
+              },
+              {
+                "tag": "2:40",
+                "tone": "gray",
+                "text": "a video keeps its place"
+              }
+            ]
+          },
+          "say": "Each candidate is scored from all its vectors, with keyword matches mixed in. With a reranker set, the best go to it in one request: a text hit with the page around it, a page as its picture and its text. Its scores reorder them.",
+          "ms": 3800
+        },
+        {
+          "edges": {
+            "edge": "judged",
+            "data": "reranked"
+          },
+          "show": {
+            "fit": [
+              {
+                "tag": "1",
+                "tone": "green",
+                "text": "p.31 + the passages around it"
+              },
+              {
+                "tag": "2",
+                "tone": "green",
+                "text": "clip 2:30–3:00"
+              },
+              {
+                "tag": "3",
+                "tone": "blue",
+                "text": "p.4"
+              }
+            ]
+          },
+          "say": "The best hits come first, each with the text around it, until max_tokens is full.",
+          "ms": 3000
+        },
+        {
+          "edges": {
+            "edge": "reply",
+            "data": "ranked passages"
+          },
+          "show": {
+            "agent": [
+              {
+                "tag": "1",
+                "tone": "green",
+                "text": "Troubleshooting: pressure drop (p.31)"
+              },
+              {
+                "tag": "2",
+                "tone": "green",
+                "text": "checking the seal (2:30)"
+              }
+            ]
+          },
+          "say": "Results come back best first, each pointing to its page or its second in the original file.",
+          "ms": 3200
+        }
+      ]
+    }
+  ]
+}

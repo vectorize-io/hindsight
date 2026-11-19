@@ -32,7 +32,7 @@ type MentalModelTriggerInput struct {
 	ExcludeMentalModels *bool `json:"exclude_mental_models,omitempty"`
 	ExcludeMentalModelIds []string `json:"exclude_mental_model_ids,omitempty"`
 	TagsMatch NullableString `json:"tags_match,omitempty"`
-	TagGroups []MentalModelTriggerInputTagGroupsInner `json:"tag_groups,omitempty"`
+	TagGroups []KnowledgeSearchRequestTagGroupsInner `json:"tag_groups,omitempty"`
 	IncludeChunks NullableBool `json:"include_chunks,omitempty"`
 	RecallMaxTokens NullableInt32 `json:"recall_max_tokens,omitempty"`
 	RecallChunksMaxTokens NullableInt32 `json:"recall_chunks_max_tokens,omitempty"`
@@ -449,9 +449,9 @@ func (o *MentalModelTriggerInput) UnsetTagsMatch() {
 }
 
 // GetTagGroups returns the TagGroups field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *MentalModelTriggerInput) GetTagGroups() []MentalModelTriggerInputTagGroupsInner {
+func (o *MentalModelTriggerInput) GetTagGroups() []KnowledgeSearchRequestTagGroupsInner {
 	if o == nil {
-		var ret []MentalModelTriggerInputTagGroupsInner
+		var ret []KnowledgeSearchRequestTagGroupsInner
 		return ret
 	}
 	return o.TagGroups
@@ -460,7 +460,7 @@ func (o *MentalModelTriggerInput) GetTagGroups() []MentalModelTriggerInputTagGro
 // GetTagGroupsOk returns a tuple with the TagGroups field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *MentalModelTriggerInput) GetTagGroupsOk() ([]MentalModelTriggerInputTagGroupsInner, bool) {
+func (o *MentalModelTriggerInput) GetTagGroupsOk() ([]KnowledgeSearchRequestTagGroupsInner, bool) {
 	if o == nil || IsNil(o.TagGroups) {
 		return nil, false
 	}
@@ -476,8 +476,8 @@ func (o *MentalModelTriggerInput) HasTagGroups() bool {
 	return false
 }
 
-// SetTagGroups gets a reference to the given []MentalModelTriggerInputTagGroupsInner and assigns it to the TagGroups field.
-func (o *MentalModelTriggerInput) SetTagGroups(v []MentalModelTriggerInputTagGroupsInner) {
+// SetTagGroups gets a reference to the given []KnowledgeSearchRequestTagGroupsInner and assigns it to the TagGroups field.
+func (o *MentalModelTriggerInput) SetTagGroups(v []KnowledgeSearchRequestTagGroupsInner) {
 	o.TagGroups = v
 }
 
