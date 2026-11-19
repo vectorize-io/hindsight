@@ -3042,7 +3042,8 @@ class MemoryEngine(MemoryEngineInterface):
             cross_encoder: Cross-encoder model. If not provided, created from env vars.
             decision_engine_for: The decision model each operation asks, by operation (None for none).
                                 Defaults to decision_model.decision_engine, the shared engine built
-                                from HINDSIGHT_API_DECISION_MODEL_*.
+                                from HINDSIGHT_API_DECISION_MODEL_*. Recall's reranker and consolidation
+                                triage are handed this same callable.
             query_analyzer: Query analyzer implementation. If not provided, uses DateparserQueryAnalyzer.
             pool_min_size: Minimum number of connections in the pool. Defaults to HINDSIGHT_API_DB_POOL_MIN_SIZE.
             pool_max_size: Maximum number of connections in the pool. Defaults to HINDSIGHT_API_DB_POOL_MAX_SIZE.
@@ -3512,9 +3513,12 @@ class MemoryEngine(MemoryEngineInterface):
             _consolidation_base_llm, config, "consolidation_", consolidation_call_defaults
         )
 
-        # Initialize cross-encoder reranker (cached for performance)
-        self._cross_encoder_reranker = CrossEncoderReranker(cross_encoder=cross_encoder)
+        # The engine each operation asks. Set before the reranker so recall is handed this
+        # same callable; with nothing injected it is decision_engine, as before.
         self._decision_engine_for = decision_engine_for or decision_engine
+        self._cross_encoder_reranker = CrossEncoderReranker(
+            cross_encoder=cross_encoder, decision_engine_for=self._decision_engine_for
+        )
         self._reflect_decision_model_unsupported_logged = False
 
         # Page-index writes a create hands off instead of waiting on; held so the loop does not

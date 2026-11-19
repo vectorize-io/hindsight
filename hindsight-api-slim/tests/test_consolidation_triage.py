@@ -276,7 +276,11 @@ async def test_a_batch_whose_llm_call_fails_writes_no_triage_verdict():
     ):
         _, _, failed = await consolidator._process_memory_batch(
             pool=SimpleNamespace(),
-            memory_engine=SimpleNamespace(embeddings=object(), _validator_with_hook=lambda name: None),
+            memory_engine=SimpleNamespace(
+                embeddings=object(),
+                _validator_with_hook=lambda name: None,
+                _decision_engine_for=lambda operation: None,
+            ),
             llm_config=object(),
             bank_id="bank",
             memories=memories,
@@ -287,3 +291,80 @@ async def test_a_batch_whose_llm_call_fails_writes_no_triage_verdict():
 
     assert failed
     store.begin_write_batch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_an_injected_engine_is_the_one_triage_asks():
+    """MemoryEngine(decision_engine_for=) is the engine consolidation triage asks, not the module global."""
+    pytest.importorskip("sentence_transformers", reason="MemoryEngine construction needs the local-ml extra")
+    from hindsight_api import MemoryEngine
+
+    class _Injected:
+        def __init__(self) -> None:
+            self.scopes: list[str] = []
+
+        async def ask(self, state, questions, *, scope, assets=None, headers=None):
+            self.scopes.append(scope)
+            return DecisionResponse.model_validate(
+                {
+                    "answers": {
+                        "relation": {"probabilities": {"chatter": 0.6, "new": 0.4}},
+                        "covers_o0": _yes(False),
+                        "touches_o0": _yes(False),
+                    },
+                    "usage": {"input_tokens": 4},
+                }
+            )
+
+    fake = _Injected()
+    seen: list[str] = []
+
+    def engine_for(operation: str):
+        seen.append(operation)
+        # Truthy for recall so construction does not build a local cross-encoder. Recall is not run.
+        return fake if operation in ("consolidation", "recall") else None
+
+    engine = MemoryEngine(
+        memory_llm_provider="mock",
+        memory_llm_model="mock-model",
+        skip_llm_verification=True,
+        embeddings=object(),
+        decision_engine_for=engine_for,
+    )
+    fact_id, obs = str(uuid.uuid4()), str(uuid.uuid4())
+    memories = [{"id": fact_id, "text": "thanks!", "tags": []}]
+    recall = SimpleNamespace(
+        results=[MemoryFact(id=obs, text="The user prefers dark mode.", fact_type="observation", tags=[])],
+        source_facts={},
+    )
+    llm = AsyncMock(return_value=consolidator._BatchLLMResult())
+    with (
+        patch.object(consolidator, "_find_related_observations", new=AsyncMock(return_value=recall)),
+        patch.object(consolidator, "_consolidate_batch_with_llm", new=llm),
+        patch.object(consolidator, "_effective_scope_limit", return_value=-1),
+        patch.object(consolidator, "_config_for_scope", side_effect=lambda config, _tags: config),
+        patch.object(consolidator, "_dedup_active", return_value=False),
+        patch.object(
+            consolidator, "_live_source_ids", new=AsyncMock(side_effect=lambda _p, _b, ids: set(map(str, ids)))
+        ),
+        patch.object(
+            consolidator.embedding_utils,
+            "generate_embeddings_batch",
+            new=AsyncMock(side_effect=lambda _e, texts, **_k: [[0.0] for _ in texts]),
+        ),
+    ):
+        _, _, failed = await consolidator._process_memory_batch(
+            pool=SimpleNamespace(),
+            memory_engine=engine,
+            llm_config=object(),
+            bank_id="bank",
+            memories=memories,
+            request_context=object(),
+            config=SimpleNamespace(consolidation_use_decision_model=True, observations_mission=""),
+        )
+
+    # The fake's chatter verdict settled the fact, so the LLM was not asked.
+    assert not failed
+    assert seen == ["recall", "consolidation"]
+    assert fake.scopes == ["decision_consolidation_triage"]
+    llm.assert_not_called()

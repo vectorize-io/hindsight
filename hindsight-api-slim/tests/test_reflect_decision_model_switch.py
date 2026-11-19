@@ -17,8 +17,7 @@ from hindsight_api.engine.memories import ReflectFreshness
 from hindsight_api.models import RequestContext
 
 
-@pytest.fixture
-def engine():
+def _make_engine(decision_engine_for=None):
     """A MemoryEngine with everything reflect_async touches before the agent stubbed."""
     pytest.importorskip("sentence_transformers", reason="MemoryEngine construction needs the local-ml extra")
     from hindsight_api import MemoryEngine
@@ -28,6 +27,8 @@ def engine():
         memory_llm_provider="mock",
         memory_llm_model="mock-model",
         skip_llm_verification=True,
+        embeddings=object(),
+        decision_engine_for=decision_engine_for,
     )
     eng._authenticate_tenant = AsyncMock()  # type: ignore[method-assign]
     eng.ensure_bank_profile = AsyncMock(return_value={"name": "Test", "mission": ""})  # type: ignore[method-assign]
@@ -37,6 +38,11 @@ def engine():
     eng.list_directives = AsyncMock(return_value=DirectivePage(items=[], total=0))  # type: ignore[method-assign]
     eng._get_backend = AsyncMock(return_value=SimpleNamespace())  # type: ignore[method-assign]
     return eng
+
+
+@pytest.fixture
+def engine():
+    return _make_engine()
 
 
 def _decision_model_set_up(engine) -> SimpleNamespace:
@@ -78,6 +84,9 @@ async def _orchestrated(engine, monkeypatch, operation_label: str, **switches: b
     )
     sufficient = captured["evidence_is_sufficient_fn"]
     assert (sufficient is None) == (captured["prune_evidence_fn"] is None), "the check and the pruning go together"
+    if sufficient is not None:
+        # Ask it, so a test can tell which engine was handed over, not only that one was.
+        await sufficient("test", "evidence")
     return sufficient is not None
 
 
@@ -90,6 +99,37 @@ async def test_without_a_decision_model_reflect_runs_agent_turns(engine, monkeyp
 async def test_a_set_up_decision_model_orchestrates_reflect(engine, monkeypatch):
     _decision_model_set_up(engine)
     assert await _orchestrated(engine, monkeypatch, "reflect")
+
+
+class _InjectedReflect:
+    """A decision engine whose sufficiency check records that reflect asked it."""
+
+    provider = "typesafe"
+    model = "injected"
+
+    def __init__(self) -> None:
+        self.operations: list[str] = []
+
+    async def evidence_is_sufficient(self, query: str, evidence: str, *, pictures=()) -> bool:
+        self.operations.append("reflect")
+        return True
+
+
+@pytest.mark.asyncio
+async def test_an_injected_engine_is_the_one_reflect_asks(monkeypatch):
+    """MemoryEngine(decision_engine_for=) is the engine reflect asks, not one assigned afterwards."""
+    fake = _InjectedReflect()
+    seen: list[str] = []
+
+    def engine_for(operation: str):
+        seen.append(operation)
+        # Truthy for recall so construction does not build a local cross-encoder. Recall is not run.
+        return fake if operation in ("reflect", "recall") else None
+
+    engine = _make_engine(engine_for)
+    assert await _orchestrated(engine, monkeypatch, "reflect")
+    assert seen == ["recall", "reflect"]
+    assert fake.operations == ["reflect"]
 
 
 @pytest.mark.asyncio

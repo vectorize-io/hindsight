@@ -132,6 +132,32 @@ class TestRanking:
         consolidation = decision_engine("consolidation")
         assert consolidation is not None and consolidation is not reranker._client
 
+    async def test_an_injected_engine_is_the_one_recall_asks(self):
+        """MemoryEngine(decision_engine_for=) is the client the reranker asks, not the module global."""
+        pytest.importorskip("sentence_transformers", reason="MemoryEngine construction needs the local-ml extra")
+        from hindsight_api import MemoryEngine
+
+        client = _Client(keep={"Marta likes sencha": 0.9})
+        seen: list[str] = []
+
+        def engine_for(operation: str):
+            seen.append(operation)
+            return client if operation == "recall" else None
+
+        engine = MemoryEngine(
+            memory_llm_provider="mock",
+            memory_llm_model="mock-model",
+            skip_llm_verification=True,
+            embeddings=object(),
+            decision_engine_for=engine_for,
+        )
+        result = await engine._cross_encoder_reranker.rerank("tea", [_candidate("Marta likes sencha")])
+
+        assert seen == ["recall"]
+        assert client.scopes == ["decision_recall_rerank"]
+        assert engine._cross_encoder_reranker.cross_encoder._client is client
+        assert [row.candidate.retrieval.text for row in result.results] == ["Marta likes sencha"]
+
 
 class TestSharedState:
     """What every candidate shares goes in the question's state once, not onto each."""

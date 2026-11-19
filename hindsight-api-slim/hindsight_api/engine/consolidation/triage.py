@@ -18,10 +18,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from ...config import DecisionModelOperation
 from ..decision_model import DecisionModel, DecisionQuestion, DecisionResponse, decision_engine
 
 if TYPE_CHECKING:
@@ -92,17 +94,22 @@ class TriageResult:
         return fact_id in self.restates or fact_id in self.chatter
 
 
-def triage_model(config: Any) -> DecisionModel | None:
+def triage_model(
+    config: Any,
+    decision_engine_for: Callable[[DecisionModelOperation], DecisionModel | None] | None = None,
+) -> DecisionModel | None:
     """The decision model that triages this bank's facts, or None to send every fact to the LLM.
 
     On whenever the server has a decision model for consolidation (HINDSIGHT_API_DECISION_MODEL_*,
     with HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_* overrides); a bank opts out with
-    ``consolidation_use_decision_model``.
+    ``consolidation_use_decision_model``. ``decision_engine_for`` is the callable the caller was
+    given (MemoryEngine's). Omitted, the shared ``decision_engine`` is used, which is what a
+    caller with nothing injected holds.
     """
     # getattr: callers may pass a partial config (the batch tests pass a bare object).
     if not getattr(config, "consolidation_use_decision_model", False):
         return None
-    return decision_engine("consolidation")
+    return (decision_engine_for or decision_engine)("consolidation")
 
 
 def fact_sentence(fact: dict[str, Any]) -> str:

@@ -896,10 +896,12 @@ def _engine(operation: DecisionModelOperation, setup: DecisionModelConfig) -> De
 def decision_engine(operation: DecisionModelOperation) -> DecisionModel | None:
     """The decision model ``operation`` asks, or None when it has none set up.
 
-    The one place a decision model is built: recall's reranker, consolidation triage, reflect
-    and page refresh each take what this returns as a dependency. Cached per operation and
-    resolved setup (``HINDSIGHT_API_DECISION_MODEL_*`` with the operation's overrides), so an
-    operation gets the same client every time while its setup stays the same.
+    The one place a decision model is built. Recall's reranker, consolidation triage, reflect
+    and page refresh each take a callable of this shape as a dependency
+    (``MemoryEngine(decision_engine_for=)``); this function is that callable when nothing is
+    injected. Cached per operation and resolved setup (``HINDSIGHT_API_DECISION_MODEL_*`` with
+    the operation's overrides), so an operation gets the same client every time while its setup
+    stays the same.
     """
     setup = hindsight_config.get_config().decision_model_config(operation)
     return _engine(operation, setup) if setup is not None else None
