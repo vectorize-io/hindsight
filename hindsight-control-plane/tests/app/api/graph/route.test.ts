@@ -1,6 +1,5 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { gunzipSync } from "node:zlib";
 
 vi.mock("@/lib/hindsight-client", () => ({
   DATAPLANE_URL: "http://dataplane",
@@ -23,20 +22,12 @@ function get(headers: Record<string, string> = {}, signal?: AbortSignal) {
 describe("GET /api/graph", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("gzips the graph when the browser accepts it (#5548)", async () => {
+  // Next compresses route responses itself; a body gzipped here too reached the
+  // browser gzipped twice and every memories tab read "No data available" (#6707).
+  it("leaves compression to Next even when the browser accepts gzip (#6707)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(graph))));
 
     const response = await get({ "accept-encoding": "gzip, deflate, br" });
-
-    expect(response.headers.get("content-encoding")).toBe("gzip");
-    const body = gunzipSync(Buffer.from(await response.arrayBuffer())).toString();
-    expect(JSON.parse(body)).toEqual(graph);
-  });
-
-  it("streams it plain to a client that doesn't ask for gzip", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(graph))));
-
-    const response = await get();
 
     expect(response.headers.get("content-encoding")).toBeNull();
     expect(await response.json()).toEqual(graph);

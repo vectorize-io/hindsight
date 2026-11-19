@@ -56,20 +56,11 @@ export async function GET(request: NextRequest) {
 
     // Stream the body through without parsing it: on a big bank it is several
     // MB, and parsing it only to serialize it again costs the user half a second.
-    // Gzip it on the way when the browser accepts that: graph JSON shrinks
-    // ~13x, which is the difference between usable and not over a VPN (#5548).
-    // `fetch` already decoded the dataplane's own gzip, so this is the only one.
-    const gzip = /\bgzip\b/.test(request.headers.get("accept-encoding") ?? "");
-    const body =
-      gzip && response.body
-        ? response.body.pipeThrough(new CompressionStream("gzip"))
-        : response.body;
-    return new NextResponse(body, {
+    // Next gzips it on the way out when the browser accepts that (graph JSON
+    // shrinks ~13x, #5548); gzipping it here too would send it gzipped twice (#6707).
+    return new NextResponse(response.body, {
       status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        ...(gzip ? { "Content-Encoding": "gzip", Vary: "Accept-Encoding" } : {}),
-      },
+      headers: { "Content-Type": "application/json" },
     });
   } catch (error) {
     // The browser hung up (tab switched); nobody is waiting for an answer.
