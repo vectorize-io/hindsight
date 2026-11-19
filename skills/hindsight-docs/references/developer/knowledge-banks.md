@@ -235,8 +235,8 @@ An ingestion strategy runs your own code on some file types before the knowledge
 
 ```bash
 export HINDSIGHT_API_KB_INGEST_STRATEGIES='{
-  "game-assets": {
-    ".unitypackage": {"extension": "acme.unity:Unpack"},
+  "uploads": {
+    ".zip": {"extension": "acme.archive:Unpack"},
     ".pdf": {"extension": "acme.ocr:OcrPdf", "settings": {"dpi": 300}}
   }
 }'
@@ -249,16 +249,6 @@ For each file, the extension returns either **files**, each ingested as its own 
 ### Your Own Store
 
 Documents and passages live in Postgres by default, in their own tables with a pgvector index. To keep them somewhere else, implement `KnowledgeStore` (`hindsight_api/knowledge/store.py`) and set `HINDSIGHT_API_KB_STORE_EXTENSION=module.path:ClassName`. The bank itself always stays in the `banks` table, so operations, audit and bank deletion work the same.
-
-### Access and Metering
-
-Access to every knowledge bank call goes through the [operation validator](./extensions.md) like the memory bank calls, with its own read and write operations. Three hooks report the work each operation did, so an extension can meter it:
-
-- `on_knowledge_bank_search_complete`: the tokens and number of results returned.
-- `on_knowledge_bank_ingest_complete`: the passages that became searchable, and the documents' content tokens (a text document's tokens; a binary file counts about one token per 5 KB).
-- `on_knowledge_bank_delete_complete`: the passages and content tokens removed.
-
-A hook that fails is logged and ignored: it never fails the operation. Reflect's search of linked banks is checked as the caller, but marked `sub_operation`, so it isn't billed a second time on top of the reflect.
 
 ---
 
