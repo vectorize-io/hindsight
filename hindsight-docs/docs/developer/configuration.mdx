@@ -2772,6 +2772,14 @@ This can also be overridden per bank via the [config API](#hierarchical-configur
 
 When a bank-level `mcp_enabled_tools` is set, tools not in the list return a clear error when invoked (they still appear in the tools list for MCP protocol compatibility).
 
+**MCP server instructions per bank:**
+
+`mcp_server_instructions` is sent to MCP clients in the `initialize` response when they connect to the bank's single-bank endpoint. Set it per bank through the config API:
+
+<CodeSnippet code={configurationSh} section="mcp-server-instructions-per-bank" language="bash" />
+
+See [Per-bank server instructions](./mcp-server.md#per-bank-server-instructions) for how clients use it.
+
 **MCP Authentication:**
 
 By default, the MCP endpoint is open. For production deployments, set `HINDSIGHT_API_MCP_AUTH_TOKEN` to require Bearer token authentication:

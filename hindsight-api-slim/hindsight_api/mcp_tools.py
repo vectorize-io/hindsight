@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, Literal, get_args
 
 from fastmcp import FastMCP
-from fastmcp.server.middleware import Middleware, MiddlewareContext
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from mcp import types as mcp_types
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationInfo, field_validator, model_validator
 
@@ -866,7 +867,11 @@ class BankServerInstructionsMiddleware(Middleware):
         self._memory = memory
         self._config = config
 
-    async def on_initialize(self, context: MiddlewareContext, call_next):
+    async def on_initialize(
+        self,
+        context: MiddlewareContext[mcp_types.InitializeRequest],
+        call_next: CallNext[mcp_types.InitializeRequest, mcp_types.InitializeResult | None],
+    ) -> mcp_types.InitializeResult | None:
         instructions = await self._bank_instructions()
         session = context.fastmcp_context.session if context.fastmcp_context is not None else None
         options = getattr(session, "_init_options", None)

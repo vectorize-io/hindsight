@@ -2767,6 +2767,19 @@ curl -X PATCH http://localhost:8888/v1/default/banks/config-demo-bank/config \
 
 When a bank-level `mcp_enabled_tools` is set, tools not in the list return a clear error when invoked (they still appear in the tools list for MCP protocol compatibility).
 
+**MCP server instructions per bank:**
+
+`mcp_server_instructions` is sent to MCP clients in the `initialize` response when they connect to the bank's single-bank endpoint. Set it per bank through the config API:
+
+```bash
+# Tell every MCP client that connects to this bank how to use it
+curl -X PATCH http://localhost:8888/v1/default/banks/config-demo-bank/config \
+  -H "Content-Type: application/json" \
+  -d '{"updates": {"mcp_server_instructions": "Read the document house-rules before anything else. Save new facts with the tag inbox."}}'
+```
+
+See [Per-bank server instructions](./mcp-server.md#per-bank-server-instructions) for how clients use it.
+
 **MCP Authentication:**
 
 By default, the MCP endpoint is open. For production deployments, set `HINDSIGHT_API_MCP_AUTH_TOKEN` to require Bearer token authentication:

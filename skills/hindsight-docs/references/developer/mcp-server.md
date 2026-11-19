@@ -117,13 +117,7 @@ export HINDSIGHT_API_MCP_INSTRUCTIONS="Use project:<name> tags for project-speci
 
 ### Per-bank server instructions
 
-A bank can carry its own MCP server instructions in its `mcp_server_instructions` config field. They are sent in the `initialize` response to every client that connects to the bank's single-bank endpoint (`/mcp/{bank_id}/`), so a newly connected agent knows how to use the bank without a hand-pasted prompt: which document to read first, which tags to save new facts with, and so on.
-
-```bash
-curl -X PATCH http://localhost:8888/v1/default/banks/my-bank/config \
-  -H "Content-Type: application/json" \
-  -d '{"updates": {"mcp_server_instructions": "Read the document house-rules before anything else. Save new facts with the tag inbox."}}'
-```
+A bank can carry its own MCP server instructions in its `mcp_server_instructions` config field. They are sent in the `initialize` response to every client that connects to the bank's single-bank endpoint (`/mcp/{bank_id}/`), so a newly connected agent knows how to use the bank without a hand-pasted prompt: which document to read first, which tags to save new facts with, and so on. Set it with the [bank config API](./configuration.md#mcp-server) or in the control plane's bank configuration.
 
 - The text is read when a client connects, so a change applies to the next connection.
 - At most 4,000 characters. Set it to `null` to remove it.
