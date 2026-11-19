@@ -17081,29 +17081,28 @@ class MemoryEngine(MemoryEngineInterface):
                 # observation's included (unioned from its sources when written), as export
                 # relies on. So only the names are left to look up: `entity_map_for_units` would
                 # read every observation a second time to recover ids already in hand, which
-                # on a bank with ~16k observations is about half the entity step.
+                # on a bank with ~16k observations is about half the entity step. The map is
+                # built the way recall builds it from ids in hand, in the SQL path's shape.
+                ids_by_unit = {u.unit_id: u.entity_ids for u in units}
                 names = await store.resolve_entity_names(
                     conn=conn,
                     fq_table=fq_table,
                     bank_id=bank_id,
-                    entity_ids=list(dict.fromkeys(e for u in units for e in u.entity_ids)),
+                    entity_ids=list({e for ids in ids_by_unit.values() for e in ids}),
                 )
-                entities_by_unit = {u.unit_id: [names[e] for e in u.entity_ids if e in names] for u in units}
+                entity_map = _entity_map_from_results(ids_by_unit, names)
             else:
                 # SQL stores leave `entity_ids` empty on a scanned row, and an observation
                 # inherits its source memories' entities, which this resolves.
                 entity_map = await store.entity_map_for_units(
                     conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=[u.unit_id for u in units]
                 )
-                entities_by_unit = {
-                    unit_id: [e["canonical_name"] for e in rows] for unit_id, rows in entity_map.items()
-                }
         observations = [
             TreeObservation(
                 id=u.unit_id,
                 text=u.text,
                 proof_count=u.proof_count or 1,
-                entities=entities_by_unit.get(u.unit_id, []),
+                entities=[e["canonical_name"] for e in entity_map.get(u.unit_id, [])],
                 occurred_start=u.occurred_start,
                 occurred_end=u.occurred_end,
                 mentioned_at=u.mentioned_at,
