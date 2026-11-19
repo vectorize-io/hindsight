@@ -2730,3 +2730,52 @@ def test_an_office_converter_that_dies_fails_its_file_and_the_next_gets_a_new_on
     with pytest.raises(media.MediaError, match="converter died"):
         media.read_text(b"PK", "huge.xlsx")
     assert media._OFFICE_POOL is None
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        "Zürich café, ZX-9".encode("utf-16"),  # Notepad's "Unicode", with its BOM
+        "Zürich café, ZX-9".encode("utf-8-sig"),
+        "Zürich café, ZX-9".encode("cp1252"),  # an Excel CSV saved on Windows
+        "Zürich café, ZX-9".encode(),
+    ],
+)
+def test_a_text_file_is_read_in_its_own_encoding(data):
+    assert media.read_text(data, "notes.txt") == "Zürich café, ZX-9"
+
+
+def test_a_utf8_file_with_one_bad_byte_keeps_its_accents():
+    assert (
+        media.read_text("café Zürich ".encode() + b"\xff" + " naïve".encode(), "notes.txt")
+        == "café Zürich \ufffd naïve"
+    )
+
+
+def test_html_quoting_markup_keeps_its_markdown():
+    html = "<html><body><h1>Layout</h1><p>Wrap it in <code>&lt;div&gt;</code> tags.</p></body></html>"
+    assert media.read_text(html.encode(), "page.html").startswith("# Layout")
+
+
+def test_deeply_nested_html_is_read_for_its_text_not_its_tags():
+    html = "<html><body>" + "<div>" * 2000 + "The tide is logged at dawn." + "</div>" * 2000 + "</body></html>"
+    assert media.read_text(html.encode(), "page.html").strip() == "The tide is logged at dawn."
+
+
+def test_a_stream_whose_clock_starts_late_is_cut_from_its_own_start():
+    # An MPEG transport stream's clock can start hours in; windows counted from 0 once found no frame in them.
+    import av
+    import numpy as np
+
+    out = io.BytesIO()
+    with av.open(out, "w", format="mpegts") as dst:
+        a = dst.add_stream("mp2", rate=16000, layout="mono")
+        samples = np.sin(2 * np.pi * 440 * np.arange(60 * 16000) / 16000).astype(np.float32)
+        for start in range(0, samples.size, 1152):  # mp2 frame size
+            frame = av.AudioFrame.from_ndarray(samples[None, start : start + 1152], format="fltp", layout="mono")
+            frame.sample_rate, frame.pts = 16000, 1000 * 16000 + start
+            dst.mux(a.encode(frame))
+        dst.mux(a.encode(None))
+    windows = list(media.split_media(out.getvalue(), "audio", window_seconds=30, overlap_seconds=0, max_seconds=600))
+    assert [d.start_ms for d in windows] == [0, 30000]
+    assert all(media.decode_audio_pcm(d.data or b"").size > 16000 * 25 for d in windows)

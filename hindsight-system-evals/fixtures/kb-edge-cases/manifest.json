@@ -82,6 +82,14 @@
       "expect": "ready"
     },
     {
+      "id": "late-clock",
+      "category": "audio",
+      "file": "audio/late-clock.mpg",
+      "source": "FATE aac/latm_000000001180bc60.mpg",
+      "issue": "An MPEG stream whose clock starts at 57312s: windows counted from 0 held no frame, and reading the empty clip raised FileNotFoundError, retried three times.",
+      "expect": "ready"
+    },
+    {
       "id": "broken-pdf-page",
       "category": "pdf",
       "file": "pdf/broken-page.pdf",
@@ -109,6 +117,36 @@
       "expect": "ready",
       "query": "total population of the United States census profile",
       "text_contains": "277,017,622"
+    },
+    {
+      "id": "utf16-text",
+      "category": "text",
+      "file": "text/utf16.txt",
+      "source": "made here: Notepad's 'Unicode' (UTF-16 with BOM)",
+      "issue": "Read as UTF-8, every other byte was a NUL and the text was unsearchable.",
+      "expect": "ready",
+      "query": "espresso order code ZX-9",
+      "text_contains": "Caffè ristretto"
+    },
+    {
+      "id": "windows-1252-csv",
+      "category": "text",
+      "file": "text/windows-1252.csv",
+      "source": "made here: a CSV as Excel saves it on Windows",
+      "issue": "Read as UTF-8, every accented letter became U+FFFD ('Z�rich').",
+      "expect": "ready",
+      "query": "Zürich café opens at 7",
+      "text_contains": "Zürich,café"
+    },
+    {
+      "id": "deep-html",
+      "category": "text",
+      "file": "text/deep-nesting.html",
+      "source": "made here: one sentence inside 5000 nested divs",
+      "issue": "Past ~500 levels markitdown hands back the markup; 79 passages of <div> were indexed. Read with the stdlib parser now.",
+      "expect": "ready",
+      "query": "lighthouse keeper logs the tide at dawn",
+      "text_contains": "The lighthouse keeper logs the tide at dawn."
     },
     {
       "id": "unsupported-codec",

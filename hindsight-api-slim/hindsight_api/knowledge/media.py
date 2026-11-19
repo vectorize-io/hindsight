@@ -14,6 +14,7 @@ the Docker image, a CI step); PyAV keeps the work in-process and needs nothing o
 
 from __future__ import annotations
 
+import codecs
 import collections
 import contextlib
 import io
@@ -427,10 +428,53 @@ def read_text(source: Source, filename: str | None) -> str:
     ext = Path(filename or "").suffix.lower()
     if ext in _OFFICE_EXTENSIONS:
         try:
-            return _office_text(data, ext)
+            text = _office_text(data, ext)
         except Exception as exc:
             raise MediaError(f"unreadable {ext} file: {exc}") from exc
-    return data.decode("utf-8", errors="replace")
+        # Past ~500 nested elements markitdown's HTML converter gives up and hands back the markup itself, so
+        # tags were indexed as the text. Only when it handed back the input as it was: a page that quotes markup
+        # in a code sample keeps its markdown (headings and tables decide where its passages split).
+        if ext in (".html", ".htm") and text.strip() == (html := decode_text(data)).strip():
+            return _html_text(html)
+        return text
+    return decode_text(data)
+
+
+_BOMS = (
+    (codecs.BOM_UTF32_LE, "utf-32"),  # before UTF-16: its BOM starts with UTF-16 LE's
+    (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF8, "utf-8-sig"),
+    (codecs.BOM_UTF16_LE, "utf-16"),
+    (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+
+def decode_text(data: bytes) -> str:
+    """A text file's characters: by its byte-order mark, else UTF-8, else Windows-1252.
+
+    Read as UTF-8 regardless, a UTF-16 file (Notepad's "Unicode") became every other byte a NUL,
+    and an Excel CSV saved on Windows lost each accented letter ("Z\ufffdrich"). Windows-1252 only
+    when no character decoded as UTF-8 at all: a UTF-8 file with one stray byte loses that byte, not
+    every accent in it to mojibake.
+    """
+    for bom, encoding in _BOMS:
+        if data.startswith(bom):
+            return data.decode(encoding, errors="replace")
+    text = data.decode("utf-8", errors="replace")
+    if "\ufffd" in text and all(c == "\ufffd" for c in text if ord(c) > 0x7F):
+        return data.decode("cp1252", errors="replace")
+    return text
+
+
+def _html_text(html: str) -> str:
+    from html.parser import HTMLParser
+
+    chunks: list[str] = []
+    parser = HTMLParser()
+    parser.handle_data = chunks.append  # type: ignore[method-assign]
+    parser.feed(html)
+    parser.close()
+    return "\n".join(c.strip() for c in chunks if c.strip())
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9(\u201c\"])")
@@ -658,8 +702,8 @@ def _decoded(src: Any, streams: list[Any]) -> Iterator[Any]:
 
 
 @contextlib.contextmanager
-def _seeked(data: Source, start: float) -> Iterator[Any]:
-    """The file opened at ``start`` seconds in.
+def _seeked(data: Source, start: float) -> Iterator[_Opened]:
+    """The file opened at ``start`` seconds in, and where its clock starts.
 
     A file without an index (an AVI, an mp4 starting on a non-key frame) refuses to seek (EPERM), and
     the container it refused gives no more frames; it is opened again and read from the beginning:
@@ -669,14 +713,23 @@ def _seeked(data: Source, start: float) -> Iterator[Any]:
 
     src = _open(data)
     try:
+        # An MPEG stream's clock can start hours in (57312s in one .mpg): windows count from the file's start.
+        offset = (src.start_time or 0) / 1_000_000
         try:
-            src.seek(int(start * 1_000_000), any_frame=False)
+            src.seek(int((start + offset) * 1_000_000), any_frame=False)
         except av.FFmpegError:
             src.close()
             src = _open(data)
-        yield src
+        yield _Opened(src, offset)
     finally:
         src.close()
+
+
+@dataclass(frozen=True)
+class _Opened:
+    container: Any
+    #: Where the file's clock starts, in seconds.
+    offset: float
 
 
 def _encode_window(data: Source, w: Window, out: str, *, video: bool, audio: bool) -> int:
@@ -686,9 +739,10 @@ def _encode_window(data: Source, w: Window, out: str, *, video: bool, audio: boo
     import av
 
     with (
-        _seeked(data, w.start) as src,
+        _seeked(data, w.start) as opened,
         av.open(out, "w", format="mp4", options={"movflags": "+faststart"}) as dst,
     ):
+        src = opened.container
         streams: list[Any] = []
         v_out = a_out = None
         if video:
@@ -716,7 +770,8 @@ def _encode_window(data: Source, w: Window, out: str, *, video: bool, audio: boo
         )
         audio_samples, video_frames, finished = 0, 0, set()
         for frame in _decoded(src, streams):
-            t = frame.time
+            # Relative to the file's start: against windows counted from 0, a late clock put every frame past them.
+            t = None if frame.time is None else frame.time - opened.offset
             if t is None or t < w.start:
                 continue
             if t >= w.end:
