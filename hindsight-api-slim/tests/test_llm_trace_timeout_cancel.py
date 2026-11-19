@@ -93,6 +93,9 @@ class _HangingProvider:
     def supports_attempt_scoped_concurrency(self) -> bool:
         return False
 
+    def caches_marked_prefix(self) -> bool:
+        return False
+
     async def call(self, **_kwargs: Any) -> Any:
         await asyncio.Event().wait()
 

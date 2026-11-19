@@ -99,7 +99,7 @@ def test_native_call_to_an_undeclared_function_is_a_violation() -> None:
     fmt = schema_format(response_schema(TOOLS, LLM_TOOL_CHOICE_REQUIRED))
     reply = native_call_reply(fmt, [{"function": {"name": "browser.open", "arguments": {}}}])
     calls = calls_from_reply(reply, TOOLS, LLM_TOOL_CHOICE_REQUIRED)
-    assert reply_violation(reply, calls, TOOLS) == "`browser.open` is not one of the declared functions"
+    assert reply_violation(reply, calls, TOOLS).startswith("`browser.open` can't be called on this turn; call one of ")
 
 
 def test_only_tool_turns_take_a_native_call() -> None:

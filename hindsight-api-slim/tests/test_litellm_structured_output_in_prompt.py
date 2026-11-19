@@ -111,7 +111,10 @@ async def test_the_schema_goes_in_the_prompt_instead_of_response_format():
     kwargs = captured["kwargs"]
     assert "response_format" not in kwargs and "tools" not in kwargs and "tool_choice" not in kwargs
     system = kwargs["messages"][0]
-    assert system["role"] == "system" and '"facts"' in system["content"]
+    # A Claude model: the system prompt, schema included, is one part marked for the cache.
+    (part,) = system["content"]
+    assert system["role"] == "system" and '"facts"' in part["text"]
+    assert part["cache_control"] == {"type": "ephemeral"}
     assert kwargs["messages"][1:] == _MESSAGES
     assert _MESSAGES == [{"role": "user", "content": "hi"}], "the caller's messages are left alone"
     assert captured["result"] == _Facts(facts=["the sky is blue"])

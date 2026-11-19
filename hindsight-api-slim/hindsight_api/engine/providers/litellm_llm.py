@@ -119,6 +119,19 @@ def _is_retryable(exc: BaseException) -> bool:
     return is_transient_remote_error(exc)
 
 
+def _with_cached_system(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The messages with the system prompt marked for Claude's prompt cache.
+
+    The system prompt (with any prompt-injected schema) is the prefix every call of a scope
+    shares, as ``anthropic_llm`` marks it. Below the model's minimum cacheable length a marker
+    is ignored at no cost. A copy: the list is the caller's.
+    """
+    if not messages or messages[0].get("role") != "system" or not isinstance(messages[0].get("content"), str):
+        return messages
+    system = {"type": "text", "text": messages[0]["content"], "cache_control": {"type": "ephemeral"}}
+    return [{**messages[0], "content": [system]}, *messages[1:]]
+
+
 class LiteLLMLLM(LLMInterface):
     """
     LLM provider using the LiteLLM SDK for universal model support.
@@ -302,6 +315,17 @@ class LiteLLMLLM(LLMInterface):
         """Issue a chat completion. Subclasses override to route via ``litellm.Router``."""
         return await self._litellm.acompletion(**kwargs)
 
+    def caches_marked_prefix(self) -> bool:
+        """A Claude model (Bedrock, Vertex, Anthropic) caches up to a ``cache_control`` part,
+        which LiteLLM turns into the provider's own marker (a Bedrock ``cachePoint``).
+
+        ``HINDSIGHT_API_LLM_LITELLM_PROMPT_CACHE`` overrides the name check both ways: a Claude model
+        behind an ARN or a proxy alias has no "claude" in its name."""
+        override = get_config().llm_litellm_prompt_cache
+        if override is not None:
+            return override
+        return "claude" in self.model.lower()
+
     def _resolve_completion_model(self, response: Any) -> str:
         """
         Return the model name to record in metrics/tracing.
@@ -359,6 +383,9 @@ class LiteLLMLLM(LLMInterface):
                         "strict": strict_schema,
                     },
                 }
+
+        if self.caches_marked_prefix():
+            call_kwargs["messages"] = _with_cached_system(call_kwargs["messages"])
 
         last_exception = None
         # Kept outside the try so the final invalid-JSON log can name it (#5443).
