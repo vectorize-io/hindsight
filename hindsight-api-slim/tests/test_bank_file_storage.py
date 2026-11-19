@@ -1,6 +1,7 @@
 """Bank-scoped file storage: the tenant-scoped key prefix, and what deletes the files under it."""
 
 import uuid
+from urllib.parse import quote
 
 import pytest
 
@@ -255,3 +256,24 @@ async def test_download_endpoint_chunked_streaming_and_gzip(api_client, memory):
     finally:
         await memory._file_storage.delete(key)
         await api_client.delete(f"/v1/default/banks/{bank_id}")
+
+
+@pytest.mark.asyncio
+async def test_download_names_the_archive_after_a_non_ascii_bank(api_client, memory):
+    """A bank id outside Latin-1 still downloads, under its own name (#6668)."""
+    bank_id = f"知识库-{uuid.uuid4().hex[:8]}"
+    response = await api_client.put(f"/v1/default/banks/{quote(bank_id)}", json={})
+    assert response.status_code in (200, 201), response.text
+
+    key = f"{bank_storage_prefix(bank_id)}exports/{uuid.uuid4()}/transfer.zip"
+    try:
+        await memory._file_storage.store(b"zip-bytes", key)
+        resp = await api_client.get(f"/v1/default/files/download/{quote(key)}")
+        assert resp.status_code == 200, resp.text
+        assert resp.content == b"zip-bytes"
+        disposition = resp.headers["content-disposition"]
+        assert disposition.startswith("attachment;")
+        assert f"filename*=UTF-8''{quote(f'{bank_id}-documents.zip')}" in disposition
+    finally:
+        await memory._file_storage.delete(key)
+        await api_client.delete(f"/v1/default/banks/{quote(bank_id)}")

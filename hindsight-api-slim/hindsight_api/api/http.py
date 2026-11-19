@@ -29,6 +29,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, 
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from hindsight_api.api.admission import AdmissionAbandoned, AdmissionRejected, build_controller_from_config
+from hindsight_api.api.content_disposition import content_disposition
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
 from hindsight_api.api.gzip_offload import OffloadingGZipMiddleware
 from hindsight_api.api.observability import HttpObservabilityMiddleware
@@ -9089,7 +9090,7 @@ def _register_routes(app: FastAPI):
             if file_info is None:
                 raise HTTPException(status_code=404, detail="File not found")
 
-            headers = {"Content-Disposition": f'attachment; filename="{bank_id}-documents.zip"'}
+            headers = {"Content-Disposition": content_disposition("attachment", f"{bank_id}-documents.zip")}
             if file_info.size is not None:
                 headers["Content-Length"] = str(file_info.size)
 

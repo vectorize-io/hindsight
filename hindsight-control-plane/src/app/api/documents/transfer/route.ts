@@ -125,7 +125,7 @@ export async function GET(request: NextRequest) {
         "Content-Type": "application/zip",
         "Content-Disposition":
           response.headers.get("content-disposition") ||
-          `attachment; filename="${bankId}-documents.zip"`,
+          `attachment; filename="documents.zip"; filename*=UTF-8''${encodeURIComponent(`${bankId}-documents.zip`)}`,
       },
     });
   } catch (error) {
