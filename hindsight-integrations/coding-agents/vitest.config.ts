@@ -4,6 +4,10 @@ import { join } from "node:path";
 
 export default defineConfig({
   test: {
+    // Many tests spawn real git or write tens of MB; with every file running in parallel a
+    // laptop pushed them past vitest's 5s default, failing a different test each run (#6682).
+    // Tests whose budget is the thing under test use fake timers instead (cline.test.ts).
+    testTimeout: 30_000,
     env: {
       // Unit tests exercise code paths that emit diagnostics; keep them out of the REAL
       // ~/.hindsight/coding-agents-logs so a developer's trail isn't polluted with test noise.

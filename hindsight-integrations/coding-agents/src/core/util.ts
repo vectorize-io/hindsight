@@ -101,13 +101,38 @@ export function nodeBinary(): string {
   return process.versions.bun || process.versions.electron ? "node" : process.execPath;
 }
 
+/**
+ * The Node command written into a HOST's config (hook commands, MCP servers). Plain `node` when one
+ * is on PATH: an absolute path pins one install, and a Homebrew or nvm upgrade deletes it, which
+ * would break every hook. Only when PATH has no `node` (Nix, a version manager that sets PATH in
+ * interactive shells only) is the absolute path of this Node written, since `node` cannot run
+ * there at all (#6557). Windows keeps `node`: its Node installer puts it on the system PATH, and
+ * Antigravity runs hooks there without a shell, where a quoted path breaks (#5913).
+ */
+export function hookNode(
+  opts: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv } = {}
+): string {
+  const platform = opts.platform ?? process.platform;
+  if (platform === "win32" || binOnPath("node", opts)) return "node";
+  return nodeBinary();
+}
+
+/** `hookNode()` for a command STRING run through a shell: quoted only when it has a space. */
+export function hookNodeShell(): string {
+  const node = hookNode();
+  return node.includes(" ") ? `"${node}"` : node;
+}
+
 /** Name ownership alone is insufficient: users can legitimately register another server as
  * `hindsight`. Match the exact script shape this package has emitted under its source, npm, and
  * staged directory names; an incidental "coding-agents" string must not grant ownership. */
 export function isOurMcpEntry(entry: unknown): boolean {
   if (!entry || typeof entry !== "object") return false;
   const candidate = entry as { command?: unknown; args?: unknown };
-  if (candidate.command !== "node" || !Array.isArray(candidate.args)) return false;
+  // `hookNode()` may have written an absolute Node path rather than `node` (#6557).
+  const command = typeof candidate.command === "string" ? candidate.command : "";
+  const bin = command.replaceAll("\\", "/").split("/").at(-1);
+  if ((bin !== "node" && bin !== "node.exe") || !Array.isArray(candidate.args)) return false;
   const script = candidate.args[0];
   if (typeof script !== "string") return false;
   const parts = script.replaceAll("\\", "/").split("/").filter(Boolean);
