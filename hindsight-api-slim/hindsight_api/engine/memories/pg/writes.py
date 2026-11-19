@@ -296,8 +296,8 @@ async def delete_stale_observations(
                 seen_remaining.add(src_str)
 
     # Lock every row this sweep touches — the outgoing facts, the observations and their
-    # surviving co-sources, which belong to OTHER documents — in one id order before writing
-    # any of them. Two sweeps over a shared observation otherwise each hold rows the other
+    # surviving co-sources, which belong to OTHER documents, plus the caller's `also_lock`
+    # rows — in one id order before writing any of them. Two sweeps over a shared observation otherwise each hold rows the other
     # writes next and deadlock (#4251). The engine's delete, edit and invalidate paths, which
     # write their facts first, therefore also sweep before that write, so their locks are
     # taken in this order too.
