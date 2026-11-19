@@ -20,7 +20,7 @@ This guide walks through adding the marketplace, installing the plugin, configur
 
 > **Quick answer**
 >
-> 1. `npx @vectorize-io/hindsight-coding-agents install claude-code`.
+> 1. `npx @vectorize-io/hindsight-coding-agents install grok-build`.
 > 2. Set an LLM provider key for extraction (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`).
 > 3. Run `grok` — the plugin activates automatically.
 > 4. Verify that a later session remembers what an earlier one stored.
@@ -39,7 +39,7 @@ Before you start, make sure you have:
 Grok Build reads Claude Code plugins natively, so installation uses the standard Claude Code commands. Grok Build will discover and activate the plugin automatically.
 
 ```bash
-npx @vectorize-io/hindsight-coding-agents install claude-code
+npx @vectorize-io/hindsight-coding-agents install grok-build
 ```
 
 The `hindsight-memory` plugin is the same one that powers Claude Code — all features, configuration options, and knowledge tools are fully available in Grok Build.
