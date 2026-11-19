@@ -385,8 +385,8 @@ _OFFICE_POOL_LOCK = threading.Lock()
 
 
 def _first_to_kill() -> None:
-    """In the worker: when memory runs out, the kernel kills this process, not the server it works for (it
-    picked the server once, a 2.5 GB process over a 3 GB worker). Linux only; anywhere else nothing to do."""
+    """In the worker: when memory runs out, the kernel kills this process, not the server it works for (in a
+    6 GB container it once killed the server while a spreadsheet converted). Linux only; elsewhere a no-op."""
     with contextlib.suppress(OSError):
         Path("/proc/self/oom_score_adj").write_text("1000")
 
