@@ -744,7 +744,9 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
             opts = parsed.files[i] if parsed.files else KnowledgeIngestFileOptions()
             items.append(
                 IngestItem(
-                    data=await upload.read(),
+                    # Not read: Starlette spooled it to disk, and the service reads it from there in pieces.
+                    data=b"",
+                    file=upload.file,
                     filename=upload.filename,
                     content_type=_content_type(upload),
                     document_id=opts.document_id,

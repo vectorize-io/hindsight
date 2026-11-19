@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -725,18 +725,19 @@ class PostgresKnowledgeStore(KnowledgeStore):
             if keyword_index:
                 columns += ", search_vector"
                 values += ", to_tsvector('simple', coalesce($5, ''))"
-            await conn.executemany(f"INSERT INTO {table} ({columns}) VALUES ({values})", rows)
+            for chunk in _chunks(rows):
+                await conn.executemany(f"INSERT INTO {table} ({columns}) VALUES ({values})", chunk)
         extras = [
             (bank_id, i.document_id, p.index, v.role, v.n, v.embedding)
             for i in items
             for p in i.passages
             for v in p.extra_vectors
         ]
-        if extras:
+        for chunk in _chunks(extras):
             await conn.executemany(
                 f"INSERT INTO {vectors_table} (bank_id, document_id, idx, role, n, embedding) "
                 "VALUES ($1, $2, $3, $4, $5, $6::real[]::vector)",
-                extras,
+                chunk,
             )
 
     async def stage_passages(self, bank_id: str, items: list[PassageStage]) -> list[str]:
@@ -792,8 +793,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 # then whatever is left staged for these documents is dropped.
                 with_staged = [i for i in items if i.staged]
                 moved: list[Any] = []
-                if with_staged:
-                    moved = await conn.fetch(
+                # In windows of passage numbers, each one statement inside the command timeout: moved in
+                # one, a big spreadsheet's thousands (indexed for keywords as they go) ran past it.
+                for lo in range(0, max((i.staged for i in with_staged), default=0), _MOVE_WINDOW):
+                    moved += await conn.fetch(
                         f"""
                         INSERT INTO {table} (bank_id, document_id, idx, modality, text, page, start_ms, end_ms,
                             media_key, embedding, search_vector)
@@ -802,12 +805,14 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         FROM {staged_table} s
                         JOIN unnest($2::text[], $3::int[]) AS u(document_id, staged)
                           ON s.document_id = u.document_id AND s.idx < u.staged
-                        WHERE s.bank_id = $1
+                        WHERE s.bank_id = $1 AND s.idx >= $4 AND s.idx < $5
                         RETURNING document_id, media_key
                         """,
                         bank_id,
                         [i.document_id for i in with_staged],
                         [i.staged for i in with_staged],
+                        lo,
+                        lo + _MOVE_WINDOW,
                     )
                     await conn.execute(
                         f"""
@@ -816,11 +821,13 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         FROM {fq_table("kb_staged_passage_vectors")} v
                         JOIN unnest($2::text[], $3::int[]) AS u(document_id, staged)
                           ON v.document_id = u.document_id AND v.idx < u.staged
-                        WHERE v.bank_id = $1
+                        WHERE v.bank_id = $1 AND v.idx >= $4 AND v.idx < $5
                         """,
                         bank_id,
                         [i.document_id for i in with_staged],
                         [i.staged for i in with_staged],
+                        lo,
+                        lo + _MOVE_WINDOW,
                     )
                 await conn.execute(
                     f"DELETE FROM {staged_table} WHERE bank_id = $1 AND document_id = ANY($2::text[])",
@@ -1400,3 +1407,16 @@ def load_knowledge_store(backend_provider: Any, extension_path: str | None) -> K
         if k.startswith(prefix) and k != "HINDSIGHT_API_KB_STORE_EXTENSION"
     }
     return cls(config)
+
+
+#: Rows per insert. The command timeout (HINDSIGHT_API_DB_COMMAND_TIMEOUT, 60s) bounds one executemany, so a
+#: document's passages went in one call that a 1.6 MB numeric table (thousands of passages) ran past, three
+#: times; in pieces, each is well inside it, and the transaction around them still commits them together.
+_INSERT_CHUNK = 256
+#: Staged passages moved per statement when a version commits (server-side, so more than an insert's chunk).
+_MOVE_WINDOW = 1000
+
+
+def _chunks(rows: list[Any]) -> Iterator[list[Any]]:
+    for start in range(0, len(rows), _INSERT_CHUNK):
+        yield rows[start : start + _INSERT_CHUNK]

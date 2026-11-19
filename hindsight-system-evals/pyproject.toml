@@ -23,6 +23,8 @@ dependencies = [
     # This package creates the run's database and drops it afterwards; the
     # server's own venv is a subprocess away and cannot do the cleanup for us.
     "pg0-embedded>=0.17.0",
+    # The knowledge edge-case eval reads the server's memory and CPU while it ingests.
+    "psutil>=5.9",
 ]
 
 [project.optional-dependencies]

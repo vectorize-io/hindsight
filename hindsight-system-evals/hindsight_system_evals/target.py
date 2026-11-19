@@ -40,6 +40,8 @@ class Target:
     #: Nobody started this server, so nothing here may assume it can be
     #: restarted, read a log off it, or throw its data away.
     is_remote: bool = True
+    #: The server's process, for measuring what it uses (memory, CPU); None when remote.
+    pid: int | None = None
 
     def describe(self) -> str:
         return f"{self.url} ({'remote' if self.is_remote else 'started by this run'})"
@@ -57,6 +59,6 @@ def eval_target(api_url: str | None = None, *, log_path: Path | None = None) -> 
         log_path = Path(tempfile.mkdtemp(prefix="hindsight-eval-server-")) / "server.log"
     server = start_eval_server(log_path=log_path)
     try:
-        yield Target(url=server.url, is_remote=False)
+        yield Target(url=server.url, is_remote=False, pid=server._process.pid)
     finally:
         server.stop()

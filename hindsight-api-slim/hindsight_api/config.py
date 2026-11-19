@@ -1023,6 +1023,8 @@ ENV_KB_RERANKER_QUERY_IMAGES = "HINDSIGHT_API_KB_RERANKER_QUERY_IMAGES"
 ENV_KB_DISABLED_MEDIA_TYPES = "HINDSIGHT_API_KB_DISABLED_MEDIA_TYPES"
 ENV_KB_IMAGE_TOKENS = "HINDSIGHT_API_KB_IMAGE_TOKENS"
 ENV_KB_MAX_FILE_MB = "HINDSIGHT_API_KB_MAX_FILE_MB"
+ENV_KB_MAX_FILE_MB_BY_MEDIA_TYPE = "HINDSIGHT_API_KB_MAX_FILE_MB_BY_MEDIA_TYPE"
+ENV_KB_MAX_IMAGE_MEGAPIXELS = "HINDSIGHT_API_KB_MAX_IMAGE_MEGAPIXELS"
 ENV_KB_MAX_MEDIA_SECONDS = "HINDSIGHT_API_KB_MAX_MEDIA_SECONDS"
 ENV_KB_MAX_PDF_PAGES = "HINDSIGHT_API_KB_MAX_PDF_PAGES"
 ENV_KB_AUDIO_WINDOW_SECONDS = "HINDSIGHT_API_KB_AUDIO_WINDOW_SECONDS"
@@ -1602,6 +1604,23 @@ def _parse_kb_media_types(raw: str | None, env: str = ENV_KB_DISABLED_MEDIA_TYPE
     return names
 
 
+def _parse_kb_size_limits(raw: str | None) -> dict[str, int]:
+    """HINDSIGHT_API_KB_MAX_FILE_MB_BY_MEDIA_TYPE: ``video=2000,image=50`` -> {"video": 2000, "image": 50}."""
+    limits: dict[str, int] = {}
+    for part in (raw or "").split(","):
+        if not part.strip():
+            continue
+        name, _, value = part.partition("=")
+        name = name.strip().lower()
+        if name not in _KB_MEDIA_TYPES or not value.strip().isdigit() or int(value) < 1:
+            raise ValueError(
+                f"{ENV_KB_MAX_FILE_MB_BY_MEDIA_TYPE}: expected <media type>=<MB> pairs with media types among "
+                f"{', '.join(_KB_MEDIA_TYPES)}, got {part.strip()!r}"
+            )
+        limits[name] = int(value)
+    return limits
+
+
 def _parse_reflect_kb_search_budget(raw: str | None) -> str:
     budget = (raw or DEFAULT_REFLECT_KB_SEARCH_BUDGET).strip().lower()
     if budget not in ("low", "mid", "high"):
@@ -2095,6 +2114,9 @@ DEFAULT_KB_RERANKER_MAX_TOKENS = 120_000
 DEFAULT_KB_RERANKER_LOW_TOKENS = 26_000
 DEFAULT_KB_IMAGE_TOKENS = 280  # EmbeddingGemma 2 vision token budget per image (70..1120)
 DEFAULT_KB_MAX_FILE_MB = 500
+# Pillow's own refusal threshold (2 x its 89 MP decompression-bomb warning): a 5 MB PNG can be 30000 x 30000
+# pixels, and decoding it is memory by pixels (3-4 bytes each, twice over while converting), not by file size.
+DEFAULT_KB_MAX_IMAGE_MEGAPIXELS = 178
 DEFAULT_KB_MAX_MEDIA_SECONDS = 7200  # 2h of audio/video per file
 DEFAULT_KB_MAX_PDF_PAGES = 2000
 DEFAULT_KB_AUDIO_WINDOW_SECONDS = 60
@@ -4409,6 +4431,9 @@ class HindsightConfig:
     kb_text_embeddings: "HindsightConfig | None" = None
     kb_image_tokens: int = DEFAULT_KB_IMAGE_TOKENS
     kb_max_file_mb: int = DEFAULT_KB_MAX_FILE_MB
+    #: Per media type, in place of kb_max_file_mb (server-only, like it: a bank cannot raise either).
+    kb_max_file_mb_by_media_type: dict[str, int] = field(default_factory=dict)
+    kb_max_image_megapixels: int = DEFAULT_KB_MAX_IMAGE_MEGAPIXELS
     kb_max_media_seconds: int = DEFAULT_KB_MAX_MEDIA_SECONDS
     kb_max_pdf_pages: int = DEFAULT_KB_MAX_PDF_PAGES
     kb_audio_window_seconds: int = DEFAULT_KB_AUDIO_WINDOW_SECONDS
@@ -5928,6 +5953,8 @@ class HindsightConfig:
             kb_image_tokens=int(os.getenv(ENV_KB_IMAGE_TOKENS, str(DEFAULT_KB_IMAGE_TOKENS))),
             kb_disabled_media_types=_parse_kb_media_types(os.getenv(ENV_KB_DISABLED_MEDIA_TYPES)),
             kb_max_file_mb=int(os.getenv(ENV_KB_MAX_FILE_MB, str(DEFAULT_KB_MAX_FILE_MB))),
+            kb_max_file_mb_by_media_type=_parse_kb_size_limits(os.getenv(ENV_KB_MAX_FILE_MB_BY_MEDIA_TYPE)),
+            kb_max_image_megapixels=int(os.getenv(ENV_KB_MAX_IMAGE_MEGAPIXELS, str(DEFAULT_KB_MAX_IMAGE_MEGAPIXELS))),
             kb_max_media_seconds=int(os.getenv(ENV_KB_MAX_MEDIA_SECONDS, str(DEFAULT_KB_MAX_MEDIA_SECONDS))),
             kb_max_pdf_pages=int(os.getenv(ENV_KB_MAX_PDF_PAGES, str(DEFAULT_KB_MAX_PDF_PAGES))),
             kb_audio_window_seconds=int(os.getenv(ENV_KB_AUDIO_WINDOW_SECONDS, str(DEFAULT_KB_AUDIO_WINDOW_SECONDS))),
