@@ -677,17 +677,25 @@ class MaintenanceLoop:
         from croniter import croniter
 
         now = datetime.now(timezone.utc)
+        # A cron's last fire depends only on the expression, and rows share a handful of
+        # them. Parsing one costs ~0.2 ms of event-loop CPU, so doing it per row stalled
+        # the loop for seconds on a few thousand models (#6667). None = invalid cron.
+        prev_fires: dict[str, datetime | None] = {}
 
         def fired_since(cron: str | None, last: datetime | None, row: Any) -> bool:
             if not cron:
                 return False
-            try:
-                prev_fire = croniter(cron, now).get_prev(datetime)
-            except (ValueError, KeyError) as e:
-                logger.warning(
-                    f"Scheduled mental model refresh: skipping invalid cron {cron!r} for "
-                    f"{row['schema_name']}/{row['mental_model_id']}: {e}"
-                )
+            if cron not in prev_fires:
+                try:
+                    prev_fires[cron] = croniter(cron, now).get_prev(datetime)
+                except (ValueError, KeyError) as e:
+                    prev_fires[cron] = None
+                    logger.warning(
+                        f"Scheduled mental model refresh: skipping invalid cron {cron!r} (first seen on "
+                        f"{row['schema_name']}/{row['mental_model_id']}): {e}"
+                    )
+            prev_fire = prev_fires[cron]
+            if prev_fire is None:
                 return False
             return last is None or prev_fire > last
 

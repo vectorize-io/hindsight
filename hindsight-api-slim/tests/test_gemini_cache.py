@@ -97,6 +97,34 @@ def test_fingerprint_handles_pydantic_schema():
     assert fp_a != fp_b
 
 
+def test_fingerprint_serialises_a_schema_class_once(monkeypatch):
+    """Every chunk of a document fingerprints the same schema class. Serialising it is the
+    costly part and runs on the event loop, so it must happen once per class, not per call
+    (#6667) — while a class of another shape still gets its own key."""
+    from pydantic import BaseModel
+
+    class A(BaseModel):
+        x: int
+
+    class B(BaseModel):
+        x: str
+
+    calls: list[type] = []
+    real = BaseModel.model_json_schema.__func__
+
+    def counting(cls, *args, **kwargs):
+        calls.append(cls)
+        return real(cls, *args, **kwargs)
+
+    monkeypatch.setattr(BaseModel, "model_json_schema", classmethod(counting))
+
+    fps = {GeminiCacheManager.fingerprint("m", f"prompt {i}", A) for i in range(50)}
+    assert len(fps) == 50  # the prompt still feeds the key
+    assert calls == [A]
+    assert GeminiCacheManager.fingerprint("m", "p", A) != GeminiCacheManager.fingerprint("m", "p", B)
+    assert calls == [A, B]
+
+
 # ---- get_or_create lifecycle ---------------------------------------------
 
 
