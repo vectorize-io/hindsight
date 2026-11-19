@@ -2812,3 +2812,14 @@ def test_a_table_of_all_caps_rows_is_cut_into_passages_of_their_size():
     passages = split_into_passages(rows, passage_size=64)
     assert len(passages) > 1 and max(count_tokens(p) for p in passages) <= 64
     assert "\n".join(passages) == rows  # exact slices, in order, nothing lost
+
+
+def test_a_page_whose_first_body_is_empty_is_read_for_its_text():
+    # A Govdocs1 export opens <body> twice, the first time still inside <head>: the parser keeps that empty
+    # body, markitdown converts <body> only, and a page of 1,500 words failed "nothing to search".
+    page = (
+        b'<html><head><title>CBP Today</title><style>p { color: red }</style><body topmargin="0"></head>'
+        b"<body><p>Unified to secure the borders.</p><script>var x = 1;</script></body></html>"
+    )
+    text = media.read_text(page, "page.html")
+    assert "Unified to secure the borders." in text and "color" not in text and "var x" not in text

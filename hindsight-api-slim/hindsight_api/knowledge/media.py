@@ -431,10 +431,44 @@ def read_text(source: Source, filename: str | None) -> str:
     ext = Path(filename or "").suffix.lower()
     if ext in _OFFICE_EXTENSIONS:
         try:
-            return _office_text(data, ext)
+            text = _office_text(data, ext)
         except Exception as exc:
             raise MediaError(f"unreadable {ext} file: {exc}") from exc
+        # markitdown converts the first <body> only: a Govdocs1 export opens <body> twice, the first time
+        # still inside <head> and empty, so a page of 1,500 words came out empty and failed "nothing to
+        # search". Only then is its text read without markup.
+        if ext in (".html", ".htm") and not text.strip():
+            return _html_text(data.decode("utf-8", errors="replace"))
+        return text
     return data.decode("utf-8", errors="replace")
+
+
+def _html_text(html: str) -> str:
+    """The visible text of an HTML page, without scripts and styles (the stdlib parser: no tree to misplace)."""
+    from html.parser import HTMLParser
+
+    class _Text(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.chunks: list[str] = []
+            self._skip = 0
+
+        def handle_starttag(self, tag: str, attrs: Any) -> None:
+            if tag in ("script", "style"):
+                self._skip += 1
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag in ("script", "style") and self._skip:
+                self._skip -= 1
+
+        def handle_data(self, data: str) -> None:
+            if not self._skip and data.strip():
+                self.chunks.append(data.strip())
+
+    parser = _Text()
+    parser.feed(html)
+    parser.close()
+    return "\n".join(parser.chunks)
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9(\u201c\"])")
