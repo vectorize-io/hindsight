@@ -287,6 +287,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
 | `recall_min_scores` | — | Minimum relevance per score field, as a JSON object (e.g. `{"reranker": 0.25}` or `{"semantic": 0.5}`). Applies to both auto-recall and the `hindsight_recall` tool. See the tip below. |
 | `auto_recall` | `true` | Automatically recall memories before each turn |
+| `recall_cron` | `false` | Also auto-recall in scheduled (cron) runs. Off by default: Hermes starts every cron prompt with a fixed notice longer than `recall_max_input_chars`, so the recall would search for that notice instead of the job and inject unrelated memories. The `hindsight_recall` and `hindsight_reflect` tools still work in cron runs. |
 | `recall_sync` | `false` | Recall synchronously against the *current* message each turn (higher relevance, adds recall latency). Default off: recall runs in the background and is injected on the next turn. |
 | `recall_indicator` | `true` | Show a `👁️ Hindsight — recalled N memories` status line when auto-recall injects memory. Turn off for customer-facing agents. |
 
@@ -313,8 +314,9 @@ The lookup stops at the repository root. Only `bank_id` is read.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `auto_retain` | `true` | Automatically retain conversation turns. Sub-agent (`delegate_task`) runs and kanban workers are never auto-retained; their parent session keeps its own turns. |
+| `auto_retain` | `true` | Automatically retain conversation turns. Sub-agent (`delegate_task`) runs are never auto-retained, and kanban workers only with `retain_kanban`; their parent session keeps its own turns. |
 | `retain_cron` | `false` | Also auto-retain scheduled (cron) runs. Off by default, so job output stays out of the user's memory; the `hindsight_retain` tool still works in cron runs. |
+| `retain_kanban` | `false` | Let kanban workers write to memory: auto-retain of their turns, the `hindsight_retain` tool and the copy of built-in memory writes. Off by default, so a worker recalls and reflects on its profile's bank but never writes to it. Turn it on when the workers' runs are the only record of their work. |
 | `retain_async` | `true` | Process retain asynchronously on the Hindsight server |
 | `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |
 | `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories |
