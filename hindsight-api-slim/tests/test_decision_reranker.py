@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 import numpy as np
 import pytest
 
-from hindsight_api.config import DecisionModelConfig
 from hindsight_api.engine import decision_rerank_interface
 from hindsight_api.engine.cross_encoder import CrossEncoderModel
 from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel, DecisionRefusedError
@@ -116,17 +115,22 @@ class TestRanking:
         monkeypatch.setenv("HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER", "none")
         assert not isinstance(CrossEncoderReranker().cross_encoder, DecisionModelReranker)
 
-    def test_from_config(self):
-        config = DecisionModelConfig(
-            provider="typesafe",
-            api_key="k",
-            model="jev-latest",
-            base_url="https://example.test",
-            timeout=5.0,
-            max_concurrent=2,
-            max_request_tokens=12_345,
-        )
-        assert DecisionModelReranker.from_config(config)._client.max_request_tokens == 12_345
+    def test_is_handed_the_shared_engine(self, monkeypatch):
+        """The reranker gets the engine decision_engine("recall") returns, not a client of its own."""
+        from hindsight_api import config as config_module
+        from hindsight_api.engine.decision_model import decision_engine
+
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_PROVIDER", "typesafe")
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_API_KEY", "k")
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS", "12345")
+        monkeypatch.setattr(config_module, "get_config", config_module.HindsightConfig.from_env)
+        reranker = CrossEncoderReranker().cross_encoder
+        assert isinstance(reranker, DecisionModelReranker)
+        assert reranker._client is decision_engine("recall")
+        assert reranker._client.max_request_tokens == 12_345
+        # Same setup, another operation: its own client, since MAX_CONCURRENT caps each operation.
+        consolidation = decision_engine("consolidation")
+        assert consolidation is not None and consolidation is not reranker._client
 
 
 class TestSharedState:

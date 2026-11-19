@@ -6,9 +6,9 @@ order is final: recall applies none of the recency, temporal or proof-count boos
 applies to a cross-encoder's scores.
 
 It replaces the deprecated ``typesafe`` reranker provider (``HINDSIGHT_API_RERANKER_PROVIDER``):
-configure the shared ``HINDSIGHT_API_DECISION_MODEL_*`` settings instead. This one is read by
-``HindsightConfig.decision_model_config("recall")`` and talks to the endpoint through the
-shared :class:`~hindsight_api.engine.decision_model.DecisionModel` client.
+configure the shared ``HINDSIGHT_API_DECISION_MODEL_*`` settings instead. It is handed the
+shared :class:`~hindsight_api.engine.decision_model.DecisionModel` client that
+``decision_engine("recall")`` returns.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ...config import DecisionModelConfig
 from ..cross_encoder import CrossEncoderModel
 from ..decision_model import DecisionModel, DecisionQuestion
 from ..decision_rerank_interface import ALIKE_FROM
@@ -86,11 +85,8 @@ class DecisionModelReranker(CrossEncoderModel):
     traces_calls = False
 
     def __init__(self, client: DecisionModel):
+        # The shared engine (decision_model.decision_engine("recall")), injected.
         self._client = client
-
-    @classmethod
-    def from_config(cls, config: DecisionModelConfig) -> DecisionModelReranker:
-        return cls(DecisionModel.from_config(config))
 
     @property
     def provider_name(self) -> str:

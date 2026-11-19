@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import numpy as np
 
 from ..cross_encoder import RerankTimeoutError, _served_provider
+from ..decision_model import decision_engine
 from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
 from .decision_reranker import DecisionModelReranker, DecisionRerankOptions, rerank_options, rerank_shared_context
 from .types import MergedCandidate, ScoredResult
@@ -334,13 +335,12 @@ class CrossEncoderReranker:
 
             # A decision model set up for recall replaces the configured reranker, which then
             # only ranks the recalls the decision model fails, and only when asked to.
-            config = get_config()
-            decision_model = config.decision_model_config("recall")
-            if decision_model is None:
+            engine = decision_engine("recall")
+            if engine is None:
                 cross_encoder = create_cross_encoder_from_env()
             else:
-                cross_encoder = DecisionModelReranker.from_config(decision_model)
-                if config.recall_decision_model_fallback:
+                cross_encoder = DecisionModelReranker(engine)
+                if get_config().recall_decision_model_fallback:
                     fallback = CrossEncoderReranker(create_cross_encoder_from_env())
         self.cross_encoder = cross_encoder
         self.fallback = fallback

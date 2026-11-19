@@ -93,9 +93,14 @@ async def _run(monkeypatch, facts, candidates, answers, *, mission=""):
 
 def test_triage_runs_whenever_a_decision_model_is_set_up_unless_the_bank_opts_out(monkeypatch):
     setups = {"consolidation": _setup()}
-    monkeypatch.setattr(triage, "get_config", lambda: SimpleNamespace(decision_model_config=lambda op: setups.get(op)))
+    monkeypatch.setattr(
+        decision_model.hindsight_config,
+        "get_config",
+        lambda: SimpleNamespace(decision_model_config=lambda op: setups.get(op)),
+    )
     bank = SimpleNamespace(consolidation_use_decision_model=True)
-    assert triage.triage_model(bank) is not None
+    # The shared engine: the same client every time the setup resolves the same.
+    assert triage.triage_model(bank) is decision_model.decision_engine("consolidation") is not None
     assert triage.triage_model(SimpleNamespace(consolidation_use_decision_model=False)) is None
     setups.clear()
     assert triage.triage_model(bank) is None
