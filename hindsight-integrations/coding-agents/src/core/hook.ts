@@ -237,7 +237,9 @@ export async function buildHookOutput(args: {
   client: HookClient;
   cacheFile: string;
   /** The caller injects the full page preamble on turn 1 (plugin hosts), which already carries
-   *  the roster and tool guide, so the turn-1 roster refresh would repeat it (#5977). */
+   *  the roster and tool guide, so the turn-1 roster refresh would repeat it (#5977). Hook
+   *  harnesses leave it off: some (Grok) never hand the SessionStart text to the model, so the
+   *  turn-1 refresh is their only copy of the guide. */
   preambleOnFirstTurn?: boolean;
 }): Promise<HookOutput> {
   const { harness, prompt, cfg, client, cacheFile } = args;
