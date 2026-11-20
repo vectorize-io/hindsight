@@ -20,7 +20,7 @@ This guide walks through the plugin setup, the key config options, the differenc
 
 > **Quick answer**
 >
-> 1. Add `@vectorize-io/opencode-hindsight` to your OpenCode plugin config.
+> 1. Run `npx @vectorize-io/hindsight-coding-agents install opencode`.
 > 2. Point the plugin at your Hindsight backend.
 > 3. Enable auto-recall and auto-retain.
 > 4. Choose a bank ID strategy, static or dynamic.
