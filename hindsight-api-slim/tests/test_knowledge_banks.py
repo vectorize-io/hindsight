@@ -1119,6 +1119,21 @@ async def test_pieces_of_one_short_document_are_judged_once(api_client, kb, judg
     assert any(text.count("Step") == 6 for text in judge.texts)
 
 
+async def test_a_text_hit_is_judged_alone_under_its_document_title(api_client, kb, judge):
+    # Three clauses of a contract, a 512-token passage each: the reranker is shown the asked clause by
+    # itself (TEXT_JUDGE_TOKENS), not its neighbours, and under the document's title, as it was embedded.
+    clauses = [f"Clause {i}. " + ("The red key is returned. " if i == 1 else "") + "term " * 420 for i in range(3)]
+    item = {"document_id": "supply", "text": "\n\n".join(clauses), "filename": "supply_agreement.txt"}
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [item]})
+    assert r.status_code == 200, r.text
+    assert (await api_client.get(f"{KB}/{kb}")).json()["passage_count"] == 3
+
+    await _search(api_client, kb, query="red key", max_tokens=1_000_000)
+    asked = next(t for t in judge.texts if "red key" in t)
+    assert asked.startswith("Document: supply agreement\n\nClause 1.")
+    assert "Clause 0." not in asked and "Clause 2." not in asked
+
+
 async def test_a_failing_reranker_is_reported_as_itself(api_client, kb, judge, monkeypatch):
     r = await api_client.post(
         f"{KB}/{kb}/ingest",
