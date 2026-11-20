@@ -3089,3 +3089,11 @@ def test_office_files_convert_one_at_a_time(monkeypatch):
     with ThreadPoolExecutor(4) as threads:
         assert list(threads.map(lambda _: media._office_text(b"", ".docx"), range(4))) == ["text"] * 4
     assert most == 1
+
+
+def test_a_worker_converts_every_office_file_with_one_converter():
+    # One MarkItDown per file grew the worker by 90 MB a file (its own file-type model each time), until every
+    # conversion past the memory cap failed: 71 of the cluster sweep's Office files.
+    data = _docx({"word/document.xml": "<w:document W><w:body><w:p><w:r><w:t>Same converter</w:t></w:r></w:p></w:body></w:document>"})  # fmt: skip
+    assert media._markitdown() is media._markitdown()
+    assert all("Same converter" in media._convert_office(data, ".docx") for _ in range(3))
