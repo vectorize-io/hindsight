@@ -136,7 +136,7 @@ Per git repo, using the repo name as the bank by default.
 
 ### Is this similar to other coding-agent integrations?
 
-Yes in spirit. Aider uses read-only context files and chat history instead of a plugin or MCP, but the recall-before / retain-after pattern is the same. Compare the [OpenCode integration](https://hindsight.vectorize.io/docs/integrations/opencode) and [the Claude Code integration](https://hindsight.vectorize.io/docs/integrations/claude-code).
+Yes in spirit. Aider uses read-only context files and chat history instead of a plugin or MCP, but the recall-before / retain-after pattern is the same. Compare the [OpenCode integration](https://hindsight.vectorize.io/sdks/integrations/coding-agents) and [the Claude Code integration](https://hindsight.vectorize.io/sdks/integrations/coding-agents).
 
 ## Next Steps
 

@@ -20,28 +20,26 @@ This guide walks through adding the marketplace, installing the plugin, configur
 
 > **Quick answer**
 >
-> 1. `claude plugin marketplace add vectorize-io/hindsight`.
-> 2. `claude plugin install hindsight-memory`.
-> 3. Set an LLM provider key for extraction (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`).
-> 4. Run `grok` — the plugin activates automatically.
-> 5. Verify that a later session remembers what an earlier one stored.
+> 1. `npx @vectorize-io/hindsight-coding-agents install grok-build`.
+> 2. Set an LLM provider key for extraction (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`).
+> 3. Run `grok` — the plugin activates automatically.
+> 4. Verify that a later session remembers what an earlier one stored.
 
 ## Prerequisites
 
 Before you start, make sure you have:
 
 - Grok Build installed and working (the `grok` command)
-- The `claude` CLI available to add the marketplace and install the plugin
+- Node.js with `npx` available to run the installer
 - An LLM provider key for memory extraction, or a reachable external Hindsight server
 - Optionally, [Hindsight Cloud](https://hindsight.vectorize.io) or a self-hosted server if you don't want the plugin to run Hindsight locally
 
 ## Step 1: Add the marketplace and install the plugin
 
-Grok Build reads Claude Code plugins natively, so installation uses the standard Claude Code commands. Grok Build will discover and activate the plugin automatically.
+Grok Build reads Claude Code plugins natively, so one installer command sets it up. Grok Build will discover and activate the plugin automatically.
 
 ```bash
-claude plugin marketplace add vectorize-io/hindsight
-claude plugin install hindsight-memory
+npx @vectorize-io/hindsight-coding-agents install grok-build
 ```
 
 The `hindsight-memory` plugin is the same one that powers Claude Code — all features, configuration options, and knowledge tools are fully available in Grok Build.
@@ -107,7 +105,7 @@ export HINDSIGHT_BANK_ID=grok_build
 grok
 ```
 
-For the full configuration reference, see the [Claude Code configuration docs](https://hindsight.vectorize.io/sdks/integrations/claude-code#configuration).
+For the full configuration reference, see the [Claude Code configuration docs](https://hindsight.vectorize.io/sdks/integrations/coding-agents#configuration).
 
 ## Verify that memory is working
 

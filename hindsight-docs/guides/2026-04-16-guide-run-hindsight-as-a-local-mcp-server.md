@@ -126,7 +126,7 @@ Typical examples:
 - Windsurf MCP settings
 - Claude Code CLI registration
 
-If you are comparing client patterns, the [Claude Code integration](https://hindsight.vectorize.io/docs/integrations/claude-code) and [Adding Memory to Codex with Hindsight](https://hindsight.vectorize.io/blog/adding-memory-to-codex-with-hindsight) are useful related reads.
+If you are comparing client patterns, the [Claude Code integration](https://hindsight.vectorize.io/sdks/integrations/coding-agents) and [Adding Memory to Codex with Hindsight](https://hindsight.vectorize.io/blog/adding-memory-to-codex-with-hindsight) are useful related reads.
 
 ## Step 4: Verify that the tools are live
 

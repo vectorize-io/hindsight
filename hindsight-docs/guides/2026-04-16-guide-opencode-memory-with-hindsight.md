@@ -20,7 +20,7 @@ This guide walks through the plugin setup, the key config options, the differenc
 
 > **Quick answer**
 >
-> 1. Add `@vectorize-io/opencode-hindsight` to your OpenCode plugin config.
+> 1. Run `npx @vectorize-io/hindsight-coding-agents install opencode`.
 > 2. Point the plugin at your Hindsight backend.
 > 3. Enable auto-recall and auto-retain.
 > 4. Choose a bank ID strategy, static or dynamic.
@@ -191,7 +191,7 @@ Use static for one clear project bank. Use dynamic when the environment spans pr
 
 ### Is this similar to Claude Code or Codex memory?
 
-Yes in the broad sense, but OpenCode uses its own plugin and event model. For related workflows, compare [Adding Memory to Codex with Hindsight](https://hindsight.vectorize.io/blog/adding-memory-to-codex-with-hindsight) and [the Claude Code integration](https://hindsight.vectorize.io/docs/integrations/claude-code).
+Yes in the broad sense, but OpenCode uses its own plugin and event model. For related workflows, compare [Adding Memory to Codex with Hindsight](https://hindsight.vectorize.io/blog/adding-memory-to-codex-with-hindsight) and [the Claude Code integration](https://hindsight.vectorize.io/sdks/integrations/coding-agents).
 
 ## Next Steps
 
