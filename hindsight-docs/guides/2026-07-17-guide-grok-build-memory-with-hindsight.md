@@ -30,13 +30,13 @@ This guide walks through adding the marketplace, installing the plugin, configur
 Before you start, make sure you have:
 
 - Grok Build installed and working (the `grok` command)
-- The `claude` CLI available to add the marketplace and install the plugin
+- Node.js with `npx` available to run the installer
 - An LLM provider key for memory extraction, or a reachable external Hindsight server
 - Optionally, [Hindsight Cloud](https://hindsight.vectorize.io) or a self-hosted server if you don't want the plugin to run Hindsight locally
 
 ## Step 1: Add the marketplace and install the plugin
 
-Grok Build reads Claude Code plugins natively, so installation uses the standard Claude Code commands. Grok Build will discover and activate the plugin automatically.
+Grok Build reads Claude Code plugins natively, so one installer command sets it up. Grok Build will discover and activate the plugin automatically.
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install grok-build
