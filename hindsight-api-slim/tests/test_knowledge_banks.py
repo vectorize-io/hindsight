@@ -3038,3 +3038,27 @@ def test_an_office_file_queued_behind_one_that_kills_the_converter_still_convert
     with ThreadPoolExecutor(1) as threads:
         queued = threads.submit(media._office_text, data, ".docx")
         assert "Queued text" in queued.result(timeout=120)
+
+
+def test_the_memory_guard_kills_the_biggest_worker_only_past_its_share(monkeypatch):
+    # On Kubernetes a container out of memory has every process killed, the server too (memory.oom.group):
+    # the server kills its own biggest worker first.
+    killed: list[int] = []
+    monkeypatch.setattr(media.os, "kill", lambda pid, sig: killed.append(pid))
+    monkeypatch.setattr(media, "_worker_rss", lambda: {101: 1 << 30, 202: 4 << 30, 303: 2 << 30})
+    monkeypatch.setattr(media, "_container_used", lambda: 6 << 30)
+    assert media._guard_once(8 << 30) is None and killed == []  # 75% of 8 GB: under the share
+    monkeypatch.setattr(media, "_container_used", lambda: 7 << 30)
+    assert media._guard_once(8 << 30) == 202 and killed == [202]  # 87.5%: the biggest goes
+    monkeypatch.setattr(media, "_worker_rss", dict)
+    assert media._guard_once(8 << 30) is None  # nothing of ours to kill: the guard leaves the rest alone
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the guard reads /proc")
+def test_the_memory_guard_finds_the_workers_and_only_them():
+    import time
+
+    media._in_pdf_worker(time.sleep, 0)  # a PDF worker is up
+    workers = media._worker_rss()
+    assert workers and all(rss > 10 << 20 for rss in workers.values())
+    assert os.getpid() not in workers
