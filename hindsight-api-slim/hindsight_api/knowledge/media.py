@@ -348,6 +348,18 @@ def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
     # A crash (or a kill) breaks every call in flight on the pool, not only the file's own: once again, alone
     # in a worker of its own, so only the file that crashes it fails (a PDF rendering beside jpx_numcomps.pdf
     # failed with it).
+    try:
+        return _alone(fn, *args, timeout=_PDF_CALL_TIMEOUT)
+    except TimeoutError:
+        raise MediaError(f"rendering this PDF took over {_PDF_CALL_TIMEOUT:.0f}s") from None
+    except BrokenProcessPool as exc:
+        raise MediaError("the PDF renderer crashed on this file") from exc
+
+
+def _alone(fn: Callable[..., _T], *args: Any, timeout: float | None = None) -> _T:
+    """``fn(*args)`` once more, in a worker process of its own, killed after: the retry of a call whose
+    shared worker died, so a crash fails the file that caused it and not the files queued beside it.
+    Raises ``BrokenProcessPool`` if it dies again, ``TimeoutError`` past ``timeout``."""
     alone = ProcessPoolExecutor(
         max_workers=1,
         mp_context=multiprocessing.get_context("spawn"),
@@ -355,11 +367,7 @@ def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
         initargs=(_worker_address_space(),),
     )
     try:
-        return alone.submit(fn, *args).result(timeout=_PDF_CALL_TIMEOUT)
-    except TimeoutError:
-        raise MediaError(f"rendering this PDF took over {_PDF_CALL_TIMEOUT:.0f}s") from None
-    except BrokenProcessPool as exc:
-        raise MediaError("the PDF renderer crashed on this file") from exc
+        return alone.submit(fn, *args).result(timeout=timeout)
     finally:
         _kill(alone)
 
@@ -598,10 +606,16 @@ def _office_text(data: bytes, ext: str) -> str:
         pool = _OFFICE_POOL
     try:
         return pool.submit(_convert_office, data, ext).result()
-    except BrokenProcessPool as exc:
+    except BrokenProcessPool:
         with _OFFICE_POOL_LOCK:
             if _OFFICE_POOL is pool:
                 _OFFICE_POOL = None  # the next file gets a fresh worker
+    # Every file queued on the worker breaks with it, not only the one it died on: the cluster sweep's
+    # 51535.xls (16.7M declared cells) ran the container out of memory, the kernel killed the worker, and a
+    # 9 KB spreadsheet waiting behind it failed too. Once again alone, so only the file that kills it fails.
+    try:
+        return _alone(_convert_office, data, ext)
+    except BrokenProcessPool as exc:
         raise MediaError(f"the {ext} converter died on this file (out of memory?)") from exc
 
 
