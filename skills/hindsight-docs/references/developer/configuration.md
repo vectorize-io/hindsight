@@ -2691,6 +2691,7 @@ Knowledge banks hold documents (PDF, Office, images, audio, video, text) for sea
 - **Pixels** (`HINDSIGHT_API_KB_MAX_IMAGE_MEGAPIXELS`): a small image file that decodes into a huge one.
 - **Length** (`HINDSIGHT_API_KB_MAX_MEDIA_SECONDS`, `HINDSIGHT_API_KB_MAX_PDF_PAGES`): how many passages a long recording or PDF becomes.
 - **Work** (`HINDSIGHT_API_KB_MAX_VIDEO_WORK_SECONDS`): the CPU it takes to cut a video, which depends on its frame size and rate, not its length or size.
+- **Memory** (`HINDSIGHT_API_KB_WORKER_MEMORY_MB`): what converting an Office file or rendering a PDF may hold, whatever the file declares. A PDF call also has 180 s.
 
 A file over a limit fails with the limit's name in its error, and its stored copy is deleted.
 
@@ -2718,6 +2719,7 @@ A file over a limit fails with the limit's name in its error, and its stored cop
 | `HINDSIGHT_API_KB_MAX_FILE_MB` | Largest file accepted. Server-only. A file is never held whole in memory: uploads are read from disk and stored in pieces, and the worker cuts a local copy. | `500` |
 | `HINDSIGHT_API_KB_MAX_FILE_MB_BY_MEDIA_TYPE` | Per media type, in place of `HINDSIGHT_API_KB_MAX_FILE_MB`: `<type>=<MB>` pairs, comma-separated (`document`, `image`, `audio`, `video`, `text`), e.g. `video=2000,image=50,text=100`. A type not listed uses the global limit. Server-only. Set `document` when Office files are accepted: a spreadsheet converts at about 100× its size in memory (a 27 MB `.xls` took 3.2 GB), one at a time per server. | - |
 | `HINDSIGHT_API_KB_MAX_IMAGE_MEGAPIXELS` | Largest image, in megapixels, checked from its header before decoding: decoding costs memory by pixels (about 3–4 bytes each), and a few-MB PNG can declare 30000×30000. Covers HEIC too. Server-only. | `178` |
+| `HINDSIGHT_API_KB_WORKER_MEMORY_MB` | Most memory one worker process converting an Office file or rendering a PDF may take, in MB (its address space; about 0.9 GB of it at rest). Past it that file fails and the server carries on: a 42 KB spreadsheet can declare 16.7 million cells and grow its converter until the container runs out, and on Kubernetes that kills the server with it. `0` sizes it from the machine: half the container's memory limit (or of the RAM) plus 1 GB. Server-only. | `0` |
 | `HINDSIGHT_API_KB_MAX_MEDIA_SECONDS` | Longest audio or video file. *Per bank*. | `7200` |
 | `HINDSIGHT_API_KB_MAX_VIDEO_WORK_SECONDS` | Most work one video may take to cut, in seconds of 1080p 30 fps video: cutting costs CPU by frames and their pixels, not by length or file size, so 4K at 60 fps counts about 3× per second and a file without a seek index (decoded from its start for every passage) far more. Checked from the header before decoding, and counted again while decoding. `0` turns it off. Server-only. | `7200` |
 | `HINDSIGHT_API_KB_MAX_PDF_PAGES` | Most pages in one PDF. *Per bank*. | `2000` |

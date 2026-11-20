@@ -14,23 +14,25 @@ the Docker image, a CI step); PyAV keeps the work in-process and needs nothing o
 
 from __future__ import annotations
 
-import collections
 import contextlib
 import io
 import math
 import multiprocessing
+import os
 import re
 import tempfile
 import threading
 from collections import Counter
-from collections.abc import Iterator
-from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
+from collections.abc import Callable, Iterator
+from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import numpy as np
+
+_T = TypeVar("_T")
 
 PCM_RATE = 16000  # EmbeddingGemma 2 takes mono 16 kHz audio
 
@@ -267,10 +269,6 @@ PDF_TEXT_UNIT_TOKENS = 128
 _PDF_BANDS = ((0.0, 0.5), (0.25, 0.75), (0.5, 1.0))
 
 
-_PDF_LOOKAHEAD = 4
-_PNG_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="kb-png")
-
-
 def _page_png(sharp: Any, page_pixels: int, bands: bool) -> bytes:
     image = sharp.copy() if bands else sharp  # with bands the full-size render is still being cropped
     image.thumbnail((page_pixels, page_pixels))
@@ -283,65 +281,155 @@ def _band_pngs(sharp: Any) -> tuple[bytes, ...]:
     )
 
 
-def split_pdf(data: Source, *, page_pixels: int, max_pages: int, bands: bool = False) -> Iterator[PassageDraft]:
-    """One PNG per page, the longest side rendered at ``page_pixels``."""
+@dataclass(frozen=True)
+class _PdfText:
+    page_count: int
+    #: Each page's own text layer, or None (a scan, or a page that cannot load).
+    texts: list[str | None]
+
+
+@dataclass(frozen=True)
+class _RenderedPage:
+    number: int
+    png: bytes
+    bands: tuple[bytes, ...]
+
+
+#: Pages rendered per call to a PDF worker: few enough to hold, enough to keep the call overhead small.
+_PDF_CHUNK = 8
+#: Processes rendering PDFs at once. Each is single-threaded (pdfium is not thread-safe), so PDFs of
+#: different ingests render in parallel instead of page by page under one process-wide lock.
+_PDF_WORKERS = 2
+_PDF_POOL: ProcessPoolExecutor | None = None
+_PDF_POOL_LOCK = threading.Lock()
+
+
+#: The longest one call to a PDF worker may take (a PDF's page text, or 8 of its pages rendered). pdf.js's
+#: tiling-pattern-tiny-steps*.pdf kept both workers at 100% CPU for over 10 minutes, and every PDF of every
+#: ingest waited behind them.
+_PDF_CALL_TIMEOUT = 180.0
+
+
+def _kill(pool: ProcessPoolExecutor) -> None:
+    """Stop ``pool`` now, its running calls too: ProcessPoolExecutor has no way to cancel a call that has
+    started, so its processes are killed (``_processes``, which it keeps privately)."""
+    for process in list((getattr(pool, "_processes", None) or {}).values()):
+        process.kill()
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
+    """``fn(*args)`` in a PDF worker process. pdfium aborts the process on some files (a JPEG 2000 image in
+    pdf.js's jpx_numcomps.pdf: SIGTRAP), and in the server that took the API down for everyone; in a worker
+    it fails that file, and the next one gets a fresh worker. A call past ``_PDF_CALL_TIMEOUT`` fails its
+    file too, and its worker is killed."""
+    global _PDF_POOL
+    with _PDF_POOL_LOCK:
+        if _PDF_POOL is None:
+            _PDF_POOL = ProcessPoolExecutor(
+                max_workers=_PDF_WORKERS,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_first_to_kill,
+                initargs=(_worker_address_space(),),
+            )
+        pool = _PDF_POOL
+    try:
+        return pool.submit(fn, *args).result(timeout=_PDF_CALL_TIMEOUT)
+    except TimeoutError:
+        with _PDF_POOL_LOCK:
+            if _PDF_POOL is pool:
+                _PDF_POOL = None
+        _kill(pool)  # the calls beside it break and are retried alone, below
+        raise MediaError(f"rendering this PDF took over {_PDF_CALL_TIMEOUT:.0f}s") from None
+    except BrokenProcessPool:
+        with _PDF_POOL_LOCK:
+            if _PDF_POOL is pool:
+                _PDF_POOL = None
+    # A crash (or a kill) breaks every call in flight on the pool, not only the file's own: once again, alone
+    # in a worker of its own, so only the file that crashes it fails (a PDF rendering beside jpx_numcomps.pdf
+    # failed with it).
+    alone = ProcessPoolExecutor(
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=_first_to_kill,
+        initargs=(_worker_address_space(),),
+    )
+    try:
+        return alone.submit(fn, *args).result(timeout=_PDF_CALL_TIMEOUT)
+    except TimeoutError:
+        raise MediaError(f"rendering this PDF took over {_PDF_CALL_TIMEOUT:.0f}s") from None
+    except BrokenProcessPool as exc:
+        raise MediaError("the PDF renderer crashed on this file") from exc
+    finally:
+        _kill(alone)
+
+
+def _pdf_text(data: Source, max_pages: int) -> _PdfText:
+    """In a worker: the page count and every page's text layer."""
     import pypdfium2 as pdfium
 
-    with _PDFIUM_LOCK:
-        try:
-            pdf = pdfium.PdfDocument(data)
-        except Exception as exc:
-            raise MediaError(f"unreadable PDF: {exc}") from exc
-        page_count = len(pdf)
     try:
+        pdf = pdfium.PdfDocument(data)
+    except Exception as exc:
+        raise MediaError(f"unreadable PDF: {exc}") from None  # pdfium's exceptions carry ctypes state
+    try:
+        page_count = len(pdf)
         if page_count > max_pages:
             raise MediaError(f"PDF has {page_count} pages; the limit is {max_pages}")
-        # The pages' own text layers, when they have one (not OCR: a scan has none). A page is
-        # scored on it too (whole page and 128-token units), and it is what a reader gets back.
-        texts = [_page_text(pdf, number) for number in range(page_count)]
-        embed_texts = strip_repeated_lines(texts)
-        # Rendering goes through pdfium, one page at a time under its lock; encoding the PNGs does not
-        # (Pillow lets go of the GIL), so it runs on a few threads while the next pages render. Page by
-        # page in order it was half of a PDF's ingest; up to _PDF_LOOKAHEAD pages are held at once.
-        pending: collections.deque[tuple[int, Future[bytes], Future[tuple[bytes, ...]] | None]] = collections.deque()
-        number, rendered = 0, 0
-        while number < page_count or pending:
-            while number < page_count and len(pending) < _PDF_LOOKAHEAD:
-                with _PDFIUM_LOCK:
-                    try:
-                        page = pdf[number]
-                        width, height = page.get_size()
-                        scale = (max(page_pixels, PDF_BAND_PIXELS) if bands else page_pixels) / max(width, height, 1)
-                        sharp = page.render(scale=scale).to_pil().convert("RGB")
-                        page.close()
-                    except Exception:  # noqa: BLE001 - see below
-                        # A damaged page (a broken page tree: "Failed to load page") is skipped, so the rest
-                        # of the PDF stays searchable; raised, it was retried three times and lost them all.
-                        number += 1
-                        continue
-                # Bands only when asked: they used to be cut and encoded for every page and then dropped,
-                # three PNGs per page for nothing (half of a PDF's ingest time with bands off).
-                crops = _PNG_POOL.submit(_band_pngs, sharp) if bands else None
-                pending.append((number, _PNG_POOL.submit(_page_png, sharp, page_pixels, bands), crops))
-                number += 1
-            if not pending:
-                break
-            done, page_png, crops = pending.popleft()
+        return _PdfText(page_count, [_page_text(pdf, number) for number in range(page_count)])
+    finally:
+        pdf.close()
+
+
+def _pdf_render(data: Source, numbers: list[int], page_pixels: int, bands: bool) -> list[_RenderedPage]:
+    """In a worker: pages ``numbers`` rendered and encoded. A damaged page (a broken page tree: "Failed to
+    load page") is left out, so the rest of the PDF stays searchable; raised, it was retried three times and
+    lost them all."""
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(data)
+    try:
+        out = []
+        for number in numbers:
+            try:
+                page = pdf[number]
+                width, height = page.get_size()
+                scale = (max(page_pixels, PDF_BAND_PIXELS) if bands else page_pixels) / max(width, height, 1)
+                sharp = page.render(scale=scale).to_pil().convert("RGB")
+                page.close()
+            except Exception:  # noqa: BLE001 - see the docstring
+                continue
+            # Bands only when asked: they used to be cut and encoded for every page and then dropped,
+            # three PNGs per page for nothing (half of a PDF's ingest time with bands off).
+            out.append(_RenderedPage(number, _page_png(sharp, page_pixels, bands), _band_pngs(sharp) if bands else ()))
+        return out
+    finally:
+        pdf.close()
+
+
+def split_pdf(data: Source, *, page_pixels: int, max_pages: int, bands: bool = False) -> Iterator[PassageDraft]:
+    """One PNG per page, the longest side rendered at ``page_pixels``. pdfium runs in worker processes
+    (``_in_pdf_worker``), a few pages per call."""
+    info = _in_pdf_worker(_pdf_text, data, max_pages)
+    # The pages' own text layers, when they have one (not OCR: a scan has none). A page is scored on it
+    # too (whole page and 128-token units), and it is what a reader gets back.
+    embed_texts = strip_repeated_lines(info.texts)
+    rendered = 0
+    for start in range(0, info.page_count, _PDF_CHUNK):
+        numbers = list(range(start, min(start + _PDF_CHUNK, info.page_count)))
+        for page in _in_pdf_worker(_pdf_render, data, numbers, page_pixels, bands):
             rendered += 1
             yield PassageDraft(
                 modality="image",
-                text=texts[done],
-                data=page_png.result(),
+                text=info.texts[page.number],
+                data=page.png,
                 mime="image/png",
-                page=done + 1,
-                bands=crops.result() if crops is not None else (),
-                embed_text=embed_texts[done],
+                page=page.number + 1,
+                bands=page.bands,
+                embed_text=embed_texts[page.number],
             )
-        if not rendered:
-            raise MediaError("no page of the PDF could be rendered")
-    finally:
-        with _PDFIUM_LOCK:
-            pdf.close()
+    if not rendered:
+        raise MediaError("no page of the PDF could be rendered")
 
 
 def _page_text(pdf: Any, number: int) -> str | None:
@@ -388,22 +476,112 @@ _OFFICE_POOL: ProcessPoolExecutor | None = None
 _OFFICE_POOL_LOCK = threading.Lock()
 
 
-def _first_to_kill() -> None:
-    """In the worker: when memory runs out, the kernel kills this process, not the server it works for (in a
-    6 GB container it once killed the server while a spreadsheet converted). Linux only; elsewhere a no-op."""
+def _memory_limit() -> int:
+    """The container's memory limit (cgroup v2, then v1), else the machine's RAM; 0 if unknown."""
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        with contextlib.suppress(OSError, ValueError):
+            limit = int(Path(path).read_text().strip())  # "max": no limit, a ValueError
+            if limit < 1 << 50:  # cgroup v1 writes "no limit" as a huge number
+                return limit
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    return 0
+
+
+def _worker_address_space() -> int:
+    """The most address space a worker process (Office conversion, PDF rendering) may take, 0 for no cap
+    (``HINDSIGHT_API_KB_WORKER_MEMORY_MB``; by default half the container's memory plus 1 GB, a worker's
+    own 0.9 GB at rest). POI's 51535.xls, 42 KB, declares 65,536 rows of 256 columns, and markitdown grew by
+    14 MB a second turning them into a table until the 8 GB container ran out; on Kubernetes (cgroup v2) the
+    kernel then kills every process of the container, the server too, whatever their oom_score_adj. Past
+    the cap the worker gets a MemoryError and that file fails alone. A flat 2 GB was tried first: it also
+    failed real spreadsheets (Govdocs1's 28 MB 000032.xls peaks at 3.3 GB), so the cap follows the machine."""
+    from ..config import get_config
+
+    if (mb := get_config().kb_worker_memory_mb) > 0:
+        return mb << 20
+    total = _memory_limit()
+    return total // 2 + (1 << 30) if total else 0
+
+
+def _first_to_kill(address_space: int) -> None:
+    """In the worker: its address space is capped (``_worker_address_space``), and when memory runs out
+    anyway the kernel kills this process, not the server it works for. Linux only; elsewhere a no-op."""
+    import resource
+
+    if address_space > 0:
+        with contextlib.suppress(OSError, ValueError):
+            resource.setrlimit(resource.RLIMIT_AS, (address_space, address_space))
     with contextlib.suppress(OSError):
         Path("/proc/self/oom_score_adj").write_text("1000")
+
+
+#: The parts of an Office file that hold its text, read when markitdown cannot: the body with its headers,
+#: footers and notes (docx), the slides (pptx), the cell strings (xlsx). Any case, either separator: POI's
+#: 49609.xlsx names them "xl\\sharedstrings.xml".
+_OOXML_TEXT_PARTS = {
+    ".docx": re.compile(r"word/(document|header\d*|footer\d*|footnotes|endnotes)\.xml", re.IGNORECASE),
+    ".pptx": re.compile(r"ppt/slides/slide\d+\.xml", re.IGNORECASE),
+    ".xlsx": re.compile(r"xl/sharedStrings\.xml|xl/worksheets/sheet\d+\.xml", re.IGNORECASE),
+}
+
+
+def _ooxml_text(data: bytes, ext: str) -> str:
+    """An Office file's text runs, read from its XML a paragraph per line, without markitdown. A streaming
+    parse, so a table nested 15,000 deep (POI's deep-table-cell.docx: RecursionError in markitdown) is read
+    like any other; entities stay unresolved (the standard parser fetches nothing)."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    parts = _OOXML_TEXT_PARTS.get(ext)
+    if parts is None:
+        return ""
+    lines: list[str] = []
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = sorted(
+            (n for n in z.namelist() if parts.fullmatch(n.replace("\\", "/"))),
+            key=lambda n: [int(d) for d in re.findall(r"\d+", n)],
+        )
+        for name in names:
+            line: list[str] = []
+            with z.open(name) as part:
+                for _event, element in ET.iterparse(part):
+                    tag = element.tag.rsplit("}", 1)[-1]
+                    if tag == "t" and element.text:
+                        line.append(element.text)
+                    elif tag in ("p", "si", "row") and line:
+                        lines.append("".join(line))
+                        line = []
+                    element.clear()
+            if line:
+                lines.append("".join(line))
+    return "\n".join(lines)
 
 
 def _convert_office(data: bytes, ext: str) -> str:
     from markitdown import MarkItDown
 
     try:
-        return MarkItDown(enable_plugins=False).convert_stream(io.BytesIO(data), file_extension=ext).text_content
+        text = MarkItDown(enable_plugins=False).convert_stream(io.BytesIO(data), file_extension=ext).text_content
     except Exception as exc:
+        # markitdown fails on files Office opens: a KeyError on a field it did not expect (POI's 60329.docx),
+        # recursion on deep tables, 974 words of slides (2411-Performance_Up.pptx). Their text is still read.
+        try:
+            if text := _ooxml_text(data, ext):
+                return text
+        except Exception:
+            pass
         # Back to the server as text: markitdown's exceptions carry tracebacks, which do not pickle, and the
         # reason reached the document as "cannot pickle 'traceback' object".
         raise ValueError(str(exc)) from None
+    if text.strip():
+        return text
+    # markitdown reads a Word body only: a document whose text is all in its header (POI's Headers.docx)
+    # came out empty and failed "nothing to search".
+    try:
+        return _ooxml_text(data, ext)
+    except Exception:
+        return text
 
 
 def _office_text(data: bytes, ext: str) -> str:
@@ -412,7 +590,10 @@ def _office_text(data: bytes, ext: str) -> str:
         if _OFFICE_POOL is None:
             # spawn, not fork: the server has threads, and a forked child inherits their locks held.
             _OFFICE_POOL = ProcessPoolExecutor(
-                max_workers=1, mp_context=multiprocessing.get_context("spawn"), initializer=_first_to_kill
+                max_workers=1,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_first_to_kill,
+                initargs=(_worker_address_space(),),
             )
         pool = _OFFICE_POOL
     try:
@@ -431,10 +612,44 @@ def read_text(source: Source, filename: str | None) -> str:
     ext = Path(filename or "").suffix.lower()
     if ext in _OFFICE_EXTENSIONS:
         try:
-            return _office_text(data, ext)
+            text = _office_text(data, ext)
         except Exception as exc:
             raise MediaError(f"unreadable {ext} file: {exc}") from exc
+        # markitdown converts the first <body> only: a Govdocs1 export opens <body> twice, the first time
+        # still inside <head> and empty, so a page of 1,500 words came out empty and failed "nothing to
+        # search". Only then is its text read without markup.
+        if ext in (".html", ".htm") and not text.strip():
+            return _html_text(data.decode("utf-8", errors="replace"))
+        return text
     return data.decode("utf-8", errors="replace")
+
+
+def _html_text(html: str) -> str:
+    """The visible text of an HTML page, without scripts and styles (the stdlib parser: no tree to misplace)."""
+    from html.parser import HTMLParser
+
+    class _Text(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.chunks: list[str] = []
+            self._skip = 0
+
+        def handle_starttag(self, tag: str, attrs: Any) -> None:
+            if tag in ("script", "style"):
+                self._skip += 1
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag in ("script", "style") and self._skip:
+                self._skip -= 1
+
+        def handle_data(self, data: str) -> None:
+            if not self._skip and data.strip():
+                self.chunks.append(data.strip())
+
+    parser = _Text()
+    parser.feed(html)
+    parser.close()
+    return "\n".join(parser.chunks)
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9(\u201c\"])")
@@ -458,7 +673,33 @@ def sentences(text: str) -> list[str]:
             out[-1] = f"{out[-1]} {current}"
         else:
             out.append(current)
-    return out
+    # A page with no sentence ends (pdf.js's perf_text_labels.pdf: thousands of labels) was one "sentence"
+    # of 14k tokens, which the embedder refused (EmbeddingGemma 2 reads 8,192): cut at words.
+    return [piece for sentence in out for piece in _cut_words(sentence, _MAX_SENTENCE_TOKENS)]
+
+
+#: The longest a sentence is embedded as: past it, it is cut at words. A real sentence is far shorter.
+_MAX_SENTENCE_TOKENS = 256
+
+
+def _cut_words(text: str, tokens: int) -> list[str]:
+    """``text`` as pieces of whole words of about ``tokens`` at most, counting each word once (linear: a
+    piece re-counted per word was quadratic on a 14k-token line)."""
+    from ..engine.token_encoding import count_tokens
+
+    if count_tokens(text) <= tokens:
+        return [text]
+    pieces, current, size = [], [], 0
+    for word in text.split():
+        n = count_tokens(" " + word)
+        if current and size + n > tokens:
+            pieces.append(" ".join(current))
+            current, size = [], 0
+        current.append(word)
+        size += n
+    if current:
+        pieces.append(" ".join(current))
+    return pieces
 
 
 def pack_lines(text: str, *, tokens: int) -> list[str]:

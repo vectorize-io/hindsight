@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import math
+import sys
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import replace
@@ -2800,3 +2801,140 @@ def test_an_office_converter_that_dies_fails_its_file_and_the_next_gets_a_new_on
     with pytest.raises(media.MediaError, match="converter died"):
         media.read_text(b"PK", "huge.xlsx")
     assert media._OFFICE_POOL is None
+
+
+def test_a_table_of_all_caps_rows_is_cut_into_passages_of_their_size():
+    # Each "| AARON | GA |" row reads as a heading; a run of headings waiting for content grew into one
+    # passage of 399k tokens (a Govdocs1 spreadsheet), which the embedder refused.
+    from hindsight_api.engine.token_encoding import count_tokens
+    from hindsight_api.knowledge.text_passages import split_into_passages
+
+    rows = "\n".join(f"| TOWN{n:05d} | GA |" for n in range(3000))
+    passages = split_into_passages(rows, passage_size=64)
+    assert len(passages) > 1 and max(count_tokens(p) for p in passages) <= 64
+    assert "\n".join(passages) == rows  # exact slices, in order, nothing lost
+
+
+def test_a_page_whose_first_body_is_empty_is_read_for_its_text():
+    # A Govdocs1 export opens <body> twice, the first time still inside <head>: the parser keeps that empty
+    # body, markitdown converts <body> only, and a page of 1,500 words failed "nothing to search".
+    page = (
+        b'<html><head><title>CBP Today</title><style>p { color: red }</style><body topmargin="0"></head>'
+        b"<body><p>Unified to secure the borders.</p><script>var x = 1;</script></body></html>"
+    )
+    text = media.read_text(page, "page.html")
+    assert "Unified to secure the borders." in text and "color" not in text and "var x" not in text
+
+
+def test_a_pdf_that_crashes_the_renderer_fails_alone_and_the_next_renders():
+    # pdfium aborts the process on some files (a JPEG 2000 image: SIGTRAP), which took the API down with it;
+    # it runs in a worker now, so a crash fails that file and the next PDF gets a fresh worker.
+    import os
+
+    with pytest.raises(media.MediaError, match="renderer crashed"):
+        media._in_pdf_worker(os.abort)
+    assert [d.page for d in media.split_pdf(_pdf((255, 0, 0), (0, 0, 255)), page_pixels=128, max_pages=10)] == [1, 2]
+
+
+def test_a_page_with_no_sentence_ends_is_embedded_in_pieces_the_model_reads():
+    # pdf.js's perf_text_labels.pdf is thousands of labels with no full stop: one "sentence" of 14k tokens,
+    # which the embedder refused (EmbeddingGemma 2 reads 8,192).
+    from hindsight_api.engine.token_encoding import count_tokens
+
+    labels = " ".join(f"label{n}" for n in range(5000))
+    pieces = media.sentences(labels)
+    assert len(pieces) > 1 and max(count_tokens(p) for p in pieces) <= media._MAX_SENTENCE_TOKENS
+    assert " ".join(pieces) == labels
+    assert media.sentences("A short sentence of more than eight words here. And another one.") == [
+        "A short sentence of more than eight words here. And another one."
+    ]
+
+
+def test_a_pdf_rendering_beside_one_that_crashes_the_renderer_still_succeeds():
+    # A crash breaks every call in flight on the worker pool: the innocent one is retried alone.
+    import os
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    media._in_pdf_worker(time.sleep, 0)  # the pool is up before the race
+    with ThreadPoolExecutor(2) as threads:
+        innocent = threads.submit(media._in_pdf_worker, time.sleep, 2)
+        time.sleep(0.5)
+        crash = threads.submit(media._in_pdf_worker, os.abort)
+        with pytest.raises(media.MediaError, match="renderer crashed"):
+            crash.result()
+        assert innocent.result() is None
+
+
+def test_a_pdf_that_renders_forever_fails_in_time_and_the_next_renders(monkeypatch):
+    # pdf.js's tiling-pattern-tiny-steps*.pdf held both PDF workers at 100% CPU for over 10 minutes, and every
+    # PDF waited behind them: a call past the limit fails its file, and its worker is killed.
+    import time
+
+    monkeypatch.setattr(media, "_PDF_CALL_TIMEOUT", 1.0)
+    started = time.monotonic()
+    with pytest.raises(media.MediaError, match="took over 1s"):
+        media._in_pdf_worker(time.sleep, 30)
+    assert time.monotonic() - started < 20
+    assert [d.page for d in media.split_pdf(_pdf((255, 0, 0)), page_pixels=128, max_pages=10)] == [1]
+
+
+def _docx(parts: dict[str, str]) -> bytes:
+    """A Word file of ``parts``, each a part's root element with ``W`` where its namespace goes."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, xml in parts.items():
+            z.writestr(
+                name, xml.replace("W", 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"', 1)
+            )
+    return buf.getvalue()
+
+
+def test_a_word_file_markitdown_cannot_read_is_read_from_its_xml():
+    # POI's deep-table-cell.docx nests a table 15,000 deep: markitdown hit its recursion limit, and 15,000 words
+    # failed "unreadable .docx file". Its text runs are read straight from the XML instead.
+    depth = 3000
+    nested = "".join("<w:tbl><w:tr><w:tc>" for _ in range(depth))
+    nested += "<w:p><w:r><w:t>the innermost cell</w:t></w:r></w:p>"
+    nested += "".join("</w:tc></w:tr></w:tbl>" for _ in range(depth))
+    body = f"<w:document W><w:body><w:p><w:r><w:t>Deep tables</w:t></w:r></w:p>{nested}</w:body></w:document>"
+    text = media._convert_office(_docx({"word/document.xml": body}), ".docx")
+    assert "Deep tables" in text and "the innermost cell" in text
+
+
+def test_a_word_file_whose_text_is_all_in_its_header_is_read():
+    # markitdown reads a Word body only: POI's Headers.docx came out empty and failed "nothing to search".
+    data = _docx(
+        {
+            "word/document.xml": "<w:document W><w:body><w:p/></w:body></w:document>",
+            "word/header1.xml": "<w:hdr W><w:p><w:r><w:t>Quarterly results</w:t></w:r></w:p></w:hdr>",
+        }
+    )
+    assert "Quarterly results" in media._convert_office(data, ".docx")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the worker's address-space cap is Linux only")
+def test_a_worker_that_wants_more_memory_than_a_file_may_use_fails_alone(monkeypatch):
+    # POI's 51535.xls (42 KB, 65,536 x 256 cells) grew a converter until the container ran out of memory, and on
+    # Kubernetes that kills the server with it. The worker's address space is capped: it fails, the server stays.
+    monkeypatch.setattr(media, "_worker_address_space", lambda: 2 << 30)
+    with media._PDF_POOL_LOCK:
+        if media._PDF_POOL is not None:
+            media._kill(media._PDF_POOL)
+        media._PDF_POOL = None  # a worker of the new cap
+    with pytest.raises(MemoryError):
+        media._in_pdf_worker(bytearray, 2 << 30)
+    assert [d.page for d in media.split_pdf(_pdf((255, 0, 0)), page_pixels=128, max_pages=10)] == [1]
+
+
+def test_the_worker_memory_cap_follows_the_machine_unless_set(monkeypatch):
+    import types
+
+    monkeypatch.setattr(media, "_memory_limit", lambda: 8 << 30)
+    monkeypatch.setattr("hindsight_api.config.get_config", lambda: types.SimpleNamespace(kb_worker_memory_mb=0))
+    assert media._worker_address_space() == 5 << 30  # half of 8 GB, plus a worker's own 1 GB at rest
+    monkeypatch.setattr("hindsight_api.config.get_config", lambda: types.SimpleNamespace(kb_worker_memory_mb=3000))
+    assert media._worker_address_space() == 3000 << 20

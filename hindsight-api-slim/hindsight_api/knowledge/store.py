@@ -1422,8 +1422,10 @@ def load_knowledge_store(backend_provider: Any, extension_path: str | None) -> K
 #: document's passages went in one call that a 1.6 MB numeric table (thousands of passages) ran past, three
 #: times; in pieces, each is well inside it, and the transaction around them still commits them together.
 _INSERT_CHUNK = 256
-#: Staged passages moved per statement when a version commits (server-side, so more than an insert's chunk).
-_MOVE_WINDOW = 1000
+#: Staged passages moved per statement when a version commits. Each moved row goes into the bank's vector
+#: (HNSW) and keyword indexes, which is the cost: 1,000 took ~2.3s on a dev cluster's database but ran past
+#: the 60s command timeout on a CPU-starved one (a 27 MB spreadsheet, #6705); 200 keeps a wide margin.
+_MOVE_WINDOW = 200
 
 
 def _chunks(rows: list[Any]) -> Iterator[list[Any]]:
