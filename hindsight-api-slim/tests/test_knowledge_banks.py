@@ -3063,3 +3063,29 @@ def test_the_memory_guard_finds_the_workers_and_only_them():
     workers = media._worker_rss()
     assert workers and all(rss > 10 << 20 for rss in workers.values())
     assert os.getpid() not in workers
+
+
+def test_office_files_convert_one_at_a_time(monkeypatch):
+    # Two big spreadsheets side by side do not fit where one does: the memory guard killed both (000032.xls and
+    # the runaway 51535.xls). Conversions, retries included, take turns.
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    running, most = 0, 0
+    guard = threading.Lock()
+
+    def convert(data, ext):
+        nonlocal running, most
+        with guard:
+            running += 1
+            most = max(most, running)
+        time.sleep(0.05)
+        with guard:
+            running -= 1
+        return "text"
+
+    monkeypatch.setattr(media, "_office_text_now", convert)
+    with ThreadPoolExecutor(4) as threads:
+        assert list(threads.map(lambda _: media._office_text(b"", ".docx"), range(4))) == ["text"] * 4
+    assert most == 1

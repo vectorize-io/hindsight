@@ -688,7 +688,20 @@ def _convert_office(data: bytes, ext: str) -> str:
         return text
 
 
+#: One Office conversion at a time in the server, its retry included. A big spreadsheet's conversion holds
+#: memory by the 100x its size (Govdocs1's 28 MB 000032.xls peaks at 3.3 GB), so two side by side do not
+#: fit where one does: on the cluster, the retries of two broken calls ran at once, 000032.xls beside the
+#: runaway 51535.xls, and the memory guard had to kill both. Waiting here, a file is never queued on the
+#: worker either, so a worker's death breaks only the file it was converting.
+_OFFICE_CALL_LOCK = threading.Lock()
+
+
 def _office_text(data: bytes, ext: str) -> str:
+    with _OFFICE_CALL_LOCK:
+        return _office_text_now(data, ext)
+
+
+def _office_text_now(data: bytes, ext: str) -> str:
     global _OFFICE_POOL
     with _OFFICE_POOL_LOCK:
         if _OFFICE_POOL is None:
@@ -700,9 +713,10 @@ def _office_text(data: bytes, ext: str) -> str:
         with _OFFICE_POOL_LOCK:
             if _OFFICE_POOL is pool:
                 _OFFICE_POOL = None  # the next file gets a fresh worker
-    # Every file queued on the worker breaks with it, not only the one it died on: the cluster sweep's
-    # 51535.xls (16.7M declared cells) ran the container out of memory, the kernel killed the worker, and a
-    # 9 KB spreadsheet waiting behind it failed too. Once again alone, so only the file that kills it fails.
+    # Once again in a fresh worker: the memory guard kills the biggest worker when the container runs low,
+    # which can be this one for memory the PDF workers hold. A file that kills it twice fails. (Files used
+    # to queue on the worker, and a 9 KB spreadsheet behind the runaway 51535.xls failed with it; they now
+    # wait on _OFFICE_CALL_LOCK instead.)
     try:
         return _alone(_convert_office, data, ext)
     except BrokenProcessPool as exc:
