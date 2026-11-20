@@ -90,6 +90,7 @@ describe("full bank config surface mapping", () => {
       storeDocumentText: false,
       defaultTimezone: "Asia/Shanghai",
       mcpEnabledTools: ["recall", "reflect"],
+      mcpServerInstructions: "Read the house-rules document first.",
       llmGeminiSafetySettings: [{ category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" }],
       memoryDefense: { redact_secrets: true },
       auditLogEnabled: true,
@@ -123,6 +124,7 @@ describe("full bank config surface mapping", () => {
       store_document_text: false,
       default_timezone: "Asia/Shanghai",
       mcp_enabled_tools: ["recall", "reflect"],
+      mcp_server_instructions: "Read the house-rules document first.",
       llm_gemini_safety_settings: [
         { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
       ],

@@ -7235,6 +7235,9 @@ components:
             type: string
           nullable: true
           type: array
+        mcp_server_instructions:
+          nullable: true
+          type: string
         knowledge_banks:
           items:
             type: string

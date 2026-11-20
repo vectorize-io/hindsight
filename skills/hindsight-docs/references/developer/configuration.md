@@ -2738,6 +2738,7 @@ Configuration for MCP server endpoints.
 | `HINDSIGHT_API_MCP_AUTH_TOKEN` | Bearer token for MCP authentication (optional) | - |
 | `HINDSIGHT_API_MCP_LOCAL_BANK_ID` | Memory bank ID for local MCP | `mcp` |
 | `HINDSIGHT_API_MCP_INSTRUCTIONS` | Additional instructions appended to retain/recall tool descriptions | - |
+| `HINDSIGHT_API_MCP_SERVER_INSTRUCTIONS` | Instructions sent to MCP clients in the `initialize` response when they connect to a single-bank endpoint (`/mcp/{bank_id}/`). At most 4,000 characters. Hierarchical — usually set per bank via the [config API](#hierarchical-configuration) as `mcp_server_instructions`. See [Per-bank server instructions](./mcp-server.md#per-bank-server-instructions). | - |
 
 **Tool Access Control:**
 
@@ -2765,6 +2766,19 @@ curl -X PATCH http://localhost:8888/v1/default/banks/config-demo-bank/config \
 ```
 
 When a bank-level `mcp_enabled_tools` is set, tools not in the list return a clear error when invoked (they still appear in the tools list for MCP protocol compatibility).
+
+**MCP server instructions per bank:**
+
+`mcp_server_instructions` is sent to MCP clients in the `initialize` response when they connect to the bank's single-bank endpoint. Set it per bank through the config API:
+
+```bash
+# Tell every MCP client that connects to this bank how to use it
+curl -X PATCH http://localhost:8888/v1/default/banks/config-demo-bank/config \
+  -H "Content-Type: application/json" \
+  -d '{"updates": {"mcp_server_instructions": "Read the document house-rules before anything else. Save new facts with the tag inbox."}}'
+```
+
+See [Per-bank server instructions](./mcp-server.md#per-bank-server-instructions) for how clients use it.
 
 **MCP Authentication:**
 

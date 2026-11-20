@@ -373,6 +373,14 @@ An allowlist of MCP tool names that are enabled for this bank. When set, only th
 
 Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`, `get_page_tree`, `search_pages`, `get_page`, `create_page_folder`, `create_page`, `update_page_node`, `delete_page_node`.
 
+### mcp_server_instructions
+
+Instructions sent to MCP clients in the `initialize` response when they connect to this bank's single-bank endpoint (`/mcp/{bank_id}/`). Use it to tell every connecting agent how to use the bank — for example, which document to read first or which tags to save new facts with. At most 4,000 characters; `null` (default) sends none. See [Per-bank server instructions](../mcp-server.md#per-bank-server-instructions).
+
+```json
+"Read the document house-rules before anything else. Save new facts with the tag inbox."
+```
+
 ### llm_gemini_safety_settings
 
 Controls content filtering thresholds for Gemini and VertexAI providers. Accepts a list of safety setting objects in the [Google AI safety settings format](https://ai.google.dev/api/generate-content#v1beta.SafetySetting). When `null` (default), Gemini's built-in safety defaults are used.

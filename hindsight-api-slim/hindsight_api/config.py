@@ -841,6 +841,7 @@ ENV_MCP_ENABLED = "HINDSIGHT_API_MCP_ENABLED"
 ENV_MCP_ENABLED_TOOLS = "HINDSIGHT_API_MCP_ENABLED_TOOLS"
 ENV_MCP_STATELESS = "HINDSIGHT_API_MCP_STATELESS"
 ENV_MCP_INSTRUCTIONS = "HINDSIGHT_API_MCP_INSTRUCTIONS"
+ENV_MCP_SERVER_INSTRUCTIONS = "HINDSIGHT_API_MCP_SERVER_INSTRUCTIONS"
 ENV_MCP_AUTH_TOKEN = "HINDSIGHT_API_MCP_AUTH_TOKEN"
 ENV_ENABLE_BANK_CONFIG_API = "HINDSIGHT_API_ENABLE_BANK_CONFIG_API"
 ENV_ENABLE_BANK_LLM_HEALTH = "HINDSIGHT_API_ENABLE_BANK_LLM_HEALTH"
@@ -1908,6 +1909,12 @@ DEFAULT_MCP_ENABLED = True
 DEFAULT_MCP_ENABLED_TOOLS: list[str] | None = None  # None = all tools enabled
 DEFAULT_MCP_STATELESS = False  # False = stateful (supports SSE/GET); True = stateless (POST-only)
 DEFAULT_MCP_INSTRUCTIONS = None
+# Text sent to MCP clients as the server instructions of the initialize response, so a
+# connecting agent learns how to use the bank without a hand-pasted prompt. Per bank.
+DEFAULT_MCP_SERVER_INSTRUCTIONS = None
+# Upper bound on mcp_server_instructions. Clients place the text in the model's context on
+# every connection, so it is kept to a size a system prompt can carry.
+MCP_SERVER_INSTRUCTIONS_MAX_CHARS = 4000
 DEFAULT_ENABLE_BANK_CONFIG_API = True
 # Dry-run extraction is a preview tool that makes a real LLM call but stores nothing. Enabled by
 # default; set HINDSIGHT_API_ENABLE_DRY_RUN_EXTRACT=false to remove the endpoint (e.g. to cap
@@ -4458,6 +4465,8 @@ class HindsightConfig:
     reflect_kb_search_images: bool = DEFAULT_REFLECT_KB_SEARCH_IMAGES
     reflect_kb_search_max_images: int = DEFAULT_REFLECT_KB_SEARCH_MAX_IMAGES
     reflect_kb_search_budget: str = DEFAULT_REFLECT_KB_SEARCH_BUDGET
+    # Per bank: the instructions an MCP client receives in the initialize response (None = none)
+    mcp_server_instructions: str | None = DEFAULT_MCP_SERVER_INSTRUCTIONS
 
     # Class-level sets for configuration categorization
 
@@ -4551,6 +4560,8 @@ class HindsightConfig:
     _CONFIGURABLE_FIELDS = {
         # MCP tool access control
         "mcp_enabled_tools",
+        # Instructions sent to MCP clients when they connect to the bank
+        "mcp_server_instructions",
         # Audit logging on/off, per bank. The actions allowlist and retention
         # window remain server-level and are deliberately not configurable.
         "audit_log_enabled",
@@ -5984,6 +5995,7 @@ class HindsightConfig:
             ).lower()
             == "true",
             reflect_kb_search_budget=_parse_reflect_kb_search_budget(os.getenv(ENV_REFLECT_KB_SEARCH_BUDGET)),
+            mcp_server_instructions=os.getenv(ENV_MCP_SERVER_INSTRUCTIONS) or DEFAULT_MCP_SERVER_INSTRUCTIONS,
             reflect_kb_search_max_images=int(
                 os.getenv(ENV_REFLECT_KB_SEARCH_MAX_IMAGES, str(DEFAULT_REFLECT_KB_SEARCH_MAX_IMAGES))
             ),

@@ -38,6 +38,22 @@ echo
 curl -sf "$HINDSIGHT_API_URL/v1/default/banks/config-demo-bank/config" \
   | jq -e '.overrides.mcp_enabled_tools == ["recall"]' > /dev/null
 
+# [docs:mcp-server-instructions-per-bank]
+# Tell every MCP client that connects to this bank how to use it
+curl -X PATCH http://localhost:8888/v1/default/banks/config-demo-bank/config \
+  -H "Content-Type: application/json" \
+  -d '{"updates": {"mcp_server_instructions": "Read the document house-rules before anything else. Save new facts with the tag inbox."}}'
+# [/docs:mcp-server-instructions-per-bank]
+echo
+
+# A client connecting to the bank's endpoint receives the text in its initialize response.
+curl -sf -X POST "$HINDSIGHT_API_URL/mcp/config-demo-bank/" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "docs-example", "version": "1"}}}' \
+  | sed -n 's/^data: //p; /^{/p' \
+  | jq -e '.result.instructions == "Read the document house-rules before anything else. Save new facts with the tag inbox."' > /dev/null
+
 # [docs:bank-config-examples]
 # Update retention settings for a bank
 curl -X PATCH http://localhost:8888/v1/default/banks/config-demo-bank/config \

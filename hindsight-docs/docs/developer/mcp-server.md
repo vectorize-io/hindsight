@@ -115,6 +115,16 @@ Hindsight can append deployment-specific guidance to the `retain` and `recall` M
 export HINDSIGHT_API_MCP_INSTRUCTIONS="Use project:<name> tags for project-specific memories."
 ```
 
+### Per-bank server instructions
+
+A bank can carry its own MCP server instructions in its `mcp_server_instructions` config field. They are sent in the `initialize` response to every client that connects to the bank's single-bank endpoint (`/mcp/{bank_id}/`), so a newly connected agent knows how to use the bank without a hand-pasted prompt: which document to read first, which tags to save new facts with, and so on. Set it with the [bank config API](./configuration.mdx#mcp-server) or in the control plane's bank configuration.
+
+- The text is read when a client connects, so a change applies to the next connection.
+- At most 4,000 characters. Set it to `null` to remove it.
+- The multi-bank endpoint (`/mcp/`) does not send it: a multi-bank connection reaches every bank, so no one bank's instructions describe it.
+- How the text is used is up to the client. Clients that support MCP server instructions add them to the model's context; others ignore them.
+- Anyone who can change the bank's config can change what every connecting agent is told, including an agent with the `update_bank` tool. Restrict that tool with [`mcp_enabled_tools`](./api/memory-banks.mdx#mcp_enabled_tools) if connected agents should not edit it.
+
 MCP clients that read tool annotations also receive safety hints from the built-in tools:
 
 - Read-only operations such as `recall`, `reflect`, `list_*`, and `get_*` are marked with `readOnlyHint: true`.

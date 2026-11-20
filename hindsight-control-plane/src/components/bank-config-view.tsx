@@ -116,6 +116,9 @@ type StrategiesEdits = {
 
 type MCPEdits = {
   mcp_enabled_tools: string[] | null;
+  // Read from the overrides, like default_timezone: saving the section must not
+  // copy an inherited (server or tenant) value onto the bank as its own.
+  mcp_server_instructions: string | null;
   // The IANA zone a time with no UTC offset is read in. null = inherit the
   // server default; read from the overrides so saving the tool list never
   // pins the bank to whatever zone the server happens to resolve today.
@@ -341,6 +344,8 @@ const MCP_ALL_TOOLS: string[] = [
   "delete_page_node",
 ];
 const ALL_TOOLS: string[] = MCP_ALL_TOOLS;
+// Mirrors MCP_SERVER_INSTRUCTIONS_MAX_CHARS in the API, which rejects anything longer.
+const MCP_SERVER_INSTRUCTIONS_MAX_CHARS = 4000;
 
 // Old MCP tool names a stored allow-list may still hold; the server maps them to
 // the new names, so show them checked under the new name. Remove in 2.x.
@@ -390,6 +395,7 @@ function strategiesSlice(config: Record<string, any>): StrategiesEdits {
 function mcpSlice(config: Record<string, any>, overrides: Record<string, any>): MCPEdits {
   return {
     mcp_enabled_tools: normalizeMcpTools(config.mcp_enabled_tools),
+    mcp_server_instructions: overrides.mcp_server_instructions ?? null,
     default_timezone: overrides.default_timezone ?? null,
   };
 }
@@ -735,10 +741,13 @@ export function BankConfigView() {
       setBaseConfig((prev) => ({
         ...prev,
         mcp_enabled_tools: mcpEdits.mcp_enabled_tools,
+        mcp_server_instructions: response.config?.mcp_server_instructions,
         default_timezone: response.config?.default_timezone,
       }));
       setBaseOverrides((prev) => {
         const next = { ...prev };
+        if (mcpEdits.mcp_server_instructions === null) delete next.mcp_server_instructions;
+        else next.mcp_server_instructions = mcpEdits.mcp_server_instructions;
         if (mcpEdits.default_timezone === null) delete next.default_timezone;
         else next.default_timezone = mcpEdits.default_timezone;
         return next;
@@ -1397,6 +1406,19 @@ export function BankConfigView() {
               onChange={(tools) => setMcpEdits((prev) => ({ ...prev, mcp_enabled_tools: tools }))}
             />
           )}
+          <TextareaRow
+            label={t("mcpServerInstructionsLabel")}
+            description={t("mcpServerInstructionsDescription")}
+            value={mcpEdits.mcp_server_instructions ?? ""}
+            onChange={(v) =>
+              setMcpEdits((prev) => ({ ...prev, mcp_server_instructions: v || null }))
+            }
+            placeholder={
+              baseConfig.mcp_server_instructions ?? t("mcpServerInstructionsPlaceholder")
+            }
+            rows={4}
+            maxLength={MCP_SERVER_INSTRUCTIONS_MAX_CHARS}
+          />
         </ConfigSection>
 
         {/* Knowledge Banks Section — the knowledge banks reflect reads, and how it searches them.
@@ -2380,6 +2402,7 @@ function TextareaRow({
   onChange,
   placeholder,
   rows,
+  maxLength,
   action,
 }: {
   label: string;
@@ -2388,6 +2411,7 @@ function TextareaRow({
   onChange: (v: string) => void;
   placeholder?: string;
   rows?: number;
+  maxLength?: number;
   /** Rendered opposite the label — used by the mission fields for "Preview prompt". */
   action?: React.ReactNode;
 }) {
@@ -2406,6 +2430,7 @@ function TextareaRow({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           rows={rows ?? 3}
+          maxLength={maxLength}
           className="font-mono text-sm"
         />
       </div>
