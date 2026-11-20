@@ -24,9 +24,9 @@ The rest of the week looks different.
 
 ## The Setup
 
-Maya joined in January. The orders-service rewrite has been her main work since week two. Late that month, the team installed `@vectorize-io/opencode-hindsight` and pointed every member's OpenCode at a shared memory bank with the bank ID `team-orders`. Five engineers have used it on and off. Maya has been the most consistent contributor.
+Maya joined in January. The orders-service rewrite has been her main work since week two. Late that month, the team installed the Hindsight Coding Agents plugin (`npx @vectorize-io/hindsight-coding-agents install opencode`) and pointed every member's OpenCode at a shared memory bank with the bank ID `team-orders`. Five engineers have used it on and off. Maya has been the most consistent contributor.
 
-The plugin captures conversations after idle, runs reflect periodically, and injects relevant memories into each session's system prompt. (The [integration tutorial](/blog/2026/04/20/opencode-persistent-memory) covers how this actually works.) For the past five months, every decision discussed in an OpenCode session, every dead end, every "we tried X and it broke because Y," has been written to that bank.
+The plugin writes every session back to that bank and injects relevant memory on the first prompt of each new session. (The [integration tutorial](/blog/2026/04/20/opencode-persistent-memory) covers how this actually works.) For the past five months, every decision discussed in an OpenCode session, every dead end, every "we tried X and it broke because Y," has been written to that bank.
 
 Devon's onboarding contract is the same as anyone's: ship a small change to the orders service in his first week. The difference is that his OpenCode session already knows things he doesn't.
 
