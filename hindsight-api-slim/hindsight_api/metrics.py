@@ -201,6 +201,9 @@ _meter = None
 #: Event-loop lag in seconds. Healthy is well under 10 ms; a saturated loop runs into seconds.
 LOOP_LAG_BUCKETS = (0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0)
 
+# Phase buckets in SECONDS, sized for phases that take milliseconds (recall and knowledge search).
+PHASE_BUCKETS = (0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 10.0)
+
 
 def initialize_metrics(service_name: str = "hindsight-api", service_version: str = "1.0.0"):
     """
@@ -355,6 +358,9 @@ class MetricsCollectorBase:
         """Record one phase of a knowledge-bank ingest batch. A no-op here rather than abstract, so a
         collector that predates knowledge banks keeps working."""
 
+    def record_knowledge_search_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        """Record one phase of a knowledge-bank search. A no-op here, as the ingest one."""
+
     def record_validator_phase(self, operation: str, hook: str, seconds: float):
         """Record one operation-validator hook (`hook` is "pre" or "post")."""
         raise NotImplementedError
@@ -457,6 +463,9 @@ class NoOpMetricsCollector(MetricsCollectorBase):
 
     def record_knowledge_ingest_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
         add_phase(f"knowledge_ingest.{phase}", seconds)
+
+    def record_knowledge_search_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        add_phase(f"knowledge_search.{phase}", seconds)
 
     def record_validator_phase(self, operation: str, hook: str, seconds: float):
         pass
@@ -642,23 +651,16 @@ class MetricsCollector(MetricsCollectorBase):
             # p99 of a phase it answered 2500ms for all fifteen of them, which is simply the
             # midpoint of that first bucket. A mean cannot explain a tail, and the tail is
             # what a phase breakdown is for.
-            explicit_bucket_boundaries_advisory=[
-                0.001,
-                0.0025,
-                0.005,
-                0.01,
-                0.025,
-                0.05,
-                0.075,
-                0.1,
-                0.25,
-                0.5,
-                0.75,
-                1.0,
-                2.5,
-                5.0,
-                10.0,
-            ],
+            explicit_bucket_boundaries_advisory=PHASE_BUCKETS,
+        )
+        # A knowledge-bank search's phases (the `[knowledge_search-timing]` log line, aggregated): the
+        # bank check, the query embedding, the store's SQL statements and its scoring, the rerank and the
+        # budget's context. `store.*` phases are parts of `store.search`, not siblings of it.
+        self.knowledge_search_phase_duration = self.meter.create_histogram(
+            name="hindsight.knowledge_search.phase.duration",
+            description="Time attributed to one phase of a knowledge-bank search (store.* are parts of store.search)",
+            unit="s",
+            explicit_bucket_boundaries_advisory=PHASE_BUCKETS,
         )
         # Consolidation batch calls that failed. Labelled by failure class so the two
         # populations stay separable: `retry` is transport-shaped and usually self-heals,
@@ -960,6 +962,15 @@ class MetricsCollector(MetricsCollectorBase):
             attrs["store"] = store
         self.knowledge_ingest_phase_duration.record(seconds, attrs)
         self.knowledge_ingest_phase_calls.add(calls, attrs)
+
+    def record_knowledge_search_phase(self, phase: str, seconds: float, calls: int = 1, store: str = ""):
+        """Record one phase of a knowledge-bank search, labelled like an ingest phase. The calls are in
+        the `[knowledge_search-timing]` log line only: a search's phases run once each, nearly always."""
+        add_phase(f"knowledge_search.{phase}", seconds)
+        attrs = {"phase": phase, **self._tenant_attrs()}
+        if store:
+            attrs["store"] = store
+        self.knowledge_search_phase_duration.record(seconds, attrs)
 
     def record_validator_phase(self, operation: str, hook: str, seconds: float):
         """Record one operation-validator hook. `hook` is "pre" or "post"."""

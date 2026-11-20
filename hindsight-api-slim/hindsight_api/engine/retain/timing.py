@@ -153,11 +153,10 @@ def _emit(t: RetainTiming) -> None:
         from ...metrics import get_metrics_collector
 
         collector = get_metrics_collector()
-        # ponytail: a knowledge search has its log line only; give it a phase histogram of its own
-        # when a dashboard needs one, rather than counting its phases as an ingest's.
         record = {
             "retain": collector.record_retain_phase,
             "knowledge_ingest": collector.record_knowledge_ingest_phase,
+            "knowledge_search": collector.record_knowledge_search_phase,
         }.get(t.op)
         for name, s in t.seconds.items() if record else ():
             record(name, s, calls=t.calls.get(name, 0), store=t.store)

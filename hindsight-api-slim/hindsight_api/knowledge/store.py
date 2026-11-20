@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from typing import Any, Literal, cast
 
 from ..engine.db.ops_postgresql import create_index_without_queueing
 from ..engine.db_utils import acquire_with_retry
+from ..engine.retain import timing as _timing
 from ..engine.schema import fq_table
 from ..engine.search.tags import TagGroup, TagsMatch, build_tag_groups_where_clause, build_tags_where_clause
 from ..schema_context import get_current_schema
@@ -996,6 +998,17 @@ class PostgresKnowledgeStore(KnowledgeStore):
         params.append(max(100, min(top_k * 10, CANDIDATE_POOL_CAP), top_k))
         pool = f"${len(params)}"
         docs, passages = fq_table("kb_documents"), fq_table("kb_passages")
+        # The documents table is joined only for a filter on it (media type, tags). It was joined always,
+        # and the planner then guessed 38 rows out of a bank's 7,267 vectors, so it sorted every vector of
+        # the bank instead of walking the bank's HNSW index below. ViDoRe industrial PDF (27 documents,
+        # 92k vectors), 100 queries: the statement 170-185 ms -> 85-110 ms; nDCG@10 35.08 -> 34.51, the
+        # index being approximate where the sort was exact. Markdown industrial (5,039 documents): 128 ->
+        # 91-116 ms, the same results.
+        join_docs = (
+            f"JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id"
+            if filters.media_types or plain.sql or groups.sql
+            else ""
+        )
         # The bank's own row: no row back means it is not a knowledge bank (KnowledgeBankNotFound).
         ctes = [f"bank AS (SELECT 1 AS found FROM {fq_table('banks')} WHERE bank_id = $2 AND kind = 'knowledge')"]
         keywords = bool(query_text) and keyword_weight > 0
@@ -1039,7 +1052,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
             return f"""
                 SELECT x.document_id, x.idx, '{arm}' AS arm, 1 - {self._distance("$1", "x")} AS arm_score
                 FROM {fq_table(table)} x
-                JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
+                {join_docs}
                 WHERE x.bank_id = $2{where}{roles}
                 ORDER BY {self._distance("$1", "x")} LIMIT {pool}
             """
@@ -1056,7 +1069,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
             arms.append(f"""
                 SELECT x.document_id, x.idx, 'keyword' AS arm,
                        ts_rank_cd(x.search_vector, (SELECT q FROM tq)) AS arm_score FROM {passages} x
-                JOIN {docs} d ON d.bank_id = x.bank_id AND d.document_id = x.document_id
+                {join_docs}
                 WHERE x.bank_id = $2{where} AND x.search_vector @@ (SELECT q FROM tq)
                 ORDER BY ts_rank_cd(x.search_vector, (SELECT q FROM tq)) DESC LIMIT {pool}
             """)
@@ -1106,10 +1119,15 @@ class PostgresKnowledgeStore(KnowledgeStore):
         # One row per candidate, or a single row of NULLs for a knowledge bank with none; nothing at all
         # for a bank that is not one.
         sql = f"WITH {', '.join(ctes)} SELECT {terms_columns}, s.* FROM bank LEFT JOIN scored s ON true"
+        # Each part is timed into the search's `[knowledge_search-timing]` line as store.<part>, a part of
+        # store.search: the candidates statement, the sentence rescore, the context read, and the Python
+        # scoring between them (store.score).
         async with acquire_with_retry(await self._pool()) as conn:
-            rows = await conn.fetch(sql, *params)
+            async with _timing.timed("store.candidates_sql"):
+                rows = await conn.fetch(sql, *params)
             if not rows:
                 raise KnowledgeBankNotFound(bank_id)
+            score_started = time.perf_counter()
             terms = dict(zip(rows[0]["term_words"] or [], rows[0]["term_idfs"] or [], strict=True))
             rows = [r for r in rows if r["document_id"] is not None]
             found_by = {(r["document_id"], r["idx"]): [f.partition(":") for f in r["found"]] for r in rows}
@@ -1133,20 +1151,23 @@ class PostgresKnowledgeStore(KnowledgeStore):
             top = sorted(range(len(rows)), key=lambda i: first[i], reverse=True)[: max(top_k, RESCORE_POOL)]
             top = [i for i in top if rows[i]["page"] is not None]
             if top:
-                found = await conn.fetch(
-                    f"""
-                    SELECT v.document_id, v.idx, max(1 - {self._distance("$1", "v")}) AS best
-                    FROM {fq_table("kb_passage_vectors")} v
-                    JOIN unnest($3::text[], $4::int[]) AS c(document_id, idx)
-                      ON v.document_id = c.document_id AND v.idx = c.idx
-                    WHERE v.bank_id = $2 AND v.role IN ({", ".join(f"'{r}'" for r in RESCORE_ONLY_ROLES)})
-                    GROUP BY v.document_id, v.idx
-                    """,
-                    str(vector),
-                    bank_id,
-                    [rows[i]["document_id"] for i in top],
-                    [rows[i]["idx"] for i in top],
-                )
+                _timing.record("store.score", time.perf_counter() - score_started)
+                async with _timing.timed("store.sentences_sql"):
+                    found = await conn.fetch(
+                        f"""
+                        SELECT v.document_id, v.idx, max(1 - {self._distance("$1", "v")}) AS best
+                        FROM {fq_table("kb_passage_vectors")} v
+                        JOIN unnest($3::text[], $4::int[]) AS c(document_id, idx)
+                          ON v.document_id = c.document_id AND v.idx = c.idx
+                        WHERE v.bank_id = $2 AND v.role IN ({", ".join(f"'{r}'" for r in RESCORE_ONLY_ROLES)})
+                        GROUP BY v.document_id, v.idx
+                        """,
+                        str(vector),
+                        bank_id,
+                        [rows[i]["document_id"] for i in top],
+                        [rows[i]["idx"] for i in top],
+                    )
+                score_started = time.perf_counter()
                 best = {(f["document_id"], f["idx"]): float(f["best"]) for f in found}
                 for i in top:
                     sentence = best.get((rows[i]["document_id"], rows[i]["idx"]))
@@ -1188,9 +1209,12 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 for h in hits
                 if h.passage.modality == "text"
             ]
+            _timing.record("store.score", time.perf_counter() - score_started)
             nearby: dict[tuple[str, int], KnowledgePassage] = {}
             if around > 0 and spans:
-                for r in await _fetch_ranges(conn, bank_id, _merged_ranges(spans)):
+                async with _timing.timed("store.context_sql"):
+                    ranges = await _fetch_ranges(conn, bank_id, _merged_ranges(spans))
+                for r in ranges:
                     nearby[(r["range_document_id"], r["idx"])] = _passage(r)
         return StoreSearchResult(hits, nearby)
 
