@@ -173,8 +173,14 @@ _CANDIDATE_TOKENS = 60
 #: what its page says about it. ViDoRe V3 markdown (own language) nDCG@10, the passage vs its
 #: whole page judged: finance_en 60.98 -> 72.61, hr 66.58 -> 70.31, pharmaceuticals 66.06 -> 67.75,
 #: industrial 56.60 -> 60.73.
+#: It still caps any hit's text (a PDF page's text layer). A text passage's context is TEXT_JUDGE_TOKENS.
 JUDGE_CONTEXT_TOKENS = 2048
-#: Passages loaded on each side of a text hit before trimming to ``JUDGE_CONTEXT_TOKENS``.
+#: A text hit's context: with 512-token passages, the passage itself. 2048 tokens put neighbouring clauses of
+#: a long contract in every candidate, and the reranker judged the clause next to the one asked for.
+#: LegalBench-RAG recall@5, no file names: 79.6 at 2048, 83.7 at 1024, 85.1 at 512, 78.6 at 256 (half a
+#: passage); with file names 86.8 -> 93.5. The ViDoRe gains above were measured with 256-token passages.
+TEXT_JUDGE_TOKENS = 512
+#: Passages loaded on each side of a text hit before trimming to ``TEXT_JUDGE_TOKENS``.
 _JUDGE_SPAN = 16
 #: Hits the rerank reads its candidates from, most: past it they keep the search's order. Hits that share
 #: a candidate (``_reranked``) are many, so the window fills from further down than its candidates.
@@ -213,12 +219,44 @@ def fitting(costs: list[int], window: int) -> int:
     return len(costs)
 
 
-def reranked_order(head: list[int], scores: dict[int, float]) -> list[int]:
-    """``head`` (candidates in search order) reordered by the reranker's ``scores``, the search's order
-    breaking ties. Only scored candidates move, among their own positions: one the reranker was not shown
-    (a video) stays where it was."""
+#: How the reranker's order and the search's are fused (reciprocal rank fusion): a candidate scores
+#: 1/(K + its rerank place) + DOC_WEIGHT/(K + its document's place in the search).
+RERANK_FUSION_K = 10
+RERANK_DOCUMENT_WEIGHT = 2.0
+
+
+def reranked_order(head: list[int], scores: dict[int, float], documents: list[str]) -> list[int]:
+    """``head`` (candidates in search order) reordered by the reranker's ``scores`` fused with the search's
+    order of their documents (``documents[n]``: candidate n's document). Only scored candidates move, among
+    their own positions: one the reranker was not shown (a video) stays where it was.
+
+    Search and reranker are right about different things. The search finds which document a question is
+    about (it embeds each passage under its document's title); a reranker judges each passage alone and
+    picks the same clause from a document of the same kind just as readily. Its order alone put other
+    NDAs' clauses over the asked one's on LegalBench-RAG (NDA recall@5 64.1, search alone 97.6), while it
+    finds the passage inside a long document that search cannot (mergers 72.6, search alone 18.5).
+    Fusing its passage order with the search's document order: 87.2 recall@5, 79.4 by the reranker alone.
+    Fused with the search's passage order instead (each hit's own place), mergers fell to 40.7."""
     slots = [m for m, n in enumerate(head) if n in scores]
-    ranked = sorted(slots, key=lambda m: -scores[head[m]])
+    by_rerank = sorted(slots, key=lambda m: -scores[head[m]])  # stable: the search's order breaks ties
+    place = {m: r for r, m in enumerate(by_rerank)}
+    document_place: dict[str, int] = {}
+    for m in slots:
+        document_place.setdefault(documents[head[m]], len(document_place))
+
+    # The document order counts by how much documents repeat among the candidates, squared: in full when a few
+    # long documents hold them all (LegalBench-RAG's contracts), hardly when each candidate is a document of its
+    # own (ViDoRe's pages). There the document order is the search's passage order, and fusing with it at full
+    # weight lost ViDoRe markdown nDCG@10 (hr 70.8 -> 64.2, finance_fr 54.2 -> 47.4, computer_science
+    # 83.7 -> 76.8) the way it lost LegalBench mergers above. Squared, by share, and at 2 for everything
+    # (a small listwise reranker; LegalBench recall@5, markdown hr nDCG@10):
+    #   at 2: 88.3, 64.2   by share: 87.7, 68.1   by share squared: 86.4, 70.1   at 0: 82.9, 70.8
+    weight = RERANK_DOCUMENT_WEIGHT * (1 - len(document_place) / len(slots)) ** 2 if slots else 0.0
+
+    def fused(m: int) -> float:
+        return 1 / (RERANK_FUSION_K + place[m]) + weight / (RERANK_FUSION_K + document_place[documents[head[m]]])
+
+    ranked = sorted(slots, key=lambda m: -fused(m))
     out = list(head)
     for slot, m in zip(slots, ranked, strict=True):
         out[slot] = head[m]
@@ -588,6 +626,10 @@ def _children(work: list[_Work], budget: int) -> list[list[_Work]]:
         out[-1].append(w)
         size += w.size
     return out
+
+
+#: How many of its first words a text document with no title from its file name takes as its title.
+OPENING_TITLE_WORDS = 40
 
 
 @dataclass
@@ -1608,6 +1650,11 @@ class KnowledgeService:
                         and not doc.replaced
                         and (draft := await _split(_next_draft, drafts)) is not None
                     ):
+                        if doc.queued == 0 and doc.title is None and draft.modality == "text" and draft.text:
+                            # A text document whose file name says nothing (an id, "lb-0605.txt") takes its
+                            # opening words as its title, so every passage is embedded with what the document
+                            # is (its kind, its parties), not alone. LegalBench-RAG CUAD, first 50 questions: 78 -> 89 recall@5.
+                            doc.title = " ".join(draft.text.split()[:OPENING_TITLE_WORDS])
                         cost = _passage_estimate(draft)
                         if budget.limit > 0 and doc.reserved + cost > budget.limit and doc.queued > doc.staged:
                             await stage(doc)
@@ -2176,7 +2223,11 @@ class KnowledgeService:
                 return text
             return truncate_to_tokens(text, JUDGE_CONTEXT_TOKENS, encoding).text
 
-        shown_text = [capped(texts[groups[n][0]]) for n in shown]
+        # Each candidate under its document's title, as its passages were embedded ("title: ... | text:").
+        # Alone, a clause every contract of a kind has ("the Recipient shall return or destroy ...") cannot be
+        # told from the same clause in another one: on LegalBench-RAG's NDAs the reranker put other NDAs'
+        # clauses over the asked one's (recall@5 26.3) while search alone had it first.
+        shown_text = [capped(_titled(pool[groups[n][0]], texts[groups[n][0]])) for n in shown]
         has_picture = [
             config.kb_reranker_images
             and pool[groups[n][0]].passage.modality == "image"
@@ -2214,7 +2265,9 @@ class KnowledgeService:
         score_of = {shown[m]: score for m, score in zip(seen, scores, strict=True)}
         # The head is every candidate up to the last one shown, videos among them in their places.
         head = list(range(max(score_of) + 1))
-        order = reranked_order(head, score_of) + list(range(len(head), len(groups)))
+        order = reranked_order(head, score_of, [pool[g[0]].document.document_id for g in groups]) + list(
+            range(len(head), len(groups))
+        )
         return [pool[i] for n in order for i in groups[n]] + hits[len(pool) :]
 
     async def _query_picture(self, request: SearchRequest) -> bytes | None:
@@ -2352,9 +2405,16 @@ class KnowledgeService:
         return _Budgeted(items, used)
 
 
+def _titled(hit: SearchHit, text: str) -> str:
+    """A text candidate under its document's title (``_title_hint``); alone when the name says nothing, and a
+    page or other media hit as it is (only text was measured)."""
+    title = _title_hint(hit.document) if hit.passage.modality == "text" else None
+    return f"Document: {title}\n\n{text}" if title else text
+
+
 def _judged_texts(hits: list[SearchHit], nearby: dict[tuple[str, int], KnowledgePassage]) -> list[str]:
     """The text each hit is judged by: a text passage with the passages around it (``nearby``, read with the
-    search), grown evenly on both sides up to ``JUDGE_CONTEXT_TOKENS``; any other hit its own text."""
+    search), grown evenly on both sides up to ``TEXT_JUDGE_TOKENS``; any other hit its own text."""
     out = []
     for hit in hits:
         own = hit.passage.text or ""
@@ -2367,7 +2427,7 @@ def _judged_texts(hits: list[SearchHit], nearby: dict[tuple[str, int], Knowledge
             for i in range(max(0, index - _JUDGE_SPAN), index + _JUDGE_SPAN + 1)
             if (document_id, i) in nearby
         ]
-        out.append(_around(run, index, JUDGE_CONTEXT_TOKENS) or own)
+        out.append(_around(run, index, TEXT_JUDGE_TOKENS) or own)
     return out
 
 

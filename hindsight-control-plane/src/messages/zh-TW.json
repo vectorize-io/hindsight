@@ -2741,6 +2741,8 @@
       "arm_extra_vectors_help": "PDF 頁的條帶、文字與文字單元，以相同方式搜尋。",
       "arm_keyword": "關鍵字",
       "arm_keyword_help": "查詢中較稀有字詞的全文比對（所有文件與語言）。",
+      "arm_document": "整份文件",
+      "arm_document_help": "上方搜尋排名最高的 3 份文件的每個文字段落，措辭與查詢不同的部分也會被評分。",
       "armScore": "本次搜尋中的分數",
       "meaningTitle": "語意分數",
       "meaningHelp": "{count} 個候選逐一以所有向量評分，再與所屬文件最佳段落取平均。",

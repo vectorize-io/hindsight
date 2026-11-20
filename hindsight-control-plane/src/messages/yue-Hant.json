@@ -2741,6 +2741,8 @@
       "arm_extra_vectors_help": "PDF 頁嘅條帶、文字同文字單元，用同樣方法搵。",
       "arm_keyword": "關鍵詞",
       "arm_keyword_help": "查詢入面較罕見字詞嘅全文配對（所有文件同語言）。",
+      "arm_document": "成份文件",
+      "arm_document_help": "上面搜尋排得最高嘅 3 份文件嘅每段文字，同查詢講法唔同嘅部分都會評分。",
       "armScore": "喺呢個搜尋嘅分數",
       "meaningTitle": "意思分數",
       "meaningHelp": "{count} 個候選逐個用所有向量評分，再同文件最好段落平均。",

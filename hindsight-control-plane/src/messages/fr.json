@@ -2741,6 +2741,8 @@
       "arm_extra_vectors_help": "Bandes, texte et unités de texte d'une page PDF, cherchés de même.",
       "arm_keyword": "Mots-clés",
       "arm_keyword_help": "Correspondances plein texte des mots les plus rares de la requête, dans chaque document et chaque langue.",
+      "arm_document": "Documents entiers",
+      "arm_document_help": "Chaque passage de texte des 3 documents les mieux classés par les recherches ci-dessus, pour noter aussi une partie formulée autrement que la requête.",
       "armScore": "Score dans cette recherche",
       "meaningTitle": "Score de sens",
       "meaningHelp": "Chacun des {count} candidats, noté par tous ses vecteurs puis moyenné avec le meilleur passage de son document.",

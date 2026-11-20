@@ -26,6 +26,7 @@ const ARM_STYLE: Record<string, { letter: string; bg: string; text: string }> = 
   vector: { letter: "V", bg: "bg-blue-500/10", text: "text-blue-500" },
   extra_vectors: { letter: "X", bg: "bg-cyan-500/10", text: "text-cyan-500" },
   keyword: { letter: "K", bg: "bg-amber-500/10", text: "text-amber-500" },
+  document: { letter: "D", bg: "bg-violet-500/10", text: "text-violet-500" },
 };
 
 const ACTION_STYLE: Record<KnowledgeTraceBudgetStep["action"], string> = {

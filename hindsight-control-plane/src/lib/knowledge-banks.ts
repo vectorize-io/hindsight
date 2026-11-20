@@ -166,7 +166,7 @@ export interface KnowledgeSearchTrace {
   timings_ms: Record<string, number>;
   /** Step 1: each candidate search's own list, best first. */
   candidate_searches: {
-    name: "vector" | "extra_vectors" | "keyword";
+    name: "vector" | "extra_vectors" | "keyword" | "document";
     results: { document_id: string; index: number; score: number }[];
   }[];
   /** Every candidate scored, best first. */

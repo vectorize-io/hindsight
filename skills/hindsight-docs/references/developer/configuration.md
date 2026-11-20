@@ -2723,7 +2723,7 @@ A file over a limit fails with the limit's name in its error, and its stored cop
 | `HINDSIGHT_API_KB_MAX_MEDIA_SECONDS` | Longest audio or video file. *Per bank*. | `7200` |
 | `HINDSIGHT_API_KB_MAX_VIDEO_WORK_SECONDS` | Most work one video may take to cut, in seconds of 1080p 30 fps video: cutting costs CPU by frames and their pixels, not by length or file size, so 4K at 60 fps counts about 3× per second and a file without a seek index (decoded from its start for every passage) far more. Checked from the header before decoding, and counted again while decoding. `0` turns it off. Server-only. | `7200` |
 | `HINDSIGHT_API_KB_MAX_PDF_PAGES` | Most pages in one PDF. *Per bank*. | `2000` |
-| `HINDSIGHT_API_KB_TEXT_PASSAGE_TOKENS` | Size of a text passage, in tokens; passages follow the document's structure. *Per bank*. | `256` |
+| `HINDSIGHT_API_KB_TEXT_PASSAGE_TOKENS` | Size of a text passage, in tokens; passages follow the document's structure. *Per bank*. | `512` |
 | `HINDSIGHT_API_KB_IMAGE_TOKENS` | Vision tokens per image for the `local` embedder (70–1120). *Per bank*. | `280` |
 | `HINDSIGHT_API_KB_PDF_PAGE_PIXELS` | Longest side of a rendered PDF page, in pixels. *Per bank*. | `1536` |
 | `HINDSIGHT_API_KB_PDF_BANDS` | Also embed three horizontal bands of each PDF page: better search, half the ingest speed. *Per bank*. | `false` |

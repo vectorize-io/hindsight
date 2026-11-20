@@ -1147,6 +1147,10 @@ async def test_a_long_page_is_shown_capped_to_the_context_it_gets(api_client, kb
 
 
 async def test_pieces_of_one_short_document_are_judged_once(api_client, kb, judge):
+    # Sized for 256-token passages (this test is about how passages combine, not their size).
+    assert (
+        await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"text_passage_tokens": 256}})
+    ).status_code == 200
     # A guide long enough for several passages, short enough to be judged whole: every passage would show
     # the reranker the same text, so it is one candidate.
     guide = "\n\n".join(f"Step {i}. Rotate the red key in the console. " + "detail " * 60 for i in range(6))
@@ -1159,6 +1163,21 @@ async def test_pieces_of_one_short_document_are_judged_once(api_client, kb, judg
     assert {h["document_id"] for h in hits} == {"guide", "note"}
     assert len(judge.texts) == 2  # the guide once, whole, and the note
     assert any(text.count("Step") == 6 for text in judge.texts)
+
+
+async def test_a_text_hit_is_judged_alone_under_its_document_title(api_client, kb, judge):
+    # Three clauses of a contract, a 512-token passage each: the reranker is shown the asked clause by
+    # itself (TEXT_JUDGE_TOKENS), not its neighbours, and under the document's title, as it was embedded.
+    clauses = [f"Clause {i}. " + ("The red key is returned. " if i == 1 else "") + "term " * 420 for i in range(3)]
+    item = {"document_id": "supply", "text": "\n\n".join(clauses), "filename": "supply_agreement.txt"}
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [item]})
+    assert r.status_code == 200, r.text
+    assert (await api_client.get(f"{KB}/{kb}")).json()["passage_count"] == 3
+
+    await _search(api_client, kb, query="red key", max_tokens=1_000_000)
+    asked = next(t for t in judge.texts if "red key" in t)
+    assert asked.startswith("Document: supply agreement\n\nClause 1.")
+    assert "Clause 0." not in asked and "Clause 2." not in asked
 
 
 async def test_a_failing_reranker_is_reported_as_itself(api_client, kb, judge, monkeypatch):
@@ -1261,9 +1280,24 @@ def test_candidates_fill_the_window_in_search_order():
 def test_the_scores_reorder_the_candidates_and_leave_a_video_in_place():
     from hindsight_api.knowledge.service import reranked_order
 
-    assert reranked_order([0, 1, 2], {0: 0.05, 1: 0.05, 2: 0.9}) == [2, 0, 1]  # a tie keeps the search's order
+    one = ["d", "d", "d"]  # inside one document the reranker's order is the order
+    assert reranked_order([0, 1, 2], {0: 0.05, 1: 0.05, 2: 0.9}, one) == [2, 0, 1]  # a tie keeps the search's order
     # Candidate 1 (a video) was not shown: it keeps its place, the others swap around it.
-    assert reranked_order([0, 1, 2], {0: 0.05, 2: 0.95}) == [2, 1, 0]
+    assert reranked_order([0, 1, 2], {0: 0.05, 2: 0.95}, one) == [2, 1, 0]
+
+
+def test_the_reranker_picks_the_passage_and_the_search_the_document():
+    from hindsight_api.knowledge.service import reranked_order
+
+    # Candidates from few long documents: the search's best document ("asked") keeps the top even though the
+    # reranker likes the same clause of "other" a bit more; its best passage is first.
+    docs = ["asked"] * 6 + ["other"] * 2
+    scores = {0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4, 4: 0.5, 5: 0.8, 6: 0.9, 7: 0.6}
+    assert reranked_order(list(range(8)), scores, docs)[0] == 5
+    # Each candidate a document of its own (a page): the document order is only the search's order again,
+    # and the reranker's order stands.
+    pages = ["p0", "p1", "p2"]
+    assert reranked_order([0, 1, 2], {0: 0.1, 1: 0.5, 2: 0.9}, pages) == [2, 1, 0]
 
 
 def test_a_text_hit_is_judged_with_the_passages_around_it():
@@ -1370,7 +1404,11 @@ async def test_an_unreachable_remote_embedder_is_a_503_not_a_crash(api_client, k
 
 
 async def test_text_hits_come_back_with_neighbours_and_overlapping_windows_merge(api_client, kb):
-    # Each paragraph fills one passage at the default size (256 tokens), so passage i is paragraph i.
+    # Sized for 256-token passages (this test is about how passages combine, not their size).
+    assert (
+        await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"text_passage_tokens": 256}})
+    ).status_code == 200
+    # Each paragraph fills one 256-token passage, so passage i is paragraph i.
     paragraphs = [f"Paragraph {i}: " + ("invoice " if i in (4, 5) else "filler ") * 180 for i in range(10)]
     r = await api_client.post(
         f"{KB}/{kb}/ingest",
@@ -1516,6 +1554,42 @@ async def test_keywords_match_rare_words_in_every_language(api_client, kb):
     keyword = {h["document_id"]: h["keyword"] for h in trace["hits"]}
     assert keyword["fr-hit"] > 0 and keyword["ja-hit"] > 0 and keyword["filler-0"] == 0
     assert body["results"][0]["document_id"] == "en-hit"
+
+
+async def test_an_untitled_text_is_embedded_under_its_opening_and_its_best_documents_are_scored_whole(
+    api_client, kb, fake_embedder
+):
+    """A text with no file name gets its first words as its title (each passage then says what document it
+    is from), a named file keeps its name; every text passage of the best documents is a candidate."""
+    long = "\n\n".join(["Merger agreement between Acme and Beta."] + [f"Section {n}: the red box." for n in range(6)])
+    items = [
+        {"document_id": "deal", "text": long},
+        {"document_id": "named", "text": "a blue key", "filename": "keys.md"},
+    ]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.status_code == 200, r.text
+    titles = {i.title for call in fake_embedder.calls for i in call}
+    assert "keys" in titles and any(t and t.startswith("Merger agreement between Acme and Beta.") for t in titles)
+
+    trace = (await api_client.post(f"{KB}/{kb}/search", json={"query": "red", "trace": True})).json()["trace"]
+    arms = {a["name"]: a["results"] for a in trace["candidate_searches"]}
+    deal = {h["index"] for h in trace["hits"] if h["document_id"] == "deal"}
+    assert {r["index"] for r in arms["document"] if r["document_id"] == "deal"} == deal and len(deal) > 1
+
+
+async def test_a_question_word_rare_enough_on_its_own_stays_next_to_a_much_rarer_name(api_client, kb):
+    """In 300 passages a name in one has IDF ~5.3 and "termination", in 31, ~2.3: under half the name's,
+    so it was dropped and the search looked for the name alone. It clears KEYWORD_IDF_FLOOR (2.0)."""
+    docs = [("deal", "zorblat termination fee")]
+    docs += [(f"t-{n}", f"termination clause {n}") for n in range(30)]
+    docs += [(f"f-{n}", f"filler line {n}") for n in range(269)]
+    for start in range(0, len(docs), 100):  # an ingest takes at most 100 items
+        items = [{"document_id": d, "text": t} for d, t in docs[start : start + 100]]
+        r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+        assert r.status_code == 200, r.text
+    body = {"query": "zorblat termination", "trace": True}
+    terms = (await api_client.post(f"{KB}/{kb}/search", json=body)).json()["trace"]["keyword_terms"]
+    assert terms["zorblat"] > 2 * terms["termination"] and terms["termination"] >= 2.0
 
 
 async def test_a_search_needs_a_query_and_a_bank(api_client, kb):
@@ -2599,6 +2673,10 @@ def test_a_heading_waits_for_its_content_instead_of_standing_alone():
 
 
 async def test_a_traced_search_explains_every_rank_and_what_the_budget_kept(api_client, kb):
+    # Sized for 256-token passages (this test is about how passages combine, not their size).
+    assert (
+        await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"text_passage_tokens": 256}})
+    ).status_code == 200
     paragraphs = [
         f"Paragraph {i}: " + ("the invoice is in the box " if i == 4 else "this is the filler of it ") * 30
         for i in range(10)

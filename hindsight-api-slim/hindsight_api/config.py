@@ -2151,8 +2151,11 @@ DEFAULT_KB_KEYWORD_WEIGHT = 0.2
 # Structure-aware passages. 128 was best on LegalBench-RAG at a fixed budget of returned text (CHUNKING.md);
 # 256 beat it on every benchmark launch uses (EmbeddingGemma 2): SciFact 83.7 -> 84.2 nDCG@10,
 # EnterpriseRAG search 66.1 -> 67.6 (recall@10 77.1 -> 81.5), with half the passages. 512 led on
-# SciFact alone (85.6) and lost 3 points on EnterpriseRAG's per-category mean.
-DEFAULT_KB_TEXT_PASSAGE_TOKENS = 256
+# SciFact alone (85.6) and lost 3 points on EnterpriseRAG's per-category mean. 512 again with each text
+# titled by its opening and its best documents scored whole: LegalBench-RAG recall@5 80.9 -> 86.1 on its
+# first 50 questions per set (mergers 46.4 -> 60.7: a clause is no longer cut in two). EnterpriseRAG and
+# SciFact not yet rerun at 512 with these.
+DEFAULT_KB_TEXT_PASSAGE_TOKENS = 512
 # An async knowledge ingest is split into child operations of about this many bytes of stored files,
 # each its own worker task, so one big upload spreads across every free slot. Bytes, because the
 # passage count is only known once a file is split; a file over the budget is a child on its own.
