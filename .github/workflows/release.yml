@@ -456,8 +456,11 @@ jobs:
       uses: docker/metadata-action@v6
       with:
         images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image_name }}
+        # No latest=auto: it adds a bare `latest` to every variant, so the slim job
+        # could overwrite the full image's `latest` (#6719). The raw tag below makes
+        # `latest` for the full image and `latest-slim` for slim.
         flavor: |
-          latest=auto
+          latest=false
           suffix=${{ matrix.tag_suffix }}
         tags: |
           type=semver,pattern={{version}},value=${{ steps.get_version.outputs.VERSION }}
