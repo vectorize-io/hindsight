@@ -3056,6 +3056,7 @@ def test_the_memory_guard_kills_the_biggest_worker_only_past_its_share(monkeypat
 
 @pytest.mark.skipif(sys.platform != "linux", reason="the guard reads /proc")
 def test_the_memory_guard_finds_the_workers_and_only_them():
+    import os
     import time
 
     media._in_pdf_worker(time.sleep, 0)  # a PDF worker is up
