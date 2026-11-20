@@ -3,7 +3,7 @@ title: "Your OpenCode Agent Forgets Everything Between Sessions. Here's the Fix.
 authors: [DK09876]
 date: 2026-04-20
 tags: [opencode, memory, integrations, typescript, tutorial]
-description: "OpenCode sessions are stateless by default. The @vectorize-io/opencode-hindsight plugin adds persistent memory via automatic hooks and three explicit tools."
+description: "OpenCode sessions are stateless by default. The Hindsight Coding Agents plugin adds persistent memory via automatic hooks and three explicit tools."
 image: /img/blog/opencode-persistent-memory.png
 hide_table_of_contents: true
 ---
@@ -17,7 +17,7 @@ OpenCode gives you a fast, terminal-native AI coding agent. But every session st
 ## TL;DR
 
 - OpenCode sessions are stateless — every conversation starts from scratch
-- `@vectorize-io/opencode-hindsight` adds persistent memory via three tools (retain, recall, reflect) and automatic hooks
+- The Hindsight Coding Agents plugin adds persistent memory via three tools (retain, recall, reflect) and automatic hooks
 - Memories are injected into the system prompt on session start, so the agent has context before you say anything
 - Conversations are auto-captured on idle, and memories survive context window compaction
 - Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io) (zero setup) or self-hosted
@@ -38,7 +38,7 @@ For quick one-off tasks, this is fine. For ongoing project work where continuity
 
 [Hindsight](https://github.com/vectorize-io/hindsight) is a memory layer for AI agents. It extracts facts from conversations, retrieves them semantically at query time, and can synthesize reasoned answers from accumulated context.
 
-The `@vectorize-io/opencode-hindsight` plugin integrates Hindsight directly into OpenCode's plugin system. It works in two modes:
+The Hindsight Coding Agents plugin integrates Hindsight directly into OpenCode's plugin system. It works in two modes:
 
 **Automatic** — hooks handle everything behind the scenes:
 - Recalls relevant memories when a session starts (injected into the system prompt)
@@ -81,7 +81,7 @@ The automatic hooks handle most use cases. The explicit tools are there for when
 ### 1. Install the plugin
 
 ```bash
-npm install @vectorize-io/opencode-hindsight
+npx @vectorize-io/hindsight-coding-agents install opencode
 ```
 
 ### 2. Register in opencode.json
@@ -140,7 +140,7 @@ The auto-retain uses a sliding window controlled by `retainEveryNTurns` (default
 
 You can configure the plugin at three levels (later wins):
 
-1. **Config file** — `~/.hindsight/opencode.json` for user-wide defaults
+1. **Config file** — `~/.hindsight/coding-agent.json` for user-wide defaults
 2. **Plugin options** — inline in `opencode.json` for project-specific settings
 3. **Environment variables** — for CI/CD or per-machine overrides
 
@@ -172,7 +172,7 @@ You can configure the plugin at three levels (later wins):
 | `bankMission` | *(none)* | Guides what Hindsight extracts and how it reflects |
 | `dynamicBankId` | `false` | Derive bank ID from project/agent context |
 
-Full environment variable reference is in the [integration docs](/sdks/integrations/opencode).
+Full environment variable reference is in the [integration docs](https://hindsight.vectorize.io/sdks/integrations/coding-agents).
 
 ---
 
@@ -246,8 +246,8 @@ The plugin is most valuable when you have ongoing project work where decisions, 
 ## Next Steps
 
 - **[Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io)** — zero-config hosting, ready in seconds
-- Install the plugin: `npm install @vectorize-io/opencode-hindsight`
-- Read the [OpenCode integration reference](/sdks/integrations/opencode) for full configuration details
+- Install the plugin: `npx @vectorize-io/hindsight-coding-agents install opencode`
+- Read the [OpenCode integration reference](https://hindsight.vectorize.io/sdks/integrations/coding-agents) for full configuration details
 - Try the [quickstart](/developer/api/quickstart) if you prefer self-hosting
 - Set a `bankMission` that matches your project's focus — it significantly improves what gets extracted and recalled
 - Explore the [cookbook](/cookbook) for memory patterns across agent frameworks
