@@ -469,9 +469,21 @@ _OFFICE_POOL: ProcessPoolExecutor | None = None
 _OFFICE_POOL_LOCK = threading.Lock()
 
 
+#: The most address space a worker process (Office conversion, PDF rendering) may take. At rest one takes
+#: 0.9 GB. POI's 51535.xls, 42 KB, declares 65,536 rows of 256 columns, and markitdown grew by 14 MB a second
+#: turning them into a table until the 8 GB container ran out; on Kubernetes (cgroup v2) the kernel then
+#: kills every process of the container, the server too, whatever their oom_score_adj. Past the cap the
+#: worker gets a MemoryError and that file fails alone.
+_WORKER_ADDRESS_SPACE = 2 << 30
+
+
 def _first_to_kill() -> None:
-    """In the worker: when memory runs out, the kernel kills this process, not the server it works for (in a
-    6 GB container it once killed the server while a spreadsheet converted). Linux only; elsewhere a no-op."""
+    """In the worker: its address space is capped, and when memory runs out anyway the kernel kills this
+    process, not the server it works for. Linux only; elsewhere a no-op."""
+    import resource
+
+    with contextlib.suppress(OSError, ValueError):
+        resource.setrlimit(resource.RLIMIT_AS, (_WORKER_ADDRESS_SPACE, _WORKER_ADDRESS_SPACE))
     with contextlib.suppress(OSError):
         Path("/proc/self/oom_score_adj").write_text("1000")
 

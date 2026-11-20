@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import math
+import sys
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import replace
@@ -2913,3 +2914,12 @@ def test_a_word_file_whose_text_is_all_in_its_header_is_read():
         }
     )
     assert "Quarterly results" in media._convert_office(data, ".docx")
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the worker's address-space cap is Linux only")
+def test_a_worker_that_wants_more_memory_than_a_file_may_use_fails_alone():
+    # POI's 51535.xls (42 KB, 65,536 x 256 cells) grew a converter until the container ran out of memory, and on
+    # Kubernetes that kills the server with it. The worker's address space is capped: it fails, the server stays.
+    with pytest.raises(MemoryError):
+        media._in_pdf_worker(bytearray, media._WORKER_ADDRESS_SPACE)
+    assert [d.page for d in media.split_pdf(_pdf((255, 0, 0)), page_pixels=128, max_pages=10)] == [1]
