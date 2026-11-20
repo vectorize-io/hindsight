@@ -17,10 +17,11 @@ OpenCode gives you a fast, terminal-native AI coding agent. But every session st
 ## TL;DR
 
 - OpenCode sessions are stateless — every conversation starts from scratch
-- The Hindsight Coding Agents plugin adds persistent memory via three tools (retain, recall, reflect) and automatic hooks
-- Memories are injected into the system prompt on session start, so the agent has context before you say anything
-- Conversations are auto-captured on idle, and memories survive context window compaction
-- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io) (zero setup) or self-hosted
+- The Hindsight Coding Agents plugin adds persistent memory: one `npx` command installs it, and it registers itself in OpenCode's config
+- Relevant memory is injected on the first prompt of a session, so the agent has context before it starts working
+- Your conversations and your repo's git history flow into memory in the background — no setup step, no explicit save
+- Each repository gets its own memory bank by default, shared by every coding agent you use on it
+- Works with [Hindsight Cloud](https://ui.hindsight.vectorize.io) (the default), a self-hosted server, or a local daemon
 
 ---
 
@@ -38,41 +39,44 @@ For quick one-off tasks, this is fine. For ongoing project work where continuity
 
 [Hindsight](https://github.com/vectorize-io/hindsight) is a memory layer for AI agents. It extracts facts from conversations, retrieves them semantically at query time, and can synthesize reasoned answers from accumulated context.
 
-The Hindsight Coding Agents plugin integrates Hindsight directly into OpenCode's plugin system. It works in two modes:
+The Hindsight Coding Agents plugin integrates Hindsight directly into OpenCode's plugin system as native tools — no MCP server needed. It works in two modes:
 
-**Automatic** — hooks handle everything behind the scenes:
-- Recalls relevant memories when a session starts (injected into the system prompt)
-- Retains the conversation when the session goes idle
-- Preserves memories through context window compaction
+**Automatic** — the plugin handles these behind the scenes:
+- Injects relevant memory on the first prompt of a session
+- Writes the session back to memory every turn, plus a flush when the session goes idle
+- Ingests the repo's git history in the background
+- Keeps a curated set of **pages** (architecture, conventions, in-flight initiatives) that later sessions start from
 
-**Explicit** — three tools the agent can call directly:
-- `hindsight_retain` — store a specific fact or decision
-- `hindsight_recall` — search memory for relevant context
-- `hindsight_reflect` — synthesize a reasoned answer from accumulated memories
+**Explicit** — tools the agent can call directly:
+- `hindsight_search_pages` — first stop for project questions (components, conventions, past decisions)
+- `hindsight_read_page` / `hindsight_list_pages` — read pages in full
+- `hindsight_reflect` — deep reasoning over the whole memory for "why" questions and exact decided values
+- `hindsight_ingest_document` — store an external document, notes or durable findings
+- `hindsight_capture_initiative` — record a new feature or plan as a page once it is agreed
 
 ```
 Session start
     │
     ▼
-┌─────────────────────────────────────┐
-│  System prompt                      │
-│  + recalled memories (automatic)    │
-├─────────────────────────────────────┤
-│  OpenCode Agent                     │
-│  ├── hindsight_retain  (explicit)   │
-│  ├── hindsight_recall  (explicit)   │
-│  └── hindsight_reflect (explicit)   │
-└─────────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│  First prompt                            │
+│  + injected memory (automatic)           │
+├──────────────────────────────────────────┤
+│  OpenCode Agent                          │
+│  ├── hindsight_search_pages   (explicit) │
+│  ├── hindsight_reflect        (explicit) │
+│  └── hindsight_ingest_document (explicit)│
+└──────────────────────────────────────────┘
         │                   ▲
-      retain              recall
+   write-back             recall
         │                   │
         ▼                   │
   ┌───────────────────────────────┐
-  │        Hindsight bank         │
+  │   Hindsight bank (per repo)   │
   └───────────────────────────────┘
 ```
 
-The automatic hooks handle most use cases. The explicit tools are there for when the agent (or you) wants fine-grained control.
+The automatic part handles most use cases. The explicit tools are there for when the agent (or you) wants to dig deeper or store something on purpose.
 
 ---
 
@@ -84,41 +88,45 @@ The automatic hooks handle most use cases. The explicit tools are there for when
 npx @vectorize-io/hindsight-coding-agents install opencode
 ```
 
-### 2. Register in opencode.json
+The installer writes the plugin entry into `~/.config/opencode/opencode.json` for you — there is nothing to add by hand. On OpenCode 2.x, use `install opencode2` instead.
 
-```json
-{
-  "plugin": ["@vectorize-io/opencode-hindsight"]
-}
-```
+### 2. Choose where memory lives
 
-### 3. Point at a Hindsight server
+On a terminal, `install` asks once where memory should live. Scripted installs pass `--server`:
 
-**Option A: Hindsight Cloud** (zero setup)
+**Option A: Hindsight Cloud** (the default)
 
-Sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io), generate an API token, and set two environment variables:
+Sign up at [Hindsight Cloud](https://ui.hindsight.vectorize.io), generate an API token, and pass it to the installer:
 
 ```bash
-export HINDSIGHT_API_URL="https://api.hindsight.vectorize.io"
-export HINDSIGHT_API_TOKEN="hsk_your_token"
+npx @vectorize-io/hindsight-coding-agents install opencode --server cloud --api-token <token>
 ```
 
 **Option B: Self-hosted**
 
-Run Hindsight locally or on your own infrastructure. See the [installation guide](/developer/installation) to get started:
+Run Hindsight on your own infrastructure (see the [installation guide](/developer/installation)) and point the plugin at it:
 
 ```bash
-uvx hindsight-server
-export HINDSIGHT_API_URL="http://localhost:8888"
+npx @vectorize-io/hindsight-coding-agents install opencode --server self-hosted --api-url http://localhost:8888
 ```
 
-### 4. Start OpenCode
+**Option C: Local daemon**
+
+Run memory on your machine with a local `hindsight-embed` the plugin starts on demand. It needs `uv` on your PATH and an LLM key for fact extraction:
+
+```bash
+npx @vectorize-io/hindsight-coding-agents install opencode --server daemon
+```
+
+Re-running `install` never asks again: a config that already names a server is left alone.
+
+### 3. Start OpenCode
 
 ```bash
 opencode
 ```
 
-The plugin activates automatically. On your first session, it connects to Hindsight and begins capturing context.
+The plugin loads with OpenCode. There is no setup command: the repo's git history and your conversations start flowing into its memory bank in the background as you work.
 
 ---
 
@@ -126,37 +134,31 @@ The plugin activates automatically. On your first session, it connects to Hindsi
 
 Here's the lifecycle of a session with the plugin active:
 
-1. **Session starts** — the `session.created` event fires, marking this session for memory injection
-2. **First LLM call** — the system transform hook runs a recall query ("project context and recent work") and injects matching memories into the system prompt
-3. **During the session** — the agent can call `hindsight_retain`, `hindsight_recall`, or `hindsight_reflect` explicitly as needed
-4. **Session idles** — the `session.idle` event triggers auto-retain of the conversation transcript
-5. **Context compaction** — if the context window fills up, the plugin retains the current conversation and injects recalled memories into the compaction context, so nothing important is lost
-
-The auto-retain uses a sliding window controlled by `retainEveryNTurns` (default: 3). This prevents redundant storage while keeping recent context fresh.
+1. **Every turn** — the plugin resolves which bank to use from the directory the agent is working in, so a session that moves into another repo follows it
+2. **First prompt** — the plugin injects memory once: by default a low-budget reflect synthesis; if that times out or fails, it falls back to page search, then recall
+3. **During the session** — the agent can call `hindsight_search_pages`, `hindsight_read_page` or `hindsight_reflect` when it needs more, and store things deliberately with `hindsight_ingest_document` or `hindsight_capture_initiative`
+4. **After each turn** — the session transcript is written back to the bank, and an idle flush captures the reply the per-turn pass can't see
 
 ---
 
 ## Configuration
 
-You can configure the plugin at three levels (later wins):
+Configuration is **one JSON file**: `~/.hindsight/coding-agent.json`. The installer writes it; you edit it to change settings.
 
-1. **Config file** — `~/.hindsight/coding-agent.json` for user-wide defaults
-2. **Plugin options** — inline in `opencode.json` for project-specific settings
-3. **Environment variables** — for CI/CD or per-machine overrides
+Environment variables (`HINDSIGHT_API_URL`, `HINDSIGHT_API_TOKEN`, and one `HINDSIGHT_<FIELD_IN_CAPS>` per scalar setting) are a **fallback**: the file wins wherever it sets a value. They are meant for containers and CI that inject config instead of writing a file.
 
-### Plugin options example
+The file can also hold per-agent overrides (`harnesses.opencode`), per-directory overrides (`paths.<prefix>`) and per-repo overrides (`banks.<bankId>`).
+
+OpenCode reads the file when it loads the plugin, so restart OpenCode after an edit.
+
+### Config file example
 
 ```json
 {
-  "plugin": [
-    ["@vectorize-io/opencode-hindsight", {
-      "hindsightApiUrl": "http://localhost:8888",
-      "bankId": "my-project",
-      "recallBudget": "high",
-      "retainEveryNTurns": 5,
-      "bankMission": "You are a coding assistant for a TypeScript monorepo. Focus on architecture decisions, test patterns, and deployment procedures."
-    }]
-  ]
+  "apiUrl": "http://localhost:8888",
+  "bankId": "my-project",
+  "autoInject": "pages",
+  "reflectBudget": "mid"
 }
 ```
 
@@ -164,57 +166,52 @@ You can configure the plugin at three levels (later wins):
 
 | Setting | Default | What it does |
 |---|---|---|
-| `autoRecall` | `true` | Inject memories on session start |
-| `autoRetain` | `true` | Capture conversation on idle |
-| `recallBudget` | `mid` | How many memories to retrieve: `low`, `mid`, `high` |
-| `retainEveryNTurns` | `3` | Auto-retain frequency (user turns) |
-| `retainMode` | `full-session` | `full-session` upserts the whole conversation; `last-turn` creates chunked windows |
-| `bankMission` | *(none)* | Guides what Hindsight extracts and how it reflects |
-| `dynamicBankId` | `false` | Derive bank ID from project/agent context |
+| `apiUrl` | `https://api.hindsight.vectorize.io` | Hindsight API base URL (`http://localhost:8888` for a local server) |
+| `apiToken` | — | Bearer token for Hindsight Cloud |
+| `bankId` | — | Explicit static bank; unset means one bank per repo |
+| `bankIdTemplate` | `"coding-agent::{gitProject}"` | Format of the per-repo bank ID |
+| `autoInject` | `"reflect"` | What to inject on the session's first prompt: `"reflect"`, `"pages"` or `"recall"` |
+| `reflectBudget` | `"high"` | Budget for the agent's `hindsight_reflect` tool: `low`, `mid`, `high` |
+| `retainSessions` | `true` | Write sessions back to memory; `false` stops it while recall and the tools keep working |
+| `disabled` | `false` | Hard off-switch |
 
-Full environment variable reference is in the [integration docs](https://hindsight.vectorize.io/sdks/integrations/coding-agents).
+The full settings reference is in the [integration docs](/sdks/integrations/coding-agents).
 
 ---
 
 ## Scoping Memory with Bank IDs
 
-By default, all sessions share a single `opencode` bank. For project isolation, you have two options:
+By default, each repository gets its own bank: `coding-agent::{gitProject}`. A project at `/home/user/my-app` gets bank ID `coding-agent::my-app`, and every linked worktree of that repo shares it. The default doesn't name the agent, so OpenCode, Claude Code and Codex all share one memory per repo.
 
-**Static bank ID** — one bank per project:
+You can change that in `~/.hindsight/coding-agent.json`:
 
-```bash
-export HINDSIGHT_BANK_ID="my-project"
+**Static bank ID** — one bank for everything, or one shared by a whole team:
+
+```json
+{ "bankId": "team-orders" }
 ```
 
-**Dynamic bank ID** — derived automatically from context:
+**Split per agent** — keep OpenCode's memory apart from your other agents:
 
-```bash
-export HINDSIGHT_DYNAMIC_BANK_ID=true
+```json
+{ "bankIdTemplate": "{harness}-{gitProject}" }
 ```
 
-With dynamic mode, the bank ID is composed from granularity fields (default: `agent::project`). A project at `/home/user/my-app` gets bank ID `opencode::my-app`.
+**Map paths to banks** — `mapPathToBank` maps an absolute path to a bank; the longest matching prefix wins and overrides everything else.
 
-For multi-user setups:
-
-```bash
-export HINDSIGHT_DYNAMIC_BANK_ID=true
-export HINDSIGHT_CHANNEL_ID="team-backend"
-export HINDSIGHT_USER_ID="alice"
-```
-
-This gives you `opencode::my-app::team-backend::alice` — full isolation per user, per project, per channel. For more patterns, see the [per-user memory cookbook](/cookbook/recipes/per-user-memory).
+The template also accepts `{channel}` and `{user}` (from `$HINDSIGHT_CHANNEL_ID` / `$HINDSIGHT_USER_ID`) for multi-user setups. For more patterns, see the [per-user memory cookbook](/cookbook/recipes/per-user-memory).
 
 ---
 
 ## Pitfalls and Edge Cases
 
-**Memory feedback loops.** The plugin strips `<hindsight_memories>` tags from transcripts before retaining, preventing circular amplification. If you're building custom tooling that feeds OpenCode output into Hindsight directly, be aware of this.
+**Cold start on first session.** A new repo's bank starts empty, so the first session has little to recall. The git history ingest and each session's write-back fill it in the background. To pre-populate a bank, use the [Hindsight API](/developer/api/quickstart) or CLI directly.
 
-**Cold start on first session.** The first session in a new bank has no memories to recall. The agent starts with a blank slate. Memories accumulate from the second session onward. To pre-populate a bank, use the [Hindsight API](/developer/api/quickstart) or CLI directly.
+**Local daemon start-up.** In daemon mode, the first start downloads the daemon and loads models, which takes a while. It runs in the background, so a session that begins before it is ready simply has no memory for a turn or two.
 
-**Compaction timing.** The compaction hook retains the current conversation and recalls relevant context. If your Hindsight server is slow or unreachable, compaction proceeds without memory injection — the plugin never blocks the agent.
+**Config edits need a restart.** OpenCode reads `~/.hindsight/coding-agent.json` when it loads the plugin. Restart OpenCode after you change it.
 
-**Context window budget.** Recalled memories consume tokens from the context window. With `recallBudget: "high"`, you get more context but leave less room for the conversation. For long sessions, `mid` (the default) is a good balance.
+**Turn latency.** Injection on the first prompt costs time. `autoInject: "pages"` is faster than the default reflect synthesis, and `injectTimeoutMs` caps how long retrieval may take.
 
 ---
 
@@ -236,10 +233,9 @@ The plugin is most valuable when you have ongoing project work where decisions, 
 ## Recap
 
 - OpenCode sessions are stateless by default
-- The Hindsight plugin adds persistent memory through automatic hooks (recall on start, retain on idle, preserve through compaction) and explicit tools (retain, recall, reflect)
-- Configuration is layered: config file, plugin options, environment variables
-- Memory is scoped via bank IDs — static for simple setups, dynamic for multi-project/multi-user isolation
-- The plugin is non-blocking and gracefully degrades if Hindsight is unreachable
+- The Hindsight Coding Agents plugin adds persistent memory: injection on the first prompt, write-back every turn, background git ingest, and explicit tools (search and read pages, reflect, ingest documents, capture initiatives)
+- Configuration is one file, `~/.hindsight/coding-agent.json`; environment variables are only a fallback
+- Memory is scoped per repo by default (`coding-agent::{gitProject}`); set `bankId` to share one bank
 
 ---
 
@@ -247,7 +243,6 @@ The plugin is most valuable when you have ongoing project work where decisions, 
 
 - **[Sign up for Hindsight Cloud](https://ui.hindsight.vectorize.io)** — zero-config hosting, ready in seconds
 - Install the plugin: `npx @vectorize-io/hindsight-coding-agents install opencode`
-- Read the [OpenCode integration reference](https://hindsight.vectorize.io/sdks/integrations/coding-agents) for full configuration details
+- Read the [Coding Agents integration reference](/sdks/integrations/coding-agents) for full configuration details
 - Try the [quickstart](/developer/api/quickstart) if you prefer self-hosting
-- Set a `bankMission` that matches your project's focus — it significantly improves what gets extracted and recalled
 - Explore the [cookbook](/cookbook) for memory patterns across agent frameworks
