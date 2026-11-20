@@ -3112,6 +3112,41 @@ def test_a_worker_converts_every_office_file_with_one_converter():
     assert all("Same converter" in media._convert_office(data, ".docx") for _ in range(3))
 
 
+class _FakeSheet:
+    """A legacy .xls sheet as xlrd gives it: its declared size, and its rows."""
+
+    def __init__(self, name: str, rows: list[list[object]], nrows: int, ncols: int) -> None:
+        self.name, self._rows, self.nrows, self.ncols = name, rows, nrows, ncols
+
+    def row_values(self, row: int) -> list[object]:
+        return self._rows[row] if row < len(self._rows) else [""] * self.ncols
+
+
+def test_a_spreadsheet_declaring_millions_of_cells_is_read_cell_by_cell(monkeypatch):
+    # POI's 42 KB 51535.xls declares 65,536 x 256 cells and holds two: markitdown built a table of all 16.7M and ran
+    # a worker out of 5 GB. Past _MARKITDOWN_MAX_CELLS the non-empty cells are read row by row instead.
+    sheet = _FakeSheet("Sheet1", [["Top Left Cell", "", "Top Right Cell"]], nrows=65_536, ncols=256)
+    monkeypatch.setattr(media, "_xls_sheets", lambda data: iter([sheet]))
+    monkeypatch.setattr(media, "_markitdown", lambda: pytest.fail("markitdown read a sheet of 16.7M cells"))
+    assert media._convert_office(b"", ".xls") == "## Sheet1\n| Top Left Cell | Top Right Cell |"
+
+
+def test_a_small_spreadsheet_keeps_markitdowns_table_and_falls_back_when_it_fails(monkeypatch):
+    import types
+
+    sheet = _FakeSheet("Budget", [["Rent", 1200.0]], nrows=1, ncols=2)
+    monkeypatch.setattr(media, "_xls_sheets", lambda data: iter([sheet]))
+    table = types.SimpleNamespace(convert_stream=lambda *a, **k: types.SimpleNamespace(text_content="| Rent | 1200 |"))
+    monkeypatch.setattr(media, "_markitdown", lambda: table)
+    assert media._convert_office(b"", ".xls") == "| Rent | 1200 |"  # under the limit: as markitdown writes it
+
+    def fails(*a, **k):
+        raise MemoryError
+
+    monkeypatch.setattr(media, "_markitdown", lambda: types.SimpleNamespace(convert_stream=fails))
+    assert media._convert_office(b"", ".xls") == "## Budget\n| Rent | 1200.0 |"
+
+
 def test_a_cut_off_video_is_not_refused_for_the_length_its_header_claims():
     # FATE's 1242-small.mkv is 100 KB of a file whose header declares 22 minutes of 1280x718, and it cannot seek.
     # Counted as decoded from its start for every window, it was refused as 7.2 h of work; its few real frames
