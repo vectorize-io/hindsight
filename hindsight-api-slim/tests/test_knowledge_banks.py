@@ -1228,13 +1228,15 @@ def test_the_scores_reorder_the_candidates_and_leave_a_video_in_place():
 def test_the_reranker_picks_the_passage_and_the_search_the_document():
     from hindsight_api.knowledge.service import reranked_order
 
-    # The search's best document is "asked"; the reranker likes the same clause of "other" a bit more.
-    docs = ["asked", "asked", "other"]
-    assert reranked_order([0, 1, 2], {0: 0.5, 1: 0.6, 2: 0.9}, docs) == [1, 0, 2]
-    # The reranker's clear best, from the search's second document, still moves past the first one's weak
-    # passages: from fifth to third.
-    docs = ["a", "a", "a", "a", "b"]
-    assert reranked_order(list(range(5)), {0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4, 4: 0.9}, docs) == [3, 2, 4, 1, 0]
+    # Candidates from few long documents: the search's best document ("asked") keeps the top even though the
+    # reranker likes the same clause of "other" a bit more; its best passage is first.
+    docs = ["asked"] * 6 + ["other"] * 2
+    scores = {0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4, 4: 0.5, 5: 0.8, 6: 0.9, 7: 0.6}
+    assert reranked_order(list(range(8)), scores, docs)[0] == 5
+    # Each candidate a document of its own (a page): the document order is only the search's order again,
+    # and the reranker's order stands.
+    pages = ["p0", "p1", "p2"]
+    assert reranked_order([0, 1, 2], {0: 0.1, 1: 0.5, 2: 0.9}, pages) == [2, 1, 0]
 
 
 def test_a_text_hit_is_judged_with_the_passages_around_it():

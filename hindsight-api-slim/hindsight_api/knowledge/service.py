@@ -244,10 +244,17 @@ def reranked_order(head: list[int], scores: dict[int, float], documents: list[st
     for m in slots:
         document_place.setdefault(documents[head[m]], len(document_place))
 
+    # The document order counts by how much documents repeat among the candidates, squared: in full when a few
+    # long documents hold them all (LegalBench-RAG's contracts), hardly when each candidate is a document of its
+    # own (ViDoRe's pages). There the document order is the search's passage order, and fusing with it at full
+    # weight lost ViDoRe markdown nDCG@10 (hr 70.8 -> 64.2, finance_fr 54.2 -> 47.4, computer_science
+    # 83.7 -> 76.8) the way it lost LegalBench mergers above. Squared, by share, and at 2 for everything
+    # (reranker hs-decide-1-flash-mm; LegalBench recall@5, markdown hr nDCG@10):
+    #   at 2: 88.3, 64.2   by share: 87.7, 68.1   by share squared: 86.4, 70.1   at 0: 82.9, 70.8
+    weight = RERANK_DOCUMENT_WEIGHT * (1 - len(document_place) / len(slots)) ** 2 if slots else 0.0
+
     def fused(m: int) -> float:
-        return 1 / (RERANK_FUSION_K + place[m]) + RERANK_DOCUMENT_WEIGHT / (
-            RERANK_FUSION_K + document_place[documents[head[m]]]
-        )
+        return 1 / (RERANK_FUSION_K + place[m]) + weight / (RERANK_FUSION_K + document_place[documents[head[m]]])
 
     ranked = sorted(slots, key=lambda m: -fused(m))
     out = list(head)
