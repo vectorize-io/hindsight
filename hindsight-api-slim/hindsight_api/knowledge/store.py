@@ -1345,7 +1345,8 @@ DOCUMENT_PRIOR = 1.0
 # regex over every candidate's text on every search and were tuned on ViDoRe V3 alone (+0.3 nDCG@10; a
 # reference list was 5% of ViDoRe hr's candidates); the citation patterns were English and academic. A
 # rule the search cannot explain beyond one benchmark is not kept: they were dropped, at a measured cost
-# (ViDoRe V3 PDF pharmaceuticals, slide decks with reference slides: 72.2 -> 71.3 nDCG@10).
+# (ViDoRe V3 PDF pharmaceuticals, slide decks with reference slides: 72.2 -> 71.3 nDCG@10). An exact-text
+# bonus (`pattern`) and a grep-only search were dropped before them; no benchmark used either.
 
 
 def with_document_prior(document_ids: list[str], scores: list[float]) -> list[float]:
