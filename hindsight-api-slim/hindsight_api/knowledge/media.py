@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import contextlib
 import io
+import logging
 import math
 import multiprocessing
 import os
 import re
 import tempfile
 import threading
+import time
 from collections import Counter
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor
@@ -31,6 +33,8 @@ from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 import numpy as np
+
+_logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
@@ -326,12 +330,7 @@ def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
     global _PDF_POOL
     with _PDF_POOL_LOCK:
         if _PDF_POOL is None:
-            _PDF_POOL = ProcessPoolExecutor(
-                max_workers=_PDF_WORKERS,
-                mp_context=multiprocessing.get_context("spawn"),
-                initializer=_first_to_kill,
-                initargs=(_worker_address_space(),),
-            )
+            _PDF_POOL = _worker_pool(_PDF_WORKERS)
         pool = _PDF_POOL
     try:
         return pool.submit(fn, *args).result(timeout=_PDF_CALL_TIMEOUT)
@@ -360,12 +359,7 @@ def _alone(fn: Callable[..., _T], *args: Any, timeout: float | None = None) -> _
     """``fn(*args)`` once more, in a worker process of its own, killed after: the retry of a call whose
     shared worker died, so a crash fails the file that caused it and not the files queued beside it.
     Raises ``BrokenProcessPool`` if it dies again, ``TimeoutError`` past ``timeout``."""
-    alone = ProcessPoolExecutor(
-        max_workers=1,
-        mp_context=multiprocessing.get_context("spawn"),
-        initializer=_first_to_kill,
-        initargs=(_worker_address_space(),),
-    )
+    alone = _worker_pool(1)
     try:
         return alone.submit(fn, *args).result(timeout=timeout)
     finally:
@@ -484,16 +478,118 @@ _OFFICE_POOL: ProcessPoolExecutor | None = None
 _OFFICE_POOL_LOCK = threading.Lock()
 
 
-def _memory_limit() -> int:
-    """The container's memory limit (cgroup v2, then v1), else the machine's RAM; 0 if unknown."""
+def _container_limit() -> int:
+    """The container's memory limit (cgroup v2, then v1); 0 when it has none."""
     for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
         with contextlib.suppress(OSError, ValueError):
             limit = int(Path(path).read_text().strip())  # "max": no limit, a ValueError
             if limit < 1 << 50:  # cgroup v1 writes "no limit" as a huge number
                 return limit
+    return 0
+
+
+def _memory_limit() -> int:
+    """The container's memory limit, else the machine's RAM; 0 if unknown."""
+    if limit := _container_limit():
+        return limit
     with contextlib.suppress(OSError, ValueError, AttributeError):
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     return 0
+
+
+def _worker_pool(workers: int) -> ProcessPoolExecutor:
+    """A pool of worker processes for files (PDF rendering, Office conversion), memory-capped and guarded."""
+    _start_memory_guard()
+    # spawn, not fork: the server has threads, and a forked child inherits their locks held.
+    return ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=_first_to_kill,
+        initargs=(_worker_address_space(),),
+    )
+
+
+# --- the memory guard ------------------------------------------------------------------------
+# Each worker's own cap is not enough: on Kubernetes (cgroup v2, memory.oom.group = 1) a container that runs
+# out of memory has every process killed together, the server and its database too, and the caps of
+# several workers add up past the container next to a 2 GB server. On the cluster sweep, 51535.xls (16.7M
+# declared cells) grew its converter to its 5 GB cap beside a 3 GB server, and the whole pod restarted.
+# So the server watches the container itself, and kills its biggest worker before the kernel kills them
+# all; the call it was running is retried alone (_alone), and a file that grows that far again fails.
+
+#: The share of the container's memory in use past which the biggest worker is killed.
+_GUARD_SHARE = 0.85
+#: How often the guard looks: a runaway conversion grew 14 MB a second, so 0.25 s is 4 MB.
+_GUARD_INTERVAL = 0.25
+_GUARD_STARTED = False
+_GUARD_LOCK = threading.Lock()
+
+
+def _container_used() -> int:
+    """The memory the container holds that the kernel cannot drop: anonymous, shared and kernel memory
+    (cgroup v2's memory.stat). Page cache is left out, as it is reclaimed before anything is killed."""
+    try:
+        stat = Path("/sys/fs/cgroup/memory.stat").read_text()
+    except OSError:
+        return 0
+    fields = dict(line.split(" ", 1) for line in stat.splitlines() if " " in line)
+    return sum(int(fields.get(k, 0)) for k in ("anon", "shmem", "kernel"))
+
+
+def _worker_rss() -> dict[int, int]:
+    """Each of this process's worker children (multiprocessing's spawned processes, not its resource
+    tracker) by its resident memory in bytes."""
+    out: dict[int, int] = {}
+    me = os.getpid()
+    page = os.sysconf("SC_PAGE_SIZE")
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        with contextlib.suppress(OSError, ValueError, IndexError):
+            # The parent pid is the 2nd field after the parenthesised command name, which may hold spaces.
+            if int((entry / "stat").read_text().rsplit(")", 1)[1].split()[1]) != me:
+                continue
+            cmdline = (entry / "cmdline").read_bytes()
+            if b"multiprocessing.spawn" not in cmdline or b"resource_tracker" in cmdline:
+                continue
+            out[int(entry.name)] = int((entry / "statm").read_text().split()[1]) * page
+    return out
+
+
+def _guard_once(limit: int) -> int | None:
+    """Kill the biggest worker if the container is past ``_GUARD_SHARE`` of ``limit``; the pid killed."""
+    used = _container_used()
+    if used <= _GUARD_SHARE * limit:
+        return None
+    workers = _worker_rss()
+    if not workers:
+        return None
+    pid = max(workers, key=workers.__getitem__)
+    with contextlib.suppress(OSError):
+        os.kill(pid, 9)
+        _logger.warning(
+            f"Knowledge worker {pid} killed: the container holds {used >> 20} MB of {limit >> 20} MB, "
+            f"and the worker {workers[pid] >> 20} MB"
+        )
+        return pid
+    return None
+
+
+def _start_memory_guard() -> None:
+    """Start the guard thread once, in a container with a memory limit (Linux); elsewhere nothing."""
+    global _GUARD_STARTED
+    with _GUARD_LOCK:
+        if _GUARD_STARTED or not (limit := _container_limit()) or not Path("/proc/self/stat").exists():
+            return
+        _GUARD_STARTED = True
+
+    def watch() -> None:
+        while True:
+            with contextlib.suppress(Exception):  # the guard must never stop: a read that fails is skipped
+                _guard_once(limit)
+            time.sleep(_GUARD_INTERVAL)
+
+    threading.Thread(target=watch, name="kb-memory-guard", daemon=True).start()
 
 
 def _worker_address_space() -> int:
@@ -592,17 +688,24 @@ def _convert_office(data: bytes, ext: str) -> str:
         return text
 
 
+#: One Office conversion at a time in the server, its retry included. A big spreadsheet's conversion holds
+#: memory by the 100x its size (Govdocs1's 28 MB 000032.xls peaks at 3.3 GB), so two side by side do not
+#: fit where one does: on the cluster, the retries of two broken calls ran at once, 000032.xls beside the
+#: runaway 51535.xls, and the memory guard had to kill both. Waiting here, a file is never queued on the
+#: worker either, so a worker's death breaks only the file it was converting.
+_OFFICE_CALL_LOCK = threading.Lock()
+
+
 def _office_text(data: bytes, ext: str) -> str:
+    with _OFFICE_CALL_LOCK:
+        return _office_text_now(data, ext)
+
+
+def _office_text_now(data: bytes, ext: str) -> str:
     global _OFFICE_POOL
     with _OFFICE_POOL_LOCK:
         if _OFFICE_POOL is None:
-            # spawn, not fork: the server has threads, and a forked child inherits their locks held.
-            _OFFICE_POOL = ProcessPoolExecutor(
-                max_workers=1,
-                mp_context=multiprocessing.get_context("spawn"),
-                initializer=_first_to_kill,
-                initargs=(_worker_address_space(),),
-            )
+            _OFFICE_POOL = _worker_pool(1)
         pool = _OFFICE_POOL
     try:
         return pool.submit(_convert_office, data, ext).result()
@@ -610,9 +713,10 @@ def _office_text(data: bytes, ext: str) -> str:
         with _OFFICE_POOL_LOCK:
             if _OFFICE_POOL is pool:
                 _OFFICE_POOL = None  # the next file gets a fresh worker
-    # Every file queued on the worker breaks with it, not only the one it died on: the cluster sweep's
-    # 51535.xls (16.7M declared cells) ran the container out of memory, the kernel killed the worker, and a
-    # 9 KB spreadsheet waiting behind it failed too. Once again alone, so only the file that kills it fails.
+    # Once again in a fresh worker: the memory guard kills the biggest worker when the container runs low,
+    # which can be this one for memory the PDF workers hold. A file that kills it twice fails. (Files used
+    # to queue on the worker, and a 9 KB spreadsheet behind the runaway 51535.xls failed with it; they now
+    # wait on _OFFICE_CALL_LOCK instead.)
     try:
         return _alone(_convert_office, data, ext)
     except BrokenProcessPool as exc:
