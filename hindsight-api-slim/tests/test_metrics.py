@@ -421,6 +421,31 @@ class TestMetricsCollector:
         phases = [c.args[1]["phase"] for c in collector.recall_phase_duration.record.call_args_list]
         assert phases == ["a", "d"]
 
+    async def test_knowledge_search_phases_reach_their_own_histogram(self):
+        """A knowledge search's timed phases land on hindsight.knowledge_search.phase.duration, with the
+        store label, and not on the ingest one."""
+        from hindsight_api.engine.retain import timing
+
+        mock_config = MagicMock()
+        mock_config.metrics_include_bank_id = False
+        mock_config.metrics_include_tenant = False
+        meter = MagicMock()
+        meter.create_histogram.side_effect = lambda **kw: MagicMock(name=kw["name"])  # one mock per histogram
+        with (
+            patch("hindsight_api.metrics.get_meter", return_value=meter),
+            patch("hindsight_api.config.get_config", return_value=mock_config),
+        ):
+            collector = MetricsCollector()
+        with patch("hindsight_api.metrics.get_metrics_collector", return_value=collector):
+            async with timing.retain_timing(op="knowledge_search", bank_id="b", store="PostgresKnowledgeStore"):
+                timing.record("store.candidates_sql", 0.02)
+                timing.record("embed", 0.1)
+
+        recorded = {c.args[1]["phase"]: c.args for c in collector.knowledge_search_phase_duration.record.call_args_list}
+        assert recorded["store.candidates_sql"][0] == 0.02
+        assert recorded["embed"][1]["store"] == "PostgresKnowledgeStore"
+        collector.knowledge_ingest_phase_duration.record.assert_not_called()
+
 
 class TestGetMetricsCollector:
     """Tests for the get_metrics_collector function."""
