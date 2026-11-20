@@ -15,6 +15,7 @@ the Docker image, a CI step); PyAV keeps the work in-process and needs nothing o
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 import logging
 import math
@@ -662,11 +663,20 @@ def _ooxml_text(data: bytes, ext: str) -> str:
     return "\n".join(lines)
 
 
-def _convert_office(data: bytes, ext: str) -> str:
+@functools.cache
+def _markitdown() -> Any:
+    """The worker's one converter. Each MarkItDown loads its own file-type model (magika, on ONNX Runtime) and
+    never gives it back: one per file grew a worker's address space by 90 MB a file, and after ~55 files
+    every conversion past the worker's memory cap failed ("ONNXRuntimeError ... std::bad_alloc", or "failed to
+    create a thread"): 71 of the cluster sweep's Office files. Reused, the worker stays at 0.77 GB."""
     from markitdown import MarkItDown
 
+    return MarkItDown(enable_plugins=False)
+
+
+def _convert_office(data: bytes, ext: str) -> str:
     try:
-        text = MarkItDown(enable_plugins=False).convert_stream(io.BytesIO(data), file_extension=ext).text_content
+        text = _markitdown().convert_stream(io.BytesIO(data), file_extension=ext).text_content
     except Exception as exc:
         # markitdown fails on files Office opens: a KeyError on a field it did not expect (POI's 60329.docx),
         # recursion on deep tables, 974 words of slides (2411-Performance_Up.pptx). Their text is still read.
