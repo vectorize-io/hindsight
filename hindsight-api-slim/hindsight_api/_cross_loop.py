@@ -14,10 +14,10 @@ queues.
 **Why a queue rather than a bare counter.** A counter alone starves waiters: a holder
 that releases and re-acquires with no suspension point in between takes its own permit
 straight back, and the waiter — asleep on the backoff ladder for the whole moment the
-permit was free — never sees it. So ``release()`` hands the permit to the
-longest-waiting ticket instead of returning it to the pool.
+permit was free — never sees it. So ``release()`` hands the permit to the next
+waiting ticket (see ``_FairQueue`` for which one) instead of returning it to the pool.
 
-**Why polling rather than a cross-loop future handoff.** The queue is a flat deque of
+**Why polling rather than a cross-loop future handoff.** The queue holds plain
 tickets; a granted waiter still learns about it by polling. Waking it directly would
 mean ``loop.call_soon_threadsafe`` and a registry keyed *per loop*, which has to stay
 correct when a loop dies mid-wait. Polling keeps none of that: it only runs while the
@@ -86,6 +86,14 @@ class _FairQueue:
 
     With nothing given this is a plain FIFO queue. Nothing is reserved: one waiter
     alone still gets every permit.
+
+    History: this used to be one FIFO deque, so a retain that queued one call per
+    chunk made every later call wait for all of its chunks (#6727). A fixed share per
+    operation was rejected because a document alone would then leave most permits
+    idle. Strict turns between documents was tried and made equal documents all
+    finish at the end; picking the bank with the least queued was tried and favoured
+    small banks over busy ones for no reason. Hence: turns between tenants and banks,
+    closest-to-done only between documents of one bank.
     """
 
     def __init__(self) -> None:
@@ -148,8 +156,9 @@ class CrossLoopSemaphore:
     Waiters are served in arrival order, as ``asyncio.Semaphore`` serves them, except
     that ``acquire(background=True)`` waiters only get a permit when no foreground
     waiter is queued. That lets live requests jump ahead of background jobs. Waiters
-    that pass ``tenant``/``bank``/``document`` take turns by tenant, then by bank (see
-    ``_FairQueue``), so one big job cannot make everyone else wait for all of it.
+    that pass ``tenant``/``bank``/``document`` take turns by tenant, then by bank, and
+    inside a bank the document closest to done goes first (see ``_FairQueue``), so one
+    big job cannot make everyone else wait for all of it.
     """
 
     def __init__(self, value: int) -> None:
