@@ -38,7 +38,6 @@ const hit = (rank: number) => ({
   passage_score: 0.8,
   with_document: 0.85 - rank / 1000,
   keyword: rank === 1 ? 2.5 : 0,
-  reference_page: false,
 });
 
 const trace = (n: number) => ({

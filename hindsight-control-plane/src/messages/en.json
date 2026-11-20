@@ -2756,7 +2756,6 @@
       "rankingHelp": "Meaning and keywords scaled 0-1 and mixed, keywords {weight}%. Words used, with their rarity:",
       "noKeywords": "No keyword search for this query.",
       "idfHelp": "How rare the word is in this bank (IDF): rarer words count more.",
-      "referencePage": "reference list, pushed down",
       "depthTitle": "Depth cut (budget {budget})",
       "depthHelp": "Keeps the top {depth} of {total} for the token budget.",
       "budgetTitle": "Filling max_tokens",

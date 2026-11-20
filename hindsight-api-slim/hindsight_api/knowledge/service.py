@@ -2284,9 +2284,8 @@ class KnowledgeService:
         score_of = {shown[m]: score for m, score in zip(seen, scores, strict=True)}
         # The head is every candidate up to the last one shown, videos among them in their places.
         head = list(range(max(score_of) + 1))
-        order = reranked_order(head, score_of, [pool[g[0]].document.document_id for g in groups]) + list(
-            range(len(head), len(groups))
-        )
+        fused_documents = [fusion_document(pool[g[0]]) for g in groups]
+        order = reranked_order(head, score_of, fused_documents) + list(range(len(head), len(groups)))
         return [pool[i] for n in order for i in groups[n]] + hits[len(pool) :]
 
     async def _query_picture(self, request: SearchRequest) -> bytes | None:
@@ -2422,6 +2421,21 @@ class KnowledgeService:
             trace.tokens_used = used
             trace.hits = [_traced(hit, items, windows) for hit in hits]
         return _Budgeted(items, used)
+
+
+def fusion_document(hit: SearchHit) -> str:
+    """What a candidate counts as its document in ``reranked_order``'s fusion: a text passage its document, any
+    other hit (a PDF page, an image, a clip) itself.
+
+    The search's document order is fused in because the reranker judges a text passage alone, with nothing to
+    tell which contract a clause every NDA has comes from; the search embedded it under its document's title.
+    A page is judged whole, from its picture, its document shown on it, as ``_titled`` gives the title to text
+    alone. Its deck's place in the search is only other pages voting: a PDF as one document put its cover
+    slide over the page asked for (ViDoRe V3 PDF pharmaceuticals, 52 slide decks: 68.8 nDCG@10, 72.2 with
+    each page its own document)."""
+    if hit.passage.modality == "text":
+        return hit.document.document_id
+    return f"{hit.document.document_id}#{hit.passage.index}"
 
 
 def _titled(hit: SearchHit, text: str) -> str:

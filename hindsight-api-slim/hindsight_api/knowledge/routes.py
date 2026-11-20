@@ -293,7 +293,6 @@ class KnowledgeSearchTraceHit(BaseModel):
     passage_score: float = Field(description="The similarity with the extra vectors mixed in")
     with_document: float = Field(description="Averaged with its document's best passage score")
     keyword: float = Field(description="Keyword score: the summed IDF of the query words it contains")
-    reference_page: bool = Field(description="Read as a reference list, and pushed down")
 
 
 class KnowledgeTraceArmHit(BaseModel):
@@ -456,7 +455,6 @@ def trace_response(body: KnowledgeSearchRequest, trace: SearchTrace, returned: l
                 passage_score=explain.passage_score if explain else h.score,
                 with_document=explain.with_document if explain else h.score,
                 keyword=explain.keyword if explain else 0.0,
-                reference_page=explain.reference_page if explain else False,
             )
         )
     return KnowledgeSearchTrace(

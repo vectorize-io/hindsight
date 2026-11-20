@@ -299,7 +299,6 @@ export function KnowledgeSearchTraceView({ trace }: { trace: KnowledgeSearchTrac
             <span>
               {t("keyword")} {h.keyword > 0 ? h.keyword.toFixed(2) : "0"}
             </span>
-            {h.reference_page && <span className="text-amber-600">{t("referencePage")}</span>}
             <span className="font-medium text-foreground">
               {t("score")} {fmt(h.score)}
             </span>

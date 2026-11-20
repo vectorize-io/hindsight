@@ -1313,6 +1313,24 @@ def test_the_reranker_picks_the_passage_and_the_search_the_document():
     assert reranked_order([0, 1, 2], {0: 0.1, 1: 0.5, 2: 0.9}, pages) == [2, 1, 0]
 
 
+def test_only_text_passages_share_their_document_in_the_rerank_fusion():
+    from hindsight_api.knowledge.service import fusion_document
+    from hindsight_api.knowledge.store import KnowledgeDocument, KnowledgePassage, SearchHit
+
+    def hit(document_id: str, index: int, modality: str) -> SearchHit:
+        document = KnowledgeDocument(
+            document_id=document_id, filename=None, content_type="application/pdf", media_type="document",
+            size_bytes=0, storage_key=None, content_hash="h", status="ready", error=None, passage_count=9, tags=[],
+        )  # fmt: skip
+        return SearchHit(passage=KnowledgePassage(index=index, modality=modality), document=document, score=0.0)
+
+    # A contract's clauses are one document: the search's document order speaks for each of them.
+    assert fusion_document(hit("nda", 3, "text")) == fusion_document(hit("nda", 7, "text")) == "nda"
+    # A deck's pages (and a video's clips) each stand alone: the reranker saw the whole page.
+    assert fusion_document(hit("deck", 0, "image")) != fusion_document(hit("deck", 4, "image"))
+    assert fusion_document(hit("talk", 1, "video")) != fusion_document(hit("talk", 2, "video"))
+
+
 def test_a_text_hit_is_judged_with_the_passages_around_it():
     from hindsight_api.knowledge.service import _around
     from hindsight_api.knowledge.store import KnowledgePassage
@@ -1651,9 +1669,8 @@ def test_pdf_page_text_is_packed_by_whole_lines():
     assert all(count_tokens(u) <= 40 for u in media.pack_lines(long, tokens=40))
 
 
-def test_pdf_sentences_reference_pages_and_text_batches():
+def test_pdf_sentences_and_text_batches():
     from hindsight_api.knowledge.embedders import _token_batches
-    from hindsight_api.knowledge.store import is_reference_page
 
     text = "Employment rose sharply in 2023 across the EU.\nThe share of tempo-\nrary contracts fell to 12.6% (from 15.9%).\nShort.\nAnother sentence follows with enough words to stand alone."
     assert media.sentences(text) == [
@@ -1661,9 +1678,6 @@ def test_pdf_sentences_reference_pages_and_text_batches():
         "The share of temporary contracts fell to 12.6% (from 15.9%).",  # joined across the line break
         "Short. Another sentence follows with enough words to stand alone.",  # too short alone: merged forward
     ]
-    references = "\n".join(f"Author {i}, A. ({2000 + i}), 'A title', Journal, vol. {i}, pp. 1-9." for i in range(8))
-    assert is_reference_page(references)
-    assert not is_reference_page("The employment rate (2023) rose.\n" + "Prose without citations here.\n" * 6)
     # Batches are cut by size, not count: many short sentences share a request, a long page text does not.
     short = [(i, "s" * 100) for i in range(60)]
     assert [len(b) for b in _token_batches(short, 8)] == [60]
@@ -1672,27 +1686,9 @@ def test_pdf_sentences_reference_pages_and_text_batches():
     assert sum(len(b) for b in _token_batches([(i, "x") for i in range(200)], 8)) == 200  # nothing lost past the cap
 
 
-def test_a_reference_page_is_demoted_without_squashing_the_other_scores():
-    from hindsight_api.knowledge.store import final_scores
+def test_pages_lean_on_their_document():
+    from hindsight_api.knowledge.store import with_document_prior
 
-    # Two real pages, the better one with fewer keyword hits, and a reference list. Demoting the list inside
-    # the keyword fusion stretched the dense range so far that keywords alone decided the real pages.
-    dense = [0.80, 0.70, 0.79]
-    keyword = [1.0, 3.0, 9.0]
-    scores = final_scores(dense, keyword, 0.2, reference=[False, False, True], has_text=[True] * 3)
-    assert scores[0] > scores[1] > scores[2]  # dense still ranks the real pages; the list goes last
-    same = final_scores(dense, keyword, 0.2, reference=[False] * 3, has_text=[True] * 3)
-    assert scores[:2] == same[:2]  # the demotion does not move anyone else
-
-
-def test_pages_lean_on_the_image_when_their_text_is_junk_and_on_their_document():
-    from hindsight_api.knowledge.store import page_text_weight, with_document_prior
-
-    prose = "The employment rate of women rose across the member states in the last decade. " * 4
-    equations = "∂ψ/∂t = −iħ⁻¹ Hψ ; E = mc² ; λ = h/p ; 𝜓(𝑟,𝑡) = Σ cₙ φₙ e^(−iEₙt/ħ) ; " * 6
-    assert page_text_weight(prose, 0.6) == 0.6
-    assert page_text_weight(equations, 0.6) == 0.3
-    assert page_text_weight("short", 0.6) == 0.3  # almost no text layer
     # A page of the best-matching PDF overtakes a slightly better page of a weaker PDF...
     scores = with_document_prior(["deck", "deck", "other"], [0.80, 0.70, 0.72])
     assert scores[1] > scores[2]

@@ -2756,7 +2756,6 @@
       "rankingHelp": "意思同關鍵詞縮放到 0-1 再混合，關鍵詞佔 {weight}%。用到嘅字詞同罕見度：",
       "noKeywords": "呢個查詢冇關鍵詞搜尋。",
       "idfHelp": "呢個詞喺呢個庫有幾罕見（IDF）：越罕見越重要。",
-      "referencePage": "參考文獻列表，排低",
       "depthTitle": "深度截斷（預算 {budget}）",
       "depthHelp": "為 token 預算保留 {total} 個入面頭 {depth} 個。",
       "budgetTitle": "填滿 max_tokens",

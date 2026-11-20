@@ -2756,7 +2756,6 @@
       "rankingHelp": "意味とキーワードを0-1に正規化して混合、キーワード {weight}%。使用した単語と珍しさ:",
       "noKeywords": "このクエリにはキーワード検索なし。",
       "idfHelp": "このバンクでの単語の珍しさ（IDF）: 珍しいほど重視。",
-      "referencePage": "参考文献リスト、順位を下げる",
       "depthTitle": "深さのカット（予算 {budget}）",
       "depthHelp": "トークン予算のために {total} 件中上位 {depth} 件を残す。",
       "budgetTitle": "max_tokens を埋める",

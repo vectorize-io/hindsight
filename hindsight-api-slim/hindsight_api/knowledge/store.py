@@ -12,7 +12,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
@@ -159,8 +158,6 @@ class ScoreExplain:
     with_document: float
     #: The BM25-style keyword score (sum of the matched query words' IDF); 0 when no word matched.
     keyword: float
-    #: A page read as a reference list, pushed down by ``REFERENCE_PENALTY``.
-    reference_page: bool
 
 
 @dataclass
@@ -1142,10 +1139,7 @@ class PostgresKnowledgeStore(KnowledgeStore):
             if not rows:
                 return StoreSearchResult([])
             roles = [_role_scores(r["extra"]) for r in rows]
-            first = [
-                page_score(float(r["score"]), ro, page_text_weight(r["text"], text_weight))
-                for r, ro in zip(rows, roles, strict=True)
-            ]
+            first = [page_score(float(r["score"]), ro, text_weight) for r, ro in zip(rows, roles, strict=True)]
             # Stage 3: the best pages so far gain their sentence vectors. Scoring every candidate with
             # ~30 sentence vectors each cost a ViDoRe hr search 1.8x; the top RESCORE_POOL hold the gold.
             top = sorted(range(len(rows)), key=lambda i: first[i], reverse=True)[: max(top_k, RESCORE_POOL)]
@@ -1173,14 +1167,11 @@ class PostgresKnowledgeStore(KnowledgeStore):
                     sentence = best.get((rows[i]["document_id"], rows[i]["idx"]))
                     if sentence is not None:
                         roles[i]["sentence"] = [sentence]
-                        first[i] = page_score(
-                            float(rows[i]["score"]), roles[i], page_text_weight(rows[i]["text"], text_weight)
-                        )
+                        first[i] = page_score(float(rows[i]["score"]), roles[i], text_weight)
             dense = with_document_prior([r["document_id"] for r in rows], first)
             keyword_scores = [float(r["keyword"] or 0.0) for r in rows]
-            reference = [r["page"] is not None and is_reference_page(r["text"]) for r in rows]
             has_text = [bool((r["text"] or "").strip()) for r in rows]
-            scores = final_scores(dense, keyword_scores, keyword_weight, reference=reference, has_text=has_text)
+            scores = fuse_keyword(dense, keyword_scores, keyword_weight, has_text)
             hits = [
                 SearchHit(
                     passage=_passage(r),
@@ -1193,7 +1184,6 @@ class PostgresKnowledgeStore(KnowledgeStore):
                         passage_score=first[i],
                         with_document=dense[i],
                         keyword=keyword_scores[i],
-                        reference_page=reference[i],
                     ),
                 )
                 for i, r in enumerate(rows)
@@ -1342,9 +1332,6 @@ def page_score(primary: float, roles: dict[str, list[float]], text_weight: float
     return (1 - text_weight) * image + text_weight * max(texts)
 
 
-#: A PDF page whose text layer is mostly not words (equations, tables, figure labels) leans on its image.
-_POOR_TEXT_QUALITY = 0.5
-_POOR_TEXT_WEIGHT = 0.3
 #: Each passage gains this share of its document's best candidate score: the right PDF first, then the
 #: page. +0.4 nDCG@10 over 8 ViDoRe V3 tasks, +1.0 on physics (PDF_GEMMA.md round 7; flat for 0.5-0.7).
 #: 0.75 with sentence vectors: +0.1 on ViDoRe hr and computer_science over 0.5 (Gemini Embedding 2). 1.0, the
@@ -1353,37 +1340,12 @@ _POOR_TEXT_WEIGHT = 0.3
 DOCUMENT_PRIOR = 1.0
 
 
-def text_quality(text: str | None) -> float:
-    """Share of a page's characters inside real words (3+ letters); 0 below 200 characters."""
-    chars = len(re.sub(r"\s", "", text or ""))
-    if chars < 200:
-        return 0.0
-    return sum(len(w) for w in re.findall(r"[^\W\d_]{3,}", text or "")) / chars
-
-
-_CITATION = re.compile(r"\((19|20)\d\d[a-z]?\)|\bvol\.|\bpp\.|\bdoi\b|https?://|\bet al\b|\bISBN\b|\bISSN\b", re.I)
-#: A page this share of whose lines are citations is a reference list: on ViDoRe hr 5% of the candidates
-#: and 0.1% of the gold pages. Its titles match every query on their topic, and it answers none.
-_REFERENCE_LINES = 0.3
-REFERENCE_PENALTY = 1.0
-
-
-def is_reference_page(text: str | None) -> bool:
-    lines = [line for line in (text or "").splitlines() if line.strip()]
-    return len(lines) >= 5 and sum(bool(_CITATION.search(line)) for line in lines) / len(lines) > _REFERENCE_LINES
-
-
-def page_text_weight(text: str | None, text_weight: float) -> float:
-    """The text side's weight for one page: lower when its text layer is junk (round 7: +0.3 nDCG@10)."""
-    return page_text_weight_for_quality(text_quality(text), text_weight)
-
-
-def page_text_weight_for_quality(quality: float, text_weight: float) -> float:
-    """``page_text_weight`` from a page's ``text_quality``, for a store that works it out once, when the
-    page is written, rather than with a regex over every candidate's text at search time. An extension
-    point: this repo's Postgres store scores at search time and reaches it through ``page_text_weight``;
-    a store loaded as an extension (``load_knowledge_store``) can call it directly."""
-    return _POOR_TEXT_WEIGHT if quality < _POOR_TEXT_QUALITY else text_weight
+# A page's text side used to weigh less when its text layer was "junk" (under 200 characters, or mostly not
+# words), and a page read as a reference list (citation-shaped lines) was pushed to the bottom. Both ran a
+# regex over every candidate's text on every search and were tuned on ViDoRe V3 alone (+0.3 nDCG@10; a
+# reference list was 5% of ViDoRe hr's candidates); the citation patterns were English and academic. A
+# rule the search cannot explain beyond one benchmark is not kept: they were dropped, at a measured cost
+# (ViDoRe V3 PDF pharmaceuticals, slide decks with reference slides: 72.2 -> 71.3 nDCG@10).
 
 
 def with_document_prior(document_ids: list[str], scores: list[float]) -> list[float]:
@@ -1405,19 +1367,6 @@ EXPAND_DOCUMENTS = 3
 EXPAND_PASSAGES_CAP = 3000
 #: Where a query word's document frequency stops being counted (see the IDF in ``search``).
 _DF_CAP = 50_000
-
-
-def final_scores(
-    dense: list[float], keyword: list[float], weight: float, *, reference: list[bool], has_text: list[bool]
-) -> list[float]:
-    """Dense fused with keywords, then the reference-list demotion. The demotion comes after the fusion:
-    inside it, a page at -1 stretched the min-max range of the dense scores, so keywords alone ordered
-    the rest (ViDoRe hr English: 58.8 nDCG@10 instead of 67.2). An exact-text bonus (`pattern`) and a
-    grep-only search lived here too; no benchmark used them and they were dropped."""
-    return [
-        score - (REFERENCE_PENALTY if ref else 0.0)
-        for score, ref in zip(fuse_keyword(dense, keyword, weight, has_text), reference, strict=True)
-    ]
 
 
 def fuse_keyword(dense: list[float], keyword: list[float], weight: float, has_text: list[bool]) -> list[float]:

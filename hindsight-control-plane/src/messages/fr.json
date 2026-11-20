@@ -2756,7 +2756,6 @@
       "rankingHelp": "Sens et mots-clés ramenés à 0-1 et mélangés, mots-clés {weight} %. Mots utilisés, avec leur rareté :",
       "noKeywords": "Pas de recherche par mots-clés pour cette requête.",
       "idfHelp": "La rareté du mot dans cette banque (IDF) : les rares comptent plus.",
-      "referencePage": "liste de références, rétrogradée",
       "depthTitle": "Coupe de profondeur (budget {budget})",
       "depthHelp": "Garde les {depth} meilleurs sur {total} pour le budget de tokens.",
       "budgetTitle": "Remplissage de max_tokens",
