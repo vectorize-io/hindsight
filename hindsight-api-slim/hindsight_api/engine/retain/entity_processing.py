@@ -172,7 +172,8 @@ async def resolve_entities(
 
     Args:
         entity_resolver: EntityResolver instance
-        conn: Database connection (separate from the main write transaction)
+        conn: Connection every step runs on, or None to let each database step take its own
+            short hold from the pool (retain's phase 1, so nothing is held while names are scored)
         bank_id: Bank identifier
         unit_ids: Placeholder unit IDs (used only for grouping)
         facts: List of ProcessedFact objects

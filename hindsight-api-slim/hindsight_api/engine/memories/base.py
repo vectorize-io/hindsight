@@ -3950,7 +3950,8 @@ class MemoriesExtension(Extension, ABC):
         entity_labels: list | None = None,
     ) -> EntityResolutionResult:
         """Resolve each unit's entity mentions to canonical entity ids, creating the missing ones
-        (autocommitted on ``conn``, outside the write transaction).
+        (autocommitted outside the write transaction, on ``conn`` or — when it is None — on short
+        holds the store takes itself).
 
         Empty here — the same answer retain's phase 1 gives a store-owned bank without asking:
         such a store resolves the names its write carries itself."""

@@ -383,7 +383,8 @@ async def resolve_entities_only(
 
     Args:
         entity_resolver: EntityResolver instance
-        conn: Database connection (separate from the main write transaction)
+        conn: Connection every step runs on, or None to let each database step take its own
+            short hold from the pool (outside the main write transaction either way)
         bank_id: Bank identifier
         unit_ids: Placeholder unit IDs (used only for grouping, not yet inserted)
         sentences: Fact texts
