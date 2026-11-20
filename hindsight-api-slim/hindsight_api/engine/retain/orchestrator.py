@@ -721,8 +721,8 @@ async def _pre_resolve_phase1(
     skip_entity_resolution: bool = False,
 ) -> Phase1Result:
     """
-    Phase 1: Run expensive read-heavy operations on a separate connection
-    OUTSIDE the write transaction.
+    Phase 1: Run expensive read-heavy operations OUTSIDE the write transaction,
+    on short connection holds that never span Python-side scoring (#6603).
 
     - Entity resolution: trigram GIN scan + co-occurrence fetch + scoring
     - Semantic ANN: HNSW index probes to find similar existing units
@@ -756,28 +756,32 @@ async def _pre_resolve_phase1(
     placeholder_unit_ids = [str(i) for i in range(len(processed_facts))]
     embeddings = [fact.embedding for fact in processed_facts]
 
-    async with acquire_with_retry(pool) as resolve_conn:
-        entity_resolution = await entity_processing.resolve_entities(
-            entity_resolver,
-            resolve_conn,
-            bank_id,
-            placeholder_unit_ids,
-            processed_facts,
-            log_buffer,
-            user_entities_per_content=user_entities_per_content,
-            entity_labels=config.entity_labels,
-        )
+    # No connection is held across resolution: it borrows one only for each read and for its
+    # entity INSERTs, and scores and clusters the names in between without one. Holding one here
+    # pinned a pool connection per running retain for the length of a Python loop, and /health
+    # queued behind them (#6603).
+    entity_resolution = await entity_processing.resolve_entities(
+        entity_resolver,
+        None,
+        bank_id,
+        placeholder_unit_ids,
+        processed_facts,
+        log_buffer,
+        user_entities_per_content=user_entities_per_content,
+        entity_labels=config.entity_labels,
+    )
 
-        # Semantic ANN search on the same connection (autocommit, no transaction).
-        # Skipped in streaming mode — deferred to Phase 3 to avoid O(bank_size)
-        # scaling bottleneck that makes later streaming batches progressively slower.
-        semantic_ann_links = []
-        if not skip_semantic_ann:
-            fact_types = [fact.fact_type for fact in processed_facts]
-            from ..memories import get_memories
+    # Semantic ANN search on its own short hold (autocommit; it opens its own transaction).
+    # Skipped in streaming mode — deferred to Phase 3 to avoid O(bank_size)
+    # scaling bottleneck that makes later streaming batches progressively slower.
+    semantic_ann_links = []
+    if not skip_semantic_ann:
+        fact_types = [fact.fact_type for fact in processed_facts]
+        from ..memories import get_memories
 
+        async with acquire_with_retry(pool) as ann_conn:
             semantic_ann_links = await get_memories().compute_semantic_links_ann(
-                conn=resolve_conn,
+                conn=ann_conn,
                 bank_id=bank_id,
                 unit_ids=placeholder_unit_ids,
                 embeddings=embeddings,
@@ -923,7 +927,7 @@ async def _insert_facts_and_links(
     log_buffer.append(f"  Insert facts: {len(unit_ids)} units in {time.perf_counter() - step_start:.3f}s")
 
     if unit_ids:
-        # Entity resolution was done in Phase 1 (separate connection).
+        # Entity resolution was done in Phase 1 (outside this transaction).
         # Remap placeholder IDs to actual unit IDs.
         step_start = time.perf_counter()
         resolved_entity_ids = [entity.entity_id for entity in resolved_entities]
@@ -4429,7 +4433,7 @@ async def _try_delta_retain(
                 )
                 return ok
 
-            # PHASE 1 — Entity Resolution + Semantic ANN (separate connection, read-heavy)
+            # PHASE 1 — Entity Resolution + Semantic ANN (outside the write transaction, read-heavy)
             phase1 = await _pre_resolve_phase1(
                 pool, entity_resolver, bank_id, delta_contents, processed_facts, config, log_buffer
             )
