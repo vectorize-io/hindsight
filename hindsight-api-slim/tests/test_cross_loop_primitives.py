@@ -304,3 +304,89 @@ async def test_foreground_waiter_jumps_ahead_of_background_waiters():
     await asyncio.gather(*tasks)
 
     assert served == ["live", "bg1", "bg2"]
+
+
+async def _serve_order(sem: CrossLoopSemaphore, arrivals: list[tuple[str, str, str, str | None]]) -> list[str]:
+    """Queue `(tag, tenant, bank, document)` waiters behind a held permit, release it, return serve order."""
+    served: list[str] = []
+    await sem.acquire()
+
+    async def waiter(tag: str, tenant: str, bank: str, document: str | None):
+        await sem.acquire(tenant=tenant, bank=bank, document=document)
+        served.append(tag)
+        sem.release()
+
+    tasks = []
+    for arrival in arrivals:
+        tasks.append(asyncio.create_task(waiter(*arrival)))
+        await asyncio.sleep(0.002)  # fix arrival order
+    sem.release()
+    await asyncio.gather(*tasks)
+    return served
+
+
+@pytest.mark.asyncio
+async def test_a_bank_that_queued_later_takes_turns_with_a_big_one():
+    """Banks take turns, whatever their size: one bank's backlog does not hold up another."""
+    big = [(f"big{i}", "t1", "a", "doc") for i in range(4)]
+    served = await _serve_order(CrossLoopSemaphore(1), big + [("other", "t1", "b", "doc")])
+
+    assert served == ["big0", "other", "big1", "big2", "big3"]
+
+
+@pytest.mark.asyncio
+async def test_tenants_take_turns_before_banks():
+    """A tenant with many banks waiting gets no more turns than a tenant with one."""
+    many = [(f"c{i}", "t1", f"bank{i}", None) for i in range(4)]
+    one = [(f"d{i}", "t2", "only", None) for i in range(2)]
+    served = await _serve_order(CrossLoopSemaphore(1), many + one)
+
+    assert served == ["c0", "d0", "c1", "d1", "c2", "c3"]
+
+
+@pytest.mark.asyncio
+async def test_inside_a_bank_a_small_document_goes_ahead_of_a_big_one():
+    """The document closest to done is served first, even if it queued later."""
+    big = [(f"big{i}", "t1", "a", "big") for i in range(4)]
+    served = await _serve_order(CrossLoopSemaphore(1), big + [("small", "t1", "a", "small")])
+
+    assert served == ["small", "big0", "big1", "big2", "big3"]
+
+
+@pytest.mark.asyncio
+async def test_a_big_document_still_moves_while_small_ones_keep_arriving():
+    """Every 4th turn of a bank goes to its longest-waiting document, so a big one is not starved."""
+    big = [(f"big{i}", "t1", "a", "big") for i in range(4)]
+    small = [(f"s{i}", "t1", "a", f"s{i}") for i in range(6)]
+    served = await _serve_order(CrossLoopSemaphore(1), big + small)
+
+    assert served[:8] == ["s0", "s1", "s2", "big0", "s3", "s4", "s5", "big1"]
+
+
+@pytest.mark.asyncio
+async def test_equal_documents_in_a_bank_finish_one_after_another():
+    """Equal documents are not interleaved to the end: the one that arrived first finishes first."""
+    arrivals = [(f"{d}{i}", "t1", "a", d) for d in "xy" for i in range(3)]
+    served = await _serve_order(CrossLoopSemaphore(1), arrivals)
+
+    assert served == ["x0", "x1", "x2", "y0", "y1", "y2"]
+
+
+@pytest.mark.asyncio
+async def test_a_lone_bank_still_gets_every_permit():
+    """Turn-taking reserves nothing: one bank alone runs at the full cap."""
+    sem = CrossLoopSemaphore(4)
+    in_flight = peak = 0
+
+    async def call():
+        nonlocal in_flight, peak
+        await sem.acquire(tenant="t1", bank="a", document="doc")
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        sem.release()
+
+    await asyncio.gather(*(call() for _ in range(20)))
+
+    assert peak == 4

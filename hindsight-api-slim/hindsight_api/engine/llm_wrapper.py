@@ -169,18 +169,27 @@ async def _acquire_permits(stack: AsyncExitStack, scope: str) -> None:
     slow LLM call can be attributed to queueing rather than to the provider --
     the two are otherwise indistinguishable in the reported duration (#3881).
     """
+    from ..schema_context import get_current_bank_id, get_current_schema
     from ..worker.background import in_background_task
-    from .llm_trace import record_queue_wait
+    from .llm_trace import current_call_metadata, current_trace_context, record_queue_wait
     from .permit_wait import waiting_for_permit
 
     # Calls from a background worker task yield the next free permit to any waiting
     # live request.
     background = in_background_task()
+    # Waiters take turns by tenant, then bank, so one bank's big document does not
+    # make every other bank's calls wait behind all of its chunks. Inside a bank, the
+    # document closest to done goes first.
+    tenant = get_current_schema()
+    trace_ctx = current_trace_context()
+    bank = (trace_ctx.bank_id if trace_ctx is not None else None) or get_current_bank_id()
+    call_meta = current_call_metadata()
+    document = call_meta.get("document_id") if call_meta else None
     queue_start = time.monotonic()
     # Queued time is not this operation's work; time limits that opted in exclude it (#6140).
     with waiting_for_permit():
         for sem in _semaphores_for_scope(scope):
-            await sem.acquire(background=background)
+            await sem.acquire(background=background, tenant=tenant, bank=bank, document=document)
             stack.callback(sem.release)
     record_queue_wait(time.monotonic() - queue_start)
 

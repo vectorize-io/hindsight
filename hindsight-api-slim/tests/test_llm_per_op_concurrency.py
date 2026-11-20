@@ -535,3 +535,38 @@ async def test_worker_task_llm_calls_queue_as_background():
         await asyncio.gather(worker, live)
 
     assert served == ["live", "worker"]
+
+
+@pytest.mark.asyncio
+async def test_llm_calls_queue_by_the_tenant_bank_and_document_they_run_for():
+    """The permit queue reads tenant, bank and document from the engine's context.
+
+    Bank `a` queues three calls for one document, then bank `b` queues one. Banks take
+    turns, so `b` is served second rather than after all of `a`'s calls.
+    """
+    from hindsight_api.engine.llm_trace import reset_call_metadata, set_call_metadata
+    from hindsight_api.schema_context import _current_bank_id, _current_schema
+
+    global_sem = CrossLoopSemaphore(1)
+    served: list[str] = []
+
+    async def call(tag: str, bank: str, document: str) -> None:
+        _current_schema.set("tenant_x")
+        _current_bank_id.set(bank)
+        token = set_call_metadata({"document_id": document})
+        try:
+            async with llm_wrapper._attempt_permits("retain_extract_facts"):
+                served.append(tag)
+        finally:
+            reset_call_metadata(token)
+
+    with patch.object(llm_wrapper, "_global_llm_semaphore", global_sem):
+        await global_sem.acquire()
+        tasks = []
+        for tag, bank in [("a0", "a"), ("a1", "a"), ("a2", "a"), ("b0", "b")]:
+            tasks.append(asyncio.create_task(call(tag, bank, f"{bank}-doc")))
+            await asyncio.sleep(0.005)
+        global_sem.release()
+        await asyncio.gather(*tasks)
+
+    assert served == ["a0", "b0", "a1", "a2"]
