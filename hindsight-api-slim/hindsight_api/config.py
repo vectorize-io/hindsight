@@ -1027,6 +1027,7 @@ ENV_KB_MAX_FILE_MB = "HINDSIGHT_API_KB_MAX_FILE_MB"
 ENV_KB_MAX_FILE_MB_BY_MEDIA_TYPE = "HINDSIGHT_API_KB_MAX_FILE_MB_BY_MEDIA_TYPE"
 ENV_KB_MAX_IMAGE_MEGAPIXELS = "HINDSIGHT_API_KB_MAX_IMAGE_MEGAPIXELS"
 ENV_KB_MAX_MEDIA_SECONDS = "HINDSIGHT_API_KB_MAX_MEDIA_SECONDS"
+ENV_KB_MAX_VIDEO_WORK_SECONDS = "HINDSIGHT_API_KB_MAX_VIDEO_WORK_SECONDS"
 ENV_KB_MAX_PDF_PAGES = "HINDSIGHT_API_KB_MAX_PDF_PAGES"
 ENV_KB_AUDIO_WINDOW_SECONDS = "HINDSIGHT_API_KB_AUDIO_WINDOW_SECONDS"
 ENV_KB_VIDEO_WINDOW_SECONDS = "HINDSIGHT_API_KB_VIDEO_WINDOW_SECONDS"
@@ -2125,6 +2126,10 @@ DEFAULT_KB_MAX_FILE_MB = 500
 # pixels, and decoding it is memory by pixels (3-4 bytes each, twice over while converting), not by file size.
 DEFAULT_KB_MAX_IMAGE_MEGAPIXELS = 178
 DEFAULT_KB_MAX_MEDIA_SECONDS = 7200  # 2h of audio/video per file
+# Cutting a video costs CPU by its frames and their pixels, not by its length or size: a 500 MB file can hold
+# two hours of 4K at 60 fps, eight times the work of two hours of 1080p at 30. The limit is the work of
+# this many seconds of 1080p 30 fps video (media.py); 0 turns it off.
+DEFAULT_KB_MAX_VIDEO_WORK_SECONDS = 7200
 DEFAULT_KB_MAX_PDF_PAGES = 2000
 DEFAULT_KB_AUDIO_WINDOW_SECONDS = 60
 DEFAULT_KB_VIDEO_WINDOW_SECONDS = 30
@@ -4442,6 +4447,7 @@ class HindsightConfig:
     kb_max_file_mb_by_media_type: dict[str, int] = field(default_factory=dict)
     kb_max_image_megapixels: int = DEFAULT_KB_MAX_IMAGE_MEGAPIXELS
     kb_max_media_seconds: int = DEFAULT_KB_MAX_MEDIA_SECONDS
+    kb_max_video_work_seconds: int = DEFAULT_KB_MAX_VIDEO_WORK_SECONDS
     kb_max_pdf_pages: int = DEFAULT_KB_MAX_PDF_PAGES
     kb_audio_window_seconds: int = DEFAULT_KB_AUDIO_WINDOW_SECONDS
     kb_video_window_seconds: int = DEFAULT_KB_VIDEO_WINDOW_SECONDS
@@ -5967,6 +5973,9 @@ class HindsightConfig:
             kb_max_file_mb_by_media_type=_parse_kb_size_limits(os.getenv(ENV_KB_MAX_FILE_MB_BY_MEDIA_TYPE)),
             kb_max_image_megapixels=int(os.getenv(ENV_KB_MAX_IMAGE_MEGAPIXELS, str(DEFAULT_KB_MAX_IMAGE_MEGAPIXELS))),
             kb_max_media_seconds=int(os.getenv(ENV_KB_MAX_MEDIA_SECONDS, str(DEFAULT_KB_MAX_MEDIA_SECONDS))),
+            kb_max_video_work_seconds=int(
+                os.getenv(ENV_KB_MAX_VIDEO_WORK_SECONDS, str(DEFAULT_KB_MAX_VIDEO_WORK_SECONDS))
+            ),
             kb_max_pdf_pages=int(os.getenv(ENV_KB_MAX_PDF_PAGES, str(DEFAULT_KB_MAX_PDF_PAGES))),
             kb_audio_window_seconds=int(os.getenv(ENV_KB_AUDIO_WINDOW_SECONDS, str(DEFAULT_KB_AUDIO_WINDOW_SECONDS))),
             kb_video_window_seconds=int(os.getenv(ENV_KB_VIDEO_WINDOW_SECONDS, str(DEFAULT_KB_VIDEO_WINDOW_SECONDS))),

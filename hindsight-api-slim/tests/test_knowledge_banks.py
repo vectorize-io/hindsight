@@ -266,6 +266,49 @@ def test_audio_and_video_are_cut_into_timed_windows():
         list(media.split_media(_tone(8, video=False), "audio", window_seconds=30, overlap_seconds=5, max_seconds=5))  # fmt: skip
 
 
+def test_overlap_is_at_most_half_a_window_so_a_moment_is_cut_at_most_twice():
+    # Asked for a 1 s step (overlap 3 of 4), the cut steps by 2: 3 windows over 8 s, not 5.
+    drafts = list(
+        media.split_media(_tone(8, video=False), "audio", window_seconds=4, overlap_seconds=3, max_seconds=60)
+    )
+    assert [d.start_ms for d in drafts] == [0, 2000, 4000]
+    # The amplification this stops: a 1800 s window stepping by 1 s over two hours cut 2,700 hours of video.
+    info = media.MediaInfo(duration=7200, has_video=True, has_audio=True, width=1920, height=1080, fps=30)
+    assert media.video_work(info, media.windows(7200, 1800, 1799)) > 1000 * 7200
+    assert media.video_work(info, media.windows(7200, 1800, 900)) <= 2 * 7200
+
+
+def test_video_work_follows_frames_and_pixels_as_measured():
+    def work(width, height, fps, *, seekable=True):
+        info = media.MediaInfo(3600, True, True, width=width, height=height, fps=fps, seekable=seekable)
+        return media.video_work(info, media.windows(3600, 30, 0))
+
+    assert work(1920, 1080, 30) == pytest.approx(3600)  # the unit: a second of 1080p 30 fps
+    # Measured: 4K60 took 40 CPU-seconds a minute, 1080p30 13.
+    assert work(3840, 2160, 60) / work(1920, 1080, 30) == pytest.approx(40 / 13, rel=0.05)
+    # Without a seek index, every window decodes from the start: the work grows with the square of the length.
+    assert work(1920, 1080, 30, seekable=False) > 50 * work(1920, 1080, 30)
+
+
+def test_a_video_over_its_work_limit_is_refused_before_it_is_decoded(monkeypatch):
+    video = _tone(8, video=True)  # 160x120 at 5 fps: about 1.1 s of 1080p 30 fps work
+    with pytest.raises(media.MediaWorkError, match="HINDSIGHT_API_KB_MAX_VIDEO_WORK_SECONDS"):
+        list(media.split_media(video, "video", window_seconds=30, overlap_seconds=5, max_seconds=60, max_video_work_seconds=1))  # fmt: skip
+    monkeypatch.setattr(media, "_cut", lambda *a, **k: pytest.fail("decoded a video over its limit"))
+    with pytest.raises(media.MediaWorkError):
+        list(media.split_media(video, "video", window_seconds=30, overlap_seconds=5, max_seconds=60, max_video_work_seconds=1))  # fmt: skip
+
+
+def test_a_video_whose_header_understates_its_frames_stops_at_the_limit(monkeypatch):
+    video = _tone(8, video=True)
+    real = media.probe(video)
+    assert len(list(media.split_media(video, "video", window_seconds=30, overlap_seconds=5, max_seconds=60, max_video_work_seconds=2))) == 1  # fmt: skip
+    # A header claiming 0.5 fps passes the estimate (0.1 s of work); the decode counts the 40 real frames.
+    monkeypatch.setattr(media, "probe", lambda data: replace(real, fps=0.5))
+    with pytest.raises(media.MediaWorkError, match="more work to cut than its header showed"):
+        list(media.split_media(video, "video", window_seconds=30, overlap_seconds=5, max_seconds=60, max_video_work_seconds=0.5))  # fmt: skip
+
+
 def test_an_image_over_the_pixel_limit_is_refused_before_it_is_decoded():
     big = _png((10, 20, 30), size=(2000, 1000))  # 2 MP
     with pytest.raises(media.MediaError, match="limit is 1 MP"):
@@ -486,6 +529,8 @@ async def test_a_bank_config_refuses_what_a_bank_may_not_set(api_client, kb):
     assert "image_tokens" in await refused({"image_tokens": 5000})
     assert "disabled_media_types" in await refused({"disabled_media_types": ["pictures"]})
     assert "media_overlap_seconds" in await refused({"media_overlap_seconds": 30, "video_window_seconds": 30})
+    # More than half a window: each overlap second is cut and stored again.
+    assert "at most half" in await refused({"media_overlap_seconds": 16, "video_window_seconds": 30})
     over = get_config().kb_max_pdf_pages + 1
     assert "server's limit" in await refused({"max_pdf_pages": over})
     assert (await api_client.get(f"{KB}/{kb}/config")).json()["overrides"] == {}
@@ -1739,6 +1784,31 @@ async def test_an_ingest_of_many_documents_costs_a_fixed_number_of_calls(api_cli
     # One row write, one passage write, and embed calls in rounds across documents (100 passages / 16).
     assert counts == {"put_documents": 1, "replace_passages": 1}
     assert len(fake_embedder.calls) == math.ceil(100 / _EMBED_ROUND)
+
+
+async def test_a_file_that_fails_for_good_is_not_kept(api_client, memory, kb, monkeypatch):
+    deleted: list[str] = []
+    real_delete = memory._file_storage.delete
+
+    async def delete(key: str) -> None:
+        deleted.append(key)
+        await real_delete(key)
+
+    monkeypatch.setattr(memory._file_storage, "delete", delete)
+    assert (await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"max_pdf_pages": 1}})).is_success
+    await _upload(api_client, kb, [("two.pdf", _pdf((250, 0, 0), (0, 0, 250)), "application/pdf")], [{"document_id": "p"}])  # fmt: skip
+    # The document stays, failed, with why; its file is gone from storage, not kept unaccounted for.
+    detail = (await api_client.get(f"{KB}/{kb}/documents/p")).json()
+    assert detail["status"] == "failed" and "the limit is 1" in detail["error"], detail
+    assert (await api_client.get(f"{KB}/{kb}/documents/p/file")).status_code == 404
+    assert len(deleted) == 1
+    with pytest.raises(FileNotFoundError):
+        await memory._file_storage.retrieve(deleted[0])
+    # Uploading it again, once it fits, starts over.
+    assert (await api_client.patch(f"{KB}/{kb}/config", json={"updates": {"max_pdf_pages": None}})).is_success
+    await _upload(api_client, kb, [("two.pdf", _pdf((250, 0, 0), (0, 0, 250)), "application/pdf")], [{"document_id": "p"}])  # fmt: skip
+    assert (await api_client.get(f"{KB}/{kb}/documents/p")).json()["status"] == "ready"
+    assert (await api_client.get(f"{KB}/{kb}/documents/p/file")).status_code == 200
 
 
 async def test_a_bad_document_fails_alone_and_a_sync_ingest_reports_it(api_client, kb):

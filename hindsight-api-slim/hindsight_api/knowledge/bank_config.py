@@ -130,9 +130,11 @@ def validate_overrides(current: KnowledgeBankOverrides, updates: dict[str, Any])
     sets_media = {"audio_window_seconds", "video_window_seconds", "media_overlap_seconds"} & set(
         overrides.model_dump(exclude_none=True)
     )
-    if sets_media and settings.media_overlap_seconds >= window:
+    # At most half the shorter window: each overlap second is cut and stored again, so a one-second step
+    # would cut a file once per second of it (split_media clamps a value stored before this check).
+    if sets_media and settings.media_overlap_seconds > window // 2:
         raise ValueError(
-            f"media_overlap_seconds ({settings.media_overlap_seconds}) must be less than the audio and video "
+            f"media_overlap_seconds ({settings.media_overlap_seconds}) may be at most half the audio and video "
             f"windows ({settings.audio_window_seconds}s, {settings.video_window_seconds}s)"
         )
     return overrides

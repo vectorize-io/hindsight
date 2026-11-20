@@ -2725,7 +2725,7 @@
         },
         "media_overlap_seconds": {
           "label": "Sobreposição (segundos)",
-          "description": "Quantos segundos cada passagem compartilha com a próxima, para nada se perder num corte; deve ser menor que as duas durações."
+          "description": "Quantos segundos cada passagem compartilha com a próxima, para nada se perder num corte; no máximo metade das duas durações."
         },
         "max_media_seconds": {
           "label": "Arquivo mais longo (segundos)",

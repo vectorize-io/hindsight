@@ -2725,7 +2725,7 @@
         },
         "media_overlap_seconds": {
           "label": "Solapamiento (segundos)",
-          "description": "Cuántos segundos comparte cada pasaje con el siguiente, para no perder nada en un corte; debe ser menor que ambas duraciones."
+          "description": "Cuántos segundos comparte cada pasaje con el siguiente, para no perder nada en un corte; como máximo la mitad de ambas duraciones."
         },
         "max_media_seconds": {
           "label": "Archivo más largo (segundos)",

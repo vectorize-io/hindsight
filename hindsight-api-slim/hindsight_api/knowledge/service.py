@@ -1274,6 +1274,7 @@ class KnowledgeService:
                 window_seconds=window,
                 overlap_seconds=s.media_overlap_seconds,
                 max_seconds=s.max_media_seconds,
+                max_video_work_seconds=get_config().kb_max_video_work_seconds,
             )
         text = media.read_text(data, document.filename)
         return iter(media.split_text(text, tokens=s.text_passage_tokens))
@@ -1640,12 +1641,22 @@ class KnowledgeService:
             for d in failed:
                 await self._delete_keys(d.media_keys)
             if failed:
-                await self.store.set_statuses(
-                    bank_id,
-                    [
-                        StatusUpdate(d.work.document_id, "failed", str(d.error)[:2000], d.work.storage_key)
-                        for d in failed
-                    ],
+                # A file that failed for good (unreadable, or over a limit) goes with its passages: it holds
+                # nothing to search, and kept, it would be stored with nothing accounting for it. The
+                # document stays, failed, with the reason; uploading the file again starts over.
+                dropped = set(
+                    await self.store.set_statuses(
+                        bank_id,
+                        [
+                            StatusUpdate(
+                                d.work.document_id, "failed", str(d.error)[:2000], d.work.storage_key, drop_file=True
+                            )
+                            for d in failed
+                        ],
+                    )
+                )
+                await self._delete_keys(
+                    [d.work.storage_key for d in failed if d.work.document_id in dropped and d.work.storage_key]
                 )
             committed_passages = sum(d.committed_passages for d in kept)
             committed_content_tokens = sum(d.document.content_tokens for d in kept)

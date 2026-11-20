@@ -2725,7 +2725,7 @@
         },
         "media_overlap_seconds": {
           "label": "Überlappung (Sekunden)",
-          "description": "Wie viele Sekunden sich ein Abschnitt mit dem nächsten teilt, damit an einem Schnitt nichts verloren geht; muss kürzer als beide Längen sein."
+          "description": "Wie viele Sekunden sich ein Abschnitt mit dem nächsten teilt, damit an einem Schnitt nichts verloren geht; höchstens die Hälfte beider Längen."
         },
         "max_media_seconds": {
           "label": "Längste Datei (Sekunden)",
