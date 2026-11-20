@@ -3110,3 +3110,33 @@ def test_a_worker_converts_every_office_file_with_one_converter():
     data = _docx({"word/document.xml": "<w:document W><w:body><w:p><w:r><w:t>Same converter</w:t></w:r></w:p></w:body></w:document>"})  # fmt: skip
     assert media._markitdown() is media._markitdown()
     assert all("Same converter" in media._convert_office(data, ".docx") for _ in range(3))
+
+
+def test_a_cut_off_video_is_not_refused_for_the_length_its_header_claims():
+    # FATE's 1242-small.mkv is 100 KB of a file whose header declares 22 minutes of 1280x718, and it cannot seek.
+    # Counted as decoded from its start for every window, it was refused as 7.2 h of work; its few real frames
+    # take a second. Before decoding, each window counts its own span; the meter counts what is really decoded.
+    cut_off = media.MediaInfo(duration=22 * 60, has_video=True, has_audio=True, width=1280, height=718, fps=24, seekable=False)  # fmt: skip
+    media._check_video_work(cut_off, media.windows(cut_off.duration, 30, 5), 7200)
+    # Long enough on its own spans, it is still refused, with the advice for a file without an index.
+    long = replace(cut_off, duration=4 * 3600, width=3840, height=2160, fps=60)
+    with pytest.raises(media.MediaWorkError, match="no seek index"):
+        media._check_video_work(long, media.windows(long.duration, 30, 5), 7200)
+
+
+def test_a_video_whose_codec_pyav_does_not_know_is_probed(monkeypatch):
+    # FATE's uncv-rgb24.mp4: no codec context. Reading its width raised an AttributeError, which the worker took
+    # for a transient error and retried for three minutes; the file now fails at once, "no decodable video".
+    import contextlib
+    import types
+
+    stream = types.SimpleNamespace(codec_context=None, average_rate=None, guessed_rate=None)
+    container = types.SimpleNamespace(
+        duration=3_000_000,
+        streams=types.SimpleNamespace(video=[stream], audio=[], __iter__=None),
+        seek=lambda *a, **k: None,
+        demux=lambda **k: iter(()),
+    )
+    monkeypatch.setattr(media, "_open", lambda data: contextlib.nullcontext(container))
+    info = media.probe(b"")
+    assert (info.width, info.height, info.fps, info.has_video) == (0, 0, 0.0, True)

@@ -29,7 +29,7 @@ from collections import Counter
 from collections.abc import Callable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
@@ -948,7 +948,10 @@ def probe(data: Source) -> MediaInfo:
         fps = 0.0
         if container.streams.video:
             v = container.streams.video[0]
-            width, height = v.codec_context.width or 0, v.codec_context.height or 0
+            # No codec context for a codec PyAV does not know (FATE's uncv-rgb24.mp4): reading its width raised
+            # an AttributeError, which the worker retried for three minutes before the file failed anyway.
+            ctx = v.codec_context
+            width, height = (ctx.width or 0, ctx.height or 0) if ctx is not None else (0, 0)
             rate = v.average_rate or v.guessed_rate
             fps = float(rate) if rate else 0.0
         seekable = True
@@ -1031,7 +1034,12 @@ class _WorkMeter:
 
 
 def _check_video_work(info: MediaInfo, spans: list[Window], limit_seconds: float) -> None:
-    work = video_work(info, spans)
+    # Before decoding, each window counts its own span, even in a file that does not seek. A header can claim
+    # far more than the file holds: a cut-off upload (FATE's 1242-small.mkv, 100 KB) declares 22 minutes, and
+    # counted as decoded from its start for every window it was refused as 7.2 h of work, where its few real
+    # frames take a second. The meter (_WorkMeter) counts what is really decoded, from the start too, so a
+    # long file without an index is still stopped at the limit.
+    work = video_work(replace(info, seekable=True), spans)
     if work <= limit_seconds:
         return
     shape = f"{info.width}x{info.height} at {info.fps or 30:.0f} fps for {_span(info.duration)}"
