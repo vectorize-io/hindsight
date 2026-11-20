@@ -2685,6 +2685,15 @@ Disposition traits control how the bank reasons during reflect operations. Each 
 
 Knowledge banks hold documents (PDF, Office, images, audio, video, text) for search by meaning and keywords; a memory bank links them in its `knowledge_banks` config, and reflect reads them (see [Reflect](#reflect)). They are off by default while the feature is being built. The settings marked *per bank* can be overridden for one knowledge bank through `PATCH /v1/default/knowledge-banks/{bank_id}/config`; a bank can only narrow the server's limits, never widen them.
 
+**Limits on what one file may cost.** Each limit catches a different file, so a server that accepts uploads from users sets them together:
+
+- **Size** (`HINDSIGHT_API_KB_MAX_FILE_MB`, `HINDSIGHT_API_KB_MAX_FILE_MB_BY_MEDIA_TYPE`): checked at upload, before anything is stored.
+- **Pixels** (`HINDSIGHT_API_KB_MAX_IMAGE_MEGAPIXELS`): a small image file that decodes into a huge one.
+- **Length** (`HINDSIGHT_API_KB_MAX_MEDIA_SECONDS`, `HINDSIGHT_API_KB_MAX_PDF_PAGES`): how many passages a long recording or PDF becomes.
+- **Work** (`HINDSIGHT_API_KB_MAX_VIDEO_WORK_SECONDS`): the CPU it takes to cut a video, which depends on its frame size and rate, not its length or size.
+
+A file over a limit fails with the limit's name in its error, and its stored copy is deleted.
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HINDSIGHT_API_ENABLE_KB` | Turn knowledge banks on. Off, their HTTP routes answer 404, reflect ignores linked knowledge banks and the control plane hides them. | `false` |

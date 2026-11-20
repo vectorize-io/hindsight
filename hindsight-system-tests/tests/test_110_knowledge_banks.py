@@ -227,6 +227,28 @@ async def test_files_are_ingested_and_served_back(kb, knowledge_bank):
     assert (await kb.file(knowledge_bank, "exits")).raw == pdf
 
 
+async def test_a_file_that_fails_for_good_is_dropped_and_uploading_it_again_starts_over(kb, knowledge_bank):
+    # The worker's failure, file storage and the file download meet here: an unreadable file used to stay
+    # stored with nothing searchable to show for it. The document stays, failed, with why; its file goes.
+    r = await kb.ingest_files(knowledge_bank, [UploadFile("manual.pdf", b"%PDF-1.4 not really")], [{"document_id": "manual"}])  # fmt: skip
+    assert r.status == 202, r.body
+    await kb.wait_until_processed(knowledge_bank, 1)
+    failed = (await kb.document(knowledge_bank, "manual")).body
+    assert failed["status"] == "failed" and failed["error"], failed
+    assert (await kb.file(knowledge_bank, "manual")).status == 404
+
+    # The same document uploaded again, readable this time, is ingested from scratch and served back.
+    pdf = _text_pdf("Emergency exits are on floor nine")
+    r = await kb.ingest_files(knowledge_bank, [UploadFile("manual.pdf", pdf)], [{"document_id": "manual"}])
+    assert r.status == 202, r.body
+    deadline = asyncio.get_running_loop().time() + 30
+    while (doc := (await kb.document(knowledge_bank, "manual")).body)["status"] != "ready":
+        assert doc["status"] != "failed" and asyncio.get_running_loop().time() < deadline, doc
+        await asyncio.sleep(0.2)
+    assert doc["error"] is None and (await kb.file(knowledge_bank, "manual")).raw == pdf
+    assert (await _hits(kb, knowledge_bank, query="where are the emergency exits", first=1)) == ["manual"]
+
+
 async def test_deleting_a_document_removes_it_from_search(kb, knowledge_bank):
     await kb.ingest(knowledge_bank, [{"document_id": d, "text": t} for d, t in GUIDES.items()])
 
