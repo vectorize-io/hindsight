@@ -141,7 +141,6 @@ export interface KnowledgeSearchTraceHit {
   passage_score: number;
   with_document: number;
   keyword: number;
-  reference_page: boolean;
 }
 
 /** One step of filling max_tokens, in order. */

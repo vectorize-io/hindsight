@@ -2756,7 +2756,6 @@
       "rankingHelp": "의미와 키워드를 0-1로 맞춰 혼합, 키워드 {weight}%. 사용한 단어와 희소성:",
       "noKeywords": "이 쿼리에는 키워드 검색이 없습니다.",
       "idfHelp": "이 뱅크에서 단어의 희소성 (IDF): 드물수록 중요.",
-      "referencePage": "참고문헌 목록, 순위 낮춤",
       "depthTitle": "깊이 자르기 (예산 {budget})",
       "depthHelp": "토큰 예산을 위해 {total}개 중 상위 {depth}개를 남김.",
       "budgetTitle": "max_tokens 채우기",

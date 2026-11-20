@@ -2756,7 +2756,6 @@
       "rankingHelp": "Bedeutung und Schlüsselwörter auf 0-1 skaliert und gemischt, Schlüsselwörter {weight}%. Verwendete Wörter mit ihrer Seltenheit:",
       "noKeywords": "Keine Schlüsselwortsuche für diese Anfrage.",
       "idfHelp": "Wie selten das Wort in dieser Bank ist (IDF): seltenere zählen mehr.",
-      "referencePage": "Literaturliste, abgewertet",
       "depthTitle": "Tiefenschnitt (Budget {budget})",
       "depthHelp": "Behält die besten {depth} von {total} für das Token-Budget.",
       "budgetTitle": "max_tokens füllen",

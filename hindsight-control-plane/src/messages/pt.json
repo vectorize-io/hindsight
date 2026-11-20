@@ -2756,7 +2756,6 @@
       "rankingHelp": "Significado e palavras-chave escalados 0-1 e misturados, palavras-chave {weight}%. Palavras usadas, com sua raridade:",
       "noKeywords": "Sem busca por palavras-chave para esta consulta.",
       "idfHelp": "Quão rara a palavra é neste banco (IDF): raras contam mais.",
-      "referencePage": "lista de referências, rebaixada",
       "depthTitle": "Corte de profundidade (orçamento {budget})",
       "depthHelp": "Mantém os {depth} melhores de {total} para o orçamento de tokens.",
       "budgetTitle": "Preenchendo max_tokens",

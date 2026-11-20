@@ -2756,7 +2756,6 @@
       "rankingHelp": "语义与关键词缩放到 0-1 后混合，关键词占 {weight}%。使用的词及其稀有度：",
       "noKeywords": "此查询无关键词搜索。",
       "idfHelp": "该词在此库中的稀有程度（IDF）：越稀有越重要。",
-      "referencePage": "参考文献列表，已降权",
       "depthTitle": "深度截断（预算 {budget}）",
       "depthHelp": "为 token 预算保留 {total} 个中的前 {depth} 个。",
       "budgetTitle": "填充 max_tokens",
