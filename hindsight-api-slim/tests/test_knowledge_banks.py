@@ -2864,8 +2864,8 @@ async def test_a_document_with_more_passages_than_one_insert_holds_is_stored_who
 
 
 def test_an_office_converter_that_dies_fails_its_file_and_the_next_gets_a_new_one(monkeypatch):
-    # The converter runs in a worker process: killed for its memory on one huge spreadsheet, it fails that
-    # file for good (no retry would fare better) and the next file starts a fresh worker.
+    # The converter runs in a worker process: killed for its memory on one huge spreadsheet, and again when
+    # the file is retried alone, it fails that file for good and the next file starts a fresh worker.
     from concurrent.futures import Future
     from concurrent.futures.process import BrokenProcessPool
 
@@ -2875,7 +2875,11 @@ def test_an_office_converter_that_dies_fails_its_file_and_the_next_gets_a_new_on
             future.set_exception(BrokenProcessPool("killed"))
             return future
 
+    def dies_again(*args):
+        raise BrokenProcessPool("killed again")
+
     monkeypatch.setattr(media, "_OFFICE_POOL", DeadPool())
+    monkeypatch.setattr(media, "_alone", dies_again)
     with pytest.raises(media.MediaError, match="converter died"):
         media.read_text(b"PK", "huge.xlsx")
     assert media._OFFICE_POOL is None
@@ -3016,3 +3020,21 @@ def test_the_worker_memory_cap_follows_the_machine_unless_set(monkeypatch):
     assert media._worker_address_space() == 5 << 30  # half of 8 GB, plus a worker's own 1 GB at rest
     monkeypatch.setattr("hindsight_api.config.get_config", lambda: types.SimpleNamespace(kb_worker_memory_mb=3000))
     assert media._worker_address_space() == 3000 << 20
+
+
+def test_an_office_file_queued_behind_one_that_kills_the_converter_still_converts():
+    # The cluster sweep's 51535.xls ran the container out of memory and the kernel killed the converter: a 9 KB
+    # spreadsheet waiting behind it failed too. A call the dead worker broke is retried alone.
+    import os
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    data = _docx({"word/document.xml": "<w:document W><w:body><w:p><w:r><w:t>Queued text</w:t></w:r></w:p></w:body></w:document>"})  # fmt: skip
+    assert "Queued text" in media._office_text(data, ".docx")  # the shared worker is up
+    pool = media._OFFICE_POOL
+    assert pool is not None
+    pool.submit(time.sleep, 1)  # holds the worker while the next two queue
+    pool.submit(os.abort)  # the worker dies before it reaches the file queued behind
+    with ThreadPoolExecutor(1) as threads:
+        queued = threads.submit(media._office_text, data, ".docx")
+        assert "Queued text" in queued.result(timeout=120)
