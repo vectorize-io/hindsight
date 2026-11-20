@@ -1021,6 +1021,19 @@ async def test_a_search_by_an_image_sends_the_picture_as_the_query_even_without_
     assert judge.queries == []
 
 
+async def test_a_search_can_skip_the_reranker(api_client, kb, judge):
+    items = [{"document_id": "faq", "text": "a blue note"}, {"document_id": "faq2", "text": "another blue note"}]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.status_code == 200, r.text
+
+    await _search(api_client, kb, query="blue")
+    assert judge.queries == ["blue"]  # a configured reranker reranks a search that says nothing
+    hits = await _search(api_client, kb, query="blue", enable_reranking=False)
+    assert judge.queries == ["blue"] and {h["document_id"] for h in hits} == {"faq", "faq2"}  # skipped
+    await _search(api_client, kb, query="blue", enable_reranking=True)
+    assert judge.queries == ["blue", "blue"]
+
+
 async def test_the_query_picture_takes_its_share_of_the_rerank_window(api_client, kb, judge):
     items = [{"document_id": f"note{i}", "text": f"note {i} about the blue key. " + "detail " * 140} for i in range(10)]
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
@@ -1244,7 +1257,7 @@ async def _scored(memory, bank_id: str, query: str) -> list:
 
     request = SearchRequest(query=query, query_image=None, filters=SearchFilters())
     service = get_knowledge_service(memory)
-    return (await service._search(bank_id, request, await service._embed_query(request))).hits
+    return (await service._search(bank_id, request, await service._embed_query(request), rerank=False)).hits
 
 
 async def test_pdf_pages_are_scored_from_image_bands_and_text_layer(api_client, memory, kb, monkeypatch):

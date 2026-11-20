@@ -430,6 +430,13 @@ the operation still succeeds.
   after a search returns. `result.results_tokens` is what the returned passages
   weigh (the trace's `tokens_used`, counted whether or not a trace was asked
   for), and `result.result_count` is how many results came back.
+  `result.reranked` says whether a rerank request went to the knowledge
+  reranker, so reranker calls can be metered on their own. Before the search,
+  `validate_knowledge_bank_read` gets `ctx.rerank` for `SEARCH_KNOWLEDGE_BANK`:
+  whether the search is to be reranked (a reranker is set up and the request did
+  not send `"enable_reranking": false`). It is `None` for every other read. A
+  search that is to be reranked can still send no request, when there is
+  nothing to compare.
 - `on_knowledge_bank_ingest_complete(result: KnowledgeBankIngestResult)` runs in
   the worker each time a batch of documents commits, with `result.passages`
   committed. The worker has no request context, so the caller's

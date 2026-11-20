@@ -114,6 +114,8 @@ export interface KnowledgeSearchRequest {
   tag_groups?: TagGroup[];
   document_ids?: string[];
   media_types?: MediaType[];
+  /** Rerank this search (true) or not (false); unset reranks when the server has a reranker. */
+  enable_reranking?: boolean;
   /** Also return how the search ranked and what the token budget kept. */
   trace?: boolean;
 }

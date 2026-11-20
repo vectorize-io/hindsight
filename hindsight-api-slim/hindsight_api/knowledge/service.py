@@ -349,6 +349,8 @@ class SearchRequest:
     budget: SearchBudget = "mid"
     # An MP4 clip to search with, alone or with the text and the image: all of them make one vector.
     query_video: bytes | None = None
+    # False keeps the search's own order; None (or True) reranks when the server has a reranker.
+    enable_reranking: bool | None = None
 
 
 SearchBudget = Literal["low", "mid", "high"]
@@ -757,16 +759,20 @@ class KnowledgeService:
         bank_id: str,
         operation: KnowledgeBankReadOperation | KnowledgeBankWriteOperation,
         request_context: RequestContext,
+        rerank: bool | None = None,
     ) -> None:
         """The operation validator's knowledge-bank hook for one operation (the memory-bank hooks never run
         for a knowledge bank). Run before the bank's existence is checked, so a caller who may not touch
-        a bank cannot learn whether it exists from a 404."""
+        a bank cannot learn whether it exists from a 404. ``rerank`` is a search's: whether it is to be
+        reranked, None for any other operation."""
         validator = self._engine._operation_validator
         if validator is None:
             return
         if isinstance(operation, KnowledgeBankReadOperation):
             verdict = validator.validate_knowledge_bank_read(
-                KnowledgeBankReadContext(bank_id=bank_id, operation=operation, request_context=request_context)
+                KnowledgeBankReadContext(
+                    bank_id=bank_id, operation=operation, request_context=request_context, rerank=rerank
+                )
             )
         else:
             verdict = validator.validate_knowledge_bank_write(
@@ -782,6 +788,7 @@ class KnowledgeService:
         *,
         needs_vectors: bool = True,
         check_exists: bool = True,
+        rerank: bool | None = None,
     ) -> None:
         # ``needs_vectors=False`` for an operation that never reads or writes a vector (a delete): the
         # store's first-use setup asks the embedder for its size, and an unreachable embedder must not
@@ -790,7 +797,7 @@ class KnowledgeService:
             await self._ready(request_context)
         else:
             await self._engine._authenticate_tenant(request_context)
-        await self._authorize(bank_id, operation, request_context)
+        await self._authorize(bank_id, operation, request_context, rerank)
         # ``check_exists=False`` for a search, which checks it in its own statement (``KnowledgeStore.search``).
         if check_exists:
             await self._require_bank(bank_id)
@@ -2051,6 +2058,8 @@ class KnowledgeService:
             # of the bank, and the two are each a network round trip. The store is not touched until
             # the bank is open, so a caller refused by the checks still learns nothing about it.
             embedding = asyncio.ensure_future(self._embed_query(request))
+            # Decided before the bank is opened, so the read gate sees it (``KnowledgeBankReadContext.rerank``).
+            rerank = self.reranker is not None and request.enable_reranking is not False
             try:
                 async with _timing.timed("open_bank"):
                     # The store's search finds out in its own statement that the bank is not a knowledge
@@ -2061,6 +2070,7 @@ class KnowledgeService:
                         KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK,
                         request_context,
                         check_exists=needs_resolution(request.filters.tag_groups),
+                        rerank=rerank,
                     )
             except BaseException:
                 embedding.cancel()
@@ -2069,11 +2079,12 @@ class KnowledgeService:
             request = await self._with_exact_tag_groups(bank_id, request)
             async with _timing.timed("store.search"):
                 try:
-                    found = await self._search(bank_id, request, vector, trace)
+                    found = await self._search(bank_id, request, vector, rerank, trace)
                 except KnowledgeBankNotFound as exc:
                     raise KnowledgeBankError(f"knowledge bank '{bank_id}' not found", 404) from exc
             async with _timing.timed("rerank"):
-                hits = await self._reranked(request, found)
+                reranked = await self._reranked(request, found) if rerank else None
+            hits = reranked if reranked is not None else found.hits
             async with _timing.timed("context"):
                 budgeted = self._within_budget(hits, found.nearby, request.max_tokens, trace)
             if trace is not None:
@@ -2087,6 +2098,7 @@ class KnowledgeService:
                         request_context=request_context,
                         results_tokens=budgeted.tokens_used,
                         result_count=len(budgeted.items),
+                        reranked=reranked is not None,
                     )
                 )
             )
@@ -2151,7 +2163,12 @@ class KnowledgeService:
                 raise KnowledgeBankError(str(exc), 415) from exc
 
     async def _search(
-        self, bank_id: str, request: SearchRequest, vector: list[float], trace: SearchTrace | None = None
+        self,
+        bank_id: str,
+        request: SearchRequest,
+        vector: list[float],
+        rerank: bool,
+        trace: SearchTrace | None = None,
     ) -> StoreSearchResult:
         return await self.store.search(
             bank_id,
@@ -2162,12 +2179,14 @@ class KnowledgeService:
             query_text=request.query,
             keyword_weight=get_config().kb_keyword_weight,
             # What the reranker shows around a text hit, or else what the budget may widen it by.
-            around=_JUDGE_SPAN if self.reranker is not None else MAX_CONTEXT_PASSAGES - 1,
+            around=_JUDGE_SPAN if rerank else MAX_CONTEXT_PASSAGES - 1,
             trace=trace.store if trace is not None else None,
         )
 
-    async def _reranked(self, request: SearchRequest, found: StoreSearchResult) -> list[SearchHit]:
+    async def _reranked(self, request: SearchRequest, found: StoreSearchResult) -> list[SearchHit] | None:
         """``hits`` with the best of them reordered by the knowledge reranker; the rest keep the search's order.
+        None when no rerank request was sent (nothing to rerank by, or too few hits to compare): the search's
+        order stands, and the post-search hook reports the search as not reranked.
 
         Candidates go in search order into one request, as many as ``kb_reranker_max_tokens`` holds counted
         with ``kb_reranker_tokenizer`` (``fitting``): how deep the rerank goes is what fits, not a count. A
@@ -2190,7 +2209,7 @@ class KnowledgeService:
             else None
         )
         if reranker is None or not (text or query_picture):
-            return hits
+            return None
         query: str | dict[str, str] = text
         if query_picture is not None:
             query = {"type": "image", "b64": base64.b64encode(query_picture).decode()}
@@ -2213,7 +2232,7 @@ class KnowledgeService:
         # ranked worse than search alone (MSR-VTT nDCG@10 65.85 -> 61.54). Until a reranker reads video.
         shown = [n for n, group in enumerate(groups) if pool[group[0]].passage.modality != "video"]
         if len(shown) < 2:
-            return hits
+            return None
         encoding = config.kb_reranker_tokenizer
 
         def capped(text: str) -> str:
