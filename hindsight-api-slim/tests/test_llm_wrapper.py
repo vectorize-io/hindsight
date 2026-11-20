@@ -263,6 +263,33 @@ def test_parse_llm_json_preserves_raw_line_breaks_in_strings():
     assert parse_llm_json('{"a": "back\\\\slash and \\" quote"}') == {"a": 'back\\slash and " quote'}
 
 
+def test_parse_llm_json_stray_quote_keeps_later_objects():
+    """One unescaped quote in a value must not wreck the objects after it (#6729).
+
+    The quote used to throw off the newline-escaping pass, so the repair saw the
+    rest of the reply as one string and returned the first fact plus fragments.
+    """
+    from hindsight_api.engine.llm_wrapper import parse_llm_json
+
+    raw = (
+        "```json\n"
+        '{\n  "facts": [\n'
+        '    {\n      "what": "Tools disabled: `a` and `b".",\n      "fact_type": "world"\n    },\n'
+        '    {\n      "what": "User kept compaction off.",\n      "fact_type": "world"\n    }\n'
+        "  ]\n}\n```"
+    )
+    facts = parse_llm_json(raw)["facts"]
+    assert [type(f) for f in facts] == [dict, dict]
+    assert facts[1] == {"what": "User kept compaction off.", "fact_type": "world"}
+
+
+def test_parse_llm_json_repair_keeps_raw_line_breaks():
+    """A reply that needs repair still keeps the line breaks inside its strings."""
+    from hindsight_api.engine.llm_wrapper import parse_llm_json
+
+    assert parse_llm_json('{"a": "row 1\nrow 2",}') == {"a": "row 1\nrow 2"}
+
+
 @pytest.mark.parametrize("garbage", ["", "   ", "not json at all !!!", "```json\n```"])
 def test_parse_llm_json_unrecoverable_raises(garbage):
     """Repair that yields an empty result must not masquerade as success — the

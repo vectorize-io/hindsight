@@ -451,7 +451,15 @@ def parse_llm_json(raw: str) -> Any:
         # failing loudly in that case rather than let an empty object masquerade
         # as a successful parse: callers (retry ladders, the #1833 fail-loud path)
         # rely on JSONDecodeError to retry or surface the failure.
-        repaired = repair_json(cleaned, return_objects=True)
+        #
+        # Repair the text as the model wrote it, not ``cleaned``. The escaping pass
+        # tracks string state by counting quotes, so one unescaped quote inside a
+        # value (Gemma 4: ``"... `cmd".",``) flips it, and every newline between
+        # later fields is escaped as if it were string content. The repair then sees
+        # one long string and returns the first fact plus a list of fragments, which
+        # retain drops as malformed (#6729). ``repair_json`` handles raw control
+        # characters on its own, and ``sanitize_value`` scrubs what it keeps.
+        repaired = repair_json(text, return_objects=True)
         if not repaired:
             raise
         return sanitize_value(repaired)
