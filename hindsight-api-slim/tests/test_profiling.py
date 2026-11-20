@@ -179,14 +179,17 @@ def test_recall_phase_histogram_can_resolve_a_millisecond_phase():
     fifteen phases at once -- the midpoint of the 0-5s bucket -- which is what sent an
     investigation of a 460 ms p99 down a blind alley.
     """
-    import hindsight_api.metrics as metrics_module
+    from unittest.mock import MagicMock, patch
 
-    source = pathlib.Path(metrics_module.__file__).read_text()
-    # Slice to the NEXT instrument, not to the first ")": the description text contains
-    # parentheses, which truncated this block before the argument it is checking for.
-    block = source.split('name="hindsight.recall.phase.duration"', 1)[1]
-    block = block.split("self.consolidation_batch_failures", 1)[0]
-    assert "explicit_bucket_boundaries_advisory" in block, (
-        "the recall phase histogram needs millisecond-scale buckets, or its percentiles are fiction"
-    )
-    assert "0.025" in block, "buckets must cover the 10-50ms range where recall phases live"
+    from hindsight_api.metrics import MetricsCollector
+
+    # The boundaries the histograms are created with, read off the meter: this checked the source
+    # text for "0.025" next to the instrument, which broke once the buckets became a shared constant.
+    meter = MagicMock()
+    with patch("hindsight_api.metrics.get_meter", return_value=meter), patch("hindsight_api.config.get_config"):
+        MetricsCollector()
+    created = {c.kwargs["name"]: c.kwargs for c in meter.create_histogram.call_args_list}
+    for name in ("hindsight.recall.phase.duration", "hindsight.knowledge_search.phase.duration"):
+        buckets = created[name].get("explicit_bucket_boundaries_advisory")
+        assert buckets, f"{name} needs millisecond-scale buckets, or its percentiles are fiction"
+        assert any(0.01 <= b <= 0.05 for b in buckets), f"{name} buckets must cover the 10-50ms range"
