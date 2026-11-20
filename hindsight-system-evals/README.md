@@ -603,13 +603,17 @@ PYTEST_ADDOPTS= HINDSIGHT_EVAL_LLM_PROVIDER=none uv run pytest evals/knowledge  
 PYTEST_ADDOPTS= HINDSIGHT_EVAL_LLM_PROVIDER=none uv run pytest evals/knowledge --full   # + heavy files
 ```
 
-**The sample** (`test_edge_case`, `fixtures/kb-edge-cases/`, under 1 MB): one file per issue found by
+**The sample** (`test_edge_case`, about 1 MB): one file per issue found by
 sweeping public corpora of broken and odd files, each with what the server must do with it in
 `manifest.json`: `ready` (and, where its content is known, come back from a search among all the
 others), or `failed` / `rejected` with a reason — **within 45s**, because a deterministic failure the
 worker took for a transient one was retried a minute apart, three times, before failing anyway.
 The categories are the media types (`video`, `audio`, `image`, `pdf`, `text`, `office`); every
-case names its source and the bug it reproduces, or says it is a control.
+case names its source and the bug it reproduces, or says it is a control. The files live in
+[vectorize-io/hindsight-datasets](https://github.com/vectorize-io/hindsight-datasets/tree/main/broken-media)
+(`broken-media/`, with each source's license), and the eval downloads them at the commit
+`kb_edge_cases.BROKEN_MEDIA_REV` names into `~/.cache/hindsight-evals/broken-media`, checking each file's
+sha256. `HINDSIGHT_EVAL_BROKEN_MEDIA=DIR` runs a local copy instead.
 
 **Heavy files** (`test_heavy_file`, `--full`): common uploads, only big — a minute of 4K at 60 fps and
 50 Mb/s (~375 MB), a 108 MP photo, an hour of audio, a 1500-page PDF, a 50 MB CSV — built with `ffmpeg` at
@@ -643,8 +647,10 @@ The corpora the first sweep used (fetch a slice, not all of them):
 | Pillow `Tests/images`, PngSuite | every image mode and depth, broken PNG/TIFF/GIF | sparse clone of `python-pillow/Pillow`; `schaik.com/pngsuite` |
 | Govdocs1, SafeDocs CC-MAIN-2021-31-PDF | real-world office files and PDFs at scale, in 1000-file zips | `digitalcorpora.org` |
 
-A new failure becomes a case: fix it, copy the smallest file that shows it into the fixtures, and
-add its manifest entry saying where it came from and what broke.
+A new failure becomes a case: fix it, add the smallest file that shows it to `broken-media/` in
+hindsight-datasets with its manifest entry (where it came from, what broke, its sha256), try it with
+`HINDSIGHT_EVAL_BROKEN_MEDIA` pointing at that checkout, and once it lands move `BROKEN_MEDIA_REV` to the
+new commit.
 
 ## The corpus
 
