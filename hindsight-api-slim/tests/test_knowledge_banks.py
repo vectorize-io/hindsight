@@ -2876,3 +2876,40 @@ def test_a_pdf_that_renders_forever_fails_in_time_and_the_next_renders(monkeypat
         media._in_pdf_worker(time.sleep, 30)
     assert time.monotonic() - started < 20
     assert [d.page for d in media.split_pdf(_pdf((255, 0, 0)), page_pixels=128, max_pages=10)] == [1]
+
+
+def _docx(parts: dict[str, str]) -> bytes:
+    """A Word file of ``parts``, each a part's root element with ``W`` where its namespace goes."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, xml in parts.items():
+            z.writestr(
+                name, xml.replace("W", 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"', 1)
+            )
+    return buf.getvalue()
+
+
+def test_a_word_file_markitdown_cannot_read_is_read_from_its_xml():
+    # POI's deep-table-cell.docx nests a table 15,000 deep: markitdown hit its recursion limit, and 15,000 words
+    # failed "unreadable .docx file". Its text runs are read straight from the XML instead.
+    depth = 3000
+    nested = "".join("<w:tbl><w:tr><w:tc>" for _ in range(depth))
+    nested += "<w:p><w:r><w:t>the innermost cell</w:t></w:r></w:p>"
+    nested += "".join("</w:tc></w:tr></w:tbl>" for _ in range(depth))
+    body = f"<w:document W><w:body><w:p><w:r><w:t>Deep tables</w:t></w:r></w:p>{nested}</w:body></w:document>"
+    text = media._convert_office(_docx({"word/document.xml": body}), ".docx")
+    assert "Deep tables" in text and "the innermost cell" in text
+
+
+def test_a_word_file_whose_text_is_all_in_its_header_is_read():
+    # markitdown reads a Word body only: POI's Headers.docx came out empty and failed "nothing to search".
+    data = _docx(
+        {
+            "word/document.xml": "<w:document W><w:body><w:p/></w:body></w:document>",
+            "word/header1.xml": "<w:hdr W><w:p><w:r><w:t>Quarterly results</w:t></w:r></w:p></w:hdr>",
+        }
+    )
+    assert "Quarterly results" in media._convert_office(data, ".docx")

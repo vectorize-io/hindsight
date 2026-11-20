@@ -476,15 +476,72 @@ def _first_to_kill() -> None:
         Path("/proc/self/oom_score_adj").write_text("1000")
 
 
+#: The parts of an Office file that hold its text, read when markitdown cannot: the body with its headers,
+#: footers and notes (docx), the slides (pptx), the cell strings (xlsx). Any case, either separator: POI's
+#: 49609.xlsx names them "xl\\sharedstrings.xml".
+_OOXML_TEXT_PARTS = {
+    ".docx": re.compile(r"word/(document|header\d*|footer\d*|footnotes|endnotes)\.xml", re.IGNORECASE),
+    ".pptx": re.compile(r"ppt/slides/slide\d+\.xml", re.IGNORECASE),
+    ".xlsx": re.compile(r"xl/sharedStrings\.xml|xl/worksheets/sheet\d+\.xml", re.IGNORECASE),
+}
+
+
+def _ooxml_text(data: bytes, ext: str) -> str:
+    """An Office file's text runs, read from its XML a paragraph per line, without markitdown. A streaming
+    parse, so a table nested 15,000 deep (POI's deep-table-cell.docx: RecursionError in markitdown) is read
+    like any other; entities stay unresolved (the standard parser fetches nothing)."""
+    import xml.etree.ElementTree as ET
+    import zipfile
+
+    parts = _OOXML_TEXT_PARTS.get(ext)
+    if parts is None:
+        return ""
+    lines: list[str] = []
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        names = sorted(
+            (n for n in z.namelist() if parts.fullmatch(n.replace("\\", "/"))),
+            key=lambda n: [int(d) for d in re.findall(r"\d+", n)],
+        )
+        for name in names:
+            line: list[str] = []
+            with z.open(name) as part:
+                for _event, element in ET.iterparse(part):
+                    tag = element.tag.rsplit("}", 1)[-1]
+                    if tag == "t" and element.text:
+                        line.append(element.text)
+                    elif tag in ("p", "si", "row") and line:
+                        lines.append("".join(line))
+                        line = []
+                    element.clear()
+            if line:
+                lines.append("".join(line))
+    return "\n".join(lines)
+
+
 def _convert_office(data: bytes, ext: str) -> str:
     from markitdown import MarkItDown
 
     try:
-        return MarkItDown(enable_plugins=False).convert_stream(io.BytesIO(data), file_extension=ext).text_content
+        text = MarkItDown(enable_plugins=False).convert_stream(io.BytesIO(data), file_extension=ext).text_content
     except Exception as exc:
+        # markitdown fails on files Office opens: a KeyError on a field it did not expect (POI's 60329.docx),
+        # recursion on deep tables, 974 words of slides (2411-Performance_Up.pptx). Their text is still read.
+        try:
+            if text := _ooxml_text(data, ext):
+                return text
+        except Exception:
+            pass
         # Back to the server as text: markitdown's exceptions carry tracebacks, which do not pickle, and the
         # reason reached the document as "cannot pickle 'traceback' object".
         raise ValueError(str(exc)) from None
+    if text.strip():
+        return text
+    # markitdown reads a Word body only: a document whose text is all in its header (POI's Headers.docx)
+    # came out empty and failed "nothing to search".
+    try:
+        return _ooxml_text(data, ext)
+    except Exception:
+        return text
 
 
 def _office_text(data: bytes, ext: str) -> str:
