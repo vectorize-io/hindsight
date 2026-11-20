@@ -25,7 +25,14 @@ import Link from "next/link";
 import { client } from "@/lib/api";
 
 type NavItem =
-  "home" | "recall" | "reflect" | "data" | "documents" | "entities" | "pages" | "profile";
+  | "home"
+  | "recall"
+  | "reflect"
+  | "data"
+  | "documents"
+  | "entities"
+  | "pages"
+  | "profile";
 
 export interface SidebarItem<T extends string> {
   id: T;

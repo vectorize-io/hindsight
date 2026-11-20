@@ -72,11 +72,23 @@ import { Spinner } from "@/components/ui/spinner";
 import { LlmHealthDialog } from "@/components/llm-health-dialog";
 
 type NavItem =
-  "home" | "recall" | "reflect" | "data" | "documents" | "entities" | "pages" | "profile";
+  | "home"
+  | "recall"
+  | "reflect"
+  | "data"
+  | "documents"
+  | "entities"
+  | "pages"
+  | "profile";
 type DataSubTab = "world" | "experience" | "observations";
 type PagesTab = "pages" | "models" | "tree";
 type BankConfigTab =
-  "general" | "memory-defense" | "configuration" | "webhooks" | "audit-logs" | "llm-requests";
+  | "general"
+  | "memory-defense"
+  | "configuration"
+  | "webhooks"
+  | "audit-logs"
+  | "llm-requests";
 
 const LAST_DATA_SUB_TAB_KEY = "hindsight.memories.subTab";
 

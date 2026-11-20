@@ -34,7 +34,12 @@ import remarkGfm from "remark-gfm";
 type TagsMatch = "any" | "all" | "any_strict" | "all_strict" | "exact";
 type ViewMode = "answer" | "trace" | "json";
 type BasedOnTab =
-  "directives" | "mental_models" | "observations" | "world" | "experience" | "documents";
+  | "directives"
+  | "mental_models"
+  | "observations"
+  | "world"
+  | "experience"
+  | "documents";
 
 type KnowledgeDocument = { source?: string; document_id: string; text?: string };
 

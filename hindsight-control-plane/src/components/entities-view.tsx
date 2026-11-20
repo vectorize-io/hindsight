@@ -75,7 +75,8 @@ export function EntitiesView() {
     () => ({
       tags: selectedTags,
       tags_match: (tagsMatch === "all" ? "all_strict" : "any_strict") as
-        "all_strict" | "any_strict",
+        | "all_strict"
+        | "any_strict",
     }),
     [selectedTags, tagsMatch]
   );

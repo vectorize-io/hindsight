@@ -94,19 +94,23 @@ export function buildReflectTimeline<T extends ToolTraceCall>(
     batches.set(key, [...(batches.get(key) ?? []), tc]);
   }
   const items: TimelineItem<T>[] = [
-    ...llmCalls.map((lc): TimelineItem<T> => ({
-      kind: "llm",
-      step: describeLLMCall(lc.scope, toolIterations),
-      duration_ms: lc.duration_ms,
-      offset_ms: 0,
-      start: lc.started_at_ms ?? 0,
-    })),
-    ...[...batches.values()].map((tools): TimelineItem<T> => ({
-      kind: "tools",
-      tools,
-      offset_ms: 0,
-      start: tools[0].started_at_ms ?? 0,
-    })),
+    ...llmCalls.map(
+      (lc): TimelineItem<T> => ({
+        kind: "llm",
+        step: describeLLMCall(lc.scope, toolIterations),
+        duration_ms: lc.duration_ms,
+        offset_ms: 0,
+        start: lc.started_at_ms ?? 0,
+      })
+    ),
+    ...[...batches.values()].map(
+      (tools): TimelineItem<T> => ({
+        kind: "tools",
+        tools,
+        offset_ms: 0,
+        start: tools[0].started_at_ms ?? 0,
+      })
+    ),
   ];
   items.sort((x, y) => x.start - y.start);
   // With a decision model the last free turn's done is the answer itself (no closing call).
