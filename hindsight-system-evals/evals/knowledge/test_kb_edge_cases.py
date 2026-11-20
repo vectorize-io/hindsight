@@ -3,7 +3,7 @@
 No model call and no judge. The server's own embedder (local EmbeddingGemma 2 by default) embeds,
 so the suite runs with ``HINDSIGHT_EVAL_LLM_PROVIDER=none``.
 
-* ``test_edge_case`` — the committed sample (``fixtures/kb-edge-cases/manifest.json``): one file per
+* ``test_edge_case`` — the sample (``broken-media/`` of vectorize-io/hindsight-datasets): one file per
   issue a corpus sweep (``python -m hindsight_system_evals.kb_edge_cases harvest``) found. Each must
   end as the manifest says (``ready``, or ``failed`` / ``rejected`` with its reason), and a ready one
   must come back from a search for its query, among every other case in the same bank.
@@ -28,7 +28,6 @@ import pytest
 
 from hindsight_system_evals import Target
 from hindsight_system_evals.kb_edge_cases import (
-    FIXTURES,
     HEAVY_CASES,
     KB,
     EdgeCase,
@@ -38,6 +37,7 @@ from hindsight_system_evals.kb_edge_cases import (
     ingest_file,
     load_manifest,
     rank_of,
+    sample_dir,
     server_alive,
 )
 
@@ -76,7 +76,7 @@ def sample(target: Target) -> dict[str, CaseResult]:
             bank = await create_bank(http)
             outcomes = {}
             for case in MANIFEST:
-                path = FIXTURES / case.file
+                path = sample_dir() / case.file
                 outcomes[case.id] = await ingest_file(http, bank, path, document_id=case.id, pid=target.pid)
                 assert server_alive(target.pid), f"the server died ingesting {case.file}"
             ranks = {

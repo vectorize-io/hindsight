@@ -13,8 +13,9 @@ Two ways in, one code path:
 
       uv run python -m hindsight_system_evals.kb_edge_cases harvest ~/corpus/pdfjs --out pdfjs.jsonl
 
-* the eval (``evals/knowledge``) runs the committed sample: one file per issue found that way,
-  listed in ``fixtures/kb-edge-cases/manifest.json`` with what the server must do with it.
+* the eval (``evals/knowledge``) runs the sample: one file per issue found that way, with what the
+  server must do with it, kept in vectorize-io/hindsight-datasets (``broken-media/``) and downloaded
+  at a pinned commit (``sample_dir``).
 
 Each file is ingested alone and the server's process tree is sampled meanwhile (peak memory,
 CPU seconds), so a file that costs too much shows up as a number, not a guess.
@@ -24,7 +25,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
+import os
 import sys
 import threading
 import time
@@ -37,7 +40,10 @@ from urllib.parse import quote
 import httpx
 
 KB = "/v1/default/knowledge-banks"
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "kb-edge-cases"
+#: The sample's files and manifest: ``broken-media/`` of vectorize-io/hindsight-datasets at this commit.
+#: They used to be committed here (``fixtures/kb-edge-cases``); binaries live in the datasets repo now.
+BROKEN_MEDIA_REV = "b0cb5a34edc763de1150bac2d6f9dd587e9d9f43"
+_BROKEN_MEDIA_URL = "https://raw.githubusercontent.com/vectorize-io/hindsight-datasets/{rev}/broken-media/{path}"
 
 #: The extensions a knowledge bank takes (``knowledge/media.py``). Others are rejected with a 415,
 #: which is correct and so not worth a harvest's time.
@@ -208,7 +214,7 @@ class _DocStatus:
 
 @dataclass(frozen=True)
 class EdgeCase:
-    """One committed sample file and what the server must do with it (``fixtures/kb-edge-cases/manifest.json``)."""
+    """One sample file and what the server must do with it (``broken-media/manifest.json``, ``sample_dir``)."""
 
     id: str
     category: str
@@ -223,10 +229,42 @@ class EdgeCase:
     text_contains: str | None = None
     #: A refused one's reason must hold this text.
     error_contains: str | None = None
+    #: The file's, checked when it is downloaded (``sample_dir``).
+    sha256: str = ""
+
+
+def sample_dir() -> Path:
+    """The sample, downloaded once per ``BROKEN_MEDIA_REV`` into ``~/.cache/hindsight-evals/broken-media``,
+    each file checked against its manifest's sha256. ``HINDSIGHT_EVAL_BROKEN_MEDIA`` names a local copy
+    of ``broken-media/`` instead (a checkout of hindsight-datasets, to try a new case before it lands)."""
+    if local := os.getenv("HINDSIGHT_EVAL_BROKEN_MEDIA"):
+        return Path(local)
+    root = Path.home() / ".cache" / "hindsight-evals" / "broken-media" / BROKEN_MEDIA_REV
+    manifest = root / "manifest.json"
+    with httpx.Client(timeout=60, follow_redirects=True) as http:
+
+        def fetch(path: str) -> bytes:
+            r = http.get(_BROKEN_MEDIA_URL.format(rev=BROKEN_MEDIA_REV, path=path))
+            r.raise_for_status()
+            return r.content
+
+        if not manifest.exists():
+            root.mkdir(parents=True, exist_ok=True)
+            manifest.write_bytes(fetch("manifest.json"))
+        for case in json.loads(manifest.read_text())["cases"]:
+            path = root / case["file"]
+            if path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() == case["sha256"]:
+                continue
+            data = fetch(case["file"])
+            if hashlib.sha256(data).hexdigest() != case["sha256"]:
+                raise ValueError(f"broken-media/{case['file']} at {BROKEN_MEDIA_REV} does not match its sha256")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+    return root
 
 
 def load_manifest() -> list[EdgeCase]:
-    return [EdgeCase(**case) for case in json.loads((FIXTURES / "manifest.json").read_text())["cases"]]
+    return [EdgeCase(**case) for case in json.loads((sample_dir() / "manifest.json").read_text())["cases"]]
 
 
 async def create_bank(http: httpx.AsyncClient, bank_id: str | None = None) -> str:
