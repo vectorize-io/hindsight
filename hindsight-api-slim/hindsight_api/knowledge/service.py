@@ -249,7 +249,7 @@ def reranked_order(head: list[int], scores: dict[int, float], documents: list[st
     # own (ViDoRe's pages). There the document order is the search's passage order, and fusing with it at full
     # weight lost ViDoRe markdown nDCG@10 (hr 70.8 -> 64.2, finance_fr 54.2 -> 47.4, computer_science
     # 83.7 -> 76.8) the way it lost LegalBench mergers above. Squared, by share, and at 2 for everything
-    # (reranker hs-decide-1-flash-mm; LegalBench recall@5, markdown hr nDCG@10):
+    # (a small listwise reranker; LegalBench recall@5, markdown hr nDCG@10):
     #   at 2: 88.3, 64.2   by share: 87.7, 68.1   by share squared: 86.4, 70.1   at 0: 82.9, 70.8
     weight = RERANK_DOCUMENT_WEIGHT * (1 - len(document_place) / len(slots)) ** 2 if slots else 0.0
 
