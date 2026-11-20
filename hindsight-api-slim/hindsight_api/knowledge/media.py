@@ -18,6 +18,7 @@ import contextlib
 import io
 import math
 import multiprocessing
+import os
 import re
 import tempfile
 import threading
@@ -326,7 +327,10 @@ def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
     with _PDF_POOL_LOCK:
         if _PDF_POOL is None:
             _PDF_POOL = ProcessPoolExecutor(
-                max_workers=_PDF_WORKERS, mp_context=multiprocessing.get_context("spawn"), initializer=_first_to_kill
+                max_workers=_PDF_WORKERS,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_first_to_kill,
+                initargs=(_worker_address_space(),),
             )
         pool = _PDF_POOL
     try:
@@ -345,7 +349,10 @@ def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
     # in a worker of its own, so only the file that crashes it fails (a PDF rendering beside jpx_numcomps.pdf
     # failed with it).
     alone = ProcessPoolExecutor(
-        max_workers=1, mp_context=multiprocessing.get_context("spawn"), initializer=_first_to_kill
+        max_workers=1,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=_first_to_kill,
+        initargs=(_worker_address_space(),),
     )
     try:
         return alone.submit(fn, *args).result(timeout=_PDF_CALL_TIMEOUT)
@@ -469,21 +476,42 @@ _OFFICE_POOL: ProcessPoolExecutor | None = None
 _OFFICE_POOL_LOCK = threading.Lock()
 
 
-#: The most address space a worker process (Office conversion, PDF rendering) may take. At rest one takes
-#: 0.9 GB. POI's 51535.xls, 42 KB, declares 65,536 rows of 256 columns, and markitdown grew by 14 MB a second
-#: turning them into a table until the 8 GB container ran out; on Kubernetes (cgroup v2) the kernel then
-#: kills every process of the container, the server too, whatever their oom_score_adj. Past the cap the
-#: worker gets a MemoryError and that file fails alone.
-_WORKER_ADDRESS_SPACE = 2 << 30
+def _memory_limit() -> int:
+    """The container's memory limit (cgroup v2, then v1), else the machine's RAM; 0 if unknown."""
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        with contextlib.suppress(OSError, ValueError):
+            limit = int(Path(path).read_text().strip())  # "max": no limit, a ValueError
+            if limit < 1 << 50:  # cgroup v1 writes "no limit" as a huge number
+                return limit
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    return 0
 
 
-def _first_to_kill() -> None:
-    """In the worker: its address space is capped, and when memory runs out anyway the kernel kills this
-    process, not the server it works for. Linux only; elsewhere a no-op."""
+def _worker_address_space() -> int:
+    """The most address space a worker process (Office conversion, PDF rendering) may take, 0 for no cap
+    (``HINDSIGHT_API_KB_WORKER_MEMORY_MB``; by default half the container's memory plus 1 GB, a worker's
+    own 0.9 GB at rest). POI's 51535.xls, 42 KB, declares 65,536 rows of 256 columns, and markitdown grew by
+    14 MB a second turning them into a table until the 8 GB container ran out; on Kubernetes (cgroup v2) the
+    kernel then kills every process of the container, the server too, whatever their oom_score_adj. Past
+    the cap the worker gets a MemoryError and that file fails alone. A flat 2 GB was tried first: it also
+    failed real spreadsheets (Govdocs1's 28 MB 000032.xls peaks at 3.3 GB), so the cap follows the machine."""
+    from ..config import get_config
+
+    if (mb := get_config().kb_worker_memory_mb) > 0:
+        return mb << 20
+    total = _memory_limit()
+    return total // 2 + (1 << 30) if total else 0
+
+
+def _first_to_kill(address_space: int) -> None:
+    """In the worker: its address space is capped (``_worker_address_space``), and when memory runs out
+    anyway the kernel kills this process, not the server it works for. Linux only; elsewhere a no-op."""
     import resource
 
-    with contextlib.suppress(OSError, ValueError):
-        resource.setrlimit(resource.RLIMIT_AS, (_WORKER_ADDRESS_SPACE, _WORKER_ADDRESS_SPACE))
+    if address_space > 0:
+        with contextlib.suppress(OSError, ValueError):
+            resource.setrlimit(resource.RLIMIT_AS, (address_space, address_space))
     with contextlib.suppress(OSError):
         Path("/proc/self/oom_score_adj").write_text("1000")
 
@@ -562,7 +590,10 @@ def _office_text(data: bytes, ext: str) -> str:
         if _OFFICE_POOL is None:
             # spawn, not fork: the server has threads, and a forked child inherits their locks held.
             _OFFICE_POOL = ProcessPoolExecutor(
-                max_workers=1, mp_context=multiprocessing.get_context("spawn"), initializer=_first_to_kill
+                max_workers=1,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_first_to_kill,
+                initargs=(_worker_address_space(),),
             )
         pool = _OFFICE_POOL
     try:

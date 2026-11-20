@@ -2917,9 +2917,24 @@ def test_a_word_file_whose_text_is_all_in_its_header_is_read():
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="the worker's address-space cap is Linux only")
-def test_a_worker_that_wants_more_memory_than_a_file_may_use_fails_alone():
+def test_a_worker_that_wants_more_memory_than_a_file_may_use_fails_alone(monkeypatch):
     # POI's 51535.xls (42 KB, 65,536 x 256 cells) grew a converter until the container ran out of memory, and on
     # Kubernetes that kills the server with it. The worker's address space is capped: it fails, the server stays.
+    monkeypatch.setattr(media, "_worker_address_space", lambda: 2 << 30)
+    with media._PDF_POOL_LOCK:
+        if media._PDF_POOL is not None:
+            media._kill(media._PDF_POOL)
+        media._PDF_POOL = None  # a worker of the new cap
     with pytest.raises(MemoryError):
-        media._in_pdf_worker(bytearray, media._WORKER_ADDRESS_SPACE)
+        media._in_pdf_worker(bytearray, 2 << 30)
     assert [d.page for d in media.split_pdf(_pdf((255, 0, 0)), page_pixels=128, max_pages=10)] == [1]
+
+
+def test_the_worker_memory_cap_follows_the_machine_unless_set(monkeypatch):
+    import types
+
+    monkeypatch.setattr(media, "_memory_limit", lambda: 8 << 30)
+    monkeypatch.setattr("hindsight_api.config.get_config", lambda: types.SimpleNamespace(kb_worker_memory_mb=0))
+    assert media._worker_address_space() == 5 << 30  # half of 8 GB, plus a worker's own 1 GB at rest
+    monkeypatch.setattr("hindsight_api.config.get_config", lambda: types.SimpleNamespace(kb_worker_memory_mb=3000))
+    assert media._worker_address_space() == 3000 << 20
