@@ -521,6 +521,11 @@ class SessionService:
                     state.set_aside = (state.set_aside + [note_text[n] for n in new_dismissed if note_text[n]])[
                         -W.SET_ASIDE_KEPT :
                     ]
+                    state.found_wrong = [t for t in state.found_wrong if t not in {note_text[n] for n in new_credits}]
+                    state.found_wrong = (
+                        state.found_wrong
+                        + [note_text[n] for n in new_dismissed if note_text[n] and feedback[n].verdict == "wrong"]
+                    )[-W.SET_ASIDE_KEPT :]
                     credits, dismissed = len(new_credits), len(new_dismissed) - len(unused_then_used)
                     state.learn_pending = list(dict.fromkeys(state.learn_pending + learned))[-W.SET_ASIDE_KEPT :]
                 if corrections:
@@ -537,7 +542,8 @@ class SessionService:
                     state.inherited = True
                     earlier = await conn.fetch(
                         f"""
-                        SELECT watch_state->'set_aside' AS set_aside FROM {fq_table("sessions")}
+                        SELECT watch_state->'set_aside' AS set_aside, watch_state->'found_wrong' AS found_wrong
+                        FROM {fq_table("sessions")}
                         WHERE bank_id = $1 AND session_id <> $2
                           AND regexp_replace(watch_state->>'goal', '[0-9]+', '#', 'g')
                               = regexp_replace($3, '[0-9]+', '#', 'g')
@@ -549,6 +555,8 @@ class SessionService:
                     )
                     taken = [t for r in earlier for t in (conn.parse_json(r["set_aside"]) or [])]
                     state.set_aside = list(dict.fromkeys(state.set_aside + taken))[-W.SET_ASIDE_KEPT :]
+                    wrong = [t for r in earlier for t in (conn.parse_json(r["found_wrong"]) or [])]
+                    state.found_wrong = list(dict.fromkeys(state.found_wrong + wrong))[-W.SET_ASIDE_KEPT :]
                 if rows:
                     await conn.bulk_insert_from_arrays(
                         fq_table("session_events"),

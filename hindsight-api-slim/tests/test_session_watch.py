@@ -327,6 +327,27 @@ def test_a_rule_the_agent_set_aside_is_not_raised_again_and_the_check_is_told():
     assert "I SET THESE ASIDE OR ALREADY DID THEM (never raise them again):\nThe recorded rule is" in ctx
 
 
+def test_a_rule_set_aside_as_done_still_speaks_when_the_work_breaks_it():
+    """sdebench under2camel: set aside as already done, then broken by the next edit, and every
+    conflict the check caught was muted while the task took two nudges."""
+    rule = "You used exactly {HTTP, API, SKU, GDPR}, which matches the rule that the acronym set is exactly those four."
+    edit = W.Moment(trigger="edit", text="", recent=[], diff="d")
+    broken = (
+        "You contradict the rule that the acronym set is exactly HTTP, API, SKU and GDPR: your code adds URL and JSON."
+    )
+    assert W.accept_note(W.WatchState(set_aside=[rule]), edit, broken, ["m1"])
+    # a heads-up saying the rule again is still a repeat
+    task = W.Moment(trigger="task", text="fix it", recent=[], diff="")
+    assert not W.accept_note(
+        W.WatchState(set_aside=[rule]), task, "The acronym set is exactly HTTP, API, SKU and GDPR.", ["m2"]
+    )
+    # one the agent called wrong stays muted, conflict or not
+    assert not W.accept_note(W.WatchState(set_aside=[rule], found_wrong=[rule]), edit, broken, ["m3"])
+    # and a conflict it set aside ("does not apply") still mutes its rewordings
+    earlier = "Your code contradicts the rule that the acronym set is exactly HTTP, API, SKU and GDPR."
+    assert not W.accept_note(W.WatchState(set_aside=[earlier]), edit, broken, ["m4"])
+
+
 def test_the_file_a_request_points_to_becomes_part_of_the_request():
     """A scheduled job's request is 'Read JOB.md and do what it says': its rules live in the file."""
     s = W.WatchState()

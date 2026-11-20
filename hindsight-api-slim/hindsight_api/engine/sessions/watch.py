@@ -226,6 +226,9 @@ class WatchState(BaseModel):
     # note mostly saying the same is dropped. In beta one rule the agent had set aside twice ("only my
     # suggestion") came back a third time, reworded each time past the repeat guard.
     set_aside: list[str] = Field(default_factory=list)
+    # The set-aside notes the agent called wrong. Those stay muted whatever comes; one it set aside
+    # because it was already doing it does not mute a conflict, when the work later breaks that rule.
+    found_wrong: list[str] = Field(default_factory=list)
     # The file the request points to, as the agent read it ("Read JOB.md and do what it says"): a
     # scheduled job's request is one line, so its rules, and the exceptions they make, live there.
     request_file: str = ""
@@ -676,12 +679,25 @@ def accept_note(state: WatchState, m: Moment, text: str, memory_ids: list[str]) 
     # after a heads-up still goes: that one says the work now breaks it.)
     if m.trigger == "task" and any(_overlap(text, t) >= 0.6 for t in state.sent):
         return False
-    if any(_overlap(text, s) >= SET_ASIDE_OVERLAP for s in state.set_aside):
+
+    # A conflict gets past what the agent set aside as already done: that verdict said the work
+    # followed the rule then, and a conflict says it breaks it now. sdebench under2camel (2026-11-20):
+    # "the acronym set is exactly HTTP, API, SKU, GDPR" was set aside as already done, the agent then
+    # added URL and JSON, and the check caught it 9 times, all muted, while the task took 2 nudges.
+    # A conflict the agent set aside ("does not apply") still mutes its rewordings, and so does any
+    # note it called wrong.
+    def claims(t: str) -> bool:
+        return bool(CLAIMS_CONFLICT.search(NEGATED_CLAIM.sub("", t)))
+
+    muting = state.set_aside
+    if m.trigger != "task" and claims(text):
+        muting = list(dict.fromkeys([*state.found_wrong, *(s for s in state.set_aside if claims(s))]))
+    if any(_overlap(text, s) >= SET_ASIDE_OVERLAP for s in muting):
         return False
     # The same path set aside is the same point, in other words: disk-guard set aside the memory-poc
     # worktrees, and the next run was told about "~/dev/memory-poc/.claude/worktrees" again, reworded
     # to 0.32-0.34 overlap (beta).
-    if _paths(text) & {p for a in state.set_aside for p in _paths(a)}:
+    if _paths(text) & {p for a in muting for p in _paths(a)}:
         return False
     state.sent.append(text.strip())
     state.request_notes += 1

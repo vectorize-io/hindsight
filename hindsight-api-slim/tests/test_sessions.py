@@ -221,6 +221,7 @@ async def test_thought_lines_are_counted_like_note_lines(memory, request_context
 
     state = WatchState.model_validate(await _watch_state(memory, bank, "s1"))
     assert state.set_aside == ["Email is never masked."]
+    assert state.found_wrong == []  # "no change" is not "wrong": a later conflict may still speak
     # Each note carries what the agent made of it, in the agent's own words.
     notes = {
         e.payload["number"]: e.payload
@@ -1149,6 +1150,11 @@ async def test_a_lasting_verdict_becomes_a_rule_every_later_check_reads(memory, 
     )
     assert [e.payload["outcome"] for e in learned] == ["created"]
     rule_id = learned[0].payload["mental_model_id"]
+    # A note called wrong stays muted even for a conflict (set aside as done, it would not).
+    from hindsight_api.engine.sessions.watch import WatchState
+
+    state = WatchState.model_validate(await _watch_state(memory, bank, "s1"))
+    assert state.found_wrong and state.found_wrong == state.set_aside
     assert rule_id.startswith("rule-")
     # The writer saw the agent's reason but not the note it rejected (it would copy the note back),
     # and the rule is a mental model reflect searches first.
