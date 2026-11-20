@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import itertools
 import threading
 
 __all__ = ["CrossLoopSemaphore", "CrossLoopLock"]
@@ -50,10 +51,91 @@ _MAX_DELAY = 0.02
 class _Ticket:
     """One waiter's place in the queue, and where its permit is handed to it."""
 
-    __slots__ = ("granted",)
+    __slots__ = ("granted", "tenant", "bank", "document", "seq")
+
+    def __init__(self, tenant: str | None, bank: str | None, document: str | None, seq: int) -> None:
+        self.granted = False
+        self.tenant = tenant
+        self.bank = bank
+        self.document = document
+        self.seq = seq  # arrival order across the whole queue
+
+
+#: Inside a bank, every Nth turn goes to the document that has waited longest instead
+#: of the one closest to done, so a big document still moves while small ones arrive.
+_OLDEST_EVERY = 4
+
+_Lines = dict[str | None, collections.deque[_Ticket]]
+
+
+class _FairQueue:
+    """Waiters grouped by tenant, then bank, then document.
+
+    Tenants take turns, and inside a tenant its banks take turns: each permit goes to
+    the next one with a waiter, so a tenant or bank gets the same share whether it
+    queued one call or a thousand, and one big document cannot make another bank
+    wait for all of it.
+
+    Inside one bank, the permit goes to the document with the fewest calls waiting:
+    the one closest to done. A small document queued behind a big one finishes almost
+    at once, and equal documents finish one after another instead of all together at
+    the end. Every ``_OLDEST_EVERY``-th turn of the bank goes to the document that has
+    waited longest instead, so a big one keeps at least that share while small ones
+    keep arriving. Ties go to the document that arrived first; inside one document,
+    arrival order. Calls with no document (consolidation, reflect) share one line.
+
+    With nothing given this is a plain FIFO queue. Nothing is reserved: one waiter
+    alone still gets every permit.
+    """
 
     def __init__(self) -> None:
-        self.granted = False
+        self._tenants: dict[str | None, dict[str | None, _Lines]] = {}
+        self._turns: dict[tuple[str | None, str | None], int] = {}
+        self._seq = itertools.count()
+
+    def __bool__(self) -> bool:
+        return bool(self._tenants)
+
+    def make_ticket(self, tenant: str | None, bank: str | None, document: str | None) -> _Ticket:
+        return _Ticket(tenant, bank, document, next(self._seq))
+
+    def push(self, ticket: _Ticket) -> None:
+        banks = self._tenants.setdefault(ticket.tenant, {})
+        docs = banks.setdefault(ticket.bank, {})
+        docs.setdefault(ticket.document, collections.deque()).append(ticket)
+
+    def pop(self) -> _Ticket:
+        tenant, banks = next(iter(self._tenants.items()))
+        bank, docs = next(iter(banks.items()))
+        turn = self._turns.get((tenant, bank), 0) + 1
+        self._turns[(tenant, bank)] = turn
+        # ponytail: linear scan over the bank's waiting documents per handoff; fine
+        # for hundreds, keep a heap per bank if one bank queues thousands at once.
+        if turn % _OLDEST_EVERY == 0:
+            doc = min(docs, key=lambda d: docs[d][0].seq)
+        else:
+            doc = min(docs, key=lambda d: len(docs[d]))
+        ticket = docs[doc][0]
+        self.remove(ticket)
+        # The bank and tenant just served go to the back of their turn order.
+        if bank in banks:
+            banks[bank] = banks.pop(bank)
+        if tenant in self._tenants:
+            self._tenants[tenant] = self._tenants.pop(tenant)
+        return ticket
+
+    def remove(self, ticket: _Ticket) -> None:
+        banks = self._tenants[ticket.tenant]
+        docs = banks[ticket.bank]
+        line = docs[ticket.document]
+        line.remove(ticket)
+        if not line:
+            del docs[ticket.document]
+        if not docs:
+            del banks[ticket.bank]
+            self._turns.pop((ticket.tenant, ticket.bank), None)
+        if not banks:
+            del self._tenants[ticket.tenant]
 
 
 class CrossLoopSemaphore:
@@ -65,15 +147,17 @@ class CrossLoopSemaphore:
 
     Waiters are served in arrival order, as ``asyncio.Semaphore`` serves them, except
     that ``acquire(background=True)`` waiters only get a permit when no foreground
-    waiter is queued. That lets live requests jump ahead of background jobs.
+    waiter is queued. That lets live requests jump ahead of background jobs. Waiters
+    that pass ``tenant``/``bank``/``document`` take turns by tenant, then by bank (see
+    ``_FairQueue``), so one big job cannot make everyone else wait for all of it.
     """
 
     def __init__(self, value: int) -> None:
         self._capacity = value
         self._lock = threading.Lock()
         self._free = value
-        self._waiters: collections.deque[_Ticket] = collections.deque()
-        self._background_waiters: collections.deque[_Ticket] = collections.deque()
+        self._waiters = _FairQueue()
+        self._background_waiters = _FairQueue()
 
     @property
     def capacity(self) -> int:
@@ -85,8 +169,19 @@ class CrossLoopSemaphore:
         with self._lock:
             return not self._free or bool(self._waiters or self._background_waiters)
 
-    async def acquire(self, *, background: bool = False) -> None:
-        """Wait for a permit. ``background`` waiters queue behind every foreground one."""
+    async def acquire(
+        self,
+        *,
+        background: bool = False,
+        tenant: str | None = None,
+        bank: str | None = None,
+        document: str | None = None,
+    ) -> None:
+        """Wait for a permit. ``background`` waiters queue behind every foreground one.
+
+        ``tenant``, ``bank`` and ``document`` pick the line the waiter joins (see
+        ``_FairQueue`` for how lines take turns).
+        """
         queue = self._background_waiters if background else self._waiters
         with self._lock:
             # Fast path: uncontended acquire never yields. Gated on empty queues,
@@ -94,8 +189,8 @@ class CrossLoopSemaphore:
             if not self._waiters and not self._background_waiters and self._free:
                 self._free -= 1
                 return
-            ticket = _Ticket()
-            queue.append(ticket)
+            ticket = queue.make_ticket(tenant, bank, document)
+            queue.push(ticket)
 
         delay = _MIN_DELAY
         try:
@@ -118,7 +213,7 @@ class CrossLoopSemaphore:
             self._hand_on()
 
     def _hand_on(self) -> None:
-        """Give the permit to the longest-waiting task, or return it to the pool.
+        """Give the permit to the next waiter in turn, or return it to the pool.
 
         Foreground waiters are served first; a background waiter gets the permit only
         when no foreground one is queued (#5926).
@@ -133,11 +228,11 @@ class CrossLoopSemaphore:
         one permit per poll tick, draining a burst at ``_MAX_DELAY`` per waiter.
         """
         if self._waiters:
-            self._waiters.popleft().granted = True
+            self._waiters.pop().granted = True
         elif self._background_waiters:
             # ponytail: background can starve under constant foreground load; add an
             # every-N-handoffs fairness rule if that shows up in practice.
-            self._background_waiters.popleft().granted = True
+            self._background_waiters.pop().granted = True
         else:
             self._free += 1
 
