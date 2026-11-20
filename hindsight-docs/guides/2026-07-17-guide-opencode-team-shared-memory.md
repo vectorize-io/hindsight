@@ -55,7 +55,7 @@ These are not mutually exclusive across a company — you might run a shared ban
 
 ## Static vs dynamic bank IDs for teams
 
-The plugin resolves which bank to use from its bank-ID configuration, and this is the lever that makes a bank team-wide or per-context. The full mechanics are in the [setup guide](https://hindsight.vectorize.io/guides/2026/04/16/guide-opencode-memory-with-hindsight) and the [integration docs](https://hindsight.vectorize.io/docs/integrations/opencode); here is how each maps to team memory.
+The plugin resolves which bank to use from its bank-ID configuration, and this is the lever that makes a bank team-wide or per-context. The full mechanics are in the [setup guide](https://hindsight.vectorize.io/guides/2026/04/16/guide-opencode-memory-with-hindsight) and the [integration docs](https://hindsight.vectorize.io/sdks/integrations/coding-agents); here is how each maps to team memory.
 
 ### Static bank ID — the team default
 
@@ -98,7 +98,7 @@ Rule of thumb: **static** when the whole team should share exactly one bank; **d
 
 ## Connect OpenCode to Hindsight
 
-This guide assumes the Hindsight plugin is already installed and pointed at your backend. If it is not, follow the standard setup first — adding `@vectorize-io/opencode-hindsight` to your OpenCode config, pointing it at a local server or Hindsight Cloud, and enabling auto-recall and auto-retain:
+This guide assumes the Hindsight plugin is already installed and pointed at your backend. If it is not, follow the standard setup first — running `npx @vectorize-io/hindsight-coding-agents install opencode`, pointing it at a local server or Hindsight Cloud, and enabling auto-recall and auto-retain:
 
 - [Add OpenCode Memory with Hindsight](https://hindsight.vectorize.io/guides/2026/04/16/guide-opencode-memory-with-hindsight)
 
@@ -169,4 +169,4 @@ It can, which is why recall hygiene matters. Use tags, an appropriate recall bud
 - Follow the [quickstart guide](https://hindsight.vectorize.io/docs/quickstart)
 - Review [Hindsight's recall API](https://hindsight.vectorize.io/docs/api/recall)
 - Review [Hindsight's retain API](https://hindsight.vectorize.io/docs/api/retain)
-- Read the [OpenCode integration docs](https://hindsight.vectorize.io/docs/integrations/opencode)
+- Read the [OpenCode integration docs](https://hindsight.vectorize.io/sdks/integrations/coding-agents)
