@@ -220,7 +220,7 @@ async def _consolidate(
                 _backend=race.consolidation_pool,
                 embeddings=object(),
                 _validator_with_hook=lambda name: None,
-                _decision_engine_for=lambda operation: None,
+                decision_engine_for=lambda operation: None,
             ),
             llm_config=object(),
             bank_id=race.bank,

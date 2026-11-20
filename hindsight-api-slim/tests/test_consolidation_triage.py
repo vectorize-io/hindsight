@@ -279,7 +279,7 @@ async def test_a_batch_whose_llm_call_fails_writes_no_triage_verdict():
             memory_engine=SimpleNamespace(
                 embeddings=object(),
                 _validator_with_hook=lambda name: None,
-                _decision_engine_for=lambda operation: None,
+                decision_engine_for=lambda operation: None,
             ),
             llm_config=object(),
             bank_id="bank",

@@ -3689,6 +3689,15 @@ class MemoryEngine(MemoryEngineInterface):
         """The audit logger for feature usage tracking."""
         return self._audit_logger
 
+    @property
+    def decision_engine_for(self) -> Callable[[DecisionModelOperation], DecisionModel | None]:
+        """The decision engine each operation was given.
+
+        Read-only. This is the callable passed to MemoryEngine, or the module
+        decision_engine when nothing was injected.
+        """
+        return self._decision_engine_for
+
     async def _resolve_bank_audit_enabled(self, bank_id: str, context: "RequestContext | None" = None) -> bool:
         """Resolve ``audit_log_enabled`` for one bank (env -> tenant -> bank).
 

@@ -715,7 +715,7 @@ def _batch_engine():
         embeddings=object(),
         _consolidation_llm_config=types.SimpleNamespace(with_config=lambda *a, **k: object()),
         _validator_with_hook=lambda name: None,
-        _decision_engine_for=lambda operation: None,
+        decision_engine_for=lambda operation: None,
     )
 
 
@@ -851,7 +851,7 @@ async def test_process_batch_embeds_all_actions_in_one_call() -> None:
                 embeddings=object(),
                 _consolidation_llm_config=types.SimpleNamespace(with_config=lambda *a, **k: object()),
                 _validator_with_hook=lambda name: None,
-                _decision_engine_for=lambda operation: None,
+                decision_engine_for=lambda operation: None,
             ),
             llm_config=object(),
             bank_id="bank1",
