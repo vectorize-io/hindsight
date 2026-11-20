@@ -15,6 +15,7 @@ from hindsight_api.config import clear_config_cache
 from hindsight_api.extensions import (
     BankListResult,
     BankListScope,
+    KnowledgeBankReadContext,
     KnowledgeBankReadOperation,
     KnowledgeBankWriteOperation,
     OperationValidatorExtension,
@@ -224,20 +225,16 @@ class SearchHooks:
     reranked: bool
 
 
-class RecordsSearches(_Accepting):
-    """Records what both search hooks see: the read gate's context and the post-search result."""
+class RecordsSearches(RecordsCompletions):
+    """Also records the read gate's context, so a test sees both search hooks."""
 
     def __init__(self) -> None:
-        super().__init__({})
-        self.reads: list = []
-        self.searches: list = []
+        super().__init__()
+        self.reads: list[KnowledgeBankReadContext] = []
 
-    async def validate_knowledge_bank_read(self, ctx):
+    async def validate_knowledge_bank_read(self, ctx: KnowledgeBankReadContext) -> ValidationResult:
         self.reads.append(ctx)
         return ValidationResult.accept()
-
-    async def on_knowledge_bank_search_complete(self, result) -> None:
-        self.searches.append(result)
 
 
 async def test_both_search_hooks_see_whether_the_search_is_reranked(api_client, kb, judge, install_validator):  # noqa: F811

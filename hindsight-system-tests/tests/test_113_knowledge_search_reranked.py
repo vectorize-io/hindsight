@@ -59,7 +59,6 @@ async def test_the_rerankers_order_reaches_the_client_and_a_page_goes_with_its_p
     assert stubs.rerank.assets == [{next(iter(stubs.rerank.assets[0])): "jpg"}]
 
 
-
 async def test_a_search_can_skip_the_reranker(knowledge_reranker_client, knowledge_bank, stubs):
     query = "how do I rotate an api key"
     stubs.rerank.rerank_scores = {"Invoices": 0.9, "Emergency exits": 0.8, "outage": 0.3, "Rotate": 0.05}
