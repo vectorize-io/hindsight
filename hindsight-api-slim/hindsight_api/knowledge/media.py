@@ -674,14 +674,63 @@ def _markitdown() -> Any:
     return MarkItDown(enable_plugins=False)
 
 
+#: A legacy .xls declaring more cells than this is read cell by cell (``_xls_text``), not by markitdown: it
+#: builds a table of every declared cell, empty ones too, at about 1.7 KB each (Govdocs1's 000032.xls, 1.9M
+#: cells, peaked at 3.3 GB). A sheet with whole columns formatted declares 65,536 rows of them: POI's 31 KB
+#: SharedFormulaTest.xls (4.3M cells) and 42 KB 51535.xls (16.7M) ran a worker out of 5 GB, and read cell by
+#: cell they take 0.1 s and 0.5 s, under 200 MB. Below it, markitdown's tables are kept as they were.
+_MARKITDOWN_MAX_CELLS = 2_000_000
+
+
+def _xls_sheets(data: bytes) -> Iterator[Any]:
+    """Each sheet of a legacy .xls, loaded one at a time."""
+    import xlrd
+
+    book = xlrd.open_workbook(file_contents=data, on_demand=True)
+    try:
+        for index in range(book.nsheets):
+            yield book.sheet_by_index(index)
+            book.unload_sheet(index)
+    finally:
+        book.release_resources()
+
+
+def _xls_text(data: bytes) -> str:
+    """A legacy .xls's non-empty cells, a row per line as a table row (``| a | b |``, as markitdown writes
+    them, so the passage splitter cuts them the same way), a heading per sheet."""
+    lines: list[str] = []
+    for sheet in _xls_sheets(data):
+        lines.append(f"## {sheet.name}")
+        for row in range(sheet.nrows):
+            values = [str(v).strip() for v in sheet.row_values(row)]
+            if any(values):
+                lines.append("| " + " | ".join(v for v in values if v) + " |")
+    return "\n".join(lines)
+
+
+def _xls_cells(data: bytes) -> int:
+    """How many cells a legacy .xls declares, every sheet's rows times columns; 0 if xlrd cannot open it."""
+    try:
+        return sum(sheet.nrows * sheet.ncols for sheet in _xls_sheets(data))
+    except Exception:  # noqa: BLE001 - unreadable here is markitdown's to report
+        return 0
+
+
+def _fallback_text(data: bytes, ext: str) -> str:
+    """The text of an Office file read without markitdown, when it fails or comes back empty."""
+    return _xls_text(data) if ext == ".xls" else _ooxml_text(data, ext)
+
+
 def _convert_office(data: bytes, ext: str) -> str:
+    if ext == ".xls" and _xls_cells(data) > _MARKITDOWN_MAX_CELLS:
+        return _xls_text(data)
     try:
         text = _markitdown().convert_stream(io.BytesIO(data), file_extension=ext).text_content
     except Exception as exc:
         # markitdown fails on files Office opens: a KeyError on a field it did not expect (POI's 60329.docx),
         # recursion on deep tables, 974 words of slides (2411-Performance_Up.pptx). Their text is still read.
         try:
-            if text := _ooxml_text(data, ext):
+            if text := _fallback_text(data, ext):
                 return text
         except Exception:
             pass
@@ -693,7 +742,7 @@ def _convert_office(data: bytes, ext: str) -> str:
     # markitdown reads a Word body only: a document whose text is all in its header (POI's Headers.docx)
     # came out empty and failed "nothing to search".
     try:
-        return _ooxml_text(data, ext)
+        return _fallback_text(data, ext)
     except Exception:
         return text
 
