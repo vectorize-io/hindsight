@@ -821,6 +821,10 @@ class KnowledgeBankReadContext:
     bank_id: str
     operation: KnowledgeBankReadOperation
     request_context: "RequestContext"
+    #: SEARCH_KNOWLEDGE_BANK only: whether the search is to be reranked (the server has a knowledge reranker
+    #: and the request did not set ``enable_reranking: false``). None for every other operation. A search
+    #: that would rerank can still send no rerank request (see ``KnowledgeBankSearchResult.reranked``).
+    rerank: bool | None = None
 
 
 @dataclass
@@ -860,6 +864,10 @@ class KnowledgeBankSearchResult:
     request_context: "RequestContext"
     results_tokens: int
     result_count: int
+    #: Whether a rerank request went to the knowledge reranker. False when the server has none, the
+    #: request set ``enable_reranking: false``, or there was nothing to rerank (no text or picture to
+    #: rerank by, or fewer than two hits the reranker could compare).
+    reranked: bool = False
 
 
 @dataclass
@@ -1599,9 +1607,11 @@ class OperationValidatorExtension(Extension, ABC):
     async def on_knowledge_bank_search_complete(self, result: KnowledgeBankSearchResult) -> None:
         """Called after a knowledge-bank search returns, with what its results weigh.
 
-        The read gate (validate_knowledge_bank_read) runs before the search and sees only the
-        bank and operation; this fires after, so an extension that meters search by its output
-        tokens (``result.results_tokens``) has the figure it needs. Default: do nothing.
+        The read gate (validate_knowledge_bank_read) runs before the search and sees the bank, the
+        operation and whether the search is to be reranked (``ctx.rerank``); this fires after, so an
+        extension that meters search by its output tokens (``result.results_tokens``) has the figure
+        it needs, and ``result.reranked`` says whether a rerank request was actually sent.
+        Default: do nothing.
         """
         return None
 

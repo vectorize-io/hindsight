@@ -7,6 +7,7 @@ the validator sees and what a strategy's output becomes, not retrieval quality.
 
 import json
 import uuid
+from dataclasses import dataclass
 
 import pytest
 
@@ -14,6 +15,7 @@ from hindsight_api.config import clear_config_cache
 from hindsight_api.extensions import (
     BankListResult,
     BankListScope,
+    KnowledgeBankReadContext,
     KnowledgeBankReadOperation,
     KnowledgeBankWriteOperation,
     OperationValidatorExtension,
@@ -27,7 +29,7 @@ from hindsight_api.knowledge.ingest_strategy import (
     OutputFile,
     OutputPassage,
 )
-from tests.test_knowledge_banks import KB, _png, _search, _upload, fake_embedder, kb  # noqa: F401  (fixtures)
+from tests.test_knowledge_banks import KB, _png, _search, _upload, fake_embedder, judge, kb  # noqa: F401  (fixtures)
 
 # --- access control (operation validator) ---------------------------------------------------------
 
@@ -213,6 +215,56 @@ async def test_completion_hooks_fire_with_their_work_size(api_client, kb, instal
         assert validator.deletes, "delete hook did not fire"
         assert sum(d.passages for d in validator.deletes) >= 1
         assert sum(d.content_tokens for d in validator.deletes) >= 1
+    finally:
+        install_validator(None)
+
+
+@dataclass
+class SearchHooks:
+    rerank: bool | None
+    reranked: bool
+
+
+class RecordsSearches(RecordsCompletions):
+    """Also records the read gate's context, so a test sees both search hooks."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: list[KnowledgeBankReadContext] = []
+
+    async def validate_knowledge_bank_read(self, ctx: KnowledgeBankReadContext) -> ValidationResult:
+        self.reads.append(ctx)
+        return ValidationResult.accept()
+
+
+async def test_both_search_hooks_see_whether_the_search_is_reranked(api_client, kb, judge, install_validator):  # noqa: F811
+    validator = install_validator(RecordsSearches())
+    assert isinstance(validator, RecordsSearches)
+    try:
+        r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "a", "text": "a blue note"}]})
+        assert r.status_code == 200, r.text
+
+        async def hooks(**body) -> SearchHooks:
+            validator.reads.clear()
+            validator.searches.clear()
+            await _search(api_client, kb, **body)
+            (read,) = [c for c in validator.reads if c.operation == KnowledgeBankReadOperation.SEARCH_KNOWLEDGE_BANK]
+            (done,) = validator.searches
+            return SearchHooks(rerank=read.rerank, reranked=done.reranked)
+
+        # One hit: the search is to be reranked, but there is nothing to compare, so no request is sent.
+        assert await hooks(query="blue") == SearchHooks(rerank=True, reranked=False)
+        assert judge.requests == []
+        r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": [{"document_id": "b", "text": "another blue"}]})
+        assert r.status_code == 200, r.text
+        assert await hooks(query="blue") == SearchHooks(rerank=True, reranked=True)
+        assert await hooks(query="blue", enable_reranking=False) == SearchHooks(rerank=False, reranked=False)
+        assert judge.requests == [2]
+
+        # Any other read carries no rerank decision.
+        validator.reads.clear()
+        assert (await api_client.get(f"{KB}/{kb}/documents")).status_code == 200
+        assert [c.rerank for c in validator.reads] == [None]
     finally:
         install_validator(None)
 

@@ -57,3 +57,21 @@ async def test_the_rerankers_order_reaches_the_client_and_a_page_goes_with_its_p
     assert await _order(knowledge_reranker_client, knowledge_bank, query) == ["billing", "exits", "outage", "keys"]
     # All four in one request, the page with its picture as a JPEG.
     assert stubs.rerank.assets == [{next(iter(stubs.rerank.assets[0])): "jpg"}]
+
+
+async def test_a_search_can_skip_the_reranker(knowledge_reranker_client, knowledge_bank, stubs):
+    query = "how do I rotate an api key"
+    stubs.rerank.rerank_scores = {"Invoices": 0.9, "Emergency exits": 0.8, "outage": 0.3, "Rotate": 0.05}
+    kb = KnowledgeBanks(knowledge_reranker_client)
+
+    async def order(**flag: bool) -> list[str]:
+        r = await kb.search(knowledge_bank, query=query, **flag)
+        assert r.status == 200, r.body
+        return [hit["document_id"] for hit in r.body["results"]]
+
+    # false: the search's own order, and no rerank request goes out.
+    assert await order(enable_reranking=False) == ["keys", "outage", "billing", "exits"]
+    assert stubs.rerank.assets == []
+    # Unset, as true: the configured reranker's order.
+    assert await order() == ["billing", "exits", "outage", "keys"]
+    assert await order(enable_reranking=True) == ["billing", "exits", "outage", "keys"]
