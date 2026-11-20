@@ -136,7 +136,7 @@ Set `HINDSIGHT_API_WORKER_ID` to a stable value (e.g., `-e HINDSIGHT_API_WORKER_
 | Variant | Size (AMD64) | Size (ARM64) | When to use |
 |---------|--------------|--------------|-------------|
 | **Full** (`latest`) | ~4.5 GB (~2.2 GB download) | ~4.4 GB (~2.1 GB download) | Default. Embeddings and reranking run in the image, and the knowledge banks' EmbeddingGemma 2 model (~1.5 GB) is bundled so they work offline; the LLM is always external, including for local inference. |
-| **Slim** (`slim`) | ~1.4 GB (~600 MB download) | ~1.4 GB (~570 MB download) | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration#embeddings). |
+| **Slim** (`latest-slim`) | ~1.4 GB (~600 MB download) | ~1.4 GB (~570 MB download) | Use when you already rely on external services for embeddings and reranking (OpenAI, Cohere, TEI). Significantly smaller image, faster deploys. Requires [external providers](./configuration#embeddings). |
 
 Sizes are on disk once pulled; the download is the compressed size. The slim image corresponds to the [`hindsight-api-slim`](#bare-metal-pip) pip package. See [Configuration](./configuration#embeddings) for external provider options.
 
