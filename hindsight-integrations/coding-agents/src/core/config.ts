@@ -128,6 +128,9 @@ export interface RawConfig {
    *    "reflect" — one low-budget reflect synthesis (falls back to pages, then recall, on timeout/5xx)
    *    "pages"   — the pages matching the prompt by search (retrieval only, no LLM)
    *    "recall"  — the bank's memories recalled for the prompt (`recallOptions`; no LLM)
+   *    "tree"    — nothing on the prompt; at session start the bank's observation tree is written
+   *                as markdown files to ~/.hindsight/memory-tree/<bank>/memory and the agent is
+   *                pointed at it (needs a server with GET /observations/tree)
    *    "none"    — nothing; the tool guide routes new goals through pages before optional reflection */
   autoInject?: AutoInject;
   /** @deprecated Use `autoInject`. Still honoured: false = `autoInject: "none"`, true = "reflect";
@@ -573,8 +576,8 @@ function resolveDefaultBankConfig(raw: RawConfig["defaultBankConfig"]): Record<s
 }
 
 /** Apply defaults to a raw (file) config. Pure — the single place the defaults live. */
-export type AutoInject = "reflect" | "pages" | "recall" | "none";
-const AUTO_INJECT_MODES: readonly AutoInject[] = ["reflect", "pages", "recall", "none"];
+export type AutoInject = "reflect" | "pages" | "recall" | "tree" | "none";
+const AUTO_INJECT_MODES: readonly AutoInject[] = ["reflect", "pages", "recall", "tree", "none"];
 
 /** `autoInject` wins; otherwise the deprecated `autoReflect: false` means "none". */
 function resolveAutoInject(raw: RawConfig): AutoInject {
