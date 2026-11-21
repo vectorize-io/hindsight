@@ -3171,3 +3171,30 @@ def test_a_video_whose_codec_pyav_does_not_know_is_probed(monkeypatch):
     monkeypatch.setattr(media, "_open", lambda data: contextlib.nullcontext(container))
     info = media.probe(b"")
     assert (info.width, info.height, info.fps, info.has_video) == (0, 0, 0.0, True)
+
+
+async def test_pdf_calls_queued_when_the_pool_is_killed_are_retried_not_cancelled(monkeypatch):
+    # On the cluster, three PDFs hit the render limit at once and the pool was killed with the calls queued
+    # behind them cancelled: the cancellation reached each queued ingest as asyncio's CancelledError, so its
+    # task ended without a status and the documents (pdf.js's tracemonkey.pdf among them) stayed "processing".
+    import asyncio
+    import time
+
+    monkeypatch.setattr(media, "_PDF_CALL_TIMEOUT", 2.0)
+    with media._PDF_POOL_LOCK:
+        if media._PDF_POOL is not None:
+            media._kill(media._PDF_POOL)
+        media._PDF_POOL = None
+
+    async def call(seconds: float) -> str:
+        try:
+            await asyncio.to_thread(media._in_pdf_worker, time.sleep, seconds)
+            return "done"
+        except media.MediaError:
+            return "too slow"
+
+    hogs = [asyncio.create_task(call(30)) for _ in range(2)]
+    await asyncio.sleep(0.5)  # the hogs hold both workers
+    queued = [asyncio.create_task(call(0.2)) for _ in range(4)]
+    assert await asyncio.gather(*hogs) == ["too slow", "too slow"]
+    assert await asyncio.gather(*queued) == ["done"] * 4
