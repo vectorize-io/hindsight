@@ -27,7 +27,7 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import CancelledError, ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -320,7 +320,11 @@ def _kill(pool: ProcessPoolExecutor) -> None:
     started, so its processes are killed (``_processes``, which it keeps privately)."""
     for process in list((getattr(pool, "_processes", None) or {}).values()):
         process.kill()
-    pool.shutdown(wait=False, cancel_futures=True)
+    # Not cancel_futures: the calls queued behind are other files', and a cancelled one reached its ingest as
+    # asyncio's CancelledError (asyncio turns concurrent.futures' into its own), which ended the worker task
+    # with no status: the documents stayed "processing" for good. Left queued, they break with the pool
+    # (BrokenProcessPool) and are retried alone.
+    pool.shutdown(wait=False)
 
 
 def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
@@ -341,7 +345,8 @@ def _in_pdf_worker(fn: Callable[..., _T], *args: Any) -> _T:
                 _PDF_POOL = None
         _kill(pool)  # the calls beside it break and are retried alone, below
         raise MediaError(f"rendering this PDF took over {_PDF_CALL_TIMEOUT:.0f}s") from None
-    except BrokenProcessPool:
+    except (BrokenProcessPool, CancelledError):
+        # CancelledError too: a call cancelled by a pool shut down under it is no failure of its own file.
         with _PDF_POOL_LOCK:
             if _PDF_POOL is pool:
                 _PDF_POOL = None
