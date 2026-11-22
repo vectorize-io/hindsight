@@ -16,7 +16,6 @@
 <text x="64" y="264" fill="#e4e4e7" font-size="30" font-weight="700">SessionStart</text>
 <text x="64" y="300" fill="#a1a1aa" font-size="28" font-weight="400">Adds the Hindsight block at start and after</text>
 <text x="64" y="336" fill="#a1a1aa" font-size="28" font-weight="400">compaction.</text>
-<path d="M400 354v26" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
 <rect x="30" y="384" width="740" height="920" fill="none" stroke="#a1a1aa" rx="12"/>
 <text x="50" y="430" fill="#e4e4e7" font-size="30" font-weight="700">UserPromptSubmit, first prompt</text>
 <text x="50" y="468" fill="#a1a1aa" font-size="28" font-weight="400">Default: autoInject reflect</text>
@@ -24,6 +23,7 @@
 <rect x="64" y="508" width="5" height="78" fill="#0074d9" stroke="none" rx="2"/>
 <text x="84" y="546" fill="#e4e4e7" font-size="30" font-weight="700">Any other bank</text>
 <text x="84" y="582" fill="#a1a1aa" font-size="28" font-weight="400">Run low-budget reflect.</text>
+<path d="M750 547h10v248h-9" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
 <rect x="50" y="618" width="700" height="106" fill="#27272a" stroke="#009296" rx="12"/>
 <rect x="64" y="632" width="5" height="78" fill="#009296" stroke="none" rx="2"/>
 <text x="84" y="670" fill="#e4e4e7" font-size="30" font-weight="700">Bank the server confirms is empty</text>
