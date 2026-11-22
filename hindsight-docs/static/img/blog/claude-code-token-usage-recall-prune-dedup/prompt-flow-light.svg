@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="664" viewBox="0 0 1000 664" role="img" aria-labelledby="title desc">
+<title id="title">Hindsight hooks in Claude Code</title>
+<desc id="desc">Default session hooks prepare page guidance, try reflect early, and send the transcript at Stop by default.</desc>
+<g font-family="DejaVu Sans, sans-serif">
+<rect x="1" y="1" width="998" height="662" rx="18" fill="#ffffff" stroke="#52525b" stroke-width="2"/>
+<text x="40" y="60" fill="#18181b" font-size="34" font-weight="700">Hindsight hooks in Claude Code</text>
+<text x="40" y="100" fill="#52525b" font-size="22" font-weight="400">The hook adds a reflect or fallback answer at most once per session.</text>
+<rect x="40" y="129" width="920" height="77" rx="8" fill="#f4f4f5" stroke="none" stroke-width="2"/>
+<rect x="40" y="138" width="5" height="59" rx="3" fill="#0074d9" stroke="none" stroke-width="2"/>
+<text x="62" y="167" fill="#18181b" font-size="23" font-weight="700">SessionStart</text>
+<text x="275" y="172" fill="#18181b" font-size="19" font-weight="400">Prepare the page roster and tool guide.</text>
+<rect x="40" y="215" width="920" height="77" rx="8" fill="#f4f4f5" stroke="none" stroke-width="2"/>
+<rect x="40" y="224" width="5" height="59" rx="3" fill="#009296" stroke="none" stroke-width="2"/>
+<text x="62" y="253" fill="#18181b" font-size="23" font-weight="700">Early prompt</text>
+<text x="275" y="245" fill="#18181b" font-size="19" font-weight="400">Default reflect mode tries low-budget reflect on prompt 1.</text>
+<text x="275" y="270" fill="#18181b" font-size="19" font-weight="400">If the server confirms an empty bank at startup, wait for prompt 2.</text>
+<rect x="40" y="301" width="920" height="77" rx="8" fill="#f4f4f5" stroke="none" stroke-width="2"/>
+<rect x="40" y="310" width="5" height="59" rx="3" fill="#0074d9" stroke="none" stroke-width="2"/>
+<text x="62" y="339" fill="#18181b" font-size="23" font-weight="700">Timeout or 5xx</text>
+<text x="275" y="344" fill="#18181b" font-size="19" font-weight="400">Search pages first. Try recall if page search fails or finds no match.</text>
+<rect x="40" y="387" width="920" height="77" rx="8" fill="#f4f4f5" stroke="none" stroke-width="2"/>
+<rect x="40" y="396" width="5" height="59" rx="3" fill="#0074d9" stroke="none" stroke-width="2"/>
+<text x="62" y="425" fill="#18181b" font-size="23" font-weight="700">Every prompt</text>
+<text x="275" y="430" fill="#18181b" font-size="19" font-weight="400">By default, include the page roster and tool guide.</text>
+<rect x="40" y="473" width="920" height="77" rx="8" fill="#f4f4f5" stroke="none" stroke-width="2"/>
+<rect x="40" y="482" width="5" height="59" rx="3" fill="#009296" stroke="none" stroke-width="2"/>
+<text x="62" y="511" fill="#18181b" font-size="23" font-weight="700">On demand</text>
+<text x="275" y="516" fill="#18181b" font-size="19" font-weight="400">The agent can call hindsight_reflect.</text>
+<rect x="40" y="559" width="920" height="77" rx="8" fill="#f4f4f5" stroke="none" stroke-width="2"/>
+<rect x="40" y="568" width="5" height="59" rx="3" fill="#0074d9" stroke="none" stroke-width="2"/>
+<text x="62" y="597" fill="#18181b" font-size="23" font-weight="700">Stop</text>
+<text x="275" y="602" fill="#18181b" font-size="19" font-weight="400">By default, send the transcript. Drop compaction summaries.</text>
+</g>
+</svg>
