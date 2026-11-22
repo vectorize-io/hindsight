@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" font-family="Arial, sans-serif">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M0 0L10 5L0 10z" fill="#a1a1aa"/>
+</marker>
+</defs>
+<rect x="0" y="0" width="1200" height="630" fill="#18181b" stroke="none" rx="18"/>
+<rect x="0" y="0" width="1200" height="10" fill="#0074d9" stroke="none" rx="0"/>
+<text x="74" y="108" fill="#a1a1aa" font-size="24" font-weight="700">HINDSIGHT CODING AGENTS</text>
+<text x="74" y="207" fill="#e4e4e7" font-size="82" font-weight="700">Claude Code</text>
+<text x="74" y="302" fill="#e4e4e7" font-size="73" font-weight="700">auto compact</text>
+<text x="76" y="375" fill="#a1a1aa" font-size="33" font-weight="400">Keep rules in a repo memory bank</text>
+<rect x="670" y="112" width="450" height="305" fill="#27272a" stroke="#0074d9" rx="20"/>
+<text x="703" y="156" fill="#e4e4e7" font-size="24" font-weight="700">Claude Code context window</text>
+<rect x="704" y="178" width="382" height="87" fill="#27272a" stroke="#0074d9" rx="12"/>
+<rect x="718" y="192" width="5" height="59" fill="#0074d9" stroke="none" rx="2"/>
+<text x="734" y="212" fill="#e4e4e7" font-size="22" font-weight="700">Conversation</text>
+<text x="734" y="240" fill="#a1a1aa" font-size="18" font-weight="400">Rules and decisions</text>
+<path d="M895 266v27" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="704" y="295" width="382" height="92" fill="#27272a" stroke="#0074d9" rx="12"/>
+<rect x="718" y="309" width="5" height="64" fill="#0074d9" stroke="none" rx="2"/>
+<text x="734" y="329" fill="#e4e4e7" font-size="22" font-weight="700">Auto compact</text>
+<text x="734" y="357" fill="#a1a1aa" font-size="18" font-weight="400">Conversation summary</text>
+<rect x="704" y="463" width="382" height="100" fill="#27272a" stroke="#009296" rx="12"/>
+<rect x="718" y="477" width="5" height="72" fill="#009296" stroke="none" rx="2"/>
+<text x="734" y="497" fill="#e4e4e7" font-size="22" font-weight="700">Repo memory bank</text>
+<text x="734" y="525" fill="#a1a1aa" font-size="18" font-weight="400">Outside the context window</text>
+</svg>
