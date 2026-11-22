@@ -1,41 +1,42 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="610" viewBox="0 0 800 610" font-family="Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1052" viewBox="0 0 800 1052" font-family="Arial, sans-serif">
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
 <path d="M0 0L10 5L0 10z" fill="#52525b"/>
 </marker>
 </defs>
-<rect x="0" y="0" width="800" height="610" fill="#ffffff" stroke="none" rx="18"/>
-<text x="35" y="47" fill="#18181b" font-size="30" font-weight="700">One session through auto compact</text>
-<rect x="35" y="70" width="520" height="505" fill="#ffffff" stroke="#52525b" rx="12"/>
-<text x="57" y="105" fill="#52525b" font-size="20" font-weight="700">Claude Code context window</text>
-<rect x="57" y="124" width="475" height="74" fill="#f4f4f5" stroke="#0074d9" rx="12"/>
-<rect x="71" y="138" width="5" height="46" fill="#0074d9" stroke="none" rx="2"/>
-<text x="87" y="158" fill="#18181b" font-size="22" font-weight="700">Conversation</text>
-<text x="87" y="186" fill="#52525b" font-size="18" font-weight="400">You set rules for the repository.</text>
-<path d="M294 198v12" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
-<rect x="57" y="212" width="475" height="74" fill="#f4f4f5" stroke="#0074d9" rx="12"/>
-<rect x="71" y="226" width="5" height="46" fill="#0074d9" stroke="none" rx="2"/>
-<text x="87" y="246" fill="#18181b" font-size="22" font-weight="700">Auto compact</text>
-<text x="87" y="274" fill="#52525b" font-size="18" font-weight="400">Claude Code summarizes the conversation.</text>
-<path d="M294 286v12" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
-<rect x="57" y="300" width="475" height="74" fill="#f4f4f5" stroke="#0074d9" rx="12"/>
-<rect x="71" y="314" width="5" height="46" fill="#0074d9" stroke="none" rx="2"/>
-<text x="87" y="334" fill="#18181b" font-size="22" font-weight="700">SessionStart (source: compact)</text>
-<text x="87" y="362" fill="#52525b" font-size="18" font-weight="400">The Hindsight hook runs.</text>
-<path d="M294 374v12" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
-<rect x="57" y="388" width="475" height="74" fill="#f4f4f5" stroke="#0074d9" rx="12"/>
-<rect x="71" y="402" width="5" height="46" fill="#0074d9" stroke="none" rx="2"/>
-<text x="87" y="422" fill="#18181b" font-size="22" font-weight="700">Hindsight block returns</text>
-<text x="87" y="450" fill="#52525b" font-size="16" font-weight="400">Tool guide, and page count or &quot;No pages yet&quot;.</text>
-<path d="M294 462v12" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
-<rect x="57" y="476" width="475" height="74" fill="#f4f4f5" stroke="#009296" rx="12"/>
-<rect x="71" y="490" width="5" height="46" fill="#009296" stroke="none" rx="2"/>
-<text x="87" y="510" fill="#18181b" font-size="22" font-weight="700">Stop</text>
-<text x="87" y="538" fill="#52525b" font-size="16" font-weight="400">By default, the hook writes session turns to the bank.</text>
-<path d="M533 513H570" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
-<rect x="575" y="461" width="200" height="107" fill="#f4f4f5" stroke="#009296" rx="12"/>
-<rect x="589" y="475" width="5" height="79" fill="#009296" stroke="none" rx="2"/>
-<text x="605" y="495" fill="#18181b" font-size="18" font-weight="700">Repo memory</text>
-<text x="605" y="523" fill="#52525b" font-size="18" font-weight="400">One bank outside</text>
-<text x="605" y="546" fill="#52525b" font-size="15" font-weight="400">the context window</text>
+<rect x="0" y="0" width="800" height="1052" fill="#ffffff" stroke="none" rx="18"/>
+<rect x="30" y="76" width="740" height="804" fill="none" stroke="#52525b" rx="12"/>
+<text x="50" y="120" fill="#52525b" font-size="28" font-weight="700">Claude Code context window</text>
+<text x="30" y="52" fill="#18181b" font-size="34" font-weight="700">One session through auto compact</text>
+<rect x="50" y="138" width="700" height="106" fill="#f4f4f5" stroke="#0074d9" rx="12"/>
+<rect x="64" y="152" width="5" height="78" fill="#0074d9" stroke="none" rx="2"/>
+<text x="84" y="190" fill="#18181b" font-size="30" font-weight="700">Conversation</text>
+<text x="84" y="226" fill="#52525b" font-size="28" font-weight="400">You set rules for the repository.</text>
+<path d="M400 244v26" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="50" y="274" width="700" height="106" fill="#f4f4f5" stroke="#0074d9" rx="12"/>
+<rect x="64" y="288" width="5" height="78" fill="#0074d9" stroke="none" rx="2"/>
+<text x="84" y="326" fill="#18181b" font-size="30" font-weight="700">Auto compact</text>
+<text x="84" y="362" fill="#52525b" font-size="28" font-weight="400">Claude Code summarizes the conversation.</text>
+<path d="M400 380v26" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="50" y="410" width="700" height="106" fill="#f4f4f5" stroke="#0074d9" rx="12"/>
+<rect x="64" y="424" width="5" height="78" fill="#0074d9" stroke="none" rx="2"/>
+<text x="84" y="462" fill="#18181b" font-size="30" font-weight="700">SessionStart (source: compact)</text>
+<text x="84" y="498" fill="#52525b" font-size="28" font-weight="400">The Hindsight hook runs.</text>
+<path d="M400 516v26" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="50" y="546" width="700" height="142" fill="#f4f4f5" stroke="#0074d9" rx="12"/>
+<rect x="64" y="560" width="5" height="114" fill="#0074d9" stroke="none" rx="2"/>
+<text x="84" y="598" fill="#18181b" font-size="30" font-weight="700">Hindsight block returns</text>
+<text x="84" y="634" fill="#52525b" font-size="28" font-weight="400">Tool guide, and page count</text>
+<text x="84" y="670" fill="#52525b" font-size="28" font-weight="400">or &quot;No pages yet&quot;.</text>
+<path d="M400 688v26" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="50" y="718" width="700" height="142" fill="#f4f4f5" stroke="#009296" rx="12"/>
+<rect x="64" y="732" width="5" height="114" fill="#009296" stroke="none" rx="2"/>
+<text x="84" y="770" fill="#18181b" font-size="30" font-weight="700">Stop</text>
+<text x="84" y="806" fill="#52525b" font-size="28" font-weight="400">By default, the hook writes session turns to</text>
+<text x="84" y="842" fill="#52525b" font-size="28" font-weight="400">the bank.</text>
+<path d="M400 880v32" fill="none" stroke="#52525b" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="30" y="916" width="740" height="106" fill="#f4f4f5" stroke="#009296" rx="12"/>
+<rect x="44" y="930" width="5" height="78" fill="#009296" stroke="none" rx="2"/>
+<text x="64" y="968" fill="#18181b" font-size="30" font-weight="700">Repo memory</text>
+<text x="64" y="1004" fill="#52525b" font-size="28" font-weight="400">One bank outside the context window</text>
 </svg>

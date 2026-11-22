@@ -23,9 +23,7 @@ You want to hand the agent a long task and leave it alone. After compaction, you
 
 ## You are not the only one who sees this
 
-Developers report this problem in public, with logs.
-
-On r/ClaudeAI, [u/apaas wrote](https://www.reddit.com/r/ClaudeAI/comments/1q1c063/comment/nx6radx/) in January 2026:
+Developers report this problem in public, with logs. On r/ClaudeAI, [u/apaas wrote](https://www.reddit.com/r/ClaudeAI/comments/1q1c063/comment/nx6radx/) in January 2026:
 
 > "Claude losing its basic rule context after auto compaction is a _ridiculous_ bug which should be fixed immediately."
 
@@ -75,9 +73,7 @@ No tool can make a model obey a rule. What you can control is where the rules li
 
 The [Hindsight Coding Agents integration](https://hindsight.vectorize.io/sdks/integrations/coding-agents) keeps what your repository learns in a memory bank. The bank is on a Hindsight server, not in the Claude Code context window. Compaction does not change it.
 
-The integration's README describes the round trip you know from long sessions: "A correction is a round trip: the agent guesses a project-specific decision wrong, you stop it, you explain, it redoes the work."
-
-This is what the code does in version 0.8.8 of `@vectorize-io/hindsight-coding-agents`. The source is in [`hindsight-integrations/coding-agents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents).
+The integration's README describes the round trip you know from long sessions: "A correction is a round trip: the agent guesses a project-specific decision wrong, you stop it, you explain, it redoes the work." This is what the code does in version 0.8.8 of `@vectorize-io/hindsight-coding-agents`. The source is in [`hindsight-integrations/coding-agents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents).
 
 ### One bank for each repository
 
@@ -105,7 +101,7 @@ The installer adds 3 hooks to `~/.claude/settings.json`. Each one runs on a Clau
 
 **`UserPromptSubmit`, on every prompt.** Re-injects a `<hindsight_page_refresh>` reminder of the tools. By default, `pageRefreshEveryTurns` is 1. The block gives the full tool guide. It adds the page count when the last page list that the hook read in this session has pages.
 
-**`Stop`.** By default, writes session turns back into the bank.
+**`Stop`.** By default, writes session turns back into the bank. The list under "What goes into the bank" says what the bank gets.
 
 Claude Code sends `SessionStart` with the source `"compact"` after compaction. The installer registers the Hindsight `SessionStart` hook with no matcher. The [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) says that when you omit the matcher, "the group activates on every occurrence of the event." With the integration enabled and a bank available, the hook can return the Hindsight block after either form of compaction.
 
@@ -120,10 +116,8 @@ The agent also gets these MCP tools:
 
 - `hindsight_search_pages(query)`: the first stop. It finds the pages that bear on the current turn.
 - `hindsight_read_page(id)`: reads one page in full.
-- `hindsight_reflect(query)`: reasons over the full memory of the repository for the decision behind a behavior. It is slower.
+- `hindsight_reflect(query)`: reasons over the full memory of the repository for the decision behind a behavior. It is slower. After compaction, the agent can call it for a fresh answer from the bank.
 - `hindsight_ingest_document(title, content)`: saves notes that you want the bank to keep.
-
-After compaction, the agent can call `hindsight_reflect` for a fresh answer from the bank.
 
 ### What Hindsight does not do
 
@@ -158,7 +152,7 @@ The values are the mean of 3 runs. The benchmark does not measure compaction. It
 npx @vectorize-io/hindsight-coding-agents install claude-code
 ```
 
-On a terminal, the installer asks where memory lives. There are 3 modes:
+The install adds 3 hooks in `~/.claude/settings.json`, registers the MCP server with `claude mcp add` (user scope), and adds a companion skill. On a terminal, the installer asks where memory lives. There are 3 modes:
 
 - **`cloud`** runs Hindsight Cloud (the default). It needs an API token.
 - **`self-hosted`** uses a Hindsight server that you run. It needs its URL.
@@ -169,8 +163,6 @@ To choose the mode in a script, pass `--server`:
 ```bash
 npx @vectorize-io/hindsight-coding-agents install claude-code --server daemon
 ```
-
-The install adds 3 hooks in `~/.claude/settings.json`, registers the MCP server with `claude mcp add` (user scope), and adds a companion skill.
 
 ### 2. Get your rules into the bank
 
@@ -183,9 +175,7 @@ cd /path/to/your/repo
 npx @vectorize-io/hindsight-coding-agents install claude-code --import-conversations
 ```
 
-The README says this "costs tokens roughly in proportion to the history imported, and it is safe to re-run".
-
-For a rule that must hold across sessions, ask the agent to save it as a document:
+The README says this "costs tokens roughly in proportion to the history imported, and it is safe to re-run". For a rule that must hold across sessions, ask the agent to save it as a document:
 
 ```text
 Save this rule to Hindsight memory with hindsight_ingest_document:
@@ -224,9 +214,9 @@ Your rules stay in CLAUDE.md and in the conversation. After the next auto compac
 
 ## What your sessions look like after
 
-Auto compact runs in the middle of a long task. The SessionStart hook can add the Hindsight block and its tool guide again. The agent can search the pages or call `hindsight_reflect`. It can find the rule that you set two hours ago and mark where the rule came from.
+Auto compact runs in the middle of a long task. The SessionStart hook can add the Hindsight block and its tool guide again.
 
-You go from a developer who repeats rules after each compaction to a developer who sets a rule once and lets the repository keep it.
+The agent can search the pages or call `hindsight_reflect`. It can find the rule that you set two hours ago and mark where the rule came from. You go from a developer who repeats rules after each compaction to a developer who sets a rule once and lets the repository keep it.
 
 ## Start here
 

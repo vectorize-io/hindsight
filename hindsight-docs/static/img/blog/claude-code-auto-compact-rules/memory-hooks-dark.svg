@@ -1,58 +1,66 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="880" viewBox="0 0 800 880" font-family="Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1814" viewBox="0 0 800 1814" font-family="Arial, sans-serif">
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
 <path d="M0 0L10 5L0 10z" fill="#a1a1aa"/>
 </marker>
 </defs>
-<rect x="0" y="0" width="800" height="880" fill="#18181b" stroke="none" rx="18"/>
-<text x="34" y="47" fill="#e4e4e7" font-size="30" font-weight="700">What the hooks read and write</text>
-<rect x="34" y="75" width="488" height="85" fill="#27272a" stroke="#0074d9" rx="12"/>
-<rect x="48" y="89" width="5" height="57" fill="#0074d9" stroke="none" rx="2"/>
-<text x="64" y="109" fill="#e4e4e7" font-size="22" font-weight="700">SessionStart</text>
-<text x="64" y="137" fill="#a1a1aa" font-size="15" font-weight="400">Adds the Hindsight block at start and after compaction.</text>
-<rect x="556" y="75" width="210" height="85" fill="#27272a" stroke="#009296" rx="12"/>
-<rect x="570" y="89" width="5" height="57" fill="#009296" stroke="none" rx="2"/>
-<text x="586" y="109" fill="#e4e4e7" font-size="15" font-weight="700">Repo memory bank</text>
-<text x="586" y="137" fill="#a1a1aa" font-size="15" font-weight="400">Outside the session</text>
-<path d="M554 117H525" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
-<rect x="34" y="184" width="732" height="451" fill="none" stroke="#a1a1aa" rx="12"/>
-<text x="54" y="212" fill="#e4e4e7" font-size="24" font-weight="700">UserPromptSubmit · first prompt</text>
-<text x="54" y="232" fill="#a1a1aa" font-size="16" font-weight="400">Default: autoInject reflect</text>
-<rect x="54" y="245" width="320" height="85" fill="#27272a" stroke="#0074d9" rx="12"/>
-<rect x="68" y="259" width="5" height="57" fill="#0074d9" stroke="none" rx="2"/>
-<text x="84" y="273" fill="#e4e4e7" font-size="22" font-weight="700">Any other bank</text>
-<text x="84" y="301" fill="#a1a1aa" font-size="18" font-weight="400">Run low-budget reflect.</text>
-<rect x="423" y="245" width="320" height="85" fill="#27272a" stroke="#009296" rx="12"/>
-<rect x="437" y="259" width="5" height="57" fill="#009296" stroke="none" rx="2"/>
-<text x="453" y="273" fill="#e4e4e7" font-size="22" font-weight="700">New empty bank</text>
-<text x="453" y="301" fill="#a1a1aa" font-size="16" font-weight="400">Can wait for prompt 2 to reflect.</text>
-<path d="M214 330v15h188v14" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
-<path d="M583 330v15H402v14" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
-<rect x="54" y="363" width="689" height="147" fill="#27272a" stroke="#0074d9" rx="12"/>
-<rect x="68" y="377" width="5" height="119" fill="#0074d9" stroke="none" rx="2"/>
-<text x="84" y="397" fill="#e4e4e7" font-size="22" font-weight="700">Reflect outcome</text>
-<text x="84" y="425" fill="#a1a1aa" font-size="18" font-weight="400">Answer: add it once. Empty answer: end.</text>
-<text x="84" y="448" fill="#a1a1aa" font-size="16" font-weight="400">Timeout or server error: search pages, then recall if no page matches.</text>
-<text x="84" y="471" fill="#a1a1aa" font-size="16" font-weight="400">Network error, 408 or 429: retry on the next prompt if an attempt remains.</text>
-<text x="84" y="494" fill="#a1a1aa" font-size="18" font-weight="400">Other 4xx error: end.</text>
-<path d="M402 511v12" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
-<rect x="54" y="526" width="689" height="103" fill="#27272a" stroke="#009296" rx="12"/>
-<rect x="68" y="540" width="5" height="75" fill="#009296" stroke="none" rx="2"/>
-<text x="84" y="560" fill="#e4e4e7" font-size="22" font-weight="700">Fallback outcome</text>
-<text x="84" y="588" fill="#a1a1aa" font-size="18" font-weight="400">Result: add it once.</text>
-<text x="84" y="611" fill="#a1a1aa" font-size="18" font-weight="400">No result: retry reflect once on the next prompt if an attempt remains.</text>
-<rect x="34" y="655" width="732" height="82" fill="#27272a" stroke="#0074d9" rx="12"/>
-<rect x="48" y="669" width="5" height="54" fill="#0074d9" stroke="none" rx="2"/>
-<text x="64" y="689" fill="#e4e4e7" font-size="22" font-weight="700">UserPromptSubmit · every prompt</text>
-<text x="64" y="717" fill="#a1a1aa" font-size="16" font-weight="400">By default, adds the full tool guide, and can add the page count.</text>
-<rect x="34" y="758" width="488" height="88" fill="#27272a" stroke="#009296" rx="12"/>
-<rect x="48" y="772" width="5" height="60" fill="#009296" stroke="none" rx="2"/>
-<text x="64" y="792" fill="#e4e4e7" font-size="22" font-weight="700">Stop</text>
-<text x="64" y="816" fill="#a1a1aa" font-size="17" font-weight="400">By default, writes session turns.</text>
-<text x="64" y="837" fill="#a1a1aa" font-size="17" font-weight="400">Drops compaction summaries.</text>
-<path d="M522 802h31" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
-<rect x="556" y="758" width="210" height="88" fill="#27272a" stroke="#009296" rx="12"/>
-<rect x="570" y="772" width="5" height="60" fill="#009296" stroke="none" rx="2"/>
-<text x="586" y="792" fill="#e4e4e7" font-size="15" font-weight="700">Repo memory bank</text>
-<text x="586" y="820" fill="#a1a1aa" font-size="18" font-weight="400">Receives the turns</text>
+<rect x="0" y="0" width="800" height="1814" fill="#18181b" stroke="none" rx="18"/>
+<text x="30" y="52" fill="#e4e4e7" font-size="34" font-weight="700">What the hooks read and write</text>
+<rect x="30" y="76" width="740" height="106" fill="#27272a" stroke="#009296" rx="12"/>
+<rect x="44" y="90" width="5" height="78" fill="#009296" stroke="none" rx="2"/>
+<text x="64" y="128" fill="#e4e4e7" font-size="30" font-weight="700">Repo memory bank</text>
+<text x="64" y="164" fill="#a1a1aa" font-size="28" font-weight="400">Outside the session</text>
+<path d="M400 182v26" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="30" y="212" width="740" height="142" fill="#27272a" stroke="#0074d9" rx="12"/>
+<rect x="44" y="226" width="5" height="114" fill="#0074d9" stroke="none" rx="2"/>
+<text x="64" y="264" fill="#e4e4e7" font-size="30" font-weight="700">SessionStart</text>
+<text x="64" y="300" fill="#a1a1aa" font-size="28" font-weight="400">Adds the Hindsight block at start and after</text>
+<text x="64" y="336" fill="#a1a1aa" font-size="28" font-weight="400">compaction.</text>
+<path d="M400 354v26" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="30" y="384" width="740" height="920" fill="none" stroke="#a1a1aa" rx="12"/>
+<text x="50" y="430" fill="#e4e4e7" font-size="30" font-weight="700">UserPromptSubmit, first prompt</text>
+<text x="50" y="468" fill="#a1a1aa" font-size="28" font-weight="400">Default: autoInject reflect</text>
+<rect x="50" y="494" width="700" height="106" fill="#27272a" stroke="#0074d9" rx="12"/>
+<rect x="64" y="508" width="5" height="78" fill="#0074d9" stroke="none" rx="2"/>
+<text x="84" y="546" fill="#e4e4e7" font-size="30" font-weight="700">Any other bank</text>
+<text x="84" y="582" fill="#a1a1aa" font-size="28" font-weight="400">Run low-budget reflect.</text>
+<rect x="50" y="618" width="700" height="106" fill="#27272a" stroke="#009296" rx="12"/>
+<rect x="64" y="632" width="5" height="78" fill="#009296" stroke="none" rx="2"/>
+<text x="84" y="670" fill="#e4e4e7" font-size="30" font-weight="700">Bank the server confirms is empty</text>
+<text x="84" y="706" fill="#a1a1aa" font-size="28" font-weight="400">Can wait for prompt 2 to reflect.</text>
+<path d="M400 724v26" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="50" y="754" width="700" height="322" fill="#27272a" stroke="#0074d9" rx="12"/>
+<rect x="64" y="768" width="5" height="294" fill="#0074d9" stroke="none" rx="2"/>
+<text x="84" y="806" fill="#e4e4e7" font-size="30" font-weight="700">Reflect outcome</text>
+<text x="84" y="842" fill="#a1a1aa" font-size="28" font-weight="400">Answer: add it once.</text>
+<text x="84" y="878" fill="#a1a1aa" font-size="28" font-weight="400">Empty answer: end.</text>
+<text x="84" y="914" fill="#a1a1aa" font-size="28" font-weight="400">Timeout or server error: search pages, then</text>
+<text x="84" y="950" fill="#a1a1aa" font-size="28" font-weight="400">recall if no page matches.</text>
+<text x="84" y="986" fill="#a1a1aa" font-size="28" font-weight="400">Network error, 408 or 429: retry on the next</text>
+<text x="84" y="1022" fill="#a1a1aa" font-size="28" font-weight="400">prompt if an attempt remains.</text>
+<text x="84" y="1058" fill="#a1a1aa" font-size="28" font-weight="400">Other 4xx error: end.</text>
+<path d="M400 1076v26" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="50" y="1106" width="700" height="178" fill="#27272a" stroke="#009296" rx="12"/>
+<rect x="64" y="1120" width="5" height="150" fill="#009296" stroke="none" rx="2"/>
+<text x="84" y="1158" fill="#e4e4e7" font-size="30" font-weight="700">Fallback outcome</text>
+<text x="84" y="1194" fill="#a1a1aa" font-size="28" font-weight="400">Result: add it once.</text>
+<text x="84" y="1230" fill="#a1a1aa" font-size="28" font-weight="400">No result: retry reflect once on the next</text>
+<text x="84" y="1266" fill="#a1a1aa" font-size="28" font-weight="400">prompt if an attempt remains.</text>
+<path d="M400 1304v26" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="30" y="1334" width="740" height="142" fill="#27272a" stroke="#0074d9" rx="12"/>
+<rect x="44" y="1348" width="5" height="114" fill="#0074d9" stroke="none" rx="2"/>
+<text x="64" y="1386" fill="#e4e4e7" font-size="30" font-weight="700">UserPromptSubmit, every prompt</text>
+<text x="64" y="1422" fill="#a1a1aa" font-size="28" font-weight="400">By default, adds the full tool guide, and can add</text>
+<text x="64" y="1458" fill="#a1a1aa" font-size="28" font-weight="400">the page count.</text>
+<path d="M400 1476v26" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="30" y="1506" width="740" height="142" fill="#27272a" stroke="#009296" rx="12"/>
+<rect x="44" y="1520" width="5" height="114" fill="#009296" stroke="none" rx="2"/>
+<text x="64" y="1558" fill="#e4e4e7" font-size="30" font-weight="700">Stop</text>
+<text x="64" y="1594" fill="#a1a1aa" font-size="28" font-weight="400">By default, writes session turns.</text>
+<text x="64" y="1630" fill="#a1a1aa" font-size="28" font-weight="400">Drops compaction summaries.</text>
+<path d="M400 1648v26" fill="none" stroke="#a1a1aa" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="30" y="1678" width="740" height="106" fill="#27272a" stroke="#009296" rx="12"/>
+<rect x="44" y="1692" width="5" height="78" fill="#009296" stroke="none" rx="2"/>
+<text x="64" y="1730" fill="#e4e4e7" font-size="30" font-weight="700">Repo memory bank</text>
+<text x="64" y="1766" fill="#a1a1aa" font-size="28" font-weight="400">Receives the turns</text>
 </svg>
