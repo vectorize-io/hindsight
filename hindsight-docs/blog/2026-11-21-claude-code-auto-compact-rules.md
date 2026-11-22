@@ -92,14 +92,20 @@ The default bank id is `coding-agent::{gitProject}`. The docs say the default "m
 
 ### What comes back, and when
 
-The installer adds 3 hooks to `~/.claude/settings.json`:
+The installer adds 3 hooks to `~/.claude/settings.json`. Each one runs on a Claude Code event.
 
-| Claude Code event | What the Hindsight hook does |
-| :- | :- |
-| `SessionStart` (includes the start after compaction) | Injects a `<hindsight_pages>` block. It tells the agent that the repository has a Hindsight memory, gives the page count or "No pages yet", and says which tools to call, and when. |
-| `UserPromptSubmit`, first prompt of a session | Runs a low-budget reflect over the bank and injects the result at most once. This is the default, `autoInject: "reflect"`. When the server confirms that the bank is empty, the hook can wait for the second prompt. If the reflect times out or fails with a server error, the hook runs a fallback search in its place: the pages first, then recall when no page matches. If that search returns nothing, the hook tries reflect again on the next prompt. After a network error, an HTTP 408 or an HTTP 429, the hook skips the search and tries reflect again on the next prompt. The hook makes at most 2 reflect attempts in a session. After any other 4xx error, it does not try again. |
-| `UserPromptSubmit`, every prompt | Re-injects a `<hindsight_page_refresh>` reminder of the tools. By default, `pageRefreshEveryTurns` is 1. The block gives the full tool guide. It adds the page count when the last page list that the hook read in this session has pages. |
-| `Stop` | By default, writes session turns back into the bank. |
+**`SessionStart`, which includes the start after compaction.** Injects a `<hindsight_pages>` block. It tells the agent that the repository has a Hindsight memory, gives the page count or "No pages yet", and says which tools to call, and when.
+
+**`UserPromptSubmit`, on the first prompt of a session.** Runs a low-budget reflect over the bank and injects the result at most once. This is the default, `autoInject: "reflect"`.
+
+- When the server confirms that the bank is empty, the hook can wait for the second prompt.
+- If the reflect times out or fails with a server error, the hook runs a fallback search in its place: the pages first, then recall when no page matches. If that search returns nothing, the hook tries reflect again on the next prompt.
+- After a network error, an HTTP 408 or an HTTP 429, the hook skips the search and tries reflect again on the next prompt.
+- The hook makes at most 2 reflect attempts in a session. After any other 4xx error, it does not try again.
+
+**`UserPromptSubmit`, on every prompt.** Re-injects a `<hindsight_page_refresh>` reminder of the tools. By default, `pageRefreshEveryTurns` is 1. The block gives the full tool guide. It adds the page count when the last page list that the hook read in this session has pages.
+
+**`Stop`.** By default, writes session turns back into the bank.
 
 Claude Code sends `SessionStart` with the source `"compact"` after compaction. The installer registers the Hindsight `SessionStart` hook with no matcher. The [Claude Code hooks reference](https://code.claude.com/docs/en/hooks) says that when you omit the matcher, "the group activates on every occurrence of the event." With the integration enabled and a bank available, the hook can return the Hindsight block after either form of compaction.
 
