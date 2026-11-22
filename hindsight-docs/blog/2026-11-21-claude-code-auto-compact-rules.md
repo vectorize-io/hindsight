@@ -160,11 +160,9 @@ npx @vectorize-io/hindsight-coding-agents install claude-code
 
 On a terminal, the installer asks where memory lives. There are 3 modes:
 
-| Mode | What runs | What it needs |
-| :- | :- | :- |
-| `cloud` | Hindsight Cloud (the default) | an API token |
-| `self-hosted` | a Hindsight server that you run | its URL |
-| `daemon` | a local `hindsight-embed` on your machine | `uv` on PATH and an LLM key for extraction |
+- **`cloud`** runs Hindsight Cloud (the default). It needs an API token.
+- **`self-hosted`** uses a Hindsight server that you run. It needs its URL.
+- **`daemon`** runs a local `hindsight-embed` on your machine. It needs `uv` on PATH and an LLM key for extraction.
 
 To choose the mode in a script, pass `--server`:
 
