@@ -20480,8 +20480,24 @@ class MemoryEngine(MemoryEngineInterface):
                 if is_failure
                 else f"(content->>'kind' IS NULL OR content->>'kind' <> '{_MM_HISTORY_KIND_FAILURE}')"
             )
-            await conn.execute(
-                f"""
+            if getattr(conn, "backend_type", None) == "oracle":
+                # Oracle: number the rows once and delete past the cap, instead of
+                # checking every row against a NOT IN subquery that re-reads the
+                # CLOB predicate (#6771). Same order as idx_mm_history_model.
+                trim_sql = f"""
+                DELETE FROM {fq_table("mental_model_history")}
+                WHERE id IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (ORDER BY changed_at DESC, id DESC) AS rn
+                        FROM {fq_table("mental_model_history")}
+                        WHERE mental_model_id = $1 AND bank_id = $2
+                          AND {kind_predicate}
+                    )
+                    WHERE rn > $3
+                )
+                """
+            else:
+                trim_sql = f"""
                 DELETE FROM {fq_table("mental_model_history")}
                 WHERE mental_model_id = $1 AND bank_id = $2
                   AND {kind_predicate}
@@ -20492,11 +20508,8 @@ class MemoryEngine(MemoryEngineInterface):
                       ORDER BY changed_at DESC, id DESC
                       LIMIT $3
                   )
-                """,
-                mental_model_id,
-                bank_id,
-                max_entries,
-            )
+                """
+            await conn.execute(trim_sql, mental_model_id, bank_id, max_entries)
 
     async def _record_mental_model_refresh_failure(
         self,
@@ -22755,11 +22768,18 @@ class MemoryEngine(MemoryEngineInterface):
             total = total_row["total"] if total_row else 0
 
             # Get operations with pagination (include result_metadata to check for parent operations)
+            # Oracle: with only the bank filter, pin the (bank_id, created_at DESC) index so a
+            # peeked bind cannot settle on a full scan plus sort (#6771).
+            op_hint, op_alias = (
+                ("/*+ INDEX(ao idx_async_operations_bank_created_desc) */ ", " ao")
+                if getattr(conn, "backend_type", None) == "oracle" and len(where_conditions) == 1
+                else ("", "")
+            )
             operations = await conn.fetch(
                 f"""
-                SELECT operation_id, operation_type, created_at, updated_at, status, error_message,
+                SELECT {op_hint}operation_id, operation_type, created_at, updated_at, status, error_message,
                        result_metadata, retry_count, next_retry_at
-                FROM {fq_table("async_operations")}
+                FROM {fq_table("async_operations")}{op_alias}
                 WHERE {where_clause}
                 ORDER BY created_at DESC
                 LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}

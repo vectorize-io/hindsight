@@ -652,7 +652,7 @@ class TestOracleQueryRewriter:
         query, _, returning_cols = _rewrite_pg_to_oracle(
             "UPDATE async_operations SET result_metadata = result_metadata || $1::jsonb WHERE operation_id = $2 RETURNING status"
         )
-        assert returning_cols == ["status"]
+        assert returning_cols == ("status",)
         assert query.rstrip().endswith("RETURNING status INTO :ret_0")
 
     def test_set_local_is_a_noop(self):
@@ -745,7 +745,7 @@ class TestOracleQueryRewriter:
         assert "::uuid" not in query
         assert "::jsonb" not in query
         assert not ignore_dup
-        assert returning_cols == ["id"]
+        assert returning_cols == ("id",)
         assert "RETURNING id INTO :ret_0" in query
 
     def test_no_rewrite_needed(self):

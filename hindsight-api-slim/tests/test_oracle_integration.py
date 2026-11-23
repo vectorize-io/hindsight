@@ -1301,6 +1301,87 @@ class TestAdvancedFeatures:
             await _safe_cleanup(oracle_memory, bank_id, request_context)
 
     @pytest.mark.asyncio
+    async def test_expand_observations_scores_shared_sources(
+        self, oracle_memory: MemoryEngine, request_context: RequestContext
+    ):
+        """#6592: set-wise observation expansion returns the right observations and scores.
+
+        One entity links the seed's source to two other sources. An observation built on
+        both of them shares two sources (score 2), one built on one shares one (score 1),
+        and neither the seed nor an unrelated observation comes back.
+        """
+        from hindsight_api.engine.db.ops import UpdatedWindow
+        from hindsight_api.engine.db.ops_oracle import OracleOps
+
+        # Seeds store tables directly, as the store would; fq_table refuses them (#4969).
+        from hindsight_api.engine.schema import fq_store_table as fq_table
+
+        bank_id = _bank_id("obsexp")
+        dim = oracle_memory.embeddings.dimension
+        fact_types = ["world"] * 4 + ["observation"] * 4
+        n = len(fact_types)
+        try:
+            await oracle_memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
+            backend = await oracle_memory._get_backend()
+            async with backend.transaction() as conn:
+                ids = await backend.ops.insert_facts_batch(
+                    conn,
+                    bank_id,
+                    fact_texts=[f"fact {i}" for i in range(n)],
+                    embeddings=[embedding_to_pgvector([1.0] + [0.0] * (dim - 1))] * n,
+                    event_dates=[datetime(2024, 1, 1, tzinfo=timezone.utc)] * n,
+                    occurred_starts=[None] * n,
+                    occurred_ends=[None] * n,
+                    mentioned_ats=[None] * n,
+                    contexts=[""] * n,
+                    fact_types=fact_types,
+                    metadata_jsons=["{}"] * n,
+                    chunk_ids=[None] * n,
+                    document_ids=[None] * n,
+                    tags_list=["[]"] * n,
+                    observation_scopes_list=[None] * n,
+                    text_signals_list=[None] * n,
+                    attachment_ids_list=[None] * n,
+                )
+                s_seed, s_a, s_b, s_lone = ids[:4]
+                o_seed, o_two, o_one, o_none = ids[4:]
+                entity_id = str(uuid.uuid4())
+                await conn.execute(
+                    f"INSERT INTO {fq_table('entities')} (id, bank_id, canonical_name) VALUES ($1, $2, $3)",
+                    entity_id,
+                    bank_id,
+                    "shared entity",
+                )
+                for unit_id in (s_seed, s_a, s_b):
+                    await conn.execute(
+                        f"INSERT INTO {fq_table('unit_entities')} (unit_id, entity_id) VALUES ($1, $2)",
+                        unit_id,
+                        entity_id,
+                    )
+                for obs, src in ((o_seed, s_seed), (o_two, s_a), (o_two, s_b), (o_one, s_a), (o_none, s_lone)):
+                    await conn.execute(
+                        f"INSERT INTO {fq_table('observation_sources')} (observation_id, source_id) VALUES ($1, $2)",
+                        obs,
+                        src,
+                    )
+
+            async with backend.acquire() as conn:
+                rows = await OracleOps().expand_observations(
+                    conn,
+                    fq_table("memory_units"),
+                    fq_table("unit_entities"),
+                    fq_table("memory_links"),
+                    [o_seed],
+                    budget=10,
+                    per_entity_limit=10,
+                    window=UpdatedWindow(after=None, before=None, first_param_index=3),
+                )
+            scores = {str(r["id"]): float(r["score"]) for r in rows.entity}
+            assert scores == {str(o_two): 2.0, str(o_one): 1.0}
+        finally:
+            await _safe_cleanup(oracle_memory, bank_id, request_context)
+
+    @pytest.mark.asyncio
     async def test_task_queue(self, oracle_memory: MemoryEngine, request_context: RequestContext):
         bank_id = _bank_id("taskq")
         try:
