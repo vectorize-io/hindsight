@@ -4565,6 +4565,21 @@ class MemoryEngine(MemoryEngineInterface):
             retry_count=task_dict.get("_retry_count", 0),
             operation_id=task_dict.get("_operation_id"),
         )
+        if operation_id and not any(item.get("update_mode") == "append" for item in contents):
+            newer = await self._supersede_by_newer_retain_of_same_document(operation_id)
+            if newer:
+                # A replace carries the whole document, so one SENT later and already finished holds
+                # a newer version. This one can only reach here after it by being retried: the claim
+                # predicate runs a document's retains in submission order, but a peer waiting out
+                # its retry delay does not hold the line. Running it would roll the document back
+                # and re-extract the older body (#6763). The orchestrator's own stale check cannot
+                # see this: it compares against when this run STARTED, which is after the newer
+                # version committed.
+                logger.info(
+                    f"[BATCH_RETAIN_TASK] Skipping retain {operation_id} for bank_id={bank_id}: "
+                    f"retain {newer}, sent after it, already replaced the document"
+                )
+                return
         await self.retain_batch_async(
             bank_id=bank_id,
             contents=contents,
@@ -23594,6 +23609,40 @@ class MemoryEngine(MemoryEngineInterface):
         except Exception as e:
             logger.warning(f"Failed to check for other pending consolidation ops for bank {bank_id}: {e}")
             return None
+
+    async def _supersede_by_newer_retain_of_same_document(self, operation_id: str) -> str | None:
+        """The completed retain of the same document submitted after ``operation_id``, if any.
+
+        When there is one, records it as ``result_metadata.superseded_by`` on ``operation_id``,
+        which then completes normally: nothing is left for it to do, so it is neither a failure
+        nor a cancellation (a cancelled child would also turn its whole batch 'cancelled').
+
+        Keyed on ``serialization_key``, which a retain carries exactly when it targets one
+        document; a multi-document retain has none and never matches.
+        """
+        table = fq_table("async_operations")
+        backend = await self._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            newer = await conn.fetchval(
+                f"SELECT newer.operation_id FROM {table} me "
+                f"JOIN {table} newer "
+                f"ON newer.bank_id = me.bank_id AND newer.serialization_key = me.serialization_key "
+                f"AND newer.operation_type = me.operation_type "
+                f"WHERE me.operation_id = $1 AND newer.status = 'completed' "
+                f"AND (newer.created_at > me.created_at "
+                f"OR (newer.created_at = me.created_at AND newer.operation_id > me.operation_id)) "
+                f"LIMIT 1",
+                uuid.UUID(operation_id),
+            )
+            if newer is None:
+                return None
+            await conn.execute(
+                f"UPDATE {table} SET result_metadata = COALESCE(result_metadata, '{{}}'::jsonb) || $2::jsonb "
+                f"WHERE operation_id = $1",
+                uuid.UUID(operation_id),
+                json.dumps({"superseded_by": str(newer)}),
+            )
+        return str(newer)
 
     async def _mark_operation_superseded(self, operation_id: str, superseded_by: str, error_message: str) -> None:
         """Close an op whose work another pending op will do, without calling it a failure.
