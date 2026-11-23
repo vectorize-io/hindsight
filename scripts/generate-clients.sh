@@ -636,12 +636,14 @@ else
         fi
     done
 
-    # Fix known generator issue: api_files.go uses os.File but generator omits "os" import
-    if [ -f "api_files.go" ] && grep -q 'os\.File' api_files.go && ! grep -q '"os"' api_files.go; then
-        echo "Patching api_files.go: adding missing 'os' import..."
-        sed -i.bak 's|"net/url"|"net/url"\n\t"os"|' api_files.go
-        rm -f api_files.go.bak
-    fi
+    # Fix known generator issue: an API with file uploads uses os.File but the generator omits the "os" import
+    for f in api_*.go; do
+        if grep -q 'os\.File' "$f" && ! grep -q '"os"' "$f"; then
+            echo "Patching $f: adding missing 'os' import..."
+            sed -i.bak 's|"net/url"|"net/url"\n\t"os"|' "$f"
+            rm -f "$f.bak"
+        fi
+    done
 
     # Initialize module and build
     echo "Building Go client..."

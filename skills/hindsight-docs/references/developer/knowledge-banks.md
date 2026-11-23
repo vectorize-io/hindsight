@@ -1,0 +1,271 @@
+
+
+# Knowledge Banks
+
+A **knowledge bank** stores your documents as they are and finds the right passage in them: a page of a PDF, a window of a video, a paragraph of a manual. You upload files, then search them with text, an image or a short clip.
+
+There is no LLM anywhere in a knowledge bank. Nothing is summarised, extracted or rewritten. What you search is what you uploaded, and every result points back to its page or its second in the original file.
+
+---
+
+## Knowledge Banks and Memory Banks
+
+A [memory bank](./api/memory-banks.md) learns from what it is told. Retain sends the content to an LLM, which pulls out facts, people and dates, and consolidation turns those facts into observations. What you get back is what the bank *learned*, not the text you sent.
+
+A knowledge bank keeps the text. It is for content that is already right and must stay word for word: product manuals, policies, contracts, research papers, support articles, recorded calls, training videos.
+
+**Figure: Memory Banks and Knowledge Banks.** An animated diagram on the docs site; its narration, step by step:
+
+- **each on its own**
+  1. On their own, each bank has its own job. A personal assistant remembers Sam. A help center searches its manuals.
+  2. Retain sends the chat to an LLM. Ingest splits the files and embeds the pieces, with no LLM.
+  3. The memory bank keeps what it learned about Sam. The knowledge bank keeps the files word for word.
+  4. The assistant recalls what it knows about Sam. The help center searches its files.
+  5. Recall returns facts the bank learned. Search returns the exact page and the second of the video.
+- **together**
+  1. A support agent needs both: one memory bank per customer, linked to one knowledge bank of policies.
+  2. The memory bank keeps what the customer said, true or not. The knowledge bank keeps the policy as written.
+  3. The customer asks. Reflect reads both banks.
+  4. Memories bring the customer's context. The documents bring the rules.
+  5. When they disagree, the document wins. The customer can't talk the agent out of the policy.
+
+| | Memory bank | Knowledge bank |
+|---|---|---|
+| You send | conversations, notes, events | files and documents |
+| It stores | facts and observations an LLM wrote | the original files, split into passages |
+| You get back | facts, with their sources | passages, with their page or timestamp |
+| Uses an LLM | yes, on every retain | never |
+| Kinds of content | text, plus images through retain | PDF, image, audio, video, text, Office files |
+| Operations | retain, recall, reflect | ingest, search |
+
+The two work together: [link a knowledge bank to a memory bank](#linking-to-a-memory-bank) and reflect reads both. Knowledge banks and memory banks share one set of bank ids, so a knowledge bank cannot have the id of an existing memory bank.
+
+---
+
+## Ingesting Documents
+
+Each file you ingest becomes one **document**, split into **passages**. Each passage is embedded on its own, and search returns passages.
+
+**Figure: Ingesting into a Knowledge Bank.** An animated diagram on the docs site; its narration, step by step:
+
+- **ingest**
+  1. You upload files as they are. Each file becomes one document. Nothing is summarised and no LLM reads it.
+  2. The call returns at once. One background operation picks up the whole upload.
+  3. Each kind of file is split its own way: a PDF page by page, audio and video into short clips, text into passages that keep headings with their content.
+  4. Every passage is embedded into the same space, so a text question can find a page image or a video clip.
+  5. The passages swap in at once and the documents turn ready. The original files are kept, so search can point back to the page or the second.
+
+Each kind of file is split its own way. None of them goes through OCR or an LLM: the embedder reads pages and clips as they are.
+
+| File | Becomes | Types |
+|---|---|---|
+| PDF | one passage per page: the page rendered as an image, with its text layer kept and embedded too | `.pdf` |
+| Image | one passage | `.png` `.jpg` `.webp` `.gif` `.bmp` `.tiff` `.heic` |
+| Audio | windows of 60 seconds, 5 seconds of overlap | `.mp3` `.wav` `.m4a` `.aac` `.flac` `.ogg` `.opus` `.wma` |
+| Video | windows of 30 seconds (picture and sound), 5 seconds of overlap | `.mp4` `.mov` `.mkv` `.webm` `.avi` `.m4v` `.mpeg` |
+| Text | passages of about 512 tokens that follow the document's structure (see [how text is split](#how-text-is-split)) | `.txt` `.md` `.json` `.jsonl` `.csv` `.yaml` `.xml` `.rst` |
+| Office and web | their text, then split as text | `.docx` `.pptx` `.xlsx` `.xls` `.html` `.epub` |
+
+Audio and video are cut and decoded in-process (PyAV), with nothing to install on the server. Every size above can be changed for the whole server or [for one bank](#per-bank-settings).
+
+**How an ingest runs:**
+
+- **Files** are always ingested in the background: the call returns right away with the document ids and one operation id. Poll the operation, or each document's `status` (`pending`, `processing`, `ready`, `failed`), to know when it can be searched.
+- **Text** sent as JSON is ingested before the call returns, unless you ask for `async`.
+- **Same id, new content:** ingesting a document id again replaces that document. Its old passages stay searchable until the new ones are ready, then they swap in all at once.
+- **Same id, same content:** nothing is done, as long as the tags, file name and bank settings are the same too and the old document is `ready`. The id comes back in `unchanged_document_ids`.
+- **The original file is kept** in the server's [file storage](./configuration.md#file-storage) (PostgreSQL by default, or S3, GCS or Azure), so you can download it and stream the page or clip a result points to. A file that fails for good (it can't be read, or it's over a limit) is deleted.
+
+Tags on a document let a search look at only part of a bank. See the [API reference](./api/knowledge-banks.md#ingest-files).
+
+### How Text Is Split
+
+Text, and the text of Office and web files, is split by its structure first:
+
+- **A heading starts a new passage**, and waits for its content: a heading is never a passage on its own. A few words like "## Observations" alone used to match short questions better than any real answer.
+- **Paragraphs are merged** until the passage reaches about 512 tokens (`text_passage_tokens`).
+- **A paragraph bigger than that is cut by sentences.** If a heading was waiting, it leads the first piece.
+- **No overlap** between passages: it didn't improve search.
+
+Each passage is an exact slice of the original text, in order. It's embedded under its document's title: the title from its file name, or its first 40 words when the name gives none. So a clear file name helps search find the right document.
+
+A small passage alone loses what its page says about it: a table's rows without the table's title, or the company named only in the footer. So each passage also gets a **window**: the consecutive passages around it, up to 2048 tokens, embedded once as one more vector shared by every passage in it. Search finds a passage by its own vector or its window's, whichever is closer, and still returns the small passage. On ViDoRe V3's markdown subsets the window raised nDCG@10 by up to 7 points (finance: 54.1 → 61.0).
+
+---
+
+## Searching
+
+A search takes text, an image, a short video, or any mix of them, embedded together as one query. It returns passages, best first.
+
+**Figure: Searching a Knowledge Bank.** An animated diagram on the docs site; its narration, step by step:
+
+- **search**
+  1. A search takes text, an image, a short video, or several together. They become one query.
+  2. Two searches run: one by meaning, one by keywords. Only the query's rarer words count as keywords, in any language.
+  3. Each candidate is scored from all its vectors, with keyword matches mixed in. With a reranker set, the best go to it in one request: a text hit as its passage, a page as its picture and its text. Its order, blended with the search's order of documents, decides.
+  4. The best hits come first, each with the text around it, until max_tokens is full.
+  5. Results come back best first, each pointing to its page or its second in the original file.
+
+**1. Find candidates.** Three searches run side by side:
+
+- **by meaning:** the passages whose vectors are nearest to the query. A PDF page also has vectors for its text, in short sections and sentence by sentence, so a question can match a single line on a page. A text passage also has its [window](#how-text-is-split)'s vector.
+- **by keywords:** only the query's rarer words take part (the rarest, and any other word that is rare in the bank), so "X200" counts and "the" doesn't. Words are matched as they are, with no stemming, so this works in any language, and a product code or a name finds its document whatever language the question is in.
+- **by document:** every text passage of the three documents the meaning search ranks best is scored too, so the right passage of the right document is found even when it's worded unlike the question.
+
+**2. Score them.** Each candidate is scored from all its vectors. On a PDF page, the text counts for 70% of the score and the page image for 30%. A text passage takes the better of its own score and its window's. Each score is then averaged with the best score in its document, so a passage of a document that matches well climbs. Keyword matches are then mixed in at 20%.
+
+**3. Rerank them (optional).** With a reranker set (`HINDSIGHT_API_KB_RERANKER_URL` and `_MODEL`: any service that speaks Cohere's rerank API), the best candidates go to it in one request, in search order. Its order is then blended with the search's order of documents: the search is better at finding which document a question is about, the reranker at finding the passage inside it. The search's document order counts most when a few long documents hold all the candidates, and hardly at all when each candidate is its own document (a PDF page, an image or a clip counts as its own document here).
+
+- **How deep it goes:** as many candidates as fit in `HINDSIGHT_API_KB_RERANKER_MAX_TOKENS` (120,000 tokens; at most 26,000 on a `low` budget), not a fixed count. The rest keep the search's order, and so do ties.
+- **What the reranker reads:** a text hit as its passage, up to 512 tokens, under its document's title. Hits that would show it the same text (pieces of one short page) go once, as one candidate. An image or PDF page goes as its picture with its text; with `HINDSIGHT_API_KB_RERANKER_IMAGES=false`, or a picture under 280 or over 1568 pixels a side, it goes as its text. A video is not sent and keeps its place.
+- **When it runs:** for a query with text, unless the search sets `enable_reranking: false`. A search by an image is reranked with the picture as the query too when `HINDSIGHT_API_KB_RERANKER_QUERY_IMAGES` is on (off by default: turn it on only for a reranker that takes an image query). A search by a video is reranked by its text alone. If the reranker can't be reached, the search fails with `503`.
+
+Reflect's search of [linked knowledge banks](#linking-to-a-memory-bank) is reranked the same way.
+
+**4. Fit the budget.** Two settings decide how much comes back:
+
+- **`budget`** (`low`, `mid`, `high`) is how many scored candidates stay in the running: 50, 200 or 500. A higher budget reaches further down the list, but takes longer.
+- **`max_tokens`** (default 4096) is how much text the results can add up to. The best hits go in first. Each text hit comes with the passages around it, so you get the paragraph, not a cut sentence. Any budget left over widens the best hits a little more. An image, page or clip costs a small fixed amount plus its text.
+
+Results don't carry a score: scores are only comparable within one search, so the order is what to rely on. Pass `trace: true` to see everything: every candidate, its score at each step, the keywords used and their weight, what the budget kept, and how long each step took, rerank included. The control plane's search shows the same trace.
+
+You can narrow a search by `tags`, with the same rules as memory recall (`tags_match`: `any`, `all`, `any_strict`, `all_strict`, `exact`; and `tag_groups` for and/or/not), to some `document_ids`, or to some `media_types` (`document`, `image`, `audio`, `video`, `text`). `GET /knowledge-banks/{bank_id}/tags` lists a bank's tags with how many documents carry each.
+
+---
+
+## Linking to a Memory Bank
+
+A memory bank can read one or more knowledge banks. Add their ids to the memory bank's config:
+
+```bash
+curl -X PATCH "$HINDSIGHT_URL/v1/default/banks/support-agent/config" \
+  -H "Content-Type: application/json" \
+  -d '{"updates": {"knowledge_banks": ["product-manuals"]}}'
+```
+
+From then on, when [reflect](./reflect.md) searches its memories, it also searches every linked knowledge bank at the same time, with the same search as above. Each bank's best hits are taken in turn, within the same `max_tokens`. The passages reach the agent next to the memories, marked as documents. **When a document and a memory disagree, the document wins**: the agent is told to answer from the document and say the memory is out of date.
+
+How reflect searches them:
+
+| Setting | What it does | Default |
+|---|---|---|
+| `reflect_kb_search_apply_tags` | Filter the documents by the reflect's `tags`, `tags_match` and `tag_groups`, with the same rules as its memories. `false` searches every document. | `true` |
+| `reflect_kb_search_media_types` | The kinds of passage the search may return. | all |
+| `reflect_kb_search_budget` | The search's `budget`. Server-wide. | `mid` |
+| `reflect_kb_search_images` | Show the model the picture behind an image or PDF page hit, when the model reads images (`HINDSIGHT_API_LLM_VISION`). Server-wide. | `true` |
+| `reflect_kb_search_max_images` | The most pictures one search hands the model. Server-wide. | `4` |
+
+Each is also a server setting (`HINDSIGHT_API_REFLECT_KB_SEARCH_*`). With `HINDSIGHT_API_DECISION_MODEL_VISION` on, the [decision model](./decision-models.md) also sees those pictures when it checks whether the evidence already answers the question.
+
+If a linked bank can't be searched (it was deleted, or the caller may not read it), reflect skips it and goes on with the memories.
+
+A link only reaches reflect:
+
+- **Recall** over HTTP does not return documents.
+- **Consolidation and mental model refreshes** never read them, so a manual is never folded into the bank's memories.
+- **Exporting** a memory bank exports the link, not the knowledge bank's documents.
+
+Permissions are checked for the caller of the reflect, not for a background job: a caller who can't read a linked knowledge bank doesn't get its passages.
+
+---
+
+## Choosing an Embedder
+
+One embedder serves every knowledge bank on a server. What it can embed decides which kinds of files you can ingest.
+
+| Provider | Model (default) | Text | Image | Audio | Video |
+|---|---|:-:|:-:|:-:|:-:|
+| `local` (default) | `google/embeddinggemma-2`, in-process, open weights | ✓ | ✓ | ✓ | ✓ |
+| `gemini` | `gemini-embedding-2` | ✓ | ✓ | ✓ | ✓ |
+| `vertex` | `gemini-embedding-2` on Vertex AI | ✓ | ✓ | ✓ | ✓ |
+| `voyage` | `voyage-multimodal-3.5` | ✓ | ✓ | | ✓ |
+| `cohere` | `embed-v4.0` | ✓ | ✓ | | |
+| `openai` | any OpenAI-compatible `/v1/embeddings` server | set with `..._MODALITIES` (default `text,image`) | | | |
+| `text` | any [memory bank embeddings provider](./models.md#embedding-model), text only | ✓ | | | |
+
+- A file the embedder can't embed is refused: a text-only model refuses video. A PDF is embedded from its text layer alone when the model takes no images.
+- `vertex` uses the memory banks' Vertex project, region and credentials. `text` uses the memory banks' own embedder, or its own one set with `HINDSIGHT_API_KB_TEXT_EMBEDDINGS_*` (each takes the same values as the `HINDSIGHT_API_EMBEDDINGS_*` setting of the same name).
+- **Pick the embedder before you ingest.** The first time it runs, the server fixes the vector size for every knowledge bank. To switch to a model with another size, delete the knowledge banks and ingest again: the server refuses to start knowledge banks with vectors of two sizes.
+
+```bash
+# Gemini Embedding 2 instead of the in-process model
+export HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER=gemini
+export HINDSIGHT_API_KB_EMBEDDINGS_API_KEY=...
+```
+
+---
+
+## Per-Bank Settings
+
+A knowledge bank can change how its files are split, and nothing else: the embedder, keys, search weights and server limits stay the server's.
+
+```bash
+curl -X PATCH "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" \
+  -H "Content-Type: application/json" \
+  -d '{"updates": {"text_passage_tokens": 256, "disabled_media_types": ["video"]}}'
+```
+
+| Setting | What it changes | Range |
+|---|---|---|
+| `text_passage_tokens` | size of a text passage | 16–8192 |
+| `pdf_page_pixels` | longest side of a rendered PDF page | 256–8192 |
+| `pdf_bands` | also embed three horizontal strips of each PDF page: slightly better search, half the ingest speed | `true` / `false` |
+| `image_tokens` | how much detail the embedder reads from each image | 70–1120 |
+| `audio_window_seconds` | length of an audio window | 1–3600 |
+| `video_window_seconds` | length of a video window | 1–3600 |
+| `media_overlap_seconds` | overlap between windows | 0 to half the shorter window |
+| `max_media_seconds` | longest audio or video file accepted | up to the server's limit |
+| `max_pdf_pages` | longest PDF accepted | up to the server's limit |
+| `disabled_media_types` | kinds of file this bank refuses | `document`, `image`, `audio`, `video`, `text` |
+
+A `null` value goes back to the server's setting, and `DELETE .../config` resets them all. A change applies to files ingested after it: ingesting an unchanged file again splits it with the new settings. Writes need `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` on, the same switch as memory bank config.
+
+---
+
+## Configuration
+
+Knowledge banks are on by default; `HINDSIGHT_API_ENABLE_KB=false` turns them off (their endpoints answer `404`, reflect ignores linked knowledge banks and the control plane hides them). Every setting starts with `HINDSIGHT_API_KB_`: the embedder, file limits, split sizes, search weights, the rerank and ingest workers. The full list is in [Configuration](./configuration.md#knowledge-banks); the split settings can also be changed [per bank](#per-bank-settings).
+
+---
+
+## Extending It
+
+### Ingestion Strategies
+
+An ingestion strategy runs your own code on some file types before the knowledge bank splits them: unpack an archive, run OCR on scanned PDFs, cut a file format the bank doesn't know. A strategy maps file types (an extension or a content type) to an extension class:
+
+```bash
+export HINDSIGHT_API_KB_INGEST_STRATEGIES='{
+  "uploads": {
+    ".zip": {"extension": "acme.archive:Unpack"},
+    ".pdf": {"extension": "acme.ocr:OcrPdf", "settings": {"dpi": 300}}
+  }
+}'
+```
+
+An ingest picks a strategy with `strategy` on each item, or gets `HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY`. A file whose type the strategy doesn't map is split as usual.
+
+For each file, the extension returns either **files**, each ingested as its own document of the same bank (`<document_id>/<name>`, which records the document it came from), or **passages** already cut, which are embedded as they are. It runs on the worker with the ingest's retries: a `ValueError` fails the document for good, any other error is retried. Raise its `version` to make unchanged files go through it again.
+
+### Your Own Store
+
+Documents and passages live in Postgres by default, in their own tables with a pgvector index. To keep them somewhere else, implement `KnowledgeStore` (`hindsight_api/knowledge/store.py`) and set `HINDSIGHT_API_KB_STORE_EXTENSION=module.path:ClassName`. The bank itself always stays in the `banks` table, so operations, audit and bank deletion work the same.
+
+---
+
+## In the Control Plane
+
+With knowledge banks on, the control plane lists them next to memory banks. Each knowledge bank has:
+
+- a home page with its documents and passages over time;
+- a documents list, where you can upload files or text, open a document to see its passages, and download the original;
+- a search panel that takes text, an image or an MP4 clip, shows each result's page or clip, and the full trace;
+- settings, with the bank's ingest operations and its [per-bank settings](#per-bank-settings).
+
+A memory bank's settings show the knowledge banks it links, where you can add or remove them.
+
+---
+
+## Deleting
+
+Deleting a document removes its passages, its stored file, and any documents an [ingestion strategy](#ingestion-strategies) split out of it. Deleting a knowledge bank first cancels its queued and running ingests, then removes its documents in batches, so a bank with a hundred thousand documents deletes without timing out. Memory banks that link a deleted knowledge bank keep working; reflect skips the missing bank.

@@ -47,7 +47,7 @@ class MemoryUnitListItem(BaseModel):
     invalidated_at: Optional[StrictStr] = None
     edited_at: Optional[StrictStr] = None
     updated_at: Optional[StrictStr] = None
-    source_memory_ids: Optional[List[StrictStr]] = Field(default=None, description="An observation's source facts; empty for a source fact")
+    source_memory_ids: Optional[List[Optional[StrictStr]]] = Field(default=None, description="An observation's source facts; empty for a source fact")
     __properties: ClassVar[List[str]] = ["id", "text", "context", "date", "fact_type", "document_id", "mentioned_at", "occurred_start", "occurred_end", "entities", "chunk_id", "proof_count", "tags", "metadata", "consolidated_at", "consolidation_failed_at", "state", "invalidation_reason", "invalidated_at", "edited_at", "updated_at", "source_memory_ids"]
 
     model_config = ConfigDict(

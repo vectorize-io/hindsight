@@ -1,0 +1,240 @@
+{
+  "title": "Ingesting into a Knowledge Bank",
+  "speed": 2200,
+  "elements": [
+    {
+      "id": "files",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Your files"
+        },
+        {
+          "type": "subtitle",
+          "text": "PDF · image · audio · video · text"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 230
+    },
+    {
+      "id": "split",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Split"
+        },
+        {
+          "type": "subtitle",
+          "text": "pages · clips · passages"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 300
+    },
+    {
+      "id": "embed",
+      "type": "rectangle",
+      "content": [
+        {
+          "type": "title",
+          "text": "Multimodal embedder"
+        },
+        {
+          "type": "subtitle",
+          "text": "one space for every kind of file"
+        }
+      ],
+      "minCardHeight": 118,
+      "width": 300
+    },
+    {
+      "id": "work",
+      "type": "group",
+      "children": [
+        "split",
+        "embed"
+      ],
+      "layout": {
+        "direction": "column",
+        "gap": 44,
+        "align": "stretch"
+      },
+      "label": {
+        "title": "Hindsight Worker · Ingest"
+      }
+    },
+    {
+      "id": "bank",
+      "type": "cylinder",
+      "content": [
+        {
+          "type": "title",
+          "text": "Knowledge Bank"
+        },
+        {
+          "type": "subtitle",
+          "text": "originals · passages · vectors"
+        }
+      ],
+      "minCardHeight": 148,
+      "width": 230
+    },
+    {
+      "id": "g0",
+      "type": "group",
+      "children": [
+        "files",
+        "work",
+        "bank"
+      ],
+      "layout": {
+        "direction": "row",
+        "gap": 56,
+        "align": "center"
+      }
+    },
+    {
+      "id": "up",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "files"
+      },
+      "end": {
+        "id": "split"
+      },
+      "label": {
+        "text": "ingest"
+      }
+    },
+    {
+      "id": "emb",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "split"
+      },
+      "end": {
+        "id": "embed"
+      },
+      "label": {
+        "text": "passages"
+      }
+    },
+    {
+      "id": "store",
+      "type": "arrow",
+      "route": "curved",
+      "start": {
+        "id": "embed"
+      },
+      "end": {
+        "id": "bank"
+      },
+      "label": {
+        "text": "vectors"
+      }
+    }
+  ],
+  "scenes": [
+    {
+      "label": "ingest",
+      "beats": [
+        {
+          "show": {
+            "files": [
+              {
+                "tag": "PDF",
+                "tone": "blue",
+                "text": "pump-manual.pdf · 40 pages"
+              },
+              {
+                "tag": "MP4",
+                "tone": "blue",
+                "text": "install-walkthrough.mp4 · 6 min"
+              },
+              {
+                "tag": "MD",
+                "tone": "blue",
+                "text": "faq.md"
+              }
+            ]
+          },
+          "say": "You upload files as they are. Each file becomes one document. Nothing is summarised and no LLM reads it."
+        },
+        {
+          "edges": {
+            "edge": "up",
+            "data": "3 files"
+          },
+          "show": {
+            "files": [
+              {
+                "tag": "pending",
+                "tone": "gray",
+                "text": "3 documents queued"
+              }
+            ]
+          },
+          "say": "The call returns at once. One background operation picks up the whole upload."
+        },
+        {
+          "show": {
+            "split": [
+              {
+                "text": "PDF → 40 page images, text layer kept",
+                "mark": "✓"
+              },
+              {
+                "text": "video → 15 clips of 30 s, 5 s overlap",
+                "mark": "✓"
+              },
+              {
+                "text": "text → ~512-token passages, each with its window",
+                "mark": "✓"
+              }
+            ]
+          },
+          "say": "Each kind of file is split its own way: a PDF page by page, audio and video into short clips, text into passages that keep headings with their content.",
+          "ms": 3400
+        },
+        {
+          "edges": {
+            "edge": "emb",
+            "data": "passages"
+          },
+          "show": {
+            "embed": [
+              {
+                "tag": "vectors",
+                "tone": "green",
+                "text": "pages, clips and text in one space"
+              }
+            ]
+          },
+          "say": "Every passage is embedded into the same space, so a text question can find a page image or a video clip."
+        },
+        {
+          "edges": {
+            "edge": "store",
+            "data": "vectors"
+          },
+          "show": {
+            "bank": [
+              {
+                "tag": "ready",
+                "tone": "green",
+                "text": "3 documents · 58 passages"
+              }
+            ]
+          },
+          "say": "The passages swap in at once and the documents turn ready. The original files are kept, so search can point back to the page or the second.",
+          "ms": 3200
+        }
+      ]
+    }
+  ]
+}

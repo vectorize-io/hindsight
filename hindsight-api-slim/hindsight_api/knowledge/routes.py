@@ -334,9 +334,11 @@ class KnowledgeSearchTrace(BaseModel):
     keyword_weight: float = Field(description="The keyword score's share of the final score")
     keyword_terms: dict[str, float] = Field(
         description="Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) "
-        "as the query's rarest word is left out"
+        "as the query's rarest word is left out, unless its IDF reaches 2 (in under ~13% of the bank's passages)"
     )
-    timings_ms: dict[str, float] = Field(description="Each phase's time: open_bank, embed, store.search, context")
+    timings_ms: dict[str, float] = Field(
+        description="Each phase's time: open_bank, embed, store.search (and its store.* parts), rerank, context"
+    )
     candidate_searches: list[KnowledgeTraceArm] = Field(description="Step 1: each candidate search's own list")
     hits: list[KnowledgeSearchTraceHit] = Field(description="Steps 2-3: every candidate scored, best first")
     budget_steps: list[KnowledgeTraceBudgetStep] = Field(description="Step 4: how max_tokens was filled, in order")
@@ -562,13 +564,10 @@ def _require_config_writes() -> None:
 
 
 def build_router(get_request_context: Callable[..., RequestContext]) -> APIRouter:
-    # Out of the OpenAPI spec while knowledge banks are a hidden feature: no generated client,
-    # CLI command or API reference page names them. Back in the spec at launch.
     router = APIRouter(
         prefix=PREFIX,
         tags=["Knowledge Banks"],
         dependencies=[Depends(_require_enabled)],
-        include_in_schema=False,
     )
 
     def service(request: Request) -> KnowledgeService:

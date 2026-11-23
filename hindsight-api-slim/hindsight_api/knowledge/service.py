@@ -444,7 +444,7 @@ class SearchTrace:
     hits: list[TracedHit] = field(default_factory=list)
     tokens_used: int = 0
     budget_steps: list[BudgetStep] = field(default_factory=list)
-    #: Each phase's wall time (open_bank, embed, store.search, context), in seconds.
+    #: Each phase's wall time (open_bank, embed, store.search and its store.* parts, rerank, context), in seconds.
     seconds: dict[str, float] = field(default_factory=dict)
 
 

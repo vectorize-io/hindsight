@@ -52,7 +52,7 @@ type BankTemplateConfig struct {
 	ConsolidationSourceFactsMaxTokens NullableInt32 `json:"consolidation_source_facts_max_tokens,omitempty"`
 	ConsolidationSourceFactsMaxTokensPerObservation NullableInt32 `json:"consolidation_source_facts_max_tokens_per_observation,omitempty"`
 	MaxObservationsPerScope NullableInt32 `json:"max_observations_per_scope,omitempty"`
-	ObservationScopeLimits []map[string]interface{} `json:"observation_scope_limits,omitempty"`
+	ObservationScopeLimits []*map[string]interface{} `json:"observation_scope_limits,omitempty"`
 	DefaultObservationScopes NullableDefaultObservationScopes `json:"default_observation_scopes,omitempty"`
 	ConsolidationStrategies []ConsolidationStrategySpec `json:"consolidation_strategies,omitempty"`
 	ReflectSourceFactsMaxTokens NullableInt32 `json:"reflect_source_facts_max_tokens,omitempty"`
@@ -1445,9 +1445,9 @@ func (o *BankTemplateConfig) UnsetMaxObservationsPerScope() {
 }
 
 // GetObservationScopeLimits returns the ObservationScopeLimits field value if set, zero value otherwise (both if not set or set to explicit null).
-func (o *BankTemplateConfig) GetObservationScopeLimits() []map[string]interface{} {
+func (o *BankTemplateConfig) GetObservationScopeLimits() []*map[string]interface{} {
 	if o == nil {
-		var ret []map[string]interface{}
+		var ret []*map[string]interface{}
 		return ret
 	}
 	return o.ObservationScopeLimits
@@ -1456,7 +1456,7 @@ func (o *BankTemplateConfig) GetObservationScopeLimits() []map[string]interface{
 // GetObservationScopeLimitsOk returns a tuple with the ObservationScopeLimits field value if set, nil otherwise
 // and a boolean to check if the value has been set.
 // NOTE: If the value is an explicit nil, `nil, true` will be returned
-func (o *BankTemplateConfig) GetObservationScopeLimitsOk() ([]map[string]interface{}, bool) {
+func (o *BankTemplateConfig) GetObservationScopeLimitsOk() ([]*map[string]interface{}, bool) {
 	if o == nil || IsNil(o.ObservationScopeLimits) {
 		return nil, false
 	}
@@ -1472,8 +1472,8 @@ func (o *BankTemplateConfig) HasObservationScopeLimits() bool {
 	return false
 }
 
-// SetObservationScopeLimits gets a reference to the given []map[string]interface{} and assigns it to the ObservationScopeLimits field.
-func (o *BankTemplateConfig) SetObservationScopeLimits(v []map[string]interface{}) {
+// SetObservationScopeLimits gets a reference to the given []*map[string]interface{} and assigns it to the ObservationScopeLimits field.
+func (o *BankTemplateConfig) SetObservationScopeLimits(v []*map[string]interface{}) {
 	o.ObservationScopeLimits = v
 }
 

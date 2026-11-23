@@ -24,11 +24,11 @@ from typing import Union, Any, List, Set, TYPE_CHECKING, Optional, Dict
 from typing_extensions import Literal, Self
 from pydantic import Field
 
-MENTALMODELTRIGGERINPUTTAGGROUPSINNER_ANY_OF_SCHEMAS = ["TagGroupAndInput", "TagGroupLeaf", "TagGroupNotInput", "TagGroupOrInput"]
+KNOWLEDGESEARCHREQUESTTAGGROUPSINNER_ANY_OF_SCHEMAS = ["TagGroupAndInput", "TagGroupLeaf", "TagGroupNotInput", "TagGroupOrInput"]
 
-class MentalModelTriggerInputTagGroupsInner(BaseModel):
+class KnowledgeSearchRequestTagGroupsInner(BaseModel):
     """
-    MentalModelTriggerInputTagGroupsInner
+    KnowledgeSearchRequestTagGroupsInner
     """
 
     # data type: TagGroupLeaf
@@ -62,7 +62,7 @@ class MentalModelTriggerInputTagGroupsInner(BaseModel):
 
     @field_validator('actual_instance')
     def actual_instance_must_validate_anyof(cls, v):
-        instance = MentalModelTriggerInputTagGroupsInner.model_construct()
+        instance = KnowledgeSearchRequestTagGroupsInner.model_construct()
         error_messages = []
         # validate data type: TagGroupLeaf
         if not isinstance(v, TagGroupLeaf):
@@ -90,7 +90,7 @@ class MentalModelTriggerInputTagGroupsInner(BaseModel):
 
         if error_messages:
             # no match
-            raise ValueError("No match found when setting the actual_instance in MentalModelTriggerInputTagGroupsInner with anyOf schemas: TagGroupAndInput, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when setting the actual_instance in KnowledgeSearchRequestTagGroupsInner with anyOf schemas: TagGroupAndInput, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput. Details: " + ", ".join(error_messages))
         else:
             return v
 
@@ -130,7 +130,7 @@ class MentalModelTriggerInputTagGroupsInner(BaseModel):
 
         if error_messages:
             # no match
-            raise ValueError("No match found when deserializing the JSON string into MentalModelTriggerInputTagGroupsInner with anyOf schemas: TagGroupAndInput, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput. Details: " + ", ".join(error_messages))
+            raise ValueError("No match found when deserializing the JSON string into KnowledgeSearchRequestTagGroupsInner with anyOf schemas: TagGroupAndInput, TagGroupLeaf, TagGroupNotInput, TagGroupOrInput. Details: " + ", ".join(error_messages))
         else:
             return instance
 
@@ -162,5 +162,5 @@ from hindsight_client_api.models.tag_group_and_input import TagGroupAndInput
 from hindsight_client_api.models.tag_group_not_input import TagGroupNotInput
 from hindsight_client_api.models.tag_group_or_input import TagGroupOrInput
 # TODO: Rewrite to not use raise_errors
-MentalModelTriggerInputTagGroupsInner.model_rebuild(raise_errors=False)
+KnowledgeSearchRequestTagGroupsInner.model_rebuild(raise_errors=False)
 
