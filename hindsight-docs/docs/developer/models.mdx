@@ -792,6 +792,23 @@ an API key from the [Anthropic Console](https://console.anthropic.com/).
    in the server's config (and can be set per operation or per bank like any other LLM key).
    With no key set, the CLI's own login is used.
 
+   **`apiKeyHelper` login (optional):** Hindsight starts the CLI isolated from your
+   `~/.claude/settings.json`, so an `apiKeyHelper` set there is never seen. If your Claude Code
+   logs in through one (for example behind a gateway), put it in its own settings file and point
+   Hindsight at it. Keep only the helper (and its `env`) in that file: hooks or plugins in it would
+   run inside Hindsight's own LLM calls.
+   ```bash
+   cat > /etc/hindsight/claude-settings.json <<'JSON'
+   { "apiKeyHelper": "/usr/local/bin/get-claude-key" }
+   JSON
+   export HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS=/etc/hindsight/claude-settings.json
+   ```
+
+   **Reasoning effort:** `HINDSIGHT_API_LLM_REASONING_EFFORT` and the per-operation
+   `HINDSIGHT_API_<OP>_LLM_REASONING_EFFORT` (`low`, `medium`, `high`, `xhigh`, `max`) are passed to
+   each operation's CLI, so consolidation can run at `medium` while mental model refresh stays at
+   `high`.
+
 5. **Start Hindsight:**
    ```bash
    hindsight-api

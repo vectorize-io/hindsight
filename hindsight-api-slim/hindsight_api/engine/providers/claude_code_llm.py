@@ -10,6 +10,7 @@ configured as the API key, and otherwise with the host's `claude auth login`.
 import asyncio
 import json
 import logging
+import os
 import re
 import tempfile
 import time
@@ -90,6 +91,10 @@ def _sdk_token_usage(usage: dict[str, Any] | None, messages: list[dict[str, Any]
 # When a setup-token is configured, _claude_env() below drops that override on
 # purpose so the host login is NOT found and the token is used instead.
 _isolated_claude_env: dict[str, str] | None = None
+
+# Effort values the CLI accepts. Others (e.g. "none", "minimal" from an OpenAI-style
+# config) are not sent, and the startup warning says so.
+_CLI_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
 def _get_isolated_claude_env() -> dict[str, str]:
@@ -230,12 +235,36 @@ class ClaudeCodeLLM(LLMInterface):
     ):
         """Initialize Claude Code LLM provider."""
         super().__init__(provider, api_key, base_url, model, reasoning_effort, **kwargs)
-        self._warn_reasoning_effort_unsupported()
-        self._env = _claude_env(api_key.strip() if api_key else None)
+        # Copy: _claude_env() can return the process-wide isolation dict, and an
+        # effort written into it would leak into every other operation's CLI.
+        self._env = dict(_claude_env(api_key.strip() if api_key else None))
+        # The CLI reads its effort from CLAUDE_CODE_EFFORT_LEVEL. Set per instance
+        # so each operation's HINDSIGHT_API_<OP>_LLM_REASONING_EFFORT applies, and
+        # wins over a process-wide CLAUDE_CODE_EFFORT_LEVEL (issue #6762).
+        if reasoning_effort in _CLI_EFFORT_LEVELS:
+            self._env["CLAUDE_CODE_EFFORT_LEVEL"] = reasoning_effort
+        elif reasoning_effort is not None:
+            logger.warning(
+                f"reasoning_effort={reasoning_effort!r} is ignored: the claude-code provider accepts "
+                f"{', '.join(sorted(_CLI_EFFORT_LEVELS))}."
+            )
+        from ...config import get_config
+
+        # Isolation loads no settings files, so a host apiKeyHelper is never seen;
+        # this one file is the opt-in way back in (issue #6500). Checked here: a
+        # mistyped path would otherwise surface as an opaque CLI failure on every call.
+        settings = get_config().llm_claude_code_settings
+        self._settings = os.path.expanduser(settings) if settings else None
+        if self._settings and not os.path.isfile(self._settings):
+            raise RuntimeError(
+                f"HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS points at {self._settings}, which is not a file."
+            )
         # The key can also come from a per-operation or per-bank LLM config, so the
         # hint names the config rather than only the env var an operator may not have set.
         self._auth_hint = (
-            "The configured Claude Code API key was rejected. Generate a new token with "
+            f"The key from the apiKeyHelper in {self._settings} was rejected. Check the helper's output."
+            if self._settings
+            else "The configured Claude Code API key was rejected. Generate a new token with "
             "'claude setup-token' and update HINDSIGHT_API_LLM_API_KEY (or the bank/operation LLM key)."
             if "CLAUDE_CODE_OAUTH_TOKEN" in self._env
             else "Run 'claude auth login', or set HINDSIGHT_API_LLM_API_KEY to a token from 'claude setup-token'."
@@ -244,8 +273,14 @@ class ClaudeCodeLLM(LLMInterface):
         # Verify Claude Agent SDK is available
         try:
             self._verify_claude_code_available()
+            # Settings first: the CLI ranks an apiKeyHelper above CLAUDE_CODE_OAUTH_TOKEN
+            # and the stored login.
             auth = (
-                "CLAUDE_CODE_OAUTH_TOKEN from config" if "CLAUDE_CODE_OAUTH_TOKEN" in self._env else "claude auth login"
+                f"settings file {self._settings}"
+                if self._settings
+                else "CLAUDE_CODE_OAUTH_TOKEN from config"
+                if "CLAUDE_CODE_OAUTH_TOKEN" in self._env
+                else "claude auth login"
             )
             logger.info(f"Claude Code: Using Claude Agent SDK (authentication via {auth})")
             # Automated calls on a Claude subscription may conflict with Anthropic's
@@ -407,9 +442,9 @@ class ClaudeCodeLLM(LLMInterface):
             # Pin the configured model (issue #2881). Without this the spawned CLI
             # runs its own default model — an Opus-class model on Pro/Max OAuth —
             # regardless of HINDSIGHT_API_*_LLM_MODEL, while metrics/logs still print
-            # self.model, so the mismatch is invisible. The CLI loads no settings
-            # files (setting_sources=[] below), so a host settings.json can't set the
-            # model either: passing it through here is the only channel.
+            # self.model, so the mismatch is invisible. The CLI loads no host settings
+            # (setting_sources=[] below), so a host settings.json can't set the model
+            # either: passing it through here is the only reliable channel.
             model=self.model or None,
             env=self._env,
             # CLAUDE_CONFIG_DIR only moves *user* settings. The CLI still loads
@@ -417,9 +452,12 @@ class ClaudeCodeLLM(LLMInterface):
             # subprocess inherits the daemon's cwd: started from $HOME, that file
             # IS ~/.claude/settings.json with the host's hooks, and the #1751
             # loop comes back (issue #5542). Run in the empty isolated dir and
-            # load no settings files at all.
+            # load no user/project/local settings.
             cwd=self._env["CLAUDE_CONFIG_DIR"],
             setting_sources=[],
+            # --settings loads even with setting_sources=[]: the operator's file
+            # (typically just an apiKeyHelper) is the only settings the CLI sees.
+            settings=self._settings,
         )
 
         # Call Claude Agent SDK

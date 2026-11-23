@@ -60,6 +60,7 @@ class _FakeOptions:
     model: str | None = None
     cwd: str | None = None
     setting_sources: list[str] | None = None
+    settings: str | None = None
 
 
 class _FakeAssistantMessage:

@@ -912,6 +912,10 @@ ENV_LLM_CODEX_HOME = "HINDSIGHT_API_LLM_CODEX_HOME"
 # credentials.json and this host's host_id. Server-level only.
 ENV_LLM_CHATGPT_HOME = "HINDSIGHT_API_LLM_CHATGPT_HOME"
 
+# claude-code provider: a settings file (e.g. an apiKeyHelper) the spawned CLI
+# loads despite its isolation (issue #6500). Server-level only.
+ENV_LLM_CLAUDE_CODE_SETTINGS = "HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS"
+
 # xai-oauth provider. The token store is written by the `login` entrypoint and read on
 # every call; the rest exist so a deployment can point at a different OAuth app.
 ENV_XAI_OAUTH_TOKEN_PATH = "HINDSIGHT_API_XAI_OAUTH_TOKEN_PATH"
@@ -1441,6 +1445,9 @@ DEFAULT_LLM_CODEX_HOME = None
 
 # chatgpt credentials directory (None = ~/.hindsight/chatgpt)
 DEFAULT_LLM_CHATGPT_HOME = None
+
+# claude-code settings file (None = the CLI loads no settings file)
+DEFAULT_LLM_CLAUDE_CODE_SETTINGS = None
 
 # Vertex AI defaults
 DEFAULT_LLM_VERTEXAI_PROJECT_ID = None  # Required for Vertex AI
@@ -3759,6 +3766,10 @@ class HindsightConfig:
     # only, for the same reason as llm_codex_home.
     llm_chatgpt_home: str | None
 
+    # claude-code settings file passed to the spawned CLI (None = none). Server-level
+    # only: an apiKeyHelper in it runs a command, so a bank must not point at one.
+    llm_claude_code_settings: str | None
+
     # Vertex AI configuration
     llm_vertexai_project_id: str | None
     llm_vertexai_region: str
@@ -4586,6 +4597,8 @@ class HindsightConfig:
         "kb_reranker_url",
         # chatgpt: points at a directory holding an OAuth grant.
         "llm_chatgpt_home",
+        # claude-code: a settings file whose apiKeyHelper mints the auth key.
+        "llm_claude_code_settings",
     }
 
     # CONFIGURABLE_FIELDS: Safe behavioral settings that can be customized per-tenant/bank
@@ -5205,6 +5218,8 @@ class HindsightConfig:
             # Codex (ChatGPT OAuth) credentials directory
             llm_codex_home=os.getenv(ENV_LLM_CODEX_HOME) or DEFAULT_LLM_CODEX_HOME,
             llm_chatgpt_home=os.getenv(ENV_LLM_CHATGPT_HOME, "").strip() or DEFAULT_LLM_CHATGPT_HOME,
+            llm_claude_code_settings=os.getenv(ENV_LLM_CLAUDE_CODE_SETTINGS, "").strip()
+            or DEFAULT_LLM_CLAUDE_CODE_SETTINGS,
             # Vertex AI
             llm_vertexai_project_id=os.getenv(ENV_LLM_VERTEXAI_PROJECT_ID) or DEFAULT_LLM_VERTEXAI_PROJECT_ID,
             llm_vertexai_region=os.getenv(ENV_LLM_VERTEXAI_REGION, DEFAULT_LLM_VERTEXAI_REGION),
