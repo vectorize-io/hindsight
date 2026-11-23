@@ -286,8 +286,10 @@ class OracleDialect(SQLDialect):
             )
         ft_list = ", ".join(f"'{ft}'" for ft in fact_types)
         distance = f"VECTOR_DISTANCE(embedding, {embedding_param}, COSINE)"
+        # Ordered by rank inside each type like the per-type arms: the caller keeps the
+        # first rows it reads per fact type, so they must come nearest first.
         return [
-            f"SELECT {cols}, similarity, NULL AS bm25_score, 'semantic' AS source"
+            f"SELECT * FROM (SELECT {cols}, similarity, NULL AS bm25_score, 'semantic' AS source"
             f" FROM (SELECT {cols},"
             f"        1 - {distance} AS similarity,"
             f"        ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY {distance}) AS rn_"
@@ -298,8 +300,9 @@ class OracleDialect(SQLDialect):
             f"   AND (1 - {distance}) >= {min_similarity}"
             f"   {tags_clause}"
             f"   {groups_clause}"
-            f"   {extra_where}) t_sem"
+            f"   {extra_where})"
             f" WHERE rn_ <= {fetch_limit}"
+            f" ORDER BY fact_type, rn_) t_sem"
         ]
 
     def build_bm25_arm(

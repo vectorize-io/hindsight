@@ -73,6 +73,8 @@ def test_oracle_ranks_several_fact_types_in_one_scan() -> None:
     assert "fact_type IN ('world', 'experience')" in arm
     assert "ROW_NUMBER() OVER (PARTITION BY fact_type ORDER BY VECTOR_DISTANCE(embedding, :1, COSINE))" in arm
     assert "WHERE rn_ <= 50" in arm
+    # Recall keeps the first rows it reads per type, so they must arrive nearest first.
+    assert "ORDER BY fact_type, rn_" in arm
     assert "AND tags IS NOT NULL" in arm
 
 
