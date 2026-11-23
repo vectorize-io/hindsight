@@ -48,7 +48,6 @@ class _FakeSession:
     # Set to refuse a body the way Jev does when it counts it over its window. Jev counts
     # mixed-script text at twice our tokenizer (#5715), so the window here does too.
     window: int | None = None
-    refusal = UpstreamHTTPError(400, '{"detail":{"error_type":"max_tokens_exceeded"}}', {}, "")
 
     def __init__(self, ranking: dict[str, float], cut_level: float = 0.0):
         self.ranking = ranking
@@ -56,6 +55,8 @@ class _FakeSession:
         self.posted: list[dict] = []
         self.urls: list[str] = []
         self.refused: list[dict] = []
+        # Jev's refusal; a test swaps it for another server's (#6522).
+        self.refusal = UpstreamHTTPError(400, '{"detail":{"error_type":"max_tokens_exceeded"}}', {}, "")
 
     def get(self):
         return self
