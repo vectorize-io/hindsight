@@ -1,6 +1,6 @@
 ---
 title: "Introducing Knowledge Banks: extending agent memory with SOTA multimodal search, at a fraction of the cost"
-description: "Knowledge banks give Hindsight agents your PDFs, images, audio and video, kept exactly as written. Search ranks first on LegalBench-RAG and ATM-Bench, a bank is about 3x cheaper to fill than memory, and linked to a memory bank it lifts a support agent from 75% to 85%."
+description: "Knowledge banks give Hindsight agents your PDFs, images, audio and video, kept exactly as written. Search ranks first on LegalBench-RAG and ATM-Bench, a bank costs no LLM calls to fill, and linked to a memory bank it lifts a support agent from 75% to 85%."
 authors: [nicoloboschi]
 date: 2026-11-24
 slug: "2026/11/24/knowledge-banks"
@@ -19,7 +19,7 @@ import TabItem from '@theme/TabItem';
 
 - **Memory, extended.** Link a knowledge bank to a memory bank and one reflect call reads both, with the documents as the reference. On a support-agent benchmark: 85% right, against 75% with everything in memory and 71% with everything in documents.
 - **State-of-the-art multimodal search.** First on LegalBench-RAG (contracts, 87.2) and ATM-Bench (a person's photos, videos and emails, 93.1). Second on ViDoRe V3 (enterprise PDFs), 1.5 points behind Mixedbread with its reranker.
-- **A fraction of the cost.** No LLM reads your documents, so a knowledge bank is about 3× cheaper to fill than putting the same manuals in memory. A hosted search costs $4.50 per 1,000, against $7.50 for Mixedbread with its reranker, and both models run on Hindsight Inference at $0.05 per million tokens.
+- **A fraction of the cost.** No LLM reads your documents: on the support benchmark, the manuals cost about $0.61 in LLM calls to put in a memory bank, and none in a knowledge bank, only the embedding. A hosted search costs $4.50 per 1,000, against $7.50 for Mixedbread with its reranker, and both models run on Hindsight Inference at $0.05 per million tokens.
 - **Open source and in Hindsight Cloud.** In Hindsight 1.3, and in [Hindsight Cloud](https://hindsight.vectorize.io) for every account.
 
 <!-- truncate -->
@@ -193,7 +193,7 @@ Memexa v2's recall counts the items it passes to its answer model, which may not
 
 </div>
 
-**Filling it: no LLM.** A knowledge bank costs only the embedding. On the support benchmark, putting the manuals into a memory bank cost **$0.95** in LLM calls, because retain reads every page. With the manuals in a knowledge bank and only the chats in memory, it cost **$0.34**: about 3× cheaper, and it scored higher. The linked setup sends the agent more context, so a question costs more: $0.00059 against $0.00031 with memory alone. On LLM spend, memory alone only catches up after about 2,200 questions.
+**Filling it: no LLM.** A knowledge bank costs only the embedding. On the support benchmark, filling one memory bank with the manuals and the chats cost **$0.95** in LLM calls. With the manuals in a knowledge bank and only the chats in memory, it cost **$0.34**, and it scored higher. The difference, about **$0.61**, is what retain spent reading the 837 pages of manuals; in a knowledge bank they cost only the embedding. The linked setup sends the agent more context, so a question costs more: $0.00059 against $0.00031 with memory alone. On LLM spend, memory alone only catches up after about 2,200 questions.
 
 **Searching.** On Hindsight Cloud, a search costs **$4.50 per 1,000**, reranking included. Mixedbread's list price, with its reranker, is $7.50 per 1,000. On your own server you pay only for the models you call.
 
