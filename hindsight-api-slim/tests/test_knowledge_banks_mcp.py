@@ -15,6 +15,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from hindsight_api.extensions import KnowledgeBankReadOperation
 from hindsight_api.mcp_tools import _KNOWLEDGE_TOOLS
+from hindsight_api.models import RequestContext
 from tests.test_knowledge_banks import fake_embedder  # noqa: F401  (fixture)
 
 
@@ -55,6 +56,10 @@ async def test_knowledge_bank_over_mcp(memory, fake_embedder):  # noqa: F811
                 # A memory bank id is not a knowledge bank: an error payload, not a crash.
                 missing = _payload(await s.call_tool("get_knowledge_bank", {"bank_id": f"nope-{kb}"}))
                 assert "not found" in missing["error"]
+                # Each family refuses the other kind of bank by id.
+                assert "error" in _payload(await s.call_tool("recall", {"bank_id": kb, "query": "x"}))
+                await memory.get_bank_profile(f"mem-{kb}", request_context=RequestContext())
+                assert "error" in _payload(await s.call_tool("get_knowledge_bank", {"bank_id": f"mem-{kb}"}))
 
             # The knowledge bank's own endpoint: only its tools, scoped to it.
             async with await session(f"http://test/mcp/kb/{kb}/") as (r, w, _), ClientSession(r, w) as s:
