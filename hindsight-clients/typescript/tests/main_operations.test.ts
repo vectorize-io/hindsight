@@ -749,7 +749,12 @@ const canSpyOnModules = typeof (globalThis as any).Deno === "undefined";
   });
 });
 
-describe("TestKnowledgeBanks", () => {
+// Knowledge banks are PostgreSQL-only: on Oracle the kb_* tables don't exist, yet the server
+// still reports the feature as on and answers 500 (#6821), so the backend is the only signal.
+const describeKb =
+  process.env.HINDSIGHT_API_DATABASE_BACKEND === "oracle" ? describe.skip : describe;
+
+describeKb("TestKnowledgeBanks", () => {
   let kbId: string;
 
   beforeEach(async () => {

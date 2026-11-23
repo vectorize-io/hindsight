@@ -931,6 +931,11 @@ class TestAsyncDeleteBank:
         assert response.success is True
 
 
+# Knowledge banks are PostgreSQL-only: on Oracle the kb_* tables don't exist, yet the server
+# still reports the feature as on and answers 500 (#6821), so the backend is the only signal.
+@pytest.mark.skipif(
+    os.getenv("HINDSIGHT_API_DATABASE_BACKEND") == "oracle", reason="knowledge banks are PostgreSQL-only"
+)
 class TestKnowledgeBanks:
     """A knowledge bank's whole life through the wrapper: create, ingest, search, delete."""
 
