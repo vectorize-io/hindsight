@@ -27,8 +27,9 @@ RUN uv pip install --python /app/api/.venv/bin/python --no-cache \
 # pick other multilingual variants as a concrete non-default example.
 ARG EMBEDDER=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 ARG RERANKER=cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
-ENV HF_HUB_DOWNLOAD_TIMEOUT=600
-RUN python -c "\
+# Long download timeout for the build only; an ENV would leak into runtime and
+# outlast the startup watchdog when huggingface.co is unreachable (#6494).
+RUN HF_HUB_DOWNLOAD_TIMEOUT=600 python -c "\
 from sentence_transformers import SentenceTransformer, CrossEncoder; \
 SentenceTransformer('${EMBEDDER}'); \
 CrossEncoder('${RERANKER}')"

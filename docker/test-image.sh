@@ -123,6 +123,14 @@ echo ""
 # Remove any existing container with the same name
 docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
+# The long HF download timeout is for the model preload at build time only. Baked
+# into the image as an ENV, it makes a blocked huggingface.co check at startup
+# outlast the 300s watchdog, which then kills a healthy container (#6494).
+if docker image inspect --format '{{json .Config.Env}}' "$IMAGE" | grep -q 'HF_HUB_DOWNLOAD_TIMEOUT='; then
+    echo -e "${RED}Image sets HF_HUB_DOWNLOAD_TIMEOUT at runtime; keep it inside the build RUN step${NC}"
+    exit 1
+fi
+
 # Start container based on target type
 echo "Starting container..."
 if [ "$TARGET" = "cp-only" ]; then
