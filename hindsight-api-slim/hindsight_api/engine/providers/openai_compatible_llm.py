@@ -48,6 +48,7 @@ from hindsight_api.engine.cache_affinity import (
 from hindsight_api.engine.llm_interface import (
     LLMInterface,
     OutputTooLongError,
+    ProviderContentPolicyError,
     ProviderRateLimitResetError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, current_response_usage, stash_response_usage
@@ -503,12 +504,18 @@ def _content_or_error(
         if native is not None:
             return native, choice
         refusal = _message_refusal(message)
-        retryable = finish_reason not in {"content_filter"}
+        if finish_reason == "content_filter":
+            # A content block is permanent, like the other providers' refusals: the
+            # worker fails it once and HTTP answers 422 instead of retrying (#6503).
+            raise ProviderContentPolicyError(
+                f"Provider blocked the request ({provider}/{model}, scope={scope}, "
+                "finish_reason=content_filter); not retrying"
+            )
         raise ProviderResponseError(
             f"Provider returned empty message content ({provider}/{model}, scope={scope}, "
             f"finish_reason={finish_reason}, has_tool_calls={bool(tool_calls)}, "
             f"refusal={bool(refusal)})",
-            retryable=retryable,
+            retryable=True,
         )
     return content, choice
 

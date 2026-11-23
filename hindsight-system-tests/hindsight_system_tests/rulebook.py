@@ -199,6 +199,15 @@ class RuleBuilder:
         self._stub.add_rule(ChatRule(contains=self._contains, respond=respond, tool=self._tool, budget=budget))
         return self._stub
 
+    def is_blocked(self) -> LLMStub:
+        """Answer the way a provider's content filter does: no content, ``finish_reason="content_filter"``.
+
+        A block is permanent, so the server must fail the operation once rather than retry it (#6503).
+        """
+        return self._register(
+            lambda _request: StubbedReply(message={"role": "assistant", "content": None}, finish_reason="content_filter")
+        )
+
     def returns_text(self, text: str) -> LLMStub:
         return self._register(lambda _request: _assistant_message(text))
 

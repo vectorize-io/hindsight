@@ -44,6 +44,7 @@ from hindsight_api.engine.cache_affinity import apply_opencode_session
 from hindsight_api.engine.llm_interface import (
     LLMInterface,
     OutputTooLongError,
+    ProviderContentPolicyError,
     merge_extra_body,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
@@ -296,15 +297,18 @@ class OpenAIResponsesLLM(LLMInterface):
         )
 
     @staticmethod
-    def _raise_if_truncated(response: Any) -> None:
-        """Map a ``max_output_tokens`` truncation to ``OutputTooLongError``."""
+    def _raise_if_incomplete(response: Any) -> None:
+        """Map an incomplete reply: a token cap to ``OutputTooLongError``, a content block
+        to ``ProviderContentPolicyError`` (permanent, so it is never retried — #6503)."""
         if getattr(response, "status", None) != "incomplete":
             return
-        details = getattr(response, "incomplete_details", None)
-        if getattr(details, "reason", None) == "max_output_tokens":
+        reason = getattr(getattr(response, "incomplete_details", None), "reason", None)
+        if reason == "max_output_tokens":
             raise OutputTooLongError(
                 "LLM output exceeded token limits. Input may need to be split into smaller chunks."
             )
+        if reason == "content_filter":
+            raise ProviderContentPolicyError("Provider blocked the request (reason=content_filter); not retrying")
 
     def _record_success(
         self,
@@ -519,7 +523,7 @@ class OpenAIResponsesLLM(LLMInterface):
         apply_opencode_session(params, base_url=self.base_url)
 
         def parse(response: Any) -> Any:
-            self._raise_if_truncated(response)
+            self._raise_if_incomplete(response)
             usage = self._extract_usage(response)
             duration = time.perf_counter() - start_time
             content = _strip_reasoning_tags(_reply_text(response))

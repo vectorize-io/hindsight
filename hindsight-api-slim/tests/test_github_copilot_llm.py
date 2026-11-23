@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel
 
+from hindsight_api.engine.llm_interface import ProviderContentPolicyError
 from hindsight_api.config import PROVIDER_DEFAULT_MODELS
 from hindsight_api.engine.llm_interface import LLMToolChoice
 from hindsight_api.engine.llm_wrapper import create_llm_provider, requires_api_key
@@ -97,7 +98,7 @@ def _assistant_event(content: str, tool_requests=None):
     )
 
 
-def _usage_event():
+def _usage_event(finish_reason: str = "stop"):
     from copilot.session_events import AssistantUsageData
 
     return SimpleNamespace(
@@ -107,7 +108,7 @@ def _usage_event():
             output_tokens=30,
             cache_read_tokens=20,
             reasoning_tokens=10,
-            finish_reason="stop",
+            finish_reason=finish_reason,
         )
     )
 
@@ -478,3 +479,14 @@ def test_transient_service_outage_is_not_mistaken_for_a_config_error():
     assert provider_module._is_configuration_error(JsonRpcError("Copilot service is not available.")) is False
     assert provider_module._is_runtime_failure(JsonRpcError("Copilot service is not available.")) is True
     assert provider_module._is_configuration_error(JsonRpcError('Model "gpt-9" is not available.')) is True
+
+
+@pytest.mark.asyncio
+async def test_a_content_filter_block_is_a_refusal_sent_once(monkeypatch):
+    """#6503: an empty reply the content filter stopped is permanent, not retried."""
+    provider, client = _provider(monkeypatch, [_usage_event(finish_reason="content_filter")])
+
+    with pytest.raises(ProviderContentPolicyError):
+        await provider.call(messages=[{"role": "user", "content": "hi"}], max_retries=3, initial_backoff=0)
+
+    assert client.create_count == 1

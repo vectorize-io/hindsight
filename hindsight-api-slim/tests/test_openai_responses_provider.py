@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import BaseModel
 
-from hindsight_api.engine.llm_interface import OutputTooLongError
+from hindsight_api.engine.llm_interface import OutputTooLongError, ProviderContentPolicyError
 from hindsight_api.engine.providers.openai_responses_llm import OpenAIResponsesLLM
 from hindsight_api.engine.providers.tools_via_schema import ResponseSchema, schema_format
 
@@ -240,6 +240,19 @@ async def test_call_raises_output_too_long_on_truncation():
     with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
         with pytest.raises(OutputTooLongError):
             await llm.call(messages=[{"role": "user", "content": "hi"}])
+
+
+@pytest.mark.asyncio
+async def test_a_content_filter_block_is_a_refusal_sent_once():
+    """#6503: an incomplete reply blocked by the content filter is permanent, not retried."""
+    llm = _make_llm()
+    blocked = _fake_response(output_text="", status="incomplete")
+    blocked.incomplete_details = types.SimpleNamespace(reason="content_filter")
+    create = _mock_create(llm, blocked)
+    with patch("hindsight_api.engine.providers.openai_responses_llm.get_metrics_collector"):
+        with pytest.raises(ProviderContentPolicyError):
+            await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=2)
+    assert create.await_count == 1
 
 
 # --------------------------------------------------------------------------- #

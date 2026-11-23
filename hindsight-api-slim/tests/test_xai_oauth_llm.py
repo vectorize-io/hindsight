@@ -35,6 +35,7 @@ from aiohttp import web
 from multidict import CIMultiDict
 from pydantic import BaseModel
 
+from hindsight_api.engine.llm_interface import ProviderContentPolicyError
 from hindsight_api.config import PROVIDER_DEFAULT_MODELS
 from hindsight_api.engine.cache_affinity import XAI_CONV_ID_HEADER, cache_affinity_id
 from hindsight_api.engine.llm_trace import (
@@ -2163,3 +2164,16 @@ async def test_a_default_base_url_still_names_api_x_ai(tmp_path, monkeypatch):
 
     with pytest.raises(RuntimeError, match="api.x.ai returned HTTP 502"):
         await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=0)
+
+
+async def test_a_content_filter_block_is_a_refusal_sent_once(tmp_path, monkeypatch):
+    """#6503: an empty content_filter answer is permanent, not an empty reply to retry."""
+    blocked = _FakeResponse(
+        200, json.dumps({"choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}]})
+    )
+    llm = _make_llm(tmp_path, monkeypatch, replies=[blocked])
+
+    with pytest.raises(ProviderContentPolicyError):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=2)
+
+    assert len(llm._client.calls) == 1

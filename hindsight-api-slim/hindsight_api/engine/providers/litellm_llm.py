@@ -24,6 +24,7 @@ from hindsight_api.config import get_config
 from hindsight_api.engine.llm_interface import (
     LLMInterface,
     OutputTooLongError,
+    ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_wrapper import parse_llm_json
@@ -412,6 +413,13 @@ class LiteLLMLLM(LLMInterface):
                 finish_reason = choice.finish_reason
                 model_name = self._resolve_completion_model(response)
 
+                # A content block is permanent: fail once, don't retry (#6503).
+                if finish_reason == "content_filter" and not content:
+                    raise ProviderContentPolicyError(
+                        f"LiteLLM provider blocked the request ({self.provider}/{self.model}, scope={scope}, "
+                        "finish_reason=content_filter); not retrying"
+                    )
+
                 # Check for length-limited output
                 if finish_reason == "length":
                     raise OutputTooLongError("LiteLLM response was truncated due to token limit")
@@ -497,7 +505,7 @@ class LiteLLMLLM(LLMInterface):
                 )
                 return LLMCallResult(content=result, usage=token_usage)
 
-            except OutputTooLongError:
+            except (OutputTooLongError, ProviderContentPolicyError):
                 raise
 
             except json.JSONDecodeError as e:
