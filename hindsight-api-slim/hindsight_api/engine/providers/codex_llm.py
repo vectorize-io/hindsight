@@ -36,6 +36,7 @@ from hindsight_api.engine.aiohttp_session import LoopLocalSession, UpstreamHTTPE
 from hindsight_api.engine.cache_affinity import cache_affinity_id
 from hindsight_api.engine.llm_interface import (
     LLMInterface,
+    ProviderContentPolicyError,
     ProviderRateLimitResetError,
     ProviderUnavailableError,
     merge_extra_body,
@@ -223,6 +224,19 @@ def _raise_on_sse_failure(event_type: str | None, data: Any) -> None:
     code = error.get("code") if isinstance(error, dict) else None
     message = error.get("message") if isinstance(error, dict) else None
     raise CodexStreamError(f"Codex backend failed the response ({event_type}): {code}: {message or data}")
+
+
+def _raise_on_content_filter(event_type: str | None, data: Any) -> None:
+    """Raise :class:`ProviderContentPolicyError` for a reply the content filter stopped.
+
+    A block is permanent, like the other providers' refusals, so the worker fails the
+    operation once instead of replaying it through the retry schedule (#6503).
+    """
+    if event_type != "response.incomplete" or not isinstance(data, dict):
+        return
+    details = (data.get("response") or {}).get("incomplete_details") or {}
+    if details.get("reason") == "content_filter":
+        raise ProviderContentPolicyError("Codex blocked the request (reason=content_filter); not retrying")
 
 
 class _InputTokensDetails(BaseModel):
@@ -967,6 +981,7 @@ class CodexLLM(LLMInterface):
                 try:
                     data = json.loads(data_str)
                     _raise_on_sse_failure(event_type, data)
+                    _raise_on_content_filter(event_type, data)
                     usage = _usage_from_completed_event(event_type, data) or usage
 
                     if (

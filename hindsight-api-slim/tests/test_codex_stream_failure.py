@@ -59,3 +59,24 @@ async def test_structured_call_raises_backend_error_and_retries():
         # Treated like any transport failure: retried within the budget.
         assert server.call_count == 2
     assert is_transient_remote_error(exc_info.value)
+
+
+async def test_a_content_filter_block_is_a_refusal_sent_once():
+    """#6503: a stream the content filter stopped is permanent, so it is not retried."""
+    from hindsight_api.engine.llm_interface import ProviderContentPolicyError
+
+    blocked = (
+        "event: response.incomplete\n"
+        'data: {"response":{"status":"incomplete","incomplete_details":{"reason":"content_filter"}}}\n\n'
+    )
+    llm = _build_llm()
+    with stub_codex_stream(llm, CodexReply(text=blocked)) as server:
+        with pytest.raises(ProviderContentPolicyError):
+            await llm.call(
+                messages=[{"role": "user", "content": "extract"}],
+                response_format=_Facts,
+                max_retries=2,
+                initial_backoff=0,
+                max_backoff=0,
+            )
+        assert server.call_count == 1

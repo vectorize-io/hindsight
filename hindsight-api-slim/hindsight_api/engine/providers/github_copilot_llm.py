@@ -26,6 +26,7 @@ from pydantic import ValidationError
 
 from hindsight_api.engine.llm_interface import (
     LLMInterface,
+    ProviderContentPolicyError,
     ProviderUnavailableError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
@@ -583,6 +584,13 @@ class GitHubCopilotLLM(LLMInterface):
                     )
                 )
 
+                if not invocation.content and invocation.finish_reason == "content_filter":
+                    # A block is permanent: fail once, don't retry (#6503).
+                    raise ProviderContentPolicyError(
+                        f"GitHub Copilot blocked the request (model={self.model}, scope={scope}, "
+                        "finish_reason=content_filter); not retrying"
+                    )
+
                 if response_format is not None:
                     data = json.loads(_strip_code_fences(invocation.content.strip()))
                     result = data if skip_validation else response_format.model_validate(data)
@@ -600,7 +608,7 @@ class GitHubCopilotLLM(LLMInterface):
                     duration=duration,
                 )
                 return LLMCallResult(content=result, usage=invocation.usage)
-            except ValidationError:
+            except (ValidationError, ProviderContentPolicyError):
                 raise
             except Exception as error:
                 if _is_configuration_error(error):
