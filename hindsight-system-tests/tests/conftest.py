@@ -178,6 +178,26 @@ def knowledge_reranker_server(stub_server, tmp_path_factory: pytest.TempPathFact
 
 
 @pytest.fixture(scope="session")
+def knowledge_reranker_opt_in_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
+    """``knowledge_reranker_server`` with ``HINDSIGHT_API_KB_ENABLE_RERANKING=false``: the reranker is set
+    up, but only a search that asks for it is reranked. A process of its own: the flag is server-level."""
+    log_path: Path = tmp_path_factory.mktemp("knowledge-reranker-opt-in-server") / "server.log"
+    server = start_hindsight_server(
+        stub_url=stub_server.url,
+        log_path=log_path,
+        extra_env={
+            "HINDSIGHT_API_KB_RERANKER_URL": f"{stub_server.url}/rerank",
+            "HINDSIGHT_API_KB_RERANKER_API_KEY": "stub-key",
+            "HINDSIGHT_API_KB_RERANKER_MODEL": "stub-reranker",
+            "HINDSIGHT_API_KB_ENABLE_RERANKING": "false",
+            "HINDSIGHT_API_WORKER_ENABLED": "false",
+        },
+    )
+    yield server
+    server.stop()
+
+
+@pytest.fixture(scope="session")
 def decision_model_prune_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """``decision_model_server`` with recall's prune flag on. A process of its own for the
     same reason: the flag is server-level."""
@@ -630,6 +650,13 @@ async def decision_model_client(decision_model_server) -> AsyncIterator[Hindsigh
 @pytest.fixture
 async def knowledge_reranker_client(knowledge_reranker_server) -> AsyncIterator[Hindsight]:
     client = Hindsight(base_url=knowledge_reranker_server.url)
+    yield client
+    await client.aclose()
+
+
+@pytest.fixture
+async def knowledge_reranker_opt_in_client(knowledge_reranker_opt_in_server) -> AsyncIterator[Hindsight]:
+    client = Hindsight(base_url=knowledge_reranker_opt_in_server.url)
     yield client
     await client.aclose()
 

@@ -2059,7 +2059,10 @@ class KnowledgeService:
             # the bank is open, so a caller refused by the checks still learns nothing about it.
             embedding = asyncio.ensure_future(self._embed_query(request))
             # Decided before the bank is opened, so the read gate sees it (``KnowledgeBankReadContext.rerank``).
-            rerank = self.reranker is not None and request.enable_reranking is not False
+            wants_rerank = request.enable_reranking
+            if wants_rerank is None:
+                wants_rerank = get_config().kb_enable_reranking
+            rerank = self.reranker is not None and wants_rerank
             try:
                 async with _timing.timed("open_bank"):
                     # The store's search finds out in its own statement that the bank is not a knowledge

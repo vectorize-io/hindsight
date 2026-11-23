@@ -3,7 +3,8 @@
 The reranker (any Cohere-style /rerank endpoint) gets the search's best hits in one request, as many as
 its token budget holds; a PDF page goes as its picture with its text. Its scores reorder them. Each step
 is unit-tested; the story shows that this order is what the client receives, that the page goes with its
-picture, and that a server without the setting searches the very same bank in the search's own order.
+picture, that a server without the setting searches the very same bank in the search's own order, and that
+a server with ``HINDSIGHT_API_KB_ENABLE_RERANKING=false`` reranks only a search that asks for it.
 """
 
 from __future__ import annotations
@@ -75,3 +76,21 @@ async def test_a_search_can_skip_the_reranker(knowledge_reranker_client, knowled
     # Unset, as true: the configured reranker's order.
     assert await order() == ["billing", "exits", "outage", "keys"]
     assert await order(enable_reranking=True) == ["billing", "exits", "outage", "keys"]
+
+
+async def test_a_server_can_make_the_reranker_opt_in(knowledge_reranker_opt_in_client, knowledge_bank, stubs):
+    query = "how do I rotate an api key"
+    stubs.rerank.rerank_scores = {"Invoices": 0.9, "Emergency exits": 0.8, "outage": 0.3, "Rotate": 0.05}
+    kb = KnowledgeBanks(knowledge_reranker_opt_in_client)
+
+    async def order(**flag: bool) -> list[str]:
+        r = await kb.search(knowledge_bank, query=query, **flag)
+        assert r.status == 200, r.body
+        return [hit["document_id"] for hit in r.body["results"]]
+
+    # Unset: the search's own order, and no rerank request goes out.
+    assert await order() == ["keys", "outage", "billing", "exits"]
+    assert stubs.rerank.assets == []
+    # true: the configured reranker's order.
+    assert await order(enable_reranking=True) == ["billing", "exits", "outage", "keys"]
+    assert len(stubs.rerank.assets) == 1
