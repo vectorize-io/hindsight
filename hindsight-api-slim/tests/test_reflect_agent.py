@@ -1451,6 +1451,28 @@ class TestReflectAgentMocked:
         assert choices[0] == choices[1] == LLMToolChoice.named("search_observations")
 
     @pytest.mark.asyncio
+    async def test_a_failed_turn_does_not_use_up_an_iteration(self, mock_llm, mock_functions):
+        """#6674: a turn that failed and was retried counted as one of the run's
+        iterations, so a rate-limited run ended one search short with nothing to say so."""
+        search = LLMToolCallResult(
+            tool_calls=[LLMToolCall(id="1", name="recall", arguments={"query": "test"})],
+            finish_reason="tool_calls",
+        )
+        mock_llm.call_with_tools.side_effect = closing_echo([RuntimeError("429"), search, search])
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="test query",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            max_iterations=3,
+            **mock_functions,
+        )
+
+        # Two searches, then the closing step: the failed call took no iteration.
+        assert mock_functions["recall_fn"].await_count == 2
+
+    @pytest.mark.asyncio
     async def test_cancellation_from_a_tool_is_not_wrapped(self, mock_llm, mock_functions):
         """A client disconnect must stay a cancellation, not become a tool failure.
 
