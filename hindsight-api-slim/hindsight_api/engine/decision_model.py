@@ -887,7 +887,7 @@ class DecisionModel:
 
 #: Which decision model an operation asks, or None for none: :func:`decision_engine`, or one injected
 #: through ``MemoryEngine(decision_engine_for=)``.
-DecisionEngineFor = Callable[[DecisionModelOperation], "DecisionModel | None"]
+DecisionEngineFor = Callable[[DecisionModelOperation], DecisionModel | None]
 
 
 @lru_cache(maxsize=8)
