@@ -5,6 +5,8 @@ The model writes one entry per new fact and names each observation it repeats, c
 model's own verdicts decide, the code only reads them — and what the prompt is shown.
 """
 
+import json
+import re
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +22,7 @@ from hindsight_api.engine.consolidation.consolidator import (
 )
 from hindsight_api.engine.consolidation.prompts import build_consolidation_system_prompt
 from hindsight_api.engine.response_models import LLMCallResult
+from hindsight_api.engine.structured_output import strict_json_schema
 
 POOL = {"o-port": "ledger-sink listens on port 8444.", "o-fav": "The user's favorite framework is Svelte."}
 
@@ -302,6 +305,33 @@ def test_the_schema_pins_ids_and_verdicts() -> None:
     schema = str(_build_fact_response_model(["f1"]).model_json_schema())
     for value in ("'f1'", "'lasting'", "'momentary'", "'unrelated'", "'repeats'", "'changes'", "'ends'"):
         assert value in schema
+
+
+def _missing_required(node: Any, schema: dict[str, Any], defs: dict[str, Any], path: str = "$") -> list[str]:
+    """Every key the strict schema requires that ``node`` leaves out."""
+    if "$ref" in schema:
+        schema = defs[schema["$ref"].rsplit("/", 1)[-1]]
+    if isinstance(node, list):
+        item = schema.get("items", {})
+        return [m for i, v in enumerate(node) for m in _missing_required(v, item, defs, f"{path}[{i}]")]
+    if not isinstance(node, dict):
+        return []
+    missing = [f"{path}.{key}" for key in schema.get("required", []) if key not in node]
+    for key, value in node.items():
+        if key in schema.get("properties", {}):
+            missing += _missing_required(value, schema["properties"][key], defs, f"{path}.{key}")
+    return missing
+
+
+def test_the_prompt_example_is_a_valid_strict_answer() -> None:
+    # Under strict mode every field is required; an example (or a rule) that leaves one out tells a
+    # small model to do what the grammar forbids, and it pads whitespace up to the token cap (#6752).
+    schema = strict_json_schema(_build_fact_response_model(["F1", "F2", "F3", "F4", "F5", "F6"]))
+    prompt = build_consolidation_system_prompt()
+    match = re.search(r"Output:\n\n(\{.*?\n\"deletes\": \[\]\})", prompt, re.S)
+    assert match is not None
+    assert _missing_required(json.loads(match.group(1)), schema, schema.get("$defs", {})) == []
+    assert "Leave it out" not in prompt
 
 
 def test_a_chatter_skip_settles_a_fact_no_action_cites() -> None:

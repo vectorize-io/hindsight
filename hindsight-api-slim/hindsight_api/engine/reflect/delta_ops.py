@@ -171,7 +171,7 @@ class RemoveBlockOp(_OpBase):
 
 
 class AddSectionOp(_OpBase):
-    """Add a new section with its blocks, after after_section_id (an existing section's id) or at the end when omitted."""
+    """Add a new section with its blocks, after after_section_id (an existing section's id) or at the end when null."""
 
     # ``new_id``, when omitted, is the heading slugified and disambiguated
     # against the ids already in use.

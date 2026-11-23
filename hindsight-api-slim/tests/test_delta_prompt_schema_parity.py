@@ -21,7 +21,8 @@ import re
 import pytest
 
 from hindsight_api.engine.reflect import prompts
-from hindsight_api.engine.reflect.delta_ops import Operation
+from hindsight_api.engine.reflect.delta_ops import DeltaOperationList, Operation
+from hindsight_api.engine.structured_output import strict_json_schema
 
 # Prompts that instruct a model to emit operations. Add a prompt here when you
 # add one; the point of the list is that forgetting is what this test catches.
@@ -83,6 +84,21 @@ class TestPromptsMatchTheSchema:
                 f"{prompt_name} tells the model to send {sorted(fields - allowed)} on "
                 f"{op_name!r}; the schema accepts {sorted(allowed)}"
             )
+
+    def test_every_op_shape_carries_every_field_strict_mode_requires(self, prompt_name: str):
+        """Under strict mode every field is required, nullable or not. A shape that leaves one
+        out — or prose that says "omit it" — tells the model to do what the grammar forbids,
+        and small models pad whitespace up to the token cap instead (#6752, #6673)."""
+        models = _operation_models()
+        required = {
+            name: set(d.get("required", [])) for name, d in strict_json_schema(DeltaOperationList)["$defs"].items()
+        }
+        for op_name, rest in _instructed_shapes(_OPERATION_PROMPTS[prompt_name]):
+            if rest.startswith(", ...}"):  # an op named in passing, not a shape to copy
+                continue
+            fields = set(re.findall(r'"(\w+)":', rest.split("``")[0])) | {"op"}
+            missing = required[models[op_name].__name__] - fields
+            assert not missing, f"{prompt_name} shows {op_name!r} without {sorted(missing)}, which strict mode requires"
 
     def test_blocks_are_never_described_as_typed_objects(self, prompt_name: str):
         """v1's typed block union is gone; a prompt still describing it teaches

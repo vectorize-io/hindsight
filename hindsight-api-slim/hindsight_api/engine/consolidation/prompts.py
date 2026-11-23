@@ -118,7 +118,7 @@ For each fact:
      - `"repeats"`: the observation already says what the fact says.
      - `"changes"`: the fact gives a new value for exactly the facet the observation states (a new owner for the owner observation, a new port for the port observation — never a language fact for an owner observation), or fills in what the observation left vague ("her home country" → "Sweden"). A count is changed only by a fact that states the new number itself: one member arriving, leaving or dying ("adopted a puppy", "Shadow died") is NOT a new count — the count observation is "unrelated" and keeps its number. Never calculate.
      - `"ends"`: the fact makes the observation no longer true as written — an item was sold, a tool retired, the observation is shown to be wrong, a member left a group, or someone left an employer: then EVERYTHING that was true only because of it ends too — their role there, their team there, their tenure there, their commute to its office.
-   - `observation_text`: for repeats, changes or ends, the observation's text copied exactly. Leave it out for unrelated.
+   - `observation_text`: for repeats, changes or ends, the observation's text copied exactly. Unrelated → empty: `""`.
    - `text`: the observation after this fact.
      - unrelated or repeats → empty: `""`.
      - the observation is marked `(stated after this fact)` or `"newer_than_input_facts": true` → the fact is older news: effect `"changes"` with `text` empty. The observation stays the current value, and the fact is added to it as its earlier state for you.
@@ -177,16 +177,16 @@ Output:
 
 {{"facts": [
   {{"fact_id": "F1", "about": "ledger-sink", "kind": "lasting", "existing": [
-      {{"observation_id": "O1", "observation_about": "billing-sink", "effect": "unrelated", "text": ""}}],
+      {{"observation_id": "O1", "observation_about": "billing-sink", "effect": "unrelated", "observation_text": "", "text": ""}}],
     "adds": "yes", "new": ["ledger-sink listens on port 8444."], "same_as_fact": null}},
   {{"fact_id": "F2", "about": "the conversation", "kind": "momentary", "existing": [], "adds": "no", "new": [], "same_as_fact": null}},
   {{"fact_id": "F3", "about": "Cleo", "kind": "lasting", "existing": [
       {{"observation_id": "O2", "observation_about": "the on-call rotation", "effect": "ends", "observation_text": "The on-call rotation is Ana, Ben, Cleo and Dev.", "text": "The on-call rotation is Ana, Ben and Dev; Cleo left it on 3 May 2025."}},
-      {{"observation_id": "O6", "observation_about": "Cleo", "effect": "unrelated", "text": ""}},
+      {{"observation_id": "O6", "observation_about": "Cleo", "effect": "unrelated", "observation_text": "", "text": ""}},
       {{"observation_id": "O3", "observation_about": "Cleo", "effect": "ends", "observation_text": "Cleo is on call on Mondays.", "text": "Cleo was on call on Mondays until she left the rotation on 3 May 2025."}}],
     "adds": "no", "new": [], "same_as_fact": null}},
   {{"fact_id": "F4", "about": "the user's dog Rex", "kind": "lasting", "existing": [
-      {{"observation_id": "O4", "observation_about": "the user's dogs", "effect": "unrelated", "text": ""}}],
+      {{"observation_id": "O4", "observation_about": "the user's dogs", "effect": "unrelated", "observation_text": "", "text": ""}}],
     "adds": "yes", "new": ["The user has a dog named Rex."], "same_as_fact": null}},
   {{"fact_id": "F5", "about": "the user's favorite framework", "kind": "lasting", "existing": [
       {{"observation_id": "O5", "observation_about": "the user's favorite framework", "effect": "changes", "observation_text": "The user's favorite framework is Svelte.", "text": ""}}],
