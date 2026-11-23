@@ -10434,6 +10434,7 @@ class MemoryEngine(MemoryEngineInterface):
                     recency_decay_function=get_config().recency_decay_function,
                     recency_decay_linear_window_days=get_config().recency_decay_linear_window_days,
                     recency_decay_halflife_days=get_config().recency_decay_halflife_days,
+                    recency_alpha=get_config().recency_alpha,
                     # Resolved here, not in the store: `question_date` overrides "now", and two
                     # clocks would make an identical request score differently on the two paths.
                     now=_recall_scoring_now(request.question_date),
@@ -11031,6 +11032,7 @@ class MemoryEngine(MemoryEngineInterface):
                     recency_decay_function=scoring_config.recency_decay_function,
                     recency_decay_linear_window_days=scoring_config.recency_decay_linear_window_days,
                     recency_decay_halflife_days=scoring_config.recency_decay_halflife_days,
+                    recency_alpha=scoring_config.recency_alpha,
                 )
                 # Per-strategy bump after combined scoring. Passthrough recalls
                 # (explicit rrf, an rrf provider, or a chain that failed over to
@@ -11043,7 +11045,9 @@ class MemoryEngine(MemoryEngineInterface):
 
                     stage2 = apply_post_rerank_boost(scored_results, strategy_boosts, passthrough=is_passthrough)
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
-                log_buffer.append("  [4.6] Combined scoring: ce * recency_boost(0.2) * temporal_boost(0.2)")
+                log_buffer.append(
+                    f"  [4.6] Combined scoring: ce * recency_boost({scoring_config.recency_alpha}) * temporal_boost(0.2)"
+                )
                 if strategy_boosts:
                     log_buffer.append(f"  [4.7] Strategy boosts applied: {strategy_boosts} {stage2}")
 

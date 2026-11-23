@@ -188,6 +188,7 @@ class ScoredResult:
     recency: float = 0.5
     temporal: float = 0.5
     proof_norm: float = 0.5  # log-normalized proof count (neutral 0.5); drives proof_count_boost
+    recency_boost: float = 1.0  # multiplier recency applied; depends on HINDSIGHT_API_RECENCY_ALPHA
 
     # Final combined score
     combined_score: float = 0.0
@@ -246,6 +247,7 @@ class ScoredResult:
         result["temporal"] = self.temporal
         result["recency"] = self.recency
         result["proof_norm"] = self.proof_norm
+        result["recency_boost"] = self.recency_boost
         result["combined_score"] = self.combined_score
         result["weight"] = self.weight
         result["activation"] = self.weight  # Legacy field

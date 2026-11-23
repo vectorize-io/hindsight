@@ -95,8 +95,13 @@ async def test_each_retrieval_arm_runs_and_fusion_records_what_it_found(client, 
         "temporal",
         "recency",
         "proof_norm",
+        "recency_boost",
         "combined_score",
     }
+    # Default recency weight (HINDSIGHT_API_RECENCY_ALPHA=0.2): boost = 1 + 0.2 * (recency - 0.5).
+    assert top["score_components"]["recency_boost"] == pytest.approx(
+        1 + 0.2 * (top["score_components"]["recency"] - 0.5)
+    )
     # The combined score is what surfaces as `scores.final`, so the trace and the
     # response must agree — a trace that reports a different number from the one
     # the caller was ranked by would be worse than no trace.

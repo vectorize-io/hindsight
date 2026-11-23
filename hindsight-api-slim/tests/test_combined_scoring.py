@@ -192,6 +192,8 @@ class TestBoostFormula:
         apply_combined_scoring([sr], now=NOW, recency_alpha=0.4, temporal_alpha=0.0)
         expected = 0.5 * (1.0 + 0.4 * 0.5) * 1.0
         assert abs(sr.weight - expected) < 1e-6
+        # The trace shows the multiplier actually used, not one derived from a fixed alpha.
+        assert abs(sr.recency_boost - 1.2) < 1e-6
 
     def test_future_event_recency_capped_at_one(self):
         """Events in the future must not produce recency > 1.0, keeping boost within bounds."""

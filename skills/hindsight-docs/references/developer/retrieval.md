@@ -312,7 +312,7 @@ boost = 1 + α × (signal - 0.5)
 
 | Boost | α | Max adjustment | What it rewards |
 |-------|---|----------------|-----------------|
-| **Recency** | 0.2 | ±10% | Recent memories over older ones |
+| **Recency** | 0.2 (set with [`HINDSIGHT_API_RECENCY_ALPHA`](./configuration.md#retrieval)) | ±10% at the default | Recent memories over older ones |
 | **Temporal proximity** | 0.2 | ±10% | Memories close to a queried time window |
 | **Proof count** | 0.1 | ±5% | Observations backed by more evidence |
 
@@ -324,7 +324,7 @@ Linear decay over 365 days from the memory's occurrence date:
 recency = clamp(1.0 - days_ago / 365, 0.1, 1.0)
 ```
 
-A memory from the query timestamp has recency 1.0 (+10% boost). A memory from 6 months before the query timestamp has recency ~0.5 (neutral). A memory more than a year before the query timestamp has recency 0.1 (-8% penalty). If no `query_timestamp` is provided, the server's current time is used. Memories without dates get 0.5 (neutral — no boost or penalty).
+With the default α of 0.2, a memory from the query timestamp has recency 1.0 (+10% boost). A memory from 6 months before the query timestamp has recency ~0.5 (neutral). A memory more than a year before the query timestamp has recency 0.1 (-8% penalty). If no `query_timestamp` is provided, the server's current time is used. Memories without dates get 0.5 (neutral — no boost or penalty).
 
 #### Temporal proximity signal
 
