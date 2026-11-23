@@ -1798,8 +1798,8 @@ DECISION_MODEL_PROVIDER_DEFAULTS = {
     "openai": _DecisionProviderDefaults(model="gpt-6-luna", base_url="https://api.openai.com"),
 }
 DECISION_MODEL_PROVIDERS = ("none", *DECISION_MODEL_PROVIDER_DEFAULTS)
-# Providers whose endpoint is System One itself (<base_url>/v1/systemone), which reflect's
-# client (TypeSafeCrossEncoder) speaks.
+# Providers whose endpoint is System One itself (<base_url>/v1/systemone): the ones reflect's
+# decision-orchestrated mode runs on (MemoryEngine._reflect_decision_model).
 SYSTEM_ONE_DECISION_MODEL_PROVIDERS = frozenset({"hindsight", "typesafe"})
 DEFAULT_DECISION_MODEL_PROVIDER = "none"
 DEFAULT_DECISION_MODEL_TIMEOUT = 60.0

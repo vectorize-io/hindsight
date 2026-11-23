@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 import numpy as np
 import pytest
 
-from hindsight_api.config import DecisionModelConfig
 from hindsight_api.engine import decision_rerank_interface
 from hindsight_api.engine.cross_encoder import CrossEncoderModel
 from hindsight_api.engine.decision_model import DecisionAnswer, DecisionModel, DecisionRefusedError
@@ -116,17 +115,48 @@ class TestRanking:
         monkeypatch.setenv("HINDSIGHT_API_RECALL_DECISION_MODEL_PROVIDER", "none")
         assert not isinstance(CrossEncoderReranker().cross_encoder, DecisionModelReranker)
 
-    def test_from_config(self):
-        config = DecisionModelConfig(
-            provider="typesafe",
-            api_key="k",
-            model="jev-latest",
-            base_url="https://example.test",
-            timeout=5.0,
-            max_concurrent=2,
-            max_request_tokens=12_345,
+    def test_is_handed_the_shared_engine(self, monkeypatch):
+        """The reranker gets the engine decision_engine("recall") returns, not a client of its own."""
+        from hindsight_api import config as config_module
+        from hindsight_api.engine.decision_model import decision_engine
+
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_PROVIDER", "typesafe")
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_API_KEY", "k")
+        monkeypatch.setenv("HINDSIGHT_API_DECISION_MODEL_MAX_REQUEST_TOKENS", "12345")
+        monkeypatch.setattr(config_module, "get_config", config_module.HindsightConfig.from_env)
+        reranker = CrossEncoderReranker().cross_encoder
+        assert isinstance(reranker, DecisionModelReranker)
+        assert reranker._client is decision_engine("recall")
+        assert reranker._client.max_request_tokens == 12_345
+        # Same setup, another operation: its own client, since MAX_CONCURRENT caps each operation.
+        consolidation = decision_engine("consolidation")
+        assert consolidation is not None and consolidation is not reranker._client
+
+    async def test_an_injected_engine_is_the_one_recall_asks(self):
+        """MemoryEngine(decision_engine_for=) is the client the reranker asks, not the module global."""
+        pytest.importorskip("sentence_transformers", reason="MemoryEngine construction needs the local-ml extra")
+        from hindsight_api import MemoryEngine
+
+        client = _Client(keep={"Marta likes sencha": 0.9})
+        seen: list[str] = []
+
+        def engine_for(operation: str):
+            seen.append(operation)
+            return client if operation == "recall" else None
+
+        engine = MemoryEngine(
+            memory_llm_provider="mock",
+            memory_llm_model="mock-model",
+            skip_llm_verification=True,
+            embeddings=object(),
+            decision_engine_for=engine_for,
         )
-        assert DecisionModelReranker.from_config(config)._client.max_request_tokens == 12_345
+        result = await engine._cross_encoder_reranker.rerank("tea", [_candidate("Marta likes sencha")])
+
+        assert seen == ["recall"]
+        assert client.scopes == ["decision_recall_rerank"]
+        assert engine._cross_encoder_reranker.cross_encoder._client is client
+        assert [row.candidate.retrieval.text for row in result.results] == ["Marta likes sencha"]
 
 
 class TestSharedState:

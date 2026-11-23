@@ -17,8 +17,7 @@ from hindsight_api.engine.memories import ReflectFreshness
 from hindsight_api.models import RequestContext
 
 
-@pytest.fixture
-def engine():
+def _make_engine(decision_engine_for=None):
     """A MemoryEngine with everything reflect_async touches before the agent stubbed."""
     pytest.importorskip("sentence_transformers", reason="MemoryEngine construction needs the local-ml extra")
     from hindsight_api import MemoryEngine
@@ -28,6 +27,8 @@ def engine():
         memory_llm_provider="mock",
         memory_llm_model="mock-model",
         skip_llm_verification=True,
+        embeddings=object(),
+        decision_engine_for=decision_engine_for,
     )
     eng._authenticate_tenant = AsyncMock()  # type: ignore[method-assign]
     eng.ensure_bank_profile = AsyncMock(return_value={"name": "Test", "mission": ""})  # type: ignore[method-assign]
@@ -39,9 +40,17 @@ def engine():
     return eng
 
 
+@pytest.fixture
+def engine():
+    return _make_engine()
+
+
 def _decision_model_set_up(engine) -> SimpleNamespace:
-    decision_model = SimpleNamespace(model="jev-test", evidence_is_sufficient=AsyncMock(return_value=True))
-    engine._reflect_decision_model_client = decision_model
+    """Inject a decision engine for reflect, as the constructor's decision_engine_for would."""
+    decision_model = SimpleNamespace(
+        provider="typesafe", model="jev-test", evidence_is_sufficient=AsyncMock(return_value=True)
+    )
+    engine._decision_engine_for = lambda operation: decision_model if operation == "reflect" else None
     return decision_model
 
 
@@ -75,6 +84,9 @@ async def _orchestrated(engine, monkeypatch, operation_label: str, **switches: b
     )
     sufficient = captured["evidence_is_sufficient_fn"]
     assert (sufficient is None) == (captured["prune_evidence_fn"] is None), "the check and the pruning go together"
+    if sufficient is not None:
+        # Ask it, so a test can tell which engine was handed over, not only that one was.
+        await sufficient("test", "evidence")
     return sufficient is not None
 
 
@@ -87,6 +99,37 @@ async def test_without_a_decision_model_reflect_runs_agent_turns(engine, monkeyp
 async def test_a_set_up_decision_model_orchestrates_reflect(engine, monkeypatch):
     _decision_model_set_up(engine)
     assert await _orchestrated(engine, monkeypatch, "reflect")
+
+
+class _InjectedReflect:
+    """A decision engine whose sufficiency check records that reflect asked it."""
+
+    provider = "typesafe"
+    model = "injected"
+
+    def __init__(self) -> None:
+        self.operations: list[str] = []
+
+    async def evidence_is_sufficient(self, query: str, evidence: str, *, pictures=()) -> bool:
+        self.operations.append("reflect")
+        return True
+
+
+@pytest.mark.asyncio
+async def test_an_injected_engine_is_the_one_reflect_asks(monkeypatch):
+    """MemoryEngine(decision_engine_for=) is the engine reflect asks, not one assigned afterwards."""
+    fake = _InjectedReflect()
+    seen: list[str] = []
+
+    def engine_for(operation: str):
+        seen.append(operation)
+        # Truthy for recall so construction does not build a local cross-encoder. Recall is not run.
+        return fake if operation in ("reflect", "recall") else None
+
+    engine = _make_engine(engine_for)
+    assert await _orchestrated(engine, monkeypatch, "reflect")
+    assert seen == ["recall", "reflect"]
+    assert fake.operations == ["reflect"]
 
 
 @pytest.mark.asyncio
@@ -104,9 +147,16 @@ async def test_a_refresh_follows_its_own_switch(engine, monkeypatch, label):
     assert not await _orchestrated(engine, monkeypatch, label, refresh=False)
 
 
+def _set_up_for_reflect(monkeypatch, setup) -> None:
+    monkeypatch.setattr(
+        "hindsight_api.engine.decision_model.hindsight_config.get_config",
+        lambda: SimpleNamespace(decision_model_config=lambda operation: setup),
+    )
+
+
 @pytest.mark.parametrize("provider", ["cloudflare", "openai"])
 def test_a_provider_reflect_cannot_speak_leaves_agent_turns(engine, monkeypatch, provider):
-    """Reflect's client speaks only System One: another provider would fail every first round."""
+    """Reflect runs on System One only: its first round is tuned to it."""
     from hindsight_api.config import DecisionModelConfig
 
     setup = DecisionModelConfig(
@@ -118,10 +168,7 @@ def test_a_provider_reflect_cannot_speak_leaves_agent_turns(engine, monkeypatch,
         max_concurrent=1,
         max_request_tokens=8192,
     )
-    monkeypatch.setattr(
-        "hindsight_api.engine.memory_engine.get_config",
-        lambda: SimpleNamespace(decision_model_config=lambda operation: setup),
-    )
+    _set_up_for_reflect(monkeypatch, setup)
 
     assert engine._reflect_decision_model() is None
 
@@ -130,6 +177,7 @@ def test_a_provider_reflect_cannot_speak_leaves_agent_turns(engine, monkeypatch,
 def test_a_system_one_provider_drives_reflect(engine, monkeypatch, provider):
     """Hindsight Inference serves System One too, so reflect and pages run on it."""
     from hindsight_api.config import DecisionModelConfig
+    from hindsight_api.engine.decision_model import DecisionModel, decision_engine
 
     setup = DecisionModelConfig(
         provider=provider,
@@ -141,18 +189,15 @@ def test_a_system_one_provider_drives_reflect(engine, monkeypatch, provider):
         max_request_tokens=8192,
         tokenizer="jev",
     )
-    monkeypatch.setattr(
-        "hindsight_api.engine.memory_engine.get_config",
-        lambda: SimpleNamespace(decision_model_config=lambda operation: setup),
-    )
-    monkeypatch.setattr(engine, "_reflect_decision_model_client", None)
+    _set_up_for_reflect(monkeypatch, setup)
 
     client = engine._reflect_decision_model()
-    assert client is not None
+    assert isinstance(client, DecisionModel) and client.provider == provider
+    assert client is decision_engine("reflect"), "reflect asks the shared engine, not a client of its own"
     # Its cut and verdict are retried like the shared decision model's calls: a single 429 used
     # to drop them, and that round answered like agent mode.
     assert client.retry_policy is not None
     # Its questions are sized to the configured window, counted in the model's vocabulary (#6659):
     # the class default (26k) refused every first request on a smaller window.
-    assert client.MAX_QUESTION_TOKENS == 8192
+    assert client.question_tokens == 8192
     assert client.tokenizer == "jev"

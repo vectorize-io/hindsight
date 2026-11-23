@@ -2821,8 +2821,9 @@ async def _process_memory_batch(
             )
 
     # 2c. Triage: restatements and chatter are settled by a typed judgment, not the LLM.
+    # The engine is the one this MemoryEngine was given, the same way config is this batch's.
     triage = TriageResult()
-    if (decision_model := triage_model(config)) is not None:
+    if (decision_model := triage_model(config, memory_engine.decision_engine_for)) is not None:
         triage = await triage_facts(
             memories,
             [list(r.results) for r in per_fact_recalls],

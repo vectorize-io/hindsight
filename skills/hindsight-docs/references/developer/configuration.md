@@ -1558,8 +1558,8 @@ Both support the same providers:
 still work but will be removed in a future release. Set up the shared
 [decision model](#decision-model) instead (`HINDSIGHT_API_DECISION_MODEL_PROVIDER=typesafe` and
 `HINDSIGHT_API_DECISION_MODEL_API_KEY`): recall uses it in place of the reranker, and reflect and
-consolidation can use the same setup. The decision model has no equivalent of
-`HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES`: it ranks the candidates but does not cut them.
+consolidation can use the same setup. In place of `HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES`,
+`HINDSIGHT_API_RECALL_DECISION_MODEL_PRUNE` drops the candidates the decision model judges no help.
 TypeSafe is not a `/rerank` endpoint. It evaluates typed *questions* against a *state*,
 and this provider asks two of them.
 

@@ -20,11 +20,9 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-from ...config import DecisionModelConfig, get_config
-from ..decision_model import DecisionModel, DecisionQuestion, DecisionResponse
+from ..decision_model import DecisionEngineFor, DecisionModel, DecisionQuestion, DecisionResponse
 
 if TYPE_CHECKING:
     from ..response_models import MemoryFact
@@ -94,24 +92,21 @@ class TriageResult:
         return fact_id in self.restates or fact_id in self.chatter
 
 
-@lru_cache(maxsize=4)
-def _client(setup: DecisionModelConfig) -> DecisionModel:
-    # One client per setup for the process, so its connection pool and concurrency cap are shared.
-    return DecisionModel.from_config(setup)
-
-
-def triage_model(config: Any) -> DecisionModel | None:
+def triage_model(
+    config: Any,
+    decision_engine_for: DecisionEngineFor,
+) -> DecisionModel | None:
     """The decision model that triages this bank's facts, or None to send every fact to the LLM.
 
     On whenever the server has a decision model for consolidation (HINDSIGHT_API_DECISION_MODEL_*,
     with HINDSIGHT_API_CONSOLIDATION_DECISION_MODEL_* overrides); a bank opts out with
-    ``consolidation_use_decision_model``.
+    ``consolidation_use_decision_model``. ``decision_engine_for`` is the callable the caller was
+    given (MemoryEngine's).
     """
     # getattr: callers may pass a partial config (the batch tests pass a bare object).
     if not getattr(config, "consolidation_use_decision_model", False):
         return None
-    setup = get_config().decision_model_config("consolidation")
-    return _client(setup) if setup is not None else None
+    return decision_engine_for("consolidation")
 
 
 def fact_sentence(fact: dict[str, Any]) -> str:

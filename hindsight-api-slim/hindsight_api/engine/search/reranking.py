@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import numpy as np
 
 from ..cross_encoder import RerankTimeoutError, _served_provider
+from ..decision_model import DecisionEngineFor, decision_engine
 from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
 from .decision_reranker import DecisionModelReranker, DecisionRerankOptions, rerank_options, rerank_shared_context
 from .types import MergedCandidate, ScoredResult
@@ -317,7 +318,12 @@ class CrossEncoderReranker:
     Default local model is hindsight-ai/hs-rerank-1.
     """
 
-    def __init__(self, cross_encoder=None, fallback: "CrossEncoderReranker | None" = None):
+    def __init__(
+        self,
+        cross_encoder=None,
+        fallback: "CrossEncoderReranker | None" = None,
+        decision_engine_for: DecisionEngineFor | None = None,
+    ):
         """
         Initialize cross-encoder reranker.
 
@@ -327,6 +333,9 @@ class CrossEncoderReranker:
             fallback: Ranks a recall this one fails to. Built from the environment when
                 cross_encoder is None: the configured reranker chain behind a decision model,
                 with HINDSIGHT_API_RECALL_DECISION_MODEL_FALLBACK on.
+            decision_engine_for: Which decision model an operation asks. Defaults to
+                decision_model.decision_engine. Used only when cross_encoder is omitted, so an
+                explicit encoder is unchanged. MemoryEngine passes the callable it was given.
         """
         if cross_encoder is None:
             from hindsight_api.config import get_config
@@ -334,13 +343,13 @@ class CrossEncoderReranker:
 
             # A decision model set up for recall replaces the configured reranker, which then
             # only ranks the recalls the decision model fails, and only when asked to.
-            config = get_config()
-            decision_model = config.decision_model_config("recall")
-            if decision_model is None:
+            # Omitted means the shared engine, the same call as before anything was injected.
+            engine = (decision_engine_for or decision_engine)("recall")
+            if engine is None:
                 cross_encoder = create_cross_encoder_from_env()
             else:
-                cross_encoder = DecisionModelReranker.from_config(decision_model)
-                if config.recall_decision_model_fallback:
+                cross_encoder = DecisionModelReranker(engine)
+                if get_config().recall_decision_model_fallback:
                     fallback = CrossEncoderReranker(create_cross_encoder_from_env())
         self.cross_encoder = cross_encoder
         self.fallback = fallback

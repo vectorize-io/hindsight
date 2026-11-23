@@ -217,7 +217,10 @@ async def _consolidate(
         await C._process_memory_batch(
             pool=race.consolidation_pool,
             memory_engine=types.SimpleNamespace(
-                _backend=race.consolidation_pool, embeddings=object(), _validator_with_hook=lambda name: None
+                _backend=race.consolidation_pool,
+                embeddings=object(),
+                _validator_with_hook=lambda name: None,
+                decision_engine_for=lambda operation: None,
             ),
             llm_config=object(),
             bank_id=race.bank,

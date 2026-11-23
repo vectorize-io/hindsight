@@ -1,113 +1,41 @@
-"""TypeSafe reranker: the rank question, the cut question, and what comes back.
+"""The deprecated typesafe reranker provider: the rank question, the cut question, and what comes back.
 
 TypeSafe answers typed questions rather than exposing a /rerank endpoint, so the
-mapping from (query, doc) pairs onto questions — and from answers back onto scores —
-is this provider's whole substance. The HTTP round trip is faked; what is asserted is
-the requests we build and the order and cut we derive from the answers.
+mapping from (query, doc) pairs onto questions, and from answers back onto scores,
+is this provider's whole substance. It runs on the decision engine
+(:class:`ListwiseDecisionReranker` over :meth:`DecisionModel.rank`). The HTTP round trip is
+faked; what is asserted is the requests the engine builds and the order and cut derived
+from the answers.
 """
 
-import base64
 import json as jsonlib
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, fields
+from dataclasses import fields
 from unittest.mock import patch
 
 import pytest
 
 from hindsight_api.config import HindsightConfig
 from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
-from hindsight_api.engine.cross_encoder import (
-    _OPTION_KEY_OVERHEAD,
-    TypeSafeCrossEncoder,
-    create_cross_encoder_from_env,
-)
+from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
+from hindsight_api.engine.decision_model import _OPTION_KEY_OVERHEAD, DecisionModel
 from hindsight_api.engine.remote_retry import RetryPolicy
+from hindsight_api.engine.search.decision_reranker import ListwiseDecisionReranker
 from hindsight_api.engine.token_encoding import count_tokens
-
-
-class _FakeResponse:
-    def __init__(self, payload: dict):
-        self._payload = payload
-        self.status = 200
-
-    async def json(self, content_type=None):
-        return self._payload
-
-    def raise_for_status(self) -> None:
-        return None
-
-
-class _FakeSession:
-    """Answers a rank question from `ranking` and a cut question from `cut_level`.
-
-    `ranking` maps an option key ("c0", "c1", …) to the probability the model would
-    give it, so a pool ranked in several rounds is answered per round exactly as the
-    real API would answer it.
-    """
-
-    # Set to refuse a body the way Jev does when it counts it over its window. Jev counts
-    # mixed-script text at twice our tokenizer (#5715), so the window here does too.
-    window: int | None = None
-
-    def __init__(self, ranking: dict[str, float], cut_level: float = 0.0):
-        self.ranking = ranking
-        self.cut_level = cut_level
-        self.posted: list[dict] = []
-        self.urls: list[str] = []
-        self.refused: list[dict] = []
-        # Jev's refusal; a test swaps it for another server's (#6522).
-        self.refusal = UpstreamHTTPError(400, '{"detail":{"error_type":"max_tokens_exceeded"}}', {}, "")
-
-    def get(self):
-        return self
-
-    @asynccontextmanager
-    async def _post(self, url, headers=None, json=None):
-        self.urls.append(url)
-        self.posted.append(json)
-        question_id, question = next(iter(json["questions"].items()))
-        if question["type"] == "choice":
-            keys = list(question["criteria"])
-            answer = {
-                "type": "choice",
-                "choice": keys[0],
-                "probabilities": {key: self.ranking.get(key, 0.0) for key in keys},
-                "confidence": 0.9,
-            }
-        else:
-            answer = {
-                "type": "score",
-                "score": self.cut_level,
-                "legend": dict(enumerate(question["criteria"])),
-                "confidence": 0.9,
-            }
-        yield _FakeResponse({"answers": {question_id: answer}, "usage": {"input_tokens": 1, "output_tokens": 1}})
-
-    def post(self, url, headers=None, json=None):
-        if self.window is not None and 2 * count_tokens(jsonlib.dumps(json)) > self.window:
-            self.refused.append(json)
-            raise self.refusal
-        return self._post(url, headers=headers, json=json)
-
-    @property
-    def rank_requests(self) -> list[dict]:
-        return [body for body in self.posted if next(iter(body["questions"].values()))["type"] == "choice"]
-
-    @property
-    def cut_requests(self) -> list[dict]:
-        return [body for body in self.posted if next(iter(body["questions"].values()))["type"] == "score"]
+from tests.test_decision_engine import _engine, _FakeSession
 
 
 def _encoder(
     ranking: dict[str, float],
     cut_level: float = 0.0,
     max_question_tokens: int | None = None,
+    prune_candidates: bool = False,
     **kwargs,
-):
-    encoder = TypeSafeCrossEncoder(api_key="k", max_question_tokens=max_question_tokens, **kwargs)
+) -> tuple[ListwiseDecisionReranker, _FakeSession]:
+    """Built as the factory builds it: no configured window (the 26k question budget) and no
+    retry of its own, unless ``max_question_tokens`` names the window."""
     session = _FakeSession(ranking, cut_level)
-    encoder._session = session
-    return encoder, session
+    engine = _engine(session, max_request_tokens=max_question_tokens, retry_policy=RetryPolicy(max_retries=0), **kwargs)
+    return ListwiseDecisionReranker(engine, prune=prune_candidates), session
 
 
 def _make_config(**overrides) -> HindsightConfig:
@@ -203,7 +131,7 @@ class TestChunking:
     @pytest.mark.asyncio
     async def test_a_pool_over_the_option_cap_is_ranked_in_rounds(self):
         """A Choice takes at most 255 options, so a bigger pool needs several rounds."""
-        size = TypeSafeCrossEncoder.MAX_OPTIONS + 10
+        size = DecisionModel.MAX_OPTIONS + 10
         encoder, session = _encoder({f"c{i}": 1.0 / (i + 1) for i in range(size)})
         scores = await encoder._predict([("q", f"doc {i}") for i in range(size)])
 
@@ -214,7 +142,7 @@ class TestChunking:
 
     @pytest.mark.asyncio
     async def test_every_candidate_still_gets_a_distinct_position(self):
-        size = TypeSafeCrossEncoder.MAX_OPTIONS + 10
+        size = DecisionModel.MAX_OPTIONS + 10
         encoder, _ = _encoder({f"c{i}": 1.0 / (i + 1) for i in range(size)})
         scores = await encoder._predict([("q", f"doc {i}") for i in range(size)])
 
@@ -231,7 +159,7 @@ class TestCut:
         assert len(session.cut_requests) == 1
         question = session.cut_requests[0]["questions"]["depth"]
         assert question["type"] == "score"
-        assert question["criteria"] == TypeSafeCrossEncoder.CUT_LEVELS
+        assert question["criteria"] == DecisionModel.CUT_LEVELS
 
     @pytest.mark.asyncio
     async def test_level_zero_keeps_only_the_best_candidate(self):
@@ -260,7 +188,7 @@ class TestCut:
     async def test_the_top_level_keeps_the_whole_shortlist(self):
         encoder, _ = _encoder(
             {f"c{i}": 1.0 / (i + 1) for i in range(4)},
-            cut_level=float(len(TypeSafeCrossEncoder.CUT_LEVELS) - 1),
+            cut_level=float(len(DecisionModel.CUT_LEVELS) - 1),
             prune_candidates=True,
         )
         scores = await encoder._predict([("q", f"doc {i}") for i in range(4)])
@@ -275,212 +203,12 @@ class TestCut:
         assert all(score > 0.0 for score in scores)
 
 
-class _SufficiencySession(_FakeSession):
-    """Answers the sufficiency Score with a fixed expected score and per-level probabilities."""
-
-    def __init__(self, score: float, probabilities: dict[str, float] | None):
-        super().__init__({})
-        self.score = score
-        self.probabilities = probabilities
-
-    @asynccontextmanager
-    async def _post(self, url, headers=None, json=None):
-        self.posted.append(json)
-        answer = {"type": "score", "score": self.score, "confidence": 0.5}
-        if self.probabilities is not None:
-            answer["probabilities"] = self.probabilities
-        yield _FakeResponse({"answers": {"sufficient": answer}})
-
-
-class _RateLimitedOnceSession(_SufficiencySession):
-    """Refuses the first request with a 429, as a shared endpoint under load does."""
-
-    def post(self, url, headers=None, json=None):
-        if not self.refused:
-            self.refused.append(json)
-            raise UpstreamHTTPError(429, "Too Many Requests", {}, url)
-        return super().post(url, headers=headers, json=json)
-
-
-class TestSufficiency:
-    @pytest.mark.asyncio
-    async def test_a_rate_limit_is_retried_not_read_as_not_enough(self):
-        """A 429 used to fail the verdict, and reflect then ran the agent turns it exists to save."""
-        encoder = TypeSafeCrossEncoder(api_key="k")
-        encoder.retry_policy = RetryPolicy(initial_backoff=0.01, max_backoff=0.01)
-        encoder._session = _RateLimitedOnceSession(2.0, {"0": 0.0, "1": 0.1, "2": 0.9})
-
-        assert await encoder.evidence_is_sufficient("q", "evidence") is True
-        assert len(encoder._session.refused) == 1 and len(encoder._session.posted) == 1
-
-    @staticmethod
-    async def _verdict(score: float, probabilities: dict[str, float] | None) -> bool:
-        encoder = TypeSafeCrossEncoder(api_key="k")
-        encoder._session = _SufficiencySession(score, probabilities)
-        return await encoder.evidence_is_sufficient("q", "evidence")
-
-    @pytest.mark.asyncio
-    async def test_the_likeliest_level_decides_not_the_rounded_score(self):
-        """Measured on sde-bench: expected 1.43 rounds to "partly", but "fully" was likeliest."""
-        assert await self._verdict(1.43, {"0": 0.10, "1": 0.36, "2": 0.54}) is True
-
-    @pytest.mark.asyncio
-    async def test_partly_is_not_enough(self):
-        assert await self._verdict(1.13, {"0": 0.02, "1": 0.84, "2": 0.14}) is False
-
-    @pytest.mark.asyncio
-    async def test_without_probabilities_the_score_is_rounded(self):
-        assert await self._verdict(1.6, None) is True
-        assert await self._verdict(1.4, None) is False
-
-
-def _picture(label: str, size: tuple[int, int], fmt: str = "PNG", progressive: bool = False):
-    import io
-
-    from PIL import Image
-
-    from hindsight_api.engine.decision_rerank_interface import EvidenceImage
-
-    out = io.BytesIO()
-    Image.new("RGB", size, "white").save(out, format=fmt, **({"progressive": True} if progressive else {}))
-    media_type = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}[fmt]
-    return EvidenceImage(label=label, media_type=media_type, data=out.getvalue())
-
-
-class _HeaderRecordingSufficiencySession(_SufficiencySession):
-    def __init__(self, score: float, probabilities: dict[str, float] | None):
-        super().__init__(score, probabilities)
-        self.headers: list[dict] = []
-
-    def post(self, url, headers=None, json=None):
-        self.headers.append(headers or {})
-        return super().post(url, headers=headers, json=json)
-
-
-class TestSufficiencyPictures:
-    """With HINDSIGHT_API_DECISION_MODEL_VISION, "is this enough?" sees the pictures the evidence names.
-
-    An answer only a picture holds otherwise read as "not enough", and bought reflect another round.
-    """
-
-    @staticmethod
-    async def _ask(vision: bool, pictures: list) -> tuple[dict, dict, list[dict]]:
-        encoder = TypeSafeCrossEncoder(api_key="k", vision=vision)
-        session = _HeaderRecordingSufficiencySession(2.0, {"0": 0.0, "1": 0.1, "2": 0.9})
-        encoder._session = session
-        calls: list[dict] = []
-        recorder = type("R", (), {"record_llm_call": lambda self, **kw: calls.append(kw)})()
-        with patch("hindsight_api.engine.decision_model.get_span_recorder", return_value=recorder):
-            assert await encoder.evidence_is_sufficient("door code?", "door-sign: picture", pictures=pictures)
-        return session.posted[0], session.headers[0], calls
-
-    @pytest.mark.asyncio
-    async def test_the_pictures_jev_takes_go_as_assets_named_after_their_label(self):
-        sign = _picture("Picture of door-sign.png, page 1", (900, 400))
-        scan = _picture("Picture of scan.pdf, page 2", (1200, 1500), fmt="JPEG")
-        ignored = [
-            _picture("tiny", (64, 64)),  # under 280 px a side
-            _picture("huge", (2000, 500)),  # over 1568 px a side
-            _picture("webp", (600, 600), fmt="WEBP"),  # PNG and JPEG only
-            _picture("progressive", (600, 600), fmt="JPEG", progressive=True),  # baseline JPEG only
-        ]
-        body, headers, calls = await self._ask(True, [sign, *ignored, scan])
-
-        assert headers["TypeSafe-Danger-Zone-Images"] == "true"
-        assert body["state"].endswith(
-            "Pictures:\nPicture of door-sign.png, page 1: [[picture-1]]\nPicture of scan.pdf, page 2: [[picture-2]]"
-        )
-        assert {ref: (a["type"], a["format"]) for ref, a in body["assets"].items()} == {
-            "[[picture-1]]": ("image", "png"),
-            "[[picture-2]]": ("image", "jpg"),
-        }
-        assert base64.b64decode(body["assets"]["[[picture-1]]"]["data_base64"]) == sign.data
-        # The trace keeps which pictures went, never their bytes.
-        traced = calls[0]["structured_input"]
-        assert traced["assets"] == {"[[picture-1]]": "<image>", "[[picture-2]]": "<image>"}
-
-    @pytest.mark.asyncio
-    async def test_without_vision_or_any_picture_jev_takes_the_request_is_text_only(self):
-        for vision, pictures in ((False, [_picture("sign", (900, 400))]), (True, [_picture("tiny", (64, 64))])):
-            body, headers, _ = await self._ask(vision, pictures)
-            assert "assets" not in body and "Pictures:" not in body["state"]
-            assert "TypeSafe-Danger-Zone-Images" not in headers
-
-
-class _PageImpactSession(_FakeSession):
-    """Answers the page-impact choice with a fixed answer and records each request."""
-
-    def __init__(self, answer: dict):
-        super().__init__({})
-        self.answer = answer
-
-    @asynccontextmanager
-    async def _post(self, url, headers=None, json=None):
-        self.posted.append(json)
-        yield _FakeResponse({"answers": {"impact": {"type": "choice", **self.answer}}})
-
-
-@dataclass(frozen=True)
-class _PageImpactCall:
-    verdict: bool
-    request: dict
-
-
-class TestPageImpact:
-    @staticmethod
-    async def _ask(answer: dict, page: str = "# Page\n\nDana is on call.") -> _PageImpactCall:
-        encoder = TypeSafeCrossEncoder(api_key="k")
-        session = _PageImpactSession(answer)
-        encoder._session = session
-        verdict = await encoder.could_change_page("Who is on call?", page, "Dana left the company.")
-        return _PageImpactCall(verdict=verdict, request=session.posted[0])
-
-    @pytest.mark.asyncio
-    async def test_no_drops_the_memory(self):
-        assert (await self._ask({"choice": "no", "probabilities": {"yes": 0.1, "no": 0.9}})).verdict is False
-
-    @pytest.mark.asyncio
-    async def test_yes_keeps_it(self):
-        assert (await self._ask({"choice": "yes"})).verdict is True
-
-    @pytest.mark.asyncio
-    async def test_without_a_choice_the_likeliest_option_decides(self):
-        assert (await self._ask({"probabilities": {"yes": 0.2, "no": 0.8}})).verdict is False
-
-    @pytest.mark.asyncio
-    async def test_an_empty_answer_keeps_it(self):
-        """A wrong "no" is permanent, a wrong "yes" costs one LLM call: doubt keeps."""
-        assert (await self._ask({})).verdict is True
-
-    @pytest.mark.asyncio
-    async def test_the_state_carries_topic_memory_and_page(self):
-        body = (await self._ask({"choice": "yes"})).request
-        state = body["state"]
-        assert "Who is on call?" in state and "Dana left the company." in state and "Dana is on call." in state
-        criteria = set(body["questions"]["impact"]["criteria"])
-        assert {"yes", "no"} <= criteria and len(criteria) > 2
-
-    @pytest.mark.asyncio
-    async def test_a_hedged_answer_keeps_it(self):
-        """Every option but "no" keeps the memory, so a doubt split across them never drops it."""
-        assert (await self._ask({"choice": "maybe"})).verdict is True
-        assert (await self._ask({"choice": "no"})).verdict is False
-
-    @pytest.mark.asyncio
-    async def test_an_oversized_page_keeps_its_head(self):
-        page = "HEAD " + "filler " * 40_000 + "TAIL"
-        body = (await self._ask({"choice": "yes"}, page=page)).request
-        assert "HEAD" in body["state"] and "TAIL" not in body["state"]
-        assert count_tokens(body["state"]) <= TypeSafeCrossEncoder.MAX_QUESTION_TOKENS
-
-
 class TestMinKeep:
     @pytest.mark.asyncio
     async def test_the_cut_never_keeps_fewer_than_the_floor(self):
         """Level 0 keeps one; a floor of three keeps the top three by rank."""
         encoder, _ = _encoder({"c0": 0.1, "c1": 0.4, "c2": 0.3, "c3": 0.2}, cut_level=0.0, prune_candidates=True)
-        encoder.MIN_KEEP = 3
-        scores = await encoder._predict([("q", "a"), ("q", "b"), ("q", "c"), ("q", "d")])
+        scores = await encoder._client.rank("q", ["a", "b", "c", "d"], prune=True, min_keep=3)
 
         assert [score > 0 for score in scores] == [False, True, True, True]
 
@@ -498,11 +226,35 @@ class TestFactory:
         with patch("hindsight_api.config.get_config", return_value=config):
             encoder = create_cross_encoder_from_env()
 
+        # On the decision engine, ranking listwise as it always has.
+        assert isinstance(encoder, ListwiseDecisionReranker)
+        assert isinstance(encoder._client, DecisionModel)
+        assert encoder._client.provider == "typesafe" and encoder._client.base_url == "https://api.typesafe.ai"
         assert encoder.provider_name == "typesafe"
         assert encoder.model == "jev-latest"
         assert encoder.prunes_candidates is True
         # Deprecated in favour of the shared decision model; building it says so.
         assert "HINDSIGHT_API_DECISION_MODEL_PROVIDER" in caplog.text
+
+    def test_listwise_keeps_its_budget_and_one_retry_layer(self):
+        """The provider's own 26k question budget in the default tokenizer, and predict() retrying
+        the whole call with the reranker policy, as before it ran on the engine."""
+        config = _make_config(reranker_provider="typesafe", reranker_typesafe_api_key="k", reranker_max_retries=7)
+        with patch("hindsight_api.config.get_config", return_value=config):
+            encoder = create_cross_encoder_from_env()
+
+        assert encoder._client.question_tokens == 26_000 and encoder._client.tokenizer is None
+        assert encoder.retry_policy is not None and encoder.retry_policy.max_retries == 7
+        assert encoder._client.retry_policy.max_retries == 0
+
+    @pytest.mark.asyncio
+    async def test_the_listwise_reranker_ranks_each_query_in_its_own_pool_on_the_engine(self):
+        encoder, session = _encoder({"c0": 0.9, "c1": 0.1})
+        scores = await encoder._predict([("a", "doc-a"), ("b", "doc-b"), ("a", "doc-a2"), ("b", "doc-b2")])
+
+        assert len(session.rank_requests) == 2
+        assert scores[0] > scores[2] and scores[1] > scores[3]
+        assert session.urls == ["https://api.typesafe.ai/v1/systemone"] * 2
 
     def test_missing_api_key_names_its_env_var(self):
         config = _make_config(reranker_provider="typesafe")
@@ -555,7 +307,7 @@ class TestTokenBudgetingAndOrder:
         Under the new code, non-finalists fall back to initial RRF order (0 < 1 < ...), discarding
         uncalibrated intra-group probabilities.
         """
-        size = TypeSafeCrossEncoder.MAX_OPTIONS + 20  # 270 candidates
+        size = DecisionModel.MAX_OPTIONS + 20  # 270 candidates
         # Intra-group model preference is opposite to initial RRF order
         encoder, session = _encoder({f"c{i}": float(i + 1) for i in range(size)})
         pairs = [("q", f"candidate_{i}") for i in range(size)]
@@ -732,7 +484,7 @@ class TestTokenBudgetingAndOrder:
             {"c0": 0.6, "c1": 0.4},
             max_question_tokens=max_question_tokens,
         )
-        with patch.object(encoder, "_rank_once", wraps=encoder._rank_once) as mock_rank_once:
+        with patch.object(encoder._client, "_rank_once", wraps=encoder._client._rank_once) as mock_rank_once:
             scores = await encoder._predict([("q", huge_doc), ("q", normal_doc)])
             assert len(scores) == 2
 
@@ -771,7 +523,7 @@ class TestTokenBudgetingAndOrder:
         """
         size = 30
         encoder, session = _encoder({f"c{i}": 1.0 / (i + 1) for i in range(size)}, max_question_tokens=400)
-        encoder.MAX_OPTIONS = 10
+        encoder._client.MAX_OPTIONS = 10
         scores = await encoder._predict([("q", "long document words " * 40 + str(i)) for i in range(size)])
 
         assert len(scores) == size
@@ -814,16 +566,6 @@ class TestOverflowingJevsWindow:
 
         assert session.refused
         assert len(set(scores)) == size
-
-    @pytest.mark.asyncio
-    async def test_evidence_is_cut_shorter_until_it_fits(self):
-        encoder = TypeSafeCrossEncoder(api_key="k")
-        session = _SufficiencySession(2.0, None)
-        session.window = 32_000
-        encoder._session = session
-
-        assert await encoder.evidence_is_sufficient("q", "evidence words " * 20_000) is True
-        assert len(session.refused) == 1 and len(session.posted) == 1
 
     @pytest.mark.asyncio
     async def test_a_configured_window_is_taken_at_the_first_request(self):
