@@ -106,7 +106,7 @@ Two customers ask the exact same question, and only Amara has an exception. Both
 
 **Search: meaning, the rare words, then a token budget.** A search runs two searches side by side: one by meaning, and one by the query's rare words ("X200", a policy number, a name), in any language. Every candidate is scored from all its vectors, keyword matches are mixed in, a reranker can reorder the top ones, and the best hits come back with the text around them until your `max_tokens` is full. Your agent gets the paragraph, not a cut sentence, and every result points to its page or its second in the original file.
 
-The full picture is in the [Knowledge Banks docs](/developer/knowledge-banks).
+The full picture is in the [Knowledge Banks docs](/next/developer/knowledge-banks).
 
 ## State-of-the-art search: first on contracts and personal media, second on enterprise PDFs
 
@@ -187,13 +187,13 @@ We're adding both models a knowledge bank needs to [Hindsight Inference](https:/
 - **`embeddinggemma-2`:** Google's multimodal EmbeddingGemma, with text, images, audio and video in one 768-dimension space. An image counts as about 270 tokens, 30 seconds of audio as at most 754, and a video as at most 32 frames (about 4,000 tokens; the soundtrack isn't read). Per 1,000 at this rate: images about $0.014, 30-second audio clips about $0.038, long videos about $0.20.
 - **`hs-decide-1-flash-mm`:** our decision reranker, for text and images. An image counts as width × height ÷ 384 tokens, so a 792 × 1,024 page is 2,112. Each side can be 280 to 1,568 pixels, with up to 64 images per request. Reranking 1,000 such pages costs about $0.11.
 
-Point a self-hosted server at them and you get a knowledge bank without running a model yourself. See [Configuration](/developer/configuration#knowledge-banks) and [Searching](/developer/knowledge-banks#searching).
+Point a self-hosted server at them and you get a knowledge bank without running a model yourself. See [Configuration](/next/developer/configuration#knowledge-banks) and [Searching](/next/developer/knowledge-banks#searching).
 
 ### The trade-offs
 
 - **Not first on every search benchmark.** Mixedbread with its reranker is ahead on ViDoRe V3, by 1.9 points on the raw PDFs and 3.5 on page text. Our leads are small: 0.3 points over Conare on contracts, 0.8 over Memexa v2 on ATM-Bench, and 0.2 over Cohere with its reranker on the raw PDFs.
 - **Contradictions are still the hardest case.** When an old chat confidently contradicts the manual, the linked setup gets 73% right, no better than memory alone. Documents win when the agent finds both; it doesn't always find both.
-- **Our scores use a reranker.** Every search score above is reranked by `hs-decide-1-flash-mm`. You can [plug in your own](/developer/knowledge-banks#searching) (any service that speaks Cohere's rerank API, pictures included). We haven't published scores without one.
+- **Our scores use a reranker.** Every search score above is reranked by `hs-decide-1-flash-mm`. You can [plug in your own](/next/developer/knowledge-banks#searching) (any service that speaks Cohere's rerank API, pictures included). We haven't published scores without one.
 - **Pick the embedder before you fill the bank.** Every passage is stored as a vector of the model's size. Switching to a model of another size means ingesting again.
 - **Video and audio take time to ingest.** Decoding clips is the slow part: a one-hour video takes about a minute on a GPU. You can turn either off per bank.
 
@@ -211,9 +211,9 @@ hindsight kb search manuals "the pump keeps losing pressure"
 hindsight bank set-config support-agent --knowledge-banks manuals
 ```
 
-EmbeddingGemma 2 runs inside the Hindsight API process by default. To call it on [Hindsight Inference](https://inference.hindsight.vectorize.io) with `hs-decide-1-flash-mm` as the reranker, or to use Gemini, Vertex, Voyage, Cohere or any OpenAI-compatible server, see [Configuration](/developer/configuration#knowledge-banks).
+EmbeddingGemma 2 runs inside the Hindsight API process by default. To call it on [Hindsight Inference](https://inference.hindsight.vectorize.io) with `hs-decide-1-flash-mm` as the reranker, or to use Gemini, Vertex, Voyage, Cohere or any OpenAI-compatible server, see [Configuration](/next/developer/configuration#knowledge-banks).
 
 - **Hindsight Cloud:** knowledge banks are on for every account. Open **Knowledge Banks** in the console, drop in your files and search.
-- **Every endpoint:** [Knowledge Banks API](/developer/api/knowledge-banks), with examples for Python, Node.js, Go, the CLI and HTTP.
+- **Every endpoint:** [Knowledge Banks API](/next/developer/api/knowledge-banks), with examples for Python, Node.js, Go, the CLI and HTTP.
 - **Every result:** [benchmarks.hindsight.vectorize.io](https://benchmarks.hindsight.vectorize.io), and the [benchmark code](https://github.com/vectorize-io/agent-memory-benchmark) to run them yourself.
 - Star us on [GitHub](https://github.com/vectorize-io/hindsight).
