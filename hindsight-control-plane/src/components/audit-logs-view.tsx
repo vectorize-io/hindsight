@@ -91,6 +91,10 @@ function getActionOptions(t: TranslateFn) {
     { value: "create_page", label: t("actionCreatePage") },
     { value: "update_page_node", label: t("actionUpdatePageNode") },
     { value: "delete_page_node", label: t("actionDeletePageNode") },
+    { value: "create_knowledge_bank", label: t("actionCreateKnowledgeBank") },
+    { value: "delete_knowledge_bank", label: t("actionDeleteKnowledgeBank") },
+    { value: "ingest_knowledge_text", label: t("actionIngestKnowledgeText") },
+    { value: "delete_knowledge_document", label: t("actionDeleteKnowledgeDocument") },
   ];
 }
 

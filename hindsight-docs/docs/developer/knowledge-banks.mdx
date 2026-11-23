@@ -227,6 +227,12 @@ Documents and passages live in Postgres by default, in their own tables with a p
 
 ---
 
+## Over MCP
+
+Connect an agent to `/mcp/kb/{bank_id}/` and it gets that knowledge bank's tools: search, text ingest, and listing, reading and deleting documents and tags. The multi-bank endpoint `/mcp/` has the same tools with a `bank_id` argument, plus listing and creating knowledge banks. See [Knowledge-Bank Tools](./mcp-server#knowledge-bank-tools).
+
+---
+
 ## In the Control Plane
 
 With knowledge banks on, the control plane lists them next to memory banks. Each knowledge bank has:

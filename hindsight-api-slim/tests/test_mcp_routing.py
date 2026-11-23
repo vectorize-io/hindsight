@@ -374,14 +374,17 @@ def test_registered_tool_sets_match_the_allowlists(mock_memory):
     over the whole sets rather than spot-checking tool names.
     """
     from hindsight_api.api.mcp import create_mcp_server
-    from hindsight_api.mcp_tools import _ALL_TOOLS
+    from hindsight_api.mcp_tools import _ALL_TOOLS, _KNOWLEDGE_TOOLS
 
     multi = set(_tools(create_mcp_server(mock_memory, multi_bank=True)))
     single = set(_tools(create_mcp_server(mock_memory, multi_bank=False)))
 
     assert multi == set(_ALL_TOOLS)
-    # Single-bank mode drops exactly the tools that operate across banks.
-    assert multi - single == {"list_banks", "create_bank", "get_bank_stats"}
+    # Single-bank mode drops exactly the tools that operate across banks, and the knowledge-bank
+    # tools, which a knowledge bank's own endpoint serves.
+    assert multi - single == {"list_banks", "create_bank", "get_bank_stats"} | _KNOWLEDGE_TOOLS
+    knowledge = set(_tools(create_mcp_server(mock_memory, multi_bank=False, knowledge_bank=True)))
+    assert knowledge == _KNOWLEDGE_TOOLS - {"list_knowledge_banks", "create_knowledge_bank"}
 
 
 def test_global_mcp_enabled_tools_filter_restricts_registered_tools(mock_memory):

@@ -107,6 +107,8 @@ The MCP server operates in two modes depending on the URL:
 
 **Multi-bank mode** exposes all tools with an optional `bank_id` parameter, plus bank management tools (`list_banks`, `create_bank`, `get_bank_stats`).
 
+**Knowledge banks** have their own endpoint, `/mcp/kb/{bank_id}/`, which lists only the [knowledge-bank tools](#knowledge-bank-tools). A memory bank's `/mcp/{bank_id}/` never lists them. `/mcp/` lists both, plus `list_knowledge_banks` and `create_knowledge_bank`.
+
 ## Tool Metadata and Instructions
 
 Hindsight can append deployment-specific guidance to the `retain` and `recall` MCP tool descriptions. Set `HINDSIGHT_API_MCP_INSTRUCTIONS` on the API server when clients should see local rules, such as which tags to use or which memories should be retained.
@@ -772,6 +774,29 @@ Delete a folder or page and its whole subtree. Each deleted page takes its backi
 Exporting pages is deliberately not an MCP tool — it returns the whole
 bank as a single markdown bundle. Use the HTTP endpoint
 `GET /v1/default/banks/{bank_id}/pages/export` instead.
+:::
+
+---
+
+## Knowledge-Bank Tools
+
+These work on a [knowledge bank](./knowledge-banks), and answer with the same JSON as its HTTP API. Connect to `/mcp/kb/{bank_id}/` for one knowledge bank, or to `/mcp/`, where each takes an optional `bank_id`. Authentication and the operation validator apply as on the HTTP API. They are hidden when `HINDSIGHT_API_ENABLE_KB` is off.
+
+| Tool | What it does |
+|------|--------------|
+| `list_knowledge_banks` | Lists knowledge banks, newest first (`query`, `limit`, `offset`). Multi-bank mode only |
+| `create_knowledge_bank` | Creates a knowledge bank, or returns it if it exists (`bank_id`). Multi-bank mode only |
+| `get_knowledge_bank` | Document and passage counts, by status and media type |
+| `delete_knowledge_bank` | Deletes the bank and every document in it |
+| `search_knowledge_bank` | Finds passages by meaning (`query`, `max_tokens`, `budget`, `tags`, `tags_match`, `tag_groups`, `document_ids`, `media_types`) |
+| `ingest_knowledge_text` | Adds a text or markdown document and returns once it is searchable (`text`, `document_id`, `filename`, `tags`, `strategy`) |
+| `list_knowledge_documents` | Lists documents (`q`, `status`, `media_type`, `tags`, `limit`, `offset`) |
+| `get_knowledge_document` | A document with all its passages (`document_id`) |
+| `delete_knowledge_document` | Deletes a document, its passages and its file (`document_id`) |
+| `list_knowledge_tags` | The tags on the bank's documents, most used first (`q`, `limit`, `offset`) |
+
+:::note
+Uploading files, downloading a document's file or a passage's media, searching by image or video, search traces and per-bank ingest settings are HTTP only: use the [knowledge-bank API](./api/knowledge-banks).
 :::
 
 ---

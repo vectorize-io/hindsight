@@ -11,7 +11,7 @@ import time
 from collections.abc import Awaitable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Annotated, Any, Callable, Literal, get_args
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Literal, get_args
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
@@ -23,6 +23,7 @@ from hindsight_api import MemoryEngine
 from hindsight_api.config import (
     DEFAULT_MCP_RECALL_DESCRIPTION,
     DEFAULT_MCP_RETAIN_DESCRIPTION,
+    get_config,
 )
 from hindsight_api.engine import page_markdown
 from hindsight_api.engine.audit import AuditEntry, AuditLogger
@@ -38,6 +39,9 @@ from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.stored_dates import is_placeholder_date
 from hindsight_api.extensions import OperationValidationError
 from hindsight_api.models import RequestContext
+
+if TYPE_CHECKING:
+    from hindsight_api.knowledge.service import KnowledgeService
 
 _TAG_GROUP_LIST_ADAPTER = TypeAdapter(list[TagGroup])
 
@@ -112,6 +116,24 @@ _ALL_TOOLS: frozenset[str] = frozenset(
         "delete_page_node",
     }
 )
+
+# Knowledge-bank tools. The multi-bank endpoint (/mcp/) lists them beside the memory-bank tools;
+# a single knowledge bank has its own endpoint, /mcp/kb/{bank_id}/, which lists only these.
+_KNOWLEDGE_TOOLS: frozenset[str] = frozenset(
+    {
+        "list_knowledge_banks",
+        "create_knowledge_bank",
+        "get_knowledge_bank",
+        "delete_knowledge_bank",
+        "search_knowledge_bank",
+        "ingest_knowledge_text",
+        "list_knowledge_documents",
+        "get_knowledge_document",
+        "delete_knowledge_document",
+        "list_knowledge_tags",
+    }
+)
+_ALL_TOOLS = _ALL_TOOLS | _KNOWLEDGE_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -401,7 +423,7 @@ class _ToolError(Exception):
     """
 
 
-async def _resolve_bank(config: MCPToolsConfig, bank_id: str | None) -> str | None:
+async def _resolve_bank(config: MCPToolsConfig, bank_id: str | None, *, knowledge: bool = False) -> str | None:
     """The session's bank, or the explicit one a multi-bank tool was given.
 
     The **session** bank needs no work here: the transport resolved any alias when
@@ -411,7 +433,9 @@ async def _resolve_bank(config: MCPToolsConfig, bank_id: str | None) -> str | No
     session-bank tool call free of a database round trip it does not need.
 
     Either way a knowledge bank is refused (``knowledge_bank_refuser``): its kind is
-    cached, so the session-bank path still takes no round trip on a warm bank.
+    cached, so the session-bank path still takes no round trip on a warm bank. The knowledge-bank
+    tools pass ``knowledge=True``: a knowledge bank is what they serve, and the knowledge service
+    refuses a memory bank itself.
     """
     if bank_id is None:
         resolved = config.bank_id_resolver()
@@ -419,7 +443,7 @@ async def _resolve_bank(config: MCPToolsConfig, bank_id: str | None) -> str | No
         resolved = bank_id
     else:
         resolved = await config.bank_alias_resolver(bank_id)
-    if resolved and config.knowledge_bank_refuser is not None:
+    if resolved and not knowledge and config.knowledge_bank_refuser is not None:
         await config.knowledge_bank_refuser(resolved)
     return resolved
 
@@ -434,6 +458,7 @@ async def _run_tool(
     indent: int | None = 2,
     error_extra: dict[str, Any] | None = None,
     value_error: Literal["fault", "rejection", "expected"] = "fault",
+    knowledge: bool = False,
 ) -> Any:
     """Resolve the target bank, run one tool's work, and shape its result and errors.
 
@@ -484,7 +509,7 @@ async def _run_tool(
         return _error_json(message, **extra) if as_json else {"error": str(message), **extra}
 
     try:
-        target_bank = await _resolve_bank(config, bank_id)
+        target_bank = await _resolve_bank(config, bank_id, knowledge=knowledge)
         if target_bank is None:
             return _err("No bank_id configured")
         return _ok(await run(target_bank))
@@ -638,6 +663,12 @@ _READ_ONLY_TOOLS = {
     "get_page_tree",
     "search_pages",
     "get_page",
+    "list_knowledge_banks",
+    "get_knowledge_bank",
+    "search_knowledge_bank",
+    "list_knowledge_documents",
+    "get_knowledge_document",
+    "list_knowledge_tags",
 }
 _DESTRUCTIVE_TOOLS = {
     "delete_bank",
@@ -648,6 +679,8 @@ _DESTRUCTIVE_TOOLS = {
     "delete_document",
     "invalidate_memory",
     "delete_page_node",
+    "delete_knowledge_bank",
+    "delete_knowledge_document",
 }
 
 
@@ -688,51 +721,7 @@ def register_mcp_tools(
 
         config.knowledge_bank_refuser = _refuse_knowledge_bank
 
-    tools_to_register = (
-        canonical_tool_names(config.tools)
-        if config.tools
-        else {
-            "retain",
-            "sync_retain",
-            "recall",
-            "reflect",
-            "list_banks",
-            "create_bank",
-            "list_mental_models",
-            "get_mental_model",
-            "create_mental_model",
-            "update_mental_model",
-            "delete_mental_model",
-            "refresh_mental_model",
-            "clear_mental_model",
-            "list_directives",
-            "create_directive",
-            "delete_directive",
-            "list_memories",
-            "get_memory",
-            "update_memory",
-            "invalidate_memory",
-            "list_documents",
-            "get_document",
-            "delete_document",
-            "list_operations",
-            "get_operation",
-            "cancel_operation",
-            "list_tags",
-            "get_bank",
-            "get_bank_stats",
-            "update_bank",
-            "delete_bank",
-            "clear_memories",
-            "get_page_tree",
-            "search_pages",
-            "get_page",
-            "create_page_folder",
-            "create_page",
-            "update_page_node",
-            "delete_page_node",
-        }
-    )
+    tools_to_register = canonical_tool_names(config.tools) if config.tools else set(_ALL_TOOLS)
 
     if "retain" in tools_to_register:
         _register_retain(mcp, memory, config)
@@ -858,6 +847,8 @@ def register_mcp_tools(
     if "delete_page_node" in tools_to_register:
         _register_delete_page_node(mcp, memory, config)
 
+    _register_knowledge_tools(mcp, memory, config, tools_to_register)
+
     _apply_bank_tool_filtering(mcp, memory, config)
     _apply_audit_logging(mcp, memory, config)
     if not config.include_bank_id_param:
@@ -919,12 +910,18 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
     Compatible with FastMCP 2.x (_tool_manager pattern) and 3.x (provider pattern).
     """
 
-    async def _get_enabled_tools() -> set[str] | None:
-        """Return the enabled tool set for the current bank, or None if unrestricted."""
-        bank_id = await _resolve_bank(config, None)
+    async def _tool_gate() -> Callable[[str], bool]:
+        """Return which tools the current bank may see and call."""
+        # knowledge=True: listing tools on a knowledge bank's own endpoint is no refusal; a memory
+        # tool called on one is still refused when it resolves its bank.
+        bank_id = await _resolve_bank(config, None, knowledge=True)
         if not bank_id:
-            return None
+            return lambda name: True
         request_context = _get_request_context(config)
+
+        # Knowledge tools are hidden when knowledge banks are off (checked per request, as the
+        # HTTP routes do, so the flag can flip without a restart).
+        hidden = _KNOWLEDGE_TOOLS if not get_config().enable_kb else frozenset()
 
         # Layer 1: bank config filter (existing)
         bank_cfg = await memory._config_resolver.get_bank_config(bank_id, request_context)
@@ -941,7 +938,7 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
                 filtered = await validator.filter_mcp_tools(bank_id, request_context, candidate)
             except Exception:
                 logger.warning("filter_mcp_tools raised, returning unfiltered tools", exc_info=True)
-                return enabled
+                filtered = candidate
             if filtered != candidate:
                 # Validator can only narrow, never expand beyond the bank config ceiling.
                 if bank_tools is not None:
@@ -949,7 +946,7 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
                 else:
                     enabled = set(filtered)
 
-        return enabled
+        return lambda name: name not in hidden and (enabled is None or name in enabled)
 
     if hasattr(mcp, "list_tools"):
         # FastMCP 3.x: wrap list_tools() and get_tool() on the instance
@@ -958,18 +955,15 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
 
         async def _filtered_list_tools(**kwargs):
             tools = await original_list_tools(**kwargs)
-            enabled_set = await _get_enabled_tools()
-            if enabled_set is None:
-                return tools
-            return [t for t in tools if t.name in enabled_set]
+            allowed = await _tool_gate()
+            return [t for t in tools if allowed(t.name)]
 
         async def _filtered_get_tool(name, **kwargs):
             # A call by an old tool name runs the renamed tool. list_tools only shows the new
             # names, so agents never see the old ones; only callers that hardcode them use this.
             # Deprecated alias, remove in 2.x.
             name = _RENAMED_TOOLS.get(name, name)
-            enabled_set = await _get_enabled_tools()
-            if enabled_set is not None and name not in enabled_set:
+            if not (await _tool_gate())(name):
                 return None  # FastMCP treats None as "not found" → raises NotFoundError
             return await original_get_tool(name, **kwargs)
 
@@ -984,10 +978,8 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
 
             async def _filtered_get_tools():
                 all_tools = await original_get_tools()
-                enabled_set = await _get_enabled_tools()
-                if enabled_set is None:
-                    return all_tools
-                return {k: v for k, v in all_tools.items() if k in enabled_set}
+                allowed = await _tool_gate()
+                return {k: v for k, v in all_tools.items() if allowed(k)}
 
             setattr(tool_manager, "get_tools", _filtered_get_tools)
 
@@ -995,8 +987,7 @@ def _apply_bank_tool_filtering(mcp: FastMCP, memory: MemoryEngine, config: MCPTo
                 original_run = tool.run
 
                 async def _filtered_run(arguments, _name=name, _orig=original_run):
-                    enabled_set = await _get_enabled_tools()
-                    if enabled_set is not None and _name not in enabled_set:
+                    if not (await _tool_gate())(_name):
                         raise ValueError(f"Tool '{_name}' is not enabled for bank '{config.bank_id_resolver()}'")
                     return await _orig(arguments)
 
@@ -1027,6 +1018,12 @@ _UNAUDITED_MCP_TOOLS: frozenset[str] = frozenset(
         "list_operations",
         "list_tags",
         "search_pages",
+        "list_knowledge_banks",
+        "get_knowledge_bank",
+        "search_knowledge_bank",
+        "list_knowledge_documents",
+        "get_knowledge_document",
+        "list_knowledge_tags",
     }
 )
 
@@ -4807,4 +4804,661 @@ def _register_clear_memories(mcp: FastMCP, memory: MemoryEngine, config: MCPTool
                 action="clearing memories",
                 run=lambda target_bank: _run(target_bank, type),
                 indent=None,
+            )
+
+
+# --- knowledge banks ------------------------------------------------------------------------
+#
+# The same operations as the /v1/default/knowledge-banks routes, answered with the same JSON.
+# Not offered: file ingest and file/media download (MCP carries no file stream), image/video
+# search, search traces, the timeseries and per-bank ingest settings.
+
+
+async def _knowledge_call(work: Awaitable[Any]) -> Any:
+    """A knowledge-bank refusal ("not found", "already a memory bank") is an answer, not a bug."""
+    from hindsight_api.knowledge.service import KnowledgeBankError
+
+    if not get_config().enable_kb:
+        raise _ToolError("Knowledge banks are disabled on this server")
+    try:
+        return await work
+    except KnowledgeBankError as e:
+        raise _ToolError(str(e)) from e
+
+
+def _knowledge_service(memory: MemoryEngine) -> "KnowledgeService":
+    # Imported here: the knowledge package imports the API layer, which imports this module.
+    from hindsight_api.knowledge.service import get_knowledge_service
+
+    return get_knowledge_service(memory)
+
+
+def _register_knowledge_tools(
+    mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig, tools_to_register: set[str]
+) -> None:
+    registrars = {
+        "list_knowledge_banks": _register_list_knowledge_banks,
+        "create_knowledge_bank": _register_create_knowledge_bank,
+        "get_knowledge_bank": _register_get_knowledge_bank,
+        "delete_knowledge_bank": _register_delete_knowledge_bank,
+        "search_knowledge_bank": _register_search_knowledge_bank,
+        "ingest_knowledge_text": _register_ingest_knowledge_text,
+        "list_knowledge_documents": _register_list_knowledge_documents,
+        "get_knowledge_document": _register_get_knowledge_document,
+        "delete_knowledge_document": _register_delete_knowledge_document,
+        "list_knowledge_tags": _register_list_knowledge_tags,
+    }
+    for name, register in registrars.items():
+        if name in tools_to_register:
+            register(mcp, memory, config)
+
+
+def _register_list_knowledge_banks(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    from hindsight_api.knowledge.routes import bank_response
+
+    async def _run(query: str | None, limit: int, offset: int) -> Any:
+        page = await _knowledge_call(
+            _knowledge_service(memory).list_banks(_get_request_context(config), limit=limit, offset=offset, q=query)
+        )
+        return {
+            "banks": [bank_response(b).model_dump(mode="json") for b in page.banks],
+            "total": page.total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @mcp.tool(annotations=_tool_annotations("list_knowledge_banks"), output_schema=None)
+    async def list_knowledge_banks(query: str | None = None, limit: _Limit = 100, offset: _Offset = 0) -> str:
+        """
+        List knowledge banks, newest first.
+
+        A knowledge bank stores documents as they are (text, PDFs, images, audio, video) and
+        finds passages in them by meaning. Unlike a memory bank it does not extract facts.
+
+        Args:
+            query: Optional case-insensitive part of the bank id.
+            limit: Maximum number of banks to return (default 100).
+            offset: Number of banks to skip, for paging through `total`.
+        """
+        try:
+            return json.dumps(await _run(query, limit, offset), indent=2)
+        except _ToolError as e:
+            return _error_json(e, banks=[])
+        except OperationValidationError as e:
+            logger.warning(f"Operation rejected: {e}")
+            return _error_json(e, banks=[])
+        except Exception as e:
+            logger.error(f"Error listing knowledge banks: {e}", exc_info=True)
+            return _error_json(e, banks=[])
+
+
+def _register_create_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    from hindsight_api.knowledge.routes import bank_response
+
+    @mcp.tool(annotations=_tool_annotations("create_knowledge_bank"), output_schema=None)
+    async def create_knowledge_bank(bank_id: str) -> str:
+        """
+        Create a knowledge bank, or get it if it already exists.
+
+        Knowledge banks share their ids with memory banks: an id that is already a memory bank
+        is refused.
+
+        Args:
+            bank_id: Id of the knowledge bank (e.g. 'product-docs').
+        """
+        try:
+            info = await _knowledge_call(_knowledge_service(memory).create_bank(bank_id, _get_request_context(config)))
+            return json.dumps(bank_response(info).model_dump(mode="json"), indent=2)
+        except _ToolError as e:
+            return _error_json(e)
+        except OperationValidationError as e:
+            logger.warning(f"Operation rejected: {e}")
+            return _error_json(e)
+        except Exception as e:
+            logger.error(f"Error creating knowledge bank: {e}", exc_info=True)
+            return _error_json(e)
+
+
+def _register_get_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    from hindsight_api.knowledge.routes import bank_response
+
+    async def _run(target_bank: str) -> Any:
+        info = await _knowledge_call(_knowledge_service(memory).get_bank(target_bank, _get_request_context(config)))
+        return bank_response(info).model_dump(mode="json")
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(annotations=_tool_annotations("get_knowledge_bank"), output_schema=None)
+        async def get_knowledge_bank(bank_id: str | None = None) -> str:
+            """
+            Get a knowledge bank: how many documents and passages it holds, by status and media type.
+
+            Args:
+                bank_id: Optional knowledge bank (defaults to the session bank).
+            """
+            return await _run_tool(
+                config, bank_id=bank_id, as_json=True, action="getting knowledge bank", knowledge=True, run=_run
+            )
+
+    else:
+
+        @mcp.tool(annotations=_tool_annotations("get_knowledge_bank"))
+        async def get_knowledge_bank() -> dict:
+            """
+            Get this knowledge bank: how many documents and passages it holds, by status and media type.
+            """
+            return await _run_tool(
+                config, bank_id=None, as_json=False, action="getting knowledge bank", knowledge=True, run=_run
+            )
+
+
+def _register_delete_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    async def _run(target_bank: str) -> Any:
+        await _knowledge_call(_knowledge_service(memory).delete_bank(target_bank, _get_request_context(config)))
+        return {"deleted": True}
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(annotations=_tool_annotations("delete_knowledge_bank"), output_schema=None)
+        async def delete_knowledge_bank(bank_id: str | None = None) -> str:
+            """
+            Delete a knowledge bank and every document in it. This cannot be undone.
+
+            Args:
+                bank_id: Optional knowledge bank (defaults to the session bank).
+            """
+            return await _run_tool(
+                config, bank_id=bank_id, as_json=True, action="deleting knowledge bank", knowledge=True, run=_run
+            )
+
+    else:
+
+        @mcp.tool(annotations=_tool_annotations("delete_knowledge_bank"))
+        async def delete_knowledge_bank() -> dict:
+            """
+            Delete this knowledge bank and every document in it. This cannot be undone.
+            """
+            return await _run_tool(
+                config, bank_id=None, as_json=False, action="deleting knowledge bank", knowledge=True, run=_run
+            )
+
+
+_KnowledgeTagLimit = Annotated[int, Field(ge=0, le=1000)]
+_KnowledgeMediaType = Literal["document", "image", "audio", "video", "text"]
+
+
+def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    from hindsight_api.knowledge.routes import item_result
+    from hindsight_api.knowledge.service import SearchRequest
+    from hindsight_api.knowledge.store import SearchFilters
+
+    async def _run(
+        target_bank: str,
+        query: str,
+        max_tokens: int,
+        budget: Budget,
+        tags: list[str] | None,
+        tags_match: TagsMatch,
+        tag_groups: list[dict] | None,
+        document_ids: list[str] | None,
+        media_types: list[_KnowledgeMediaType] | None,
+    ) -> Any:
+        filters = SearchFilters(
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=_TAG_GROUP_LIST_ADAPTER.validate_python(tag_groups) if tag_groups is not None else None,
+            document_ids=document_ids,
+            media_types=list(media_types) if media_types else None,
+        )
+        hits = await _knowledge_call(
+            _knowledge_service(memory).search(
+                target_bank,
+                SearchRequest(
+                    query=query, query_image=None, filters=filters, max_tokens=max_tokens, budget=budget.value
+                ),
+                _get_request_context(config),
+                None,
+            )
+        )
+        return {"results": [item_result(target_bank, h).model_dump(mode="json") for h in hits]}
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(annotations=_tool_annotations("search_knowledge_bank"), output_schema=None)
+        async def search_knowledge_bank(
+            query: str,
+            max_tokens: Annotated[int, Field(ge=1, le=1_000_000)] = 4096,
+            budget: Budget = Budget.MID,
+            tags: list[str] | None = None,
+            tags_match: TagsMatch = "any",
+            tag_groups: list[dict] | None = None,
+            document_ids: list[str] | None = None,
+            media_types: list[_KnowledgeMediaType] | None = None,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Search a knowledge bank's documents by meaning. Returns the best passages first, each
+            with the text around it, as many as fit in max_tokens.
+
+            Args:
+                query: What to look for, in natural language.
+                max_tokens: What all the results may weigh together, in tokens (default 4096).
+                budget: How deep to search: 'low' is fastest, 'high' reaches the most passages (default 'mid').
+                tags: Only documents with these tags.
+                tags_match: How tags match: 'any', 'all', 'any_strict', 'all_strict' or 'exact' (default 'any').
+                tag_groups: Compound tag filter, AND-ed together. Each group is a leaf {"tags": [...], "match": ...}
+                    or {"and": [...]}, {"or": [...]}, {"not": {...}}.
+                document_ids: Only these documents.
+                media_types: Only passages of these media types: document, image, audio, video, text.
+                bank_id: Optional knowledge bank (defaults to the session bank).
+            """
+            return await _run_tool(
+                config,
+                bank_id=bank_id,
+                as_json=True,
+                action="searching knowledge bank",
+                knowledge=True,
+                run=lambda target_bank: _run(
+                    target_bank, query, max_tokens, budget, tags, tags_match, tag_groups, document_ids, media_types
+                ),
+                error_extra={"results": []},
+                value_error="rejection",
+            )
+
+    else:
+
+        @mcp.tool(annotations=_tool_annotations("search_knowledge_bank"))
+        async def search_knowledge_bank(
+            query: str,
+            max_tokens: Annotated[int, Field(ge=1, le=1_000_000)] = 4096,
+            budget: Budget = Budget.MID,
+            tags: list[str] | None = None,
+            tags_match: TagsMatch = "any",
+            tag_groups: list[dict] | None = None,
+            document_ids: list[str] | None = None,
+            media_types: list[_KnowledgeMediaType] | None = None,
+        ) -> dict:
+            """
+            Search this knowledge bank's documents by meaning. Returns the best passages first, each
+            with the text around it, as many as fit in max_tokens.
+
+            Args:
+                query: What to look for, in natural language.
+                max_tokens: What all the results may weigh together, in tokens (default 4096).
+                budget: How deep to search: 'low' is fastest, 'high' reaches the most passages (default 'mid').
+                tags: Only documents with these tags.
+                tags_match: How tags match: 'any', 'all', 'any_strict', 'all_strict' or 'exact' (default 'any').
+                tag_groups: Compound tag filter, AND-ed together. Each group is a leaf {"tags": [...], "match": ...}
+                    or {"and": [...]}, {"or": [...]}, {"not": {...}}.
+                document_ids: Only these documents.
+                media_types: Only passages of these media types: document, image, audio, video, text.
+            """
+            return await _run_tool(
+                config,
+                bank_id=None,
+                as_json=False,
+                action="searching knowledge bank",
+                knowledge=True,
+                run=lambda target_bank: _run(
+                    target_bank, query, max_tokens, budget, tags, tags_match, tag_groups, document_ids, media_types
+                ),
+                error_extra={"results": []},
+                value_error="rejection",
+            )
+
+
+def _register_ingest_knowledge_text(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    from hindsight_api.knowledge.service import IngestItem
+
+    async def _run(
+        target_bank: str,
+        text: str,
+        document_id: str | None,
+        filename: str | None,
+        tags: list[str] | None,
+        strategy: str | None,
+    ) -> Any:
+        if not text:
+            raise _ToolError("text must not be empty")
+        item = IngestItem(
+            data=text.encode(),
+            filename=filename,
+            content_type="text/markdown",
+            document_id=document_id,
+            tags=tags or [],
+            strategy=strategy,
+        )
+        result = await _knowledge_call(
+            _knowledge_service(memory).ingest(target_bank, [item], _get_request_context(config), wait=True)
+        )
+        return {"document_ids": result.document_ids, "unchanged_document_ids": result.unchanged_document_ids}
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(annotations=_tool_annotations("ingest_knowledge_text"), output_schema=None)
+        async def ingest_knowledge_text(
+            text: str,
+            document_id: str | None = None,
+            filename: str | None = None,
+            tags: list[str] | None = None,
+            strategy: str | None = None,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            Add a text or markdown document to a knowledge bank. Returns once it is searchable.
+
+            The text is stored as it is and split into passages; nothing is summarized or extracted.
+
+            Args:
+                text: The document's content (markdown is fine).
+                document_id: Stable id; ingesting the same id again replaces the document.
+                filename: Name shown for the document (defaults to <document_id>.md).
+                tags: Tags to filter searches by later.
+                strategy: Ingestion strategy, one the server offers. Omit for the server's default.
+                bank_id: Optional knowledge bank (defaults to the session bank).
+            """
+            return await _run_tool(
+                config,
+                bank_id=bank_id,
+                as_json=True,
+                action="ingesting knowledge text",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, text, document_id, filename, tags, strategy),
+            )
+
+    else:
+
+        @mcp.tool(annotations=_tool_annotations("ingest_knowledge_text"))
+        async def ingest_knowledge_text(
+            text: str,
+            document_id: str | None = None,
+            filename: str | None = None,
+            tags: list[str] | None = None,
+            strategy: str | None = None,
+        ) -> dict:
+            """
+            Add a text or markdown document to this knowledge bank. Returns once it is searchable.
+
+            The text is stored as it is and split into passages; nothing is summarized or extracted.
+
+            Args:
+                text: The document's content (markdown is fine).
+                document_id: Stable id; ingesting the same id again replaces the document.
+                filename: Name shown for the document (defaults to <document_id>.md).
+                tags: Tags to filter searches by later.
+                strategy: Ingestion strategy, one the server offers. Omit for the server's default.
+            """
+            return await _run_tool(
+                config,
+                bank_id=None,
+                as_json=False,
+                action="ingesting knowledge text",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, text, document_id, filename, tags, strategy),
+            )
+
+
+def _register_list_knowledge_documents(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    from hindsight_api.knowledge.routes import document_response
+
+    async def _run(
+        target_bank: str,
+        q: str | None,
+        status: str | None,
+        media_type: str | None,
+        tags: list[str] | None,
+        limit: int,
+        offset: int,
+    ) -> Any:
+        page = await _knowledge_call(
+            _knowledge_service(memory).list_documents(
+                target_bank,
+                _get_request_context(config),
+                limit=limit,
+                offset=offset,
+                query=q,
+                status=status,
+                media_type=media_type,
+                tags=tags,
+            )
+        )
+        return {
+            "documents": [document_response(target_bank, d).model_dump(mode="json") for d in page.documents],
+            "total": page.total,
+        }
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(annotations=_tool_annotations("list_knowledge_documents"), output_schema=None)
+        async def list_knowledge_documents(
+            q: str | None = None,
+            status: Literal["pending", "processing", "ready", "failed"] | None = None,
+            media_type: _KnowledgeMediaType | None = None,
+            tags: list[str] | None = None,
+            limit: Annotated[int, Field(ge=1, le=500)] = 50,
+            offset: _Offset = 0,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            List the documents in a knowledge bank, newest first.
+
+            Args:
+                q: Optional part of the document id or filename.
+                status: Only documents in this state: pending, processing, ready or failed.
+                media_type: Only documents of this media type: document, image, audio, video or text.
+                tags: Only documents with these tags.
+                limit: Maximum number of documents (default 50, at most 500).
+                offset: Pagination offset (default 0). Page until you have 'total'.
+                bank_id: Optional knowledge bank (defaults to the session bank).
+            """
+            return await _run_tool(
+                config,
+                bank_id=bank_id,
+                as_json=True,
+                action="listing knowledge documents",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, q, status, media_type, tags, limit, offset),
+                error_extra={"documents": []},
+            )
+
+    else:
+
+        @mcp.tool(annotations=_tool_annotations("list_knowledge_documents"))
+        async def list_knowledge_documents(
+            q: str | None = None,
+            status: Literal["pending", "processing", "ready", "failed"] | None = None,
+            media_type: _KnowledgeMediaType | None = None,
+            tags: list[str] | None = None,
+            limit: Annotated[int, Field(ge=1, le=500)] = 50,
+            offset: _Offset = 0,
+        ) -> dict:
+            """
+            List the documents in this knowledge bank, newest first.
+
+            Args:
+                q: Optional part of the document id or filename.
+                status: Only documents in this state: pending, processing, ready or failed.
+                media_type: Only documents of this media type: document, image, audio, video or text.
+                tags: Only documents with these tags.
+                limit: Maximum number of documents (default 50, at most 500).
+                offset: Pagination offset (default 0). Page until you have 'total'.
+            """
+            return await _run_tool(
+                config,
+                bank_id=None,
+                as_json=False,
+                action="listing knowledge documents",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, q, status, media_type, tags, limit, offset),
+                error_extra={"documents": []},
+            )
+
+
+def _register_get_knowledge_document(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    from hindsight_api.knowledge.routes import document_response, passage_response
+
+    async def _run(target_bank: str, document_id: str) -> Any:
+        detail = await _knowledge_call(
+            _knowledge_service(memory).get_document(target_bank, document_id, _get_request_context(config))
+        )
+        return {
+            **document_response(target_bank, detail.document).model_dump(mode="json"),
+            "passages": [
+                passage_response(target_bank, detail.document, p).model_dump(mode="json") for p in detail.passages
+            ],
+        }
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(annotations=_tool_annotations("get_knowledge_document"), output_schema=None)
+        async def get_knowledge_document(document_id: str, bank_id: str | None = None) -> str:
+            """
+            Get a knowledge-bank document with all its passages, in order.
+
+            Args:
+                document_id: The document's id.
+                bank_id: Optional knowledge bank (defaults to the session bank).
+            """
+            return await _run_tool(
+                config,
+                bank_id=bank_id,
+                as_json=True,
+                action="getting knowledge document",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, document_id),
+            )
+
+    else:
+
+        @mcp.tool(annotations=_tool_annotations("get_knowledge_document"))
+        async def get_knowledge_document(document_id: str) -> dict:
+            """
+            Get a document in this knowledge bank with all its passages, in order.
+
+            Args:
+                document_id: The document's id.
+            """
+            return await _run_tool(
+                config,
+                bank_id=None,
+                as_json=False,
+                action="getting knowledge document",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, document_id),
+            )
+
+
+def _register_delete_knowledge_document(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    async def _run(target_bank: str, document_id: str) -> Any:
+        await _knowledge_call(
+            _knowledge_service(memory).delete_document(target_bank, document_id, _get_request_context(config))
+        )
+        return {"deleted": True}
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(annotations=_tool_annotations("delete_knowledge_document"), output_schema=None)
+        async def delete_knowledge_document(document_id: str, bank_id: str | None = None) -> str:
+            """
+            Delete a document from a knowledge bank, with its passages and stored file.
+
+            Args:
+                document_id: The document's id.
+                bank_id: Optional knowledge bank (defaults to the session bank).
+            """
+            return await _run_tool(
+                config,
+                bank_id=bank_id,
+                as_json=True,
+                action="deleting knowledge document",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, document_id),
+            )
+
+    else:
+
+        @mcp.tool(annotations=_tool_annotations("delete_knowledge_document"))
+        async def delete_knowledge_document(document_id: str) -> dict:
+            """
+            Delete a document from this knowledge bank, with its passages and stored file.
+
+            Args:
+                document_id: The document's id.
+            """
+            return await _run_tool(
+                config,
+                bank_id=None,
+                as_json=False,
+                action="deleting knowledge document",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, document_id),
+            )
+
+
+def _register_list_knowledge_tags(mcp: FastMCP, memory: MemoryEngine, config: MCPToolsConfig) -> None:
+    async def _run(target_bank: str, q: str | None, limit: int, offset: int) -> Any:
+        page = await _knowledge_call(
+            _knowledge_service(memory).list_tags(
+                target_bank, _get_request_context(config), pattern=q, limit=limit, offset=offset
+            )
+        )
+        return {
+            "items": [{"tag": t.tag, "count": t.documents} for t in page.tags],
+            "total": page.total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    if config.include_bank_id_param:
+
+        @mcp.tool(annotations=_tool_annotations("list_knowledge_tags"), output_schema=None)
+        async def list_knowledge_tags(
+            q: str | None = None,
+            limit: _KnowledgeTagLimit = 100,
+            offset: _Offset = 0,
+            bank_id: str | None = None,
+        ) -> str:
+            """
+            List the tags on a knowledge bank's documents, most used first, with how many documents carry each.
+
+            Args:
+                q: Optional pattern to filter tags (e.g. 'team:*').
+                limit: Maximum number of tags (default 100).
+                offset: Pagination offset (default 0). Page until you have 'total'.
+                bank_id: Optional knowledge bank (defaults to the session bank).
+            """
+            return await _run_tool(
+                config,
+                bank_id=bank_id,
+                as_json=True,
+                action="listing knowledge tags",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, q, limit, offset),
+                error_extra={"items": []},
+            )
+
+    else:
+
+        @mcp.tool(annotations=_tool_annotations("list_knowledge_tags"))
+        async def list_knowledge_tags(
+            q: str | None = None,
+            limit: _KnowledgeTagLimit = 100,
+            offset: _Offset = 0,
+        ) -> dict:
+            """
+            List the tags on this knowledge bank's documents, most used first, with how many documents carry each.
+
+            Args:
+                q: Optional pattern to filter tags (e.g. 'team:*').
+                limit: Maximum number of tags (default 100).
+                offset: Pagination offset (default 0). Page until you have 'total'.
+            """
+            return await _run_tool(
+                config,
+                bank_id=None,
+                as_json=False,
+                action="listing knowledge tags",
+                knowledge=True,
+                run=lambda target_bank: _run(target_bank, q, limit, offset),
+                error_extra={"items": []},
             )
