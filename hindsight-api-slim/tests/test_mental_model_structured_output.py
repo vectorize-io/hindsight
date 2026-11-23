@@ -190,6 +190,12 @@ class TestMentalModelStructuredOutput:
             trigger={"mode": "full", "response_schema": _SCHEMA},
             request_context=request_context,
         )
+        await memory.update_mental_model(
+            bank_id,
+            mm["id"],
+            reflect_response={"structured_output": {"summary": "accepted"}},
+            request_context=request_context,
+        )
 
         async def fake_reflect_async(**kwargs):
             return _canned_reflect_result("# Doc\n\nBrand new content.")
@@ -211,3 +217,7 @@ class TestMentalModelStructuredOutput:
         # path used to raise without recording anything, so the only trace of it
         # was a log line.
         assert (reloaded.get("reflect_response") or {}).get("refresh_skipped") == "structured_output_failed"
+        # The structured view of the kept content is kept too (#6499): every
+        # refresh failure goes through the same helper, so this covers the
+        # rejected, empty and delta-not-applied paths as well.
+        assert reloaded["reflect_response"]["structured_output"] == {"summary": "accepted"}
