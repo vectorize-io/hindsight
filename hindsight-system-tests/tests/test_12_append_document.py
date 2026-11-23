@@ -36,6 +36,11 @@ async def _fact_texts(client, bank: str, document_id: str | None = None) -> list
     return sorted(item.text for item in memories.items if item.state == "valid")
 
 
+async def _fact_ids(client, bank: str) -> set[str]:
+    memories = await client.memory.list_memories(bank, limit=100)
+    return {item.id for item in memories.items if item.state == "valid"}
+
+
 @pytest.fixture
 async def appended(client, llm, bank_id, settled):
     # Declared first because rules match in order: an append chunks the stored turn and the
@@ -98,13 +103,18 @@ async def test_oversized_json_conversation_append_preserves_old_and_new_turns(cl
     llm.on_step("extract_facts", contains="Nothing to remember").returns(extracted())
     llm.on_step("consolidate").returns(consolidation())
 
-    first = [{"role": "user", "content": FIRST}]
+    # Longer than one chunk: a stored body of a single chunk re-chunks the same either way, so it
+    # cannot show the stored chunks being matched rather than redone (#6766).
+    first = [{"role": "user", "content": FIRST}] + [
+        {"role": "assistant", "content": "Nothing to remember here. " * 60} for _ in range(4)
+    ]
     # Neutral filler, so the oversized turn states no fact of its own: repeating a fact
     # sentence would extract it once per chunk and blur what the story checks.
     large_tail = [{"role": "user", "content": "Nothing to remember here. " * 4000}]
     final_tail = [{"role": "user", "content": SECOND}]
     await client.aretain(bank_id=bank_id, content=json.dumps(first), document_id=DOCUMENT_ID)
     await settled(bank_id)
+    berlin_ids = await _fact_ids(client, bank_id)
 
     expected = first.copy()
     for tail, facts in ((large_tail, [BERLIN]), (final_tail, [BERLIN, CELLO])):
@@ -114,6 +124,10 @@ async def test_oversized_json_conversation_append_preserves_old_and_new_turns(cl
         document = await client.documents.get_document(bank_id, DOCUMENT_ID)
         assert json.loads(document.original_text) == expected
         assert await _fact_texts(client, bank_id) == sorted(facts)
+        # The same Berlin fact, not a re-extracted copy: an append whose first slice is a piece of
+        # one huge message used to make the stored body re-chunk as prose, match no stored chunk,
+        # and redo the whole document — new ids and new dates for every old fact (#6766).
+        assert berlin_ids <= await _fact_ids(client, bank_id)
 
 
 # ---------------------------------------------------------------------------
