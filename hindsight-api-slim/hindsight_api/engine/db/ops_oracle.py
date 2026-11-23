@@ -22,6 +22,7 @@ from .ops import (
     key_serialization_sql,
     memory_unit_columns,
 )
+from .oracle import OracleConnection
 from .result import DictResultRow as ResultRow
 from .result import ResultRow as DatabaseResultRow
 
@@ -237,11 +238,12 @@ class OracleOps(DataAccessOps):
         # only ORA-00001 duplicates and ORA-02291 on the unit FKs while rolling back
         # and raising on any unexpected batch error. A link that does land holds back
         # a concurrent DELETE of its endpoint until commit, so no window remains and
-        # no parent lock is needed.
+        # no parent lock is needed. (A FOR UPDATE parent lock was tried first and
+        # dropped: Oracle's only row lock is exclusive, so concurrent retains linking
+        # to the same neighbors queued behind each other. One execute() per link came
+        # next and cost a round-trip each: 730 ms -> 108 ms for 300 links, #6587.)
         if not sorted_links:
             return
-        from .oracle import OracleConnection
-
         query = f"""
             INSERT INTO {table}
                 (from_unit_id, to_unit_id, link_type, weight, entity_id, bank_id)
@@ -265,6 +267,7 @@ class OracleOps(DataAccessOps):
                 )
             return
 
+        # Any other DatabaseConnection has no batcherrors: one statement per link.
         for from_id, to_id, link_type, weight, entity_id in sorted_links:
             try:
                 await conn.execute(query, from_id, to_id, link_type, weight, entity_id, bank_id)
