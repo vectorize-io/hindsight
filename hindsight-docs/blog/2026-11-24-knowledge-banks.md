@@ -20,7 +20,7 @@ import TabItem from '@theme/TabItem';
 - **Memory, extended.** Link a knowledge bank to a memory bank and one reflect call reads both, with the documents as the reference. On a support-agent benchmark: 85% right, against 75% with everything in memory and 71% with everything in documents.
 - **State-of-the-art multimodal search.** First on LegalBench-RAG (contracts, 87.2) and ATM-Bench (a person's photos, videos and emails, 93.1). Second on ViDoRe V3 (enterprise PDFs), 1.5 points behind Mixedbread with its reranker.
 - **A fraction of the cost.** No LLM reads your documents: on the support benchmark, the manuals cost about $0.61 in LLM calls to put in a memory bank, and none in a knowledge bank, only the embedding. A hosted search costs $4.50 per 1,000, against $7.50 for Mixedbread with its reranker, and both models run on Hindsight Inference at $0.05 per million tokens.
-- **Open source and in Hindsight Cloud.** In Hindsight 1.3, and in [Hindsight Cloud](https://hindsight.vectorize.io) for every account.
+- **Open source, in Hindsight Cloud, and at scale on Enterprise.** In Hindsight 1.3, in [Hindsight Cloud](https://hindsight.vectorize.io) for every account, and on Hindsight Enterprise, where knowledge banks can live on Memlake, in object storage.
 
 <!-- truncate -->
 
@@ -205,6 +205,10 @@ Both models a knowledge bank needs are now on [Hindsight Inference](https://infe
 - **`hs-decide-1-flash-mm`:** our decision reranker, for text and images. Reranking 1,000 PDF pages costs about $0.11.
 
 Point a self-hosted server at them and you get a knowledge bank without running a model yourself. See [Configuration](/next/developer/configuration#knowledge-banks) for the settings.
+
+## At scale: Memlake on Hindsight Enterprise
+
+Open-source Hindsight keeps knowledge banks in Postgres, with a pgvector index. On Hindsight Enterprise they can live on [Hindsight Memlake](/blog/2026/10/13/memlake) instead, the storage engine that already serves agent memory from object storage: a bank's documents and passages go to a bucket you control, and the API, SDKs and CLI don't change. See [Hindsight Enterprise](/cloud-enterprise/enterprise).
 
 ## Try it
 
