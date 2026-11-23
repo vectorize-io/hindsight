@@ -13,6 +13,7 @@ the target bank.
 """
 
 from .export import (
+    BankNotFoundError,
     export_bank,
     export_documents,
     stream_export_bank,
@@ -34,6 +35,7 @@ from .schema import (
 
 __all__ = [
     "SCHEMA_VERSION",
+    "BankNotFoundError",
     "BankImportResult",
     "ImportResult",
     "TransferAttachment",

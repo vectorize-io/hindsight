@@ -27,7 +27,7 @@ from ..engine.retain.attachment_store import ATTACHMENT_SWEEP_GRACE, reclaim_unr
 from ..engine.retain.bank_utils import _vector_index_clause, bank_indexes_are_store_owned
 from ..engine.schema import fq_table_explicit as _fq_table
 from ..engine.storage import bank_storage_prefix, create_file_storage
-from ..engine.transfer import TransferScope, stream_export_bank
+from ..engine.transfer import BankNotFoundError, TransferScope, stream_export_bank
 from ..engine.vector_index_health import (
     BankIndexResult,
     drop_orphaned_bank_indexes,
@@ -37,7 +37,7 @@ from ..engine.vector_index_health import (
 from ..extensions import TenantExtension, load_extension
 from ..pg0 import parse_pg0_url, resolve_database_url
 from ..schema_context import _current_schema
-from ..utils import configure_stdio
+from ..utils import configure_stdio, mask_network_location
 from .reembed import SchemaReembed, finish_schema, reembed_schema
 
 # Setup logging
@@ -1515,7 +1515,16 @@ def export_bank_command(
     target_schema = schema or config.database_schema or DEFAULT_DATABASE_SCHEMA
     typer.echo(f"Exporting bank '{bank_id}' from schema '{target_schema}'...")
 
-    size = asyncio.run(_run_export_bank(config.database_url, bank_id, output, target_schema, include_history))
+    try:
+        size = asyncio.run(_run_export_bank(config.database_url, bank_id, output, target_schema, include_history))
+    except BankNotFoundError:
+        # Name the instance: a bank missing here is often a bank that lives on another one.
+        database = mask_network_location(config.database_url)
+        typer.echo(
+            f"Error: bank '{bank_id}' not found in schema '{target_schema}' of {database}; no archive written.",
+            err=True,
+        )
+        raise typer.Exit(1)
 
     typer.echo(f"Exported bank '{bank_id}' to {output} ({size} bytes)")
 

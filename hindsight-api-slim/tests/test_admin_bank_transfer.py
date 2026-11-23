@@ -64,3 +64,35 @@ async def test_run_export_bank_declares_decoded_json_rows(monkeypatch: pytest.Mo
     assert output.read_bytes() == b"archive"
     assert size == len(b"archive")
     assert connection.closed is True
+
+
+@pytest.mark.asyncio
+async def test_export_of_missing_bank_raises_before_any_chunk(memory) -> None:
+    """A typo'd bank id must not export as a well-formed empty archive (#6776)."""
+    from hindsight_api.engine.transfer import BankNotFoundError, stream_export_bank
+
+    backend = await memory._get_backend()
+    chunks: list[bytes] = []
+    with pytest.raises(BankNotFoundError):
+        async for chunk in stream_export_bank(backend, "zzz-no-such-bank"):
+            chunks.append(chunk)
+    assert chunks == []
+
+
+def test_export_bank_command_exits_nonzero_for_missing_bank(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from hindsight_api.engine.transfer import BankNotFoundError
+
+    async def fake_run_export_bank(*args, **kwargs):
+        raise BankNotFoundError("Bank 'zzz' not found")
+
+    monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://user:secret@db.example:5432/hs")
+    monkeypatch.setattr(cli, "_run_export_bank", fake_run_export_bank)
+    output = tmp_path / "out.zip"
+    result = CliRunner().invoke(cli.app, ["export-bank", "--bank", "zzz", "--output", str(output)])
+
+    assert result.exit_code == 1
+    assert "not found" in result.output
+    assert "db.example" in result.output and "secret" not in result.output
+    assert not output.exists()

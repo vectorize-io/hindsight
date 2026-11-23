@@ -494,6 +494,8 @@ hindsight-admin export-bank --bank my-bank --output my-bank.zip --include-histor
 
 Read-only — safe to run against a live instance.
 
+If the bank does not exist in the target schema, the command prints the schema and database it looked in, writes no archive, and exits with code 1. That makes `export-bank && <migration step>` safe: a mistyped bank id or the wrong database stops the migration instead of leaving an empty backup.
+
 ---
 
 ### import-bank

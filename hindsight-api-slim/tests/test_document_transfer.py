@@ -2667,7 +2667,8 @@ class _BankRowsOnlyConn:
 
     async def fetchval(self, sql: str, *args):
         self.fetched.append(sql)
-        return None
+        # The bank's own row exists (the export refuses a missing bank); nothing else does.
+        return 1 if sql.startswith("SELECT 1 FROM") and "banks" in sql else None
 
 
 class _FakeStoreOwned(_StoreOwnedMemories):
