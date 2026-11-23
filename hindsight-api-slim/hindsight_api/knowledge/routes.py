@@ -276,7 +276,7 @@ class KnowledgeSearchTraceHit(BaseModel):
     document_id: str
     filename: str | None
     index: int
-    media_type: str
+    media_type: Literal["document", "image", "audio", "video", "text"] = Field(title="Knowledge Media Type")
     page: int | None = None
     start_ms: int | None = None
     end_ms: int | None = None

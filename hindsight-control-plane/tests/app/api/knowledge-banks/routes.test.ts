@@ -1,15 +1,23 @@
 import type { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/hindsight-client", () => ({
-  DATAPLANE_URL: "http://dataplane",
-  getDataplaneHeaders: (extra?: Record<string, string>) => ({
-    Authorization: "Bearer secret",
-    ...extra,
-  }),
-}));
+vi.mock("@/lib/hindsight-client", async () => {
+  const { createClient, createConfig, sdk } = await import("@vectorize-io/hindsight-client");
+  return {
+    DATAPLANE_URL: "http://dataplane",
+    getDataplaneHeaders: (extra?: Record<string, string>) => ({
+      Authorization: "Bearer secret",
+      ...extra,
+    }),
+    sdk,
+    lowLevelClient: createClient(createConfig({ baseUrl: "http://dataplane" })),
+  };
+});
 
-import { GET, POST } from "@/app/api/knowledge-banks/[[...path]]/route";
+import { GET as getDocuments } from "@/app/api/knowledge-banks/[bankId]/documents/route";
+import { GET as getFile } from "@/app/api/knowledge-banks/[bankId]/documents/[documentId]/file/route";
+import { GET as getMedia } from "@/app/api/knowledge-banks/[bankId]/documents/[documentId]/passages/[index]/media/route";
+import { POST as ingestFiles } from "@/app/api/knowledge-banks/[bankId]/files/ingest/route";
 
 function req(url: string, init?: RequestInit): NextRequest {
   const request = new Request(url, init) as NextRequest & { nextUrl: URL };
@@ -17,32 +25,45 @@ function req(url: string, init?: RequestInit): NextRequest {
   return request;
 }
 
-const ctx = (path: string[]) => ({ params: Promise.resolve({ path }) });
+const ctx = <T extends Record<string, string>>(params: T) => ({ params: Promise.resolve(params) });
+const media = ctx({ bankId: "docs", documentId: "d", index: "0" });
+const file = ctx({ bankId: "docs", documentId: "d" });
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("/api/knowledge-banks proxy", () => {
-  it("forwards path, query and the dataplane auth header", async () => {
+describe("/api/knowledge-banks routes", () => {
+  it("sends a JSON call through the SDK with the bank id encoded", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response('{"documents":[],"total":0}', {
-        headers: { "content-type": "application/json", "content-length": "5" },
+        headers: { "content-type": "application/json" },
       })
     );
-    const res = await GET(
-      req("http://cp/api/knowledge-banks/my%2Fbank/documents?limit=25"),
-      ctx(["my/bank", "documents"])
+    const res = await getDocuments(
+      req("http://cp/api/knowledge-banks/my%2Fbank/documents?limit=25&status=ready"),
+      ctx({ bankId: "my/bank" })
     );
-    const [url, init] = fetchSpy.mock.calls[0];
-    expect(url).toBe("http://dataplane/v1/default/knowledge-banks/my%2Fbank/documents?limit=25");
-    expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer secret");
+    const sent = fetchSpy.mock.calls[0][0] as Request;
+    expect(sent.url).toBe(
+      "http://dataplane/v1/default/knowledge-banks/my%2Fbank/documents?limit=25&status=ready"
+    );
     expect(await res.json()).toEqual({ documents: [], total: 0 });
-    // fetch decompresses, so the upstream length must not be passed on.
-    expect(res.headers.get("content-length")).toBeNull();
+  });
+
+  it("passes an upstream error's reason and status through", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response('{"detail":"knowledge bank not found"}', {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    const res = await getDocuments(req("http://cp/x"), ctx({ bankId: "nope" }));
+    expect(res.status).toBe(404);
+    expect((await res.json()).details).toBe("knowledge bank not found");
   });
 
   it("refuses dot segments that would escape the prefix", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    const res = await GET(req("http://cp/api/knowledge-banks/x"), ctx(["..", "banks"]));
+    const res = await getFile(req("http://cp/x"), ctx({ bankId: "..", documentId: "d" }));
     expect(res.status).toBe(400);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -58,13 +79,16 @@ describe("/api/knowledge-banks proxy", () => {
       body: form,
     });
     const contentType = browserReq.headers.get("content-type")!;
-    const res = await POST(
-      req("http://cp/api/knowledge-banks/docs/files", {
+    const res = await ingestFiles(
+      req("http://cp/api/knowledge-banks/docs/files/ingest", {
         method: "POST",
         body: await browserReq.arrayBuffer(),
         headers: { "content-type": contentType },
       }),
-      ctx(["docs", "files"])
+      ctx({ bankId: "docs" })
+    );
+    expect(fetchSpy.mock.calls[0][0]).toBe(
+      "http://dataplane/v1/default/knowledge-banks/docs/files/ingest"
     );
     const init = fetchSpy.mock.calls[0][1]!;
     expect((init.headers as Record<string, string>)["Content-Type"]).toBe(contentType);
@@ -78,11 +102,11 @@ describe("/api/knowledge-banks proxy", () => {
         headers: { "content-type": "video/mp4" },
       })
     );
-    const res = await GET(
+    const res = await getMedia(
       req("http://cp/api/knowledge-banks/docs/documents/d/passages/0/media", {
         headers: { range: "bytes=2-4" },
       }),
-      ctx(["docs", "documents", "d", "passages", "0", "media"])
+      media
     );
     expect(res.status).toBe(206);
     expect(res.headers.get("content-range")).toBe("bytes 2-4/10");
@@ -93,24 +117,9 @@ describe("/api/knowledge-banks proxy", () => {
 
   it("answers 416 for a range past the end of the media", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(new Uint8Array(4)));
-    const res = await GET(
-      req("http://cp/x", { headers: { range: "bytes=10-" } }),
-      ctx(["docs", "documents", "d", "passages", "0", "media"])
-    );
+    const res = await getMedia(req("http://cp/x", { headers: { range: "bytes=10-" } }), media);
     expect(res.status).toBe(416);
     expect(res.headers.get("content-range")).toBe("bytes */4");
-  });
-
-  it("passes upstream errors through with their status", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response('{"detail":"knowledge bank not found"}', {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      })
-    );
-    const res = await GET(req("http://cp/x"), ctx(["nope"]));
-    expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ detail: "knowledge bank not found" });
   });
 
   it("names an untyped original by its file name so the browser can preview it", async () => {
@@ -122,10 +131,7 @@ describe("/api/knowledge-banks proxy", () => {
         },
       })
     );
-    const res = await GET(
-      req("http://cp/api/knowledge-banks/docs/documents/d/file"),
-      ctx(["docs", "documents", "d", "file"])
-    );
+    const res = await getFile(req("http://cp/api/knowledge-banks/docs/documents/d/file"), file);
     expect(res.headers.get("content-type")).toBe("video/mp4");
     expect(res.headers.get("content-disposition")).toContain("inline");
   });
@@ -138,10 +144,7 @@ describe("/api/knowledge-banks proxy", () => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(
         new Response(new Uint8Array([1]), { headers: { "content-type": type } })
       );
-      const res = await GET(
-        req("http://cp/api/knowledge-banks/docs/documents/d/file"),
-        ctx(["docs", "documents", "d", "file"])
-      );
+      const res = await getFile(req("http://cp/api/knowledge-banks/docs/documents/d/file"), file);
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
       expect(res.headers.get("content-security-policy")).toBe(sandboxed ? "sandbox" : null);
     }

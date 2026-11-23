@@ -54,6 +54,13 @@ class KnowledgeSearchTraceHit(BaseModel):
             raise ValueError("must be one of enum values ('returned', 'merged', 'over_budget', 'below_depth')")
         return value
 
+    @field_validator('media_type')
+    def media_type_validate_enum(cls, value):
+        """Validates the enum"""
+        if value not in set(['document', 'image', 'audio', 'video', 'text']):
+            raise ValueError("must be one of enum values ('document', 'image', 'audio', 'video', 'text')")
+        return value
+
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

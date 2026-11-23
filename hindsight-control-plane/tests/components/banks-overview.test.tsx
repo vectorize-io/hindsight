@@ -40,8 +40,8 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
-// Knowledge banks are a hidden feature: the memory/knowledge switch shows only when the
-// server reports them on.
+// Knowledge banks can be switched off on the server: the memory/knowledge switch shows only
+// when the server reports them on.
 let knowledgeBanks = false;
 vi.mock("@/lib/features-context", () => ({
   useFeatures: () => ({ features: { knowledge_banks: knowledgeBanks }, loading: false, error: null }),
