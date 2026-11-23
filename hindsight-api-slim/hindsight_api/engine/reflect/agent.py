@@ -931,6 +931,7 @@ async def _run_reflect_agent_inner(
                 scope="reflect",
                 tool_choice=LLMToolChoice.named("done"),
                 temperature=get_config().llm_temperature_reflect,
+                strict_schema=get_config().llm_strict_schema_reflect_tool_turns,
                 max_completion_tokens=synthesis_max_completion_tokens,
             )
         except OperationCancelledError:
@@ -1425,6 +1426,7 @@ async def _run_reflect_agent_inner(
                         scope="reflect_tool_call",
                         tool_choice=iter_tool_choice,
                         temperature=get_config().llm_temperature_reflect,
+                        strict_schema=get_config().llm_strict_schema_reflect_tool_turns,
                         # The uncapped-by-default ceiling the synthesis calls use, since a free
                         # turn's done can carry the answer: left unset this fell through to the
                         # provider's own default, which on Anthropic truncated long ``done``

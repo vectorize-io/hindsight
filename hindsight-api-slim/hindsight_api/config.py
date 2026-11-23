@@ -3698,6 +3698,11 @@ class HindsightConfig:
     llm_strict_schema_retain: bool
     llm_strict_schema_reflect: bool
     llm_strict_schema_consolidation: bool
+    # Reflect's tool turns (every loop turn and the closing ``done``). Held to the schema
+    # unless HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT says false: they always were, and small
+    # models need it to follow a forced turn, so the global default (false) does not reach
+    # them. A model that runs away under the grammar is taken off it with that flag (#6673).
+    llm_strict_schema_reflect_tool_turns: bool = field(default=True, kw_only=True)
     llm_supports_string_pattern: bool = field(
         default=DEFAULT_LLM_SUPPORTS_STRING_PATTERN,
         kw_only=True,
@@ -5154,6 +5159,8 @@ class HindsightConfig:
             llm_strict_schema_retain=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_RETAIN),
             llm_strict_schema_reflect=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_REFLECT),
             llm_strict_schema_consolidation=_resolve_operation_strict_schema(ENV_LLM_STRICT_SCHEMA_CONSOLIDATION),
+            llm_strict_schema_reflect_tool_turns=os.getenv(ENV_LLM_STRICT_SCHEMA_REFLECT, "true").strip().lower()
+            in ("true", "1"),
             llm_supports_string_pattern=_parse_boolean_env(
                 ENV_LLM_SUPPORTS_STRING_PATTERN,
                 DEFAULT_LLM_SUPPORTS_STRING_PATTERN,
