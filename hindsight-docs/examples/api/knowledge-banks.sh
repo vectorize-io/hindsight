@@ -86,6 +86,17 @@ test -s page-1.png
 hindsight bank config support-agent -o json | grep -q '"product-manuals"'
 hindsight kb config product-manuals --overrides-only -o json | grep -q '"text_passage_tokens": *256'
 
+# [docs:settings]
+# Every setting as the bank uses it, then only what the bank changes
+hindsight kb config product-manuals
+hindsight kb config product-manuals --overrides-only
+
+# Drop one override, or all of them
+hindsight kb set-config product-manuals --unset disabled_media_types
+hindsight kb reset-config product-manuals -y
+# [/docs:settings]
+hindsight kb config product-manuals --overrides-only -o json | grep -q '^{}$'
+
 # [docs:delete-document]
 hindsight kb delete-document product-manuals returns-policy
 # [/docs:delete-document]
