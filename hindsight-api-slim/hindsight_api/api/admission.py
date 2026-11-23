@@ -47,11 +47,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
+from fastapi import HTTPException, Request
+
 from ..cancellation import CancellationToken
+from .disconnect import get_scope_cancellation_token
 
 logger = logging.getLogger(__name__)
 
@@ -256,11 +259,50 @@ class AdmissionController:
             semaphore.release()
 
 
+def admit_for(operation: str) -> Callable[[Request], AsyncIterator[None]]:
+    """Build a FastAPI dependency that holds an admission permit for the request.
+
+    Yield-style so the permit is held for the whole request and released once the
+    response has been produced. FastAPI resolves dependencies before deserialising
+    the body, so an overloaded server refuses without ever reading the payload.
+
+    Returns 503 with ``Retry-After`` rather than queueing indefinitely.
+    """
+
+    async def _admit_dep(request: Request) -> AsyncIterator[None]:
+        controller: AdmissionController | None = getattr(request.app.state, "admission", None)
+        if controller is None:
+            yield
+            return
+        # Every gated route carries a disconnect token (see api/disconnect.py). A
+        # queued request whose client has gone gives up its place immediately, which
+        # is what makes a patient deadline affordable.
+        # Retain joined them in #4526: before that its lane kept the place of a
+        # caller that had already hung up, because this returned None for it.
+        abandoned = get_scope_cancellation_token(request.scope)
+        try:
+            async with controller.admit(str(operation), abandoned=abandoned):
+                yield
+        except AdmissionAbandoned:
+            # Nobody left to answer. Close the request without spending a slot
+            # or building a response.
+            raise HTTPException(status_code=499, detail="client disconnected while queued") from None
+        except AdmissionRejected as e:
+            raise HTTPException(
+                status_code=503,
+                detail=(f"Server is at capacity for '{e.lane}' ({e.limit} concurrent); try again shortly."),
+                headers={"Retry-After": str(e.retry_after_seconds)},
+            ) from None
+
+    return _admit_dep
+
+
 def build_controller_from_config(config) -> AdmissionController:
     """Build the controller from ``HindsightConfig``.
 
-    Only the three high-volume operations get a lane. `files_retain`,
-    `dry_run_extract` and the mental-model routes are administrative and low-volume:
+    Only the high-volume operations get a lane: recall, reflect, retain and
+    knowledge-bank search. `files_retain`, `dry_run_extract` and the mental-model
+    routes are administrative and low-volume:
     gating them would add knobs nobody tunes without protecting anything that
     actually saturates a worker. They fall through ungated, exactly as before.
 
@@ -271,5 +313,8 @@ def build_controller_from_config(config) -> AdmissionController:
             "recall": LaneConfig(config.admission_recall_max_in_flight, config.admission_recall_max_wait_seconds),
             "reflect": LaneConfig(config.admission_reflect_max_in_flight, config.admission_reflect_max_wait_seconds),
             "retain": LaneConfig(config.admission_retain_max_in_flight, config.admission_retain_max_wait_seconds),
+            "kb_search": LaneConfig(
+                config.admission_kb_search_max_in_flight, config.admission_kb_search_max_wait_seconds
+            ),
         }
     )

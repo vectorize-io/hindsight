@@ -28,7 +28,7 @@ import orjson
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from hindsight_api.api.admission import AdmissionAbandoned, AdmissionRejected, build_controller_from_config
+from hindsight_api.api.admission import admit_for, build_controller_from_config
 from hindsight_api.api.content_disposition import content_disposition
 from hindsight_api.api.disconnect import ClientDisconnectCancellationMiddleware, get_scope_cancellation_token
 from hindsight_api.api.gzip_offload import OffloadingGZipMiddleware
@@ -4895,46 +4895,6 @@ def _register_routes(app: FastAPI):
     from hindsight_api.knowledge.routes import build_router as _build_knowledge_router
 
     app.include_router(_build_knowledge_router(get_request_context))
-
-    def admit_for(operation: PrecheckOperation):
-        """Build a FastAPI dependency that holds an admission permit for the request.
-
-        Yield-style so the permit is held for the whole request and released once the
-        response has been produced. Declared alongside ``precheck_for`` on the heavy
-        routes: FastAPI resolves dependencies before deserialising the body, so an
-        overloaded server refuses without ever reading the payload.
-
-        Returns 503 with ``Retry-After`` rather than queueing indefinitely — see
-        :mod:`hindsight_api.api.admission` for why the wait, not the concurrency, is
-        the thing worth bounding.
-        """
-
-        async def _admit_dep(request: Request):
-            controller = getattr(app.state, "admission", None)
-            if controller is None:
-                yield
-                return
-            # Recall, reflect and the retain POST carry a disconnect token (see
-            # api/disconnect.py). A queued request whose client has gone gives up its
-            # place immediately, which is what makes a patient deadline affordable.
-            # Retain joined them in #4526: before that its lane kept the place of a
-            # caller that had already hung up, because this returned None for it.
-            abandoned = get_scope_cancellation_token(request.scope)
-            try:
-                async with controller.admit(str(operation), abandoned=abandoned):
-                    yield
-            except AdmissionAbandoned:
-                # Nobody left to answer. Close the request without spending a slot
-                # or building a response.
-                raise HTTPException(status_code=499, detail="client disconnected while queued") from None
-            except AdmissionRejected as e:
-                raise HTTPException(
-                    status_code=503,
-                    detail=(f"Server is at capacity for '{e.lane}' ({e.limit} concurrent); try again shortly."),
-                    headers={"Retry-After": str(e.retry_after_seconds)},
-                ) from None
-
-        return _admit_dep
 
     def precheck_for(operation: PrecheckOperation):
         """

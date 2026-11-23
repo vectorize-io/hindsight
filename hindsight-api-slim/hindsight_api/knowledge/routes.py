@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..api.admission import admit_for
 from ..api.content_disposition import content_disposition
 from ..config import get_config
 from ..engine.aiohttp_session import UpstreamHTTPError
@@ -929,7 +930,11 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
         operation_id="search_knowledge_bank",
     )
     async def search(
-        bank_id: str, body: KnowledgeSearchRequest, request: Request, rc: RequestContext = Depends(get_request_context)
+        bank_id: str,
+        body: KnowledgeSearchRequest,
+        request: Request,
+        rc: RequestContext = Depends(get_request_context),
+        _admit: None = Depends(admit_for("kb_search")),
     ) -> KnowledgeSearchResponse:
         try:
             image = base64.b64decode(body.query_image, validate=True) if body.query_image else None
@@ -947,21 +952,32 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
             media_types=list(body.media_types) if body.media_types else None,
         )
         trace = SearchTrace() if body.trace else None
+        # Imported here for the reason `_http_error` gives.
+        from ..api.http import run_task_cancellable_on_disconnect
+
         try:
-            hits = await service(request).search(
-                bank_id,
-                SearchRequest(
-                    query=body.query,
-                    query_image=image,
-                    query_video=video,
-                    filters=filters,
-                    max_tokens=body.max_tokens,
-                    budget=body.budget,
-                    enable_reranking=body.enable_reranking,
+            # A caller who hangs up stops the search (499) instead of leaving it to run.
+            hits = await run_task_cancellable_on_disconnect(
+                request,
+                service(request).search(
+                    bank_id,
+                    SearchRequest(
+                        query=body.query,
+                        query_image=image,
+                        query_video=video,
+                        filters=filters,
+                        max_tokens=body.max_tokens,
+                        budget=body.budget,
+                        enable_reranking=body.enable_reranking,
+                    ),
+                    rc,
+                    trace,
                 ),
-                rc,
-                trace,
+                operation="kb_search",
+                bank_id=bank_id,
             )
+        except HTTPException:
+            raise
         except Exception as exc:
             raise _http_error(exc) from exc
         return KnowledgeSearchResponse(

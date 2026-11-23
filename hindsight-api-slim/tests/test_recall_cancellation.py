@@ -113,6 +113,9 @@ def test_should_monitor_recall_reflect_and_retain():
     # The graph read behind the control plane's Memories tabs, abandoned on every
     # tab switch.
     assert _should_monitor(_scope("/v1/default/banks/b/graph", method="GET")) is True
+    # Knowledge-bank search, but not a memory bank path that happens to end the same way.
+    assert _should_monitor(_scope("/v1/default/knowledge-banks/b/search")) is True
+    assert _should_monitor(_scope("/v1/default/banks/b/search")) is False
 
 
 # --- run_cancellable_on_disconnect ----------------------------------------------
@@ -430,7 +433,14 @@ async def test_run_task_cancellable_propagates_work_errors():
 
 
 async def _assert_route_answers_499_and_stops(
-    memory, monkeypatch, *, engine_method: str, path: str, body: bytes, method: str = "POST"
+    memory,
+    monkeypatch,
+    *,
+    engine_method: str,
+    path: str,
+    body: bytes,
+    method: str = "POST",
+    target: object | None = None,
 ):
     """Drive the real app at the ASGI layer (the only level where a disconnect can be
     delivered), with the engine call stubbed out as one long await, and hang up."""
@@ -447,7 +457,7 @@ async def _assert_route_answers_499_and_stops(
         finally:
             unwound.set()
 
-    monkeypatch.setattr(memory, engine_method, never_finishes)
+    monkeypatch.setattr(target or memory, engine_method, never_finishes)
 
     body_sent = False
 
@@ -526,4 +536,18 @@ async def test_graph_route_answers_499_and_stops_the_work(memory, monkeypatch):
         path="/v1/default/banks/disconnect-probe/graph",
         body=b"",
         method="GET",
+    )
+
+
+async def test_kb_search_route_answers_499_and_stops_the_work(memory, monkeypatch):
+    """A knowledge-bank search whose client hangs up must stop, not finish for nobody."""
+    from hindsight_api.knowledge.service import get_knowledge_service
+
+    await _assert_route_answers_499_and_stops(
+        memory,
+        monkeypatch,
+        engine_method="search",
+        path="/v1/default/knowledge-banks/disconnect-probe/search",
+        body=b'{"query": "anything"}',
+        target=get_knowledge_service(memory),
     )

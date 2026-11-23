@@ -260,3 +260,26 @@ async def test_http_recall_refused_with_503_and_retry_after_when_lane_full(memor
     assert response.status_code == 503
     assert int(response.headers["retry-after"]) >= 1
     assert controller.stats()["recall"].rejected == 1
+
+
+async def test_http_kb_search_refused_with_503_when_lane_full(memory):
+    """Knowledge-bank search goes through its own lane, refused before the bank is touched."""
+    import httpx
+
+    from hindsight_api.api import create_app
+
+    app = create_app(memory, initialize_memory=False)
+    controller = _controller(kb_search=LaneConfig(max_in_flight=1, max_wait_seconds=0.0))
+    app.state.admission = controller
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with controller.admit("kb_search"):
+            response = await client.post(
+                "/v1/default/knowledge-banks/admission-test/search",
+                json={"query": "anything"},
+            )
+
+    assert response.status_code == 503
+    assert int(response.headers["retry-after"]) >= 1
+    assert controller.stats()["kb_search"].rejected == 1

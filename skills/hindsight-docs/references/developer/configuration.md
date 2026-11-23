@@ -1851,6 +1851,8 @@ validates the address it resolved, and a proxy would contact one that was never 
 | `HINDSIGHT_API_ADMISSION_REFLECT_MAX_WAIT_MS` | As above, for reflect. | `5000` |
 | `HINDSIGHT_API_ADMISSION_RETAIN_MAX_IN_FLIGHT` | As above, for retain. Only bites on the synchronous path; an async retain returns as soon as the operation is queued. | `0` (derived) |
 | `HINDSIGHT_API_ADMISSION_RETAIN_MAX_WAIT_MS` | As above, for retain. | `2000` |
+| `HINDSIGHT_API_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT` | As above, for knowledge-bank search. | `0` (derived) |
+| `HINDSIGHT_API_ADMISSION_KB_SEARCH_MAX_WAIT_MS` | As above, for knowledge-bank search. | `30000` |
 | `HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS` | Maximum token length of a recall query. Longer queries are cut to the limit instead of failing. `0` disables the limit. | `500` |
 | `HINDSIGHT_API_QUERY_ANALYZER_LANGUAGES` | Restrict the locales `dateparser` considers when extracting temporal constraints from a recall query, as a comma-separated list of language codes (e.g. `en` or `en,zh`). Empty keeps full auto-detection across all supported locales. Restricting is significantly faster (auto-detection dominates recall's CPU cost) and avoids locale misdetection on a known-language corpus, but explicit dates written in an unlisted locale will then misparse rather than yield no constraint — only set this when you know which languages your queries use. Does not affect Chinese, which is handled before `dateparser` runs. | _(empty)_ |
 | `HINDSIGHT_API_RERANKER_MAX_CANDIDATES` | Max candidates to rerank per recall (RRF pre-filters the rest) | `300` |
