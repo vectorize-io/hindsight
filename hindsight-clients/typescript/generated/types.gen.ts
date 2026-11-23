@@ -3872,9 +3872,9 @@ export type KnowledgeSearchTraceHit = {
    */
   index: number;
   /**
-   * Media Type
+   * Knowledge Media Type
    */
-  media_type: string;
+  media_type: "document" | "image" | "audio" | "video" | "text";
   /**
    * Page
    */

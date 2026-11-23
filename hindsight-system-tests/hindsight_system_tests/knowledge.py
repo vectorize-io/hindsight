@@ -1,10 +1,7 @@
-"""Knowledge-bank calls for the stories, made through the published client's own transport.
+"""Knowledge-bank calls for the stories, made through the published client's generated API.
 
-Knowledge banks are hidden: their routes are left out of the OpenAPI spec, so the generated client
-has no methods for them yet. The stories still go through the client — its base URL, headers and
-aiohttp session — by serializing each call with the client's ``ApiClient``, exactly as a generated
-method does. Only the method is missing, not the transport. When the routes are published, these
-become the generated calls and the stories do not change.
+Each call returns the status and the body rather than raising on an error status, so a story
+asserts a refusal (a 400, a 404) the same way it asserts a success.
 """
 
 from __future__ import annotations
@@ -12,12 +9,19 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
 from hindsight_client import Hindsight
-
-KB = "/v1/default/knowledge-banks"
+from hindsight_client_api.api.knowledge_banks_api import KnowledgeBanksApi
+from hindsight_client_api.models import (
+    CreateKnowledgeBankRequest,
+    KnowledgeBankConfigUpdate,
+    KnowledgeIngestRequest,
+    KnowledgeSearchRequest,
+)
+from hindsight_client_api.rest import RESTResponseType
 
 
 @dataclass
@@ -34,88 +38,78 @@ class UploadFile:
     data: bytes
 
 
+async def _read(pending: Awaitable[RESTResponseType]) -> Response:
+    response = await pending
+    raw = await response.read()
+    try:
+        body = json.loads(raw) if raw else None
+    except ValueError:
+        body = None
+    return Response(response.status, body, raw)
+
+
 class KnowledgeBanks:
     def __init__(self, client: Hindsight) -> None:
-        self._api = client._api_client
-
-    async def call(
-        self,
-        method: str,
-        path: str,
-        *,
-        json_body: Any = None,
-        query: dict[str, Any] | None = None,
-        files: list[UploadFile] | None = None,
-        form: dict[str, str] | None = None,
-    ) -> Response:
-        headers = {"Accept": "application/json"}
-        if files is not None:
-            headers["Content-Type"] = "multipart/form-data"
-        elif json_body is not None:
-            headers["Content-Type"] = "application/json"
-        serialized = self._api.param_serialize(
-            method=method,
-            resource_path=path,
-            query_params=list((query or {}).items()) or None,
-            header_params=headers,
-            body=json_body,
-            post_params=list((form or {}).items()) or None,
-            files={"files": [(f.filename, f.data) for f in files]} if files else None,
-        )
-        response = await self._api.call_api(*serialized)
-        raw = await response.read()
-        try:
-            body = json.loads(raw) if raw else None
-        except ValueError:
-            body = None
-        return Response(response.status, body, raw)
+        self._api = KnowledgeBanksApi(client._api_client)
 
     # --- the calls the stories make, each asserting nothing beyond what it returns ---------------
 
+    async def list(self) -> Response:
+        return await _read(self._api.list_knowledge_banks_without_preload_content())
+
     async def create(self, bank_id: str) -> Response:
-        return await self.call("POST", KB, json_body={"bank_id": bank_id})
+        request = CreateKnowledgeBankRequest(bank_id=bank_id)
+        return await _read(self._api.create_knowledge_bank_without_preload_content(request))
 
     async def get(self, bank_id: str) -> Response:
-        return await self.call("GET", f"{KB}/{bank_id}")
+        return await _read(self._api.get_knowledge_bank_without_preload_content(bank_id))
 
     async def delete(self, bank_id: str) -> Response:
-        return await self.call("DELETE", f"{KB}/{bank_id}")
+        return await _read(self._api.delete_knowledge_bank_without_preload_content(bank_id))
 
     async def config(self, bank_id: str) -> Response:
-        return await self.call("GET", f"{KB}/{bank_id}/config")
+        return await _read(self._api.get_knowledge_bank_config_without_preload_content(bank_id))
 
     async def update_config(self, bank_id: str, updates: dict[str, Any]) -> Response:
-        return await self.call("PATCH", f"{KB}/{bank_id}/config", json_body={"updates": updates})
+        update = KnowledgeBankConfigUpdate(updates=updates)
+        return await _read(self._api.update_knowledge_bank_config_without_preload_content(bank_id, update))
 
     async def reset_config(self, bank_id: str) -> Response:
-        return await self.call("DELETE", f"{KB}/{bank_id}/config")
+        return await _read(self._api.reset_knowledge_bank_config_without_preload_content(bank_id))
 
     async def ingest(self, bank_id: str, items: list[dict[str, Any]], *, wait: bool = True) -> Response:
-        return await self.call("POST", f"{KB}/{bank_id}/ingest", json_body={"items": items, "async": not wait})
+        request = KnowledgeIngestRequest.from_dict({"items": items, "async": not wait})
+        return await _read(self._api.ingest_knowledge_texts_without_preload_content(bank_id, request))
 
     async def ingest_files(
         self, bank_id: str, files: list[UploadFile], options: list[dict[str, Any]] | None = None
     ) -> Response:
-        form = {"request": json.dumps({"files": options})} if options else None
-        return await self.call("POST", f"{KB}/{bank_id}/files/ingest", files=files, form=form)
+        return await _read(
+            self._api.ingest_knowledge_files_without_preload_content(
+                bank_id,
+                [(f.filename, f.data) for f in files],
+                request=json.dumps({"files": options}) if options else None,
+            )
+        )
 
     async def document(self, bank_id: str, document_id: str) -> Response:
-        return await self.call("GET", f"{KB}/{bank_id}/documents/{document_id}")
+        return await _read(self._api.get_knowledge_document_without_preload_content(bank_id, document_id))
 
     async def documents(self, bank_id: str, **query: Any) -> Response:
-        return await self.call("GET", f"{KB}/{bank_id}/documents", query=query)
+        return await _read(self._api.list_knowledge_documents_without_preload_content(bank_id, **query))
 
     async def delete_document(self, bank_id: str, document_id: str) -> Response:
-        return await self.call("DELETE", f"{KB}/{bank_id}/documents/{document_id}")
+        return await _read(self._api.delete_knowledge_document_without_preload_content(bank_id, document_id))
 
     async def file(self, bank_id: str, document_id: str) -> Response:
-        return await self.call("GET", f"{KB}/{bank_id}/documents/{document_id}/file")
+        return await _read(self._api.get_knowledge_document_file_without_preload_content(bank_id, document_id))
 
     async def tags(self, bank_id: str, **query: Any) -> Response:
-        return await self.call("GET", f"{KB}/{bank_id}/tags", query=query)
+        return await _read(self._api.list_knowledge_bank_tags_without_preload_content(bank_id, **query))
 
     async def search(self, bank_id: str, **body: Any) -> Response:
-        return await self.call("POST", f"{KB}/{bank_id}/search", json_body=body)
+        request = KnowledgeSearchRequest.from_dict(body)
+        return await _read(self._api.search_knowledge_bank_without_preload_content(bank_id, request))
 
     async def wait_until_processed(self, bank_id: str, count: int, timeout: float = 30.0) -> None:
         """Until ``count`` documents of the bank are ready or failed: an async ingest's worker is done."""

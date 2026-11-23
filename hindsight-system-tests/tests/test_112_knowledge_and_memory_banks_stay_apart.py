@@ -37,7 +37,7 @@ async def test_the_two_kinds_of_bank_refuse_each_others_api(client, bank_id):
         # The memory bank list leaves knowledge banks out; the knowledge list leaves memory banks out.
         memory_ids = [b.bank_id for b in (await client.banks.list_banks(q="systest-", limit=1000)).banks]
         assert bank_id in memory_ids and knowledge not in memory_ids
-        knowledge_ids = [b["bank_id"] for b in (await kb.call("GET", "/v1/default/knowledge-banks")).body["banks"]]
+        knowledge_ids = [b["bank_id"] for b in (await kb.list()).body["banks"]]
         assert knowledge in knowledge_ids and bank_id not in knowledge_ids
 
         # Neither may be created under an id, or an alias, the other already holds.

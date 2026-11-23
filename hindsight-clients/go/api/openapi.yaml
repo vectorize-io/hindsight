@@ -11460,7 +11460,7 @@ components:
             score: 9.965781217890562
             filename: filename
             result_rank: 1
-            media_type: media_type
+            media_type: document
             similarity: 9.369310271410669
             rank: 1
             passage_score: 8.762042012749001
@@ -11482,7 +11482,7 @@ components:
             score: 9.965781217890562
             filename: filename
             result_rank: 1
-            media_type: media_type
+            media_type: document
             similarity: 9.369310271410669
             rank: 1
             passage_score: 8.762042012749001
@@ -11652,7 +11652,7 @@ components:
           score: 9.965781217890562
           filename: filename
           result_rank: 1
-          media_type: media_type
+          media_type: document
           similarity: 9.369310271410669
           rank: 1
           passage_score: 8.762042012749001
@@ -11674,7 +11674,7 @@ components:
           score: 9.965781217890562
           filename: filename
           result_rank: 1
-          media_type: media_type
+          media_type: document
           similarity: 9.369310271410669
           rank: 1
           passage_score: 8.762042012749001
@@ -11813,7 +11813,7 @@ components:
         score: 9.965781217890562
         filename: filename
         result_rank: 1
-        media_type: media_type
+        media_type: document
         similarity: 9.369310271410669
         rank: 1
         passage_score: 8.762042012749001
@@ -11857,7 +11857,13 @@ components:
           title: Index
           type: integer
         media_type:
-          title: Media Type
+          enum:
+          - document
+          - image
+          - audio
+          - video
+          - text
+          title: Knowledge Media Type
           type: string
         page:
           nullable: true

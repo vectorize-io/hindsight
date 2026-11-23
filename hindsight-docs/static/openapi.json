@@ -16943,7 +16943,14 @@
           },
           "media_type": {
             "type": "string",
-            "title": "Media Type"
+            "enum": [
+              "document",
+              "image",
+              "audio",
+              "video",
+              "text"
+            ],
+            "title": "Knowledge Media Type"
           },
           "page": {
             "anyOf": [

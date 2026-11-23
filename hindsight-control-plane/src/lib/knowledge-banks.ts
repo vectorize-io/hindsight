@@ -1,193 +1,64 @@
 /**
- * Knowledge banks: types for the `/v1/default/knowledge-banks` API and the small
+ * Knowledge banks: the UI's names for the SDK's knowledge-bank types, and the small
  * helpers the screens share. The JSON calls live on `ControlPlaneClient` in
  * `lib/api.ts`; uploads live here because they need XHR for progress events.
  */
 
-import type { TagGroup } from "./api";
+import type {
+  KnowledgeBankConfigResponse,
+  KnowledgeBankResponse,
+  KnowledgeBankSettings,
+  KnowledgeDocumentDetailResponse,
+  KnowledgeDocumentResponse,
+  KnowledgeIngestResponse,
+  KnowledgePassageResponse,
+  KnowledgeSearchRequest,
+  KnowledgeSearchResponse,
+  KnowledgeSearchResult,
+  KnowledgeSearchTrace,
+  KnowledgeSearchTraceHit,
+  KnowledgeTimeseriesBucket,
+  KnowledgeTraceBudgetStep,
+} from "@vectorize-io/hindsight-client";
 import { withBasePath } from "./base-path";
-import type { TagsMatch } from "./tag-filter-params";
 
 /** What a document or passage is. "document" covers PDF, Office and HTML files. */
-export type MediaType = "document" | "image" | "audio" | "video" | "text";
-export type DocumentStatus = "pending" | "processing" | "ready" | "failed";
+export type MediaType = KnowledgeDocumentResponse["media_type"];
+export type DocumentStatus = KnowledgeDocumentResponse["status"];
 
 export const MEDIA_TYPES: MediaType[] = ["document", "image", "audio", "video", "text"];
 export const DOCUMENT_STATUSES: DocumentStatus[] = ["pending", "processing", "ready", "failed"];
 
-export interface KnowledgeBank {
-  bank_id: string;
-  created_at: string | null;
-  document_count: number;
-  passage_count: number;
-  ready_count: number;
-  pending_count: number;
-  failed_count: number;
-  documents_by_media_type: Partial<Record<MediaType, number>>;
-  /** When a document was last added or changed; null for an empty bank. */
-  last_document_at?: string | null;
-}
+export type KnowledgeBank = KnowledgeBankResponse;
 
 /** The settings a knowledge bank splits its files with: its own value, else the server's. */
-export interface KnowledgeIngestSettings {
-  text_passage_tokens: number;
-  pdf_page_pixels: number;
-  pdf_bands: boolean;
-  image_tokens: number;
-  audio_window_seconds: number;
-  video_window_seconds: number;
-  media_overlap_seconds: number;
-  /** May only be lower than the server's. */
-  max_media_seconds: number;
-  /** May only be lower than the server's. */
-  max_pdf_pages: number;
-  /** May only add to the server's. */
-  disabled_media_types: MediaType[];
-}
-
+export type KnowledgeIngestSettings = KnowledgeBankSettings;
 export type KnowledgeSettingName = keyof KnowledgeIngestSettings;
 
 /** `GET/PATCH/DELETE /{bank}/config`: every setting resolved, and only the ones the bank sets. */
-export interface KnowledgeBankConfig {
-  bank_id: string;
-  config: KnowledgeIngestSettings;
-  overrides: Partial<KnowledgeIngestSettings>;
-}
+export type KnowledgeBankConfig = KnowledgeBankConfigResponse;
 
 /** A PATCH body's `updates`: a null clears that override. */
 export type KnowledgeBankConfigUpdates = {
   [K in KnowledgeSettingName]?: KnowledgeIngestSettings[K] | null;
 };
 
-export interface KnowledgeDocument {
-  document_id: string;
-  filename: string | null;
-  content_type: string;
-  media_type: MediaType;
-  size_bytes: number;
-  status: DocumentStatus;
-  error: string | null;
-  passage_count: number;
-  tags: string[];
-  created_at: string | null;
-  updated_at: string | null;
-  document_url: string;
-}
+export type KnowledgeDocument = KnowledgeDocumentResponse;
+export type KnowledgePassage = KnowledgePassageResponse;
+export type KnowledgeDocumentDetail = KnowledgeDocumentDetailResponse;
 
-export interface KnowledgePassage {
-  index: number;
-  media_type: MediaType;
-  text: string | null;
-  page: number | null;
-  start_ms: number | null;
-  end_ms: number | null;
-  passage_url: string | null;
-}
-
-export interface KnowledgeDocumentDetail extends KnowledgeDocument {
-  passages: KnowledgePassage[];
-}
-
-export interface KnowledgeSearchResult extends KnowledgePassage {
-  document_id: string;
-  filename: string | null;
-  tags: string[];
-  document_url: string;
-}
-
-export type SearchBudget = "low" | "mid" | "high";
+export type SearchBudget = NonNullable<KnowledgeSearchRequest["budget"]>;
 export const SEARCH_BUDGETS: SearchBudget[] = ["low", "mid", "high"];
 
-export interface KnowledgeSearchRequest {
-  query?: string;
-  query_image?: string;
-  /** Base64 MP4 clip; combined with the text and the image into one query. */
-  query_video?: string;
-  /** What the hits, and the text around them, may weigh in all, in tokens (server default 4096). */
-  max_tokens?: number;
-  /** How deep the search ranks before `max_tokens` picks from it (server default "mid"). */
-  budget?: SearchBudget;
-  tags?: string[];
-  /** Same rules as memory recall: any/all keep untagged documents, the _strict modes and exact drop them. */
-  tags_match?: TagsMatch;
-  /** Compound boolean tag filter, as memory recall takes it. */
-  tag_groups?: TagGroup[];
-  document_ids?: string[];
-  media_types?: MediaType[];
-  /** Rerank this search (true) or not (false); unset reranks when the server has a reranker. */
-  enable_reranking?: boolean;
-  /** Also return how the search ranked and what the token budget kept. */
-  trace?: boolean;
-}
-
-/** One ranked candidate of a traced search: its score step by step, and what the budget did. */
-export interface KnowledgeSearchTraceHit {
-  rank: number;
-  outcome: "returned" | "merged" | "over_budget" | "below_depth";
-  result_rank: number | null;
-  merged_into_rank: number | null;
-  document_id: string;
-  filename: string | null;
-  index: number;
-  media_type: MediaType;
-  page: number | null;
-  start_ms: number | null;
-  end_ms: number | null;
-  snippet: string | null;
-  score: number;
-  found_by: string[];
-  similarity: number;
-  roles: Record<string, number>;
-  passage_score: number;
-  with_document: number;
-  keyword: number;
-}
-
-/** One step of filling max_tokens, in order. */
-export interface KnowledgeTraceBudgetStep {
-  action: "window" | "alone" | "media" | "merged" | "widened" | "skipped";
-  rank: number;
-  document_id: string;
-  first: number;
-  last: number;
-  tokens: number;
-  total: number;
-  into_rank: number | null;
-}
-
-export interface KnowledgeSearchTrace {
-  budget: SearchBudget;
-  /** How many scored candidates the budget level keeps for max_tokens. */
-  depth: number;
-  max_tokens: number;
-  tokens_used: number;
-  candidates: number;
-  keyword_weight: number;
-  keyword_terms: Record<string, number>;
-  timings_ms: Record<string, number>;
-  /** Step 1: each candidate search's own list, best first. */
-  candidate_searches: {
-    name: "vector" | "extra_vectors" | "keyword" | "document";
-    results: { document_id: string; index: number; score: number }[];
-  }[];
-  /** Every candidate scored, best first. */
-  hits: KnowledgeSearchTraceHit[];
-  /** How max_tokens was filled, in order. */
-  budget_steps: KnowledgeTraceBudgetStep[];
-}
-
-/** Results best first: a result carries its rank, not its score (scores mean nothing across queries);
- * a traced search's `trace` carries the scores, step by step. */
-export interface KnowledgeSearchResponse {
-  results: KnowledgeSearchResult[];
-  trace?: KnowledgeSearchTrace | null;
-}
-
-export interface KnowledgeIngestResponse {
-  document_ids: string[];
-  operation_ids: string[];
-  unchanged_document_ids: string[];
-}
+export type {
+  KnowledgeIngestResponse,
+  KnowledgeSearchRequest,
+  KnowledgeSearchResponse,
+  KnowledgeSearchResult,
+  KnowledgeSearchTrace,
+  KnowledgeSearchTraceHit,
+  KnowledgeTraceBudgetStep,
+};
 
 interface FileUploadOptions {
   document_id?: string;
@@ -199,7 +70,7 @@ const API_PREFIX = "/v1/default/knowledge-banks";
 /** Fired by the header's "Add Document" on a knowledge bank page; the documents view opens its upload dialog. */
 export const KNOWLEDGE_UPLOAD_EVENT = "hindsight:knowledge-upload";
 
-/** Control-plane proxy path for a knowledge-bank endpoint; ids are percent-encoded. */
+/** Control-plane route for a knowledge-bank endpoint; ids are percent-encoded. */
 export function knowledgeApi(...segments: string[]): string {
   const suffix = segments.map(encodeURIComponent).join("/");
   return `/api/knowledge-banks${suffix ? `/${suffix}` : ""}`;
@@ -207,7 +78,8 @@ export function knowledgeApi(...segments: string[]): string {
 
 /**
  * The API hands out `passage_url`/`document_url` as dataplane paths
- * (`/v1/default/knowledge-banks/...`); the browser reaches them through the proxy.
+ * (`/v1/default/knowledge-banks/...`); the browser reaches them through the control plane's
+ * routes, which sit at the same paths under `/api/knowledge-banks`.
  */
 export function proxiedMediaUrl(apiPath: string): string {
   const path = apiPath.startsWith(API_PREFIX)
@@ -354,7 +226,7 @@ export function uploadKnowledgeFiles(
   });
 }
 
-/** The readable part of an API error body (`{detail}` from FastAPI, `{error}` from the proxy). */
+/** The readable part of an API error body (`{detail}` from FastAPI, `{error}` from a control-plane route). */
 export function errorMessage(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const { detail, error } = body as { detail?: unknown; error?: unknown };
@@ -370,12 +242,8 @@ export function errorMessage(body: unknown): string | null {
 export type ActivityPeriod = "1d" | "7d" | "30d" | "90d";
 export const ACTIVITY_PERIODS: ActivityPeriod[] = ["1d", "7d", "30d", "90d"];
 
-export interface ActivityBucket {
-  /** Bucket start, ISO in UTC. */
-  time: string;
-  documents: number;
-  passages: number;
-}
+/** One bucket of activity; `time` is the bucket start, ISO in UTC. */
+export type ActivityBucket = KnowledgeTimeseriesBucket;
 
 /**
  * The server's timeseries only lists buckets that have documents; this lays them on

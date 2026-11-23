@@ -2306,6 +2306,31 @@ export type {
   VersionResponse,
 };
 
+export type {
+  KnowledgeBankConfigResponse,
+  KnowledgeBankListResponse,
+  KnowledgeBankOverrides,
+  KnowledgeBankResponse,
+  KnowledgeBankSettings,
+  KnowledgeDeletedResponse,
+  KnowledgeDocumentDetailResponse,
+  KnowledgeDocumentListResponse,
+  KnowledgeDocumentResponse,
+  KnowledgeIngestRequest,
+  KnowledgeIngestResponse,
+  KnowledgeIngestTextItem,
+  KnowledgePassageResponse,
+  KnowledgeSearchRequest,
+  KnowledgeSearchResponse,
+  KnowledgeSearchResult,
+  KnowledgeSearchTrace,
+  KnowledgeSearchTraceHit,
+  KnowledgeTagsResponse,
+  KnowledgeTimeseriesBucket,
+  KnowledgeTimeseriesResponse,
+  KnowledgeTraceBudgetStep,
+} from "../generated/types.gen";
+
 // Deprecated type names from when pages were called "knowledge pages". Remove in 2.x.
 /** @deprecated Use {@link PageNode}. */
 export type KnowledgeNode = PageNode;

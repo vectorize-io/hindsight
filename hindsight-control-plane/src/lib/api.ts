@@ -23,6 +23,13 @@ import {
   type KnowledgeBankConfig,
   type KnowledgeBankConfigUpdates,
 } from "./knowledge-banks";
+import type {
+  KnowledgeBankListResponse,
+  KnowledgeDeletedResponse,
+  KnowledgeDocumentListResponse,
+  KnowledgeTagsResponse,
+  KnowledgeTimeseriesResponse,
+} from "@vectorize-io/hindsight-client";
 
 /**
  * Reduce an API error `details` value to a string safe to render in a toast.
@@ -2469,7 +2476,7 @@ export class ControlPlaneClient {
     });
   }
 
-  // ── Knowledge banks (/api/knowledge-banks proxy) ──────────────────────────
+  // ── Knowledge banks (/api/knowledge-banks routes) ──────────────────────────
 
   /** One page, newest first; `q` matches part of the bank id. */
   async listKnowledgeBanks(params: { limit?: number; offset?: number; q?: string } = {}) {
@@ -2478,10 +2485,9 @@ export class ControlPlaneClient {
     if (params.offset !== undefined) query.set("offset", String(params.offset));
     if (params.q) query.set("q", params.q);
     const qs = query.toString();
-    return this.fetchApi<{ banks: KnowledgeBank[]; total: number; limit: number; offset: number }>(
-      knowledgeApi() + (qs ? `?${qs}` : ""),
-      { cache: "no-store" as RequestCache }
-    );
+    return this.fetchApi<KnowledgeBankListResponse>(knowledgeApi() + (qs ? `?${qs}` : ""), {
+      cache: "no-store" as RequestCache,
+    });
   }
 
   /** Every knowledge bank, page by page: for views that show them all (the banks page, the
@@ -2509,7 +2515,7 @@ export class ControlPlaneClient {
   }
 
   async deleteKnowledgeBank(bankId: string) {
-    return this.fetchApi<{ deleted: boolean }>(knowledgeApi(bankId), { method: "DELETE" });
+    return this.fetchApi<KnowledgeDeletedResponse>(knowledgeApi(bankId), { method: "DELETE" });
   }
 
   async getKnowledgeBankConfig(bankId: string) {
@@ -2552,7 +2558,7 @@ export class ControlPlaneClient {
     if (params.q) search.set("q", params.q);
     if (params.status) search.set("status", params.status);
     if (params.media_type) search.set("media_type", params.media_type);
-    return this.fetchApi<{ documents: KnowledgeDocument[]; total: number }>(
+    return this.fetchApi<KnowledgeDocumentListResponse>(
       `${knowledgeApi(bankId, "documents")}?${search}`,
       { cache: "no-store" as RequestCache },
       { suppressErrorToast: quiet }
@@ -2566,7 +2572,7 @@ export class ControlPlaneClient {
   }
 
   async deleteKnowledgeDocument(bankId: string, documentId: string) {
-    return this.fetchApi<{ deleted: boolean }>(knowledgeApi(bankId, "documents", documentId), {
+    return this.fetchApi<KnowledgeDeletedResponse>(knowledgeApi(bankId, "documents", documentId), {
       method: "DELETE",
     });
   }
@@ -2603,26 +2609,21 @@ export class ControlPlaneClient {
     if (q) search.set("q", q);
     if (limit != null) search.set("limit", String(limit));
     const query = search.toString();
-    return this.fetchApi<{
-      items: Array<{ tag: string; count: number }>;
-      total: number;
-      limit: number;
-      offset: number;
-    }>(`${knowledgeApi(bankId, "tags")}${query ? `?${query}` : ""}`);
+    return this.fetchApi<KnowledgeTagsResponse>(
+      `${knowledgeApi(bankId, "tags")}${query ? `?${query}` : ""}`
+    );
   }
 
   /** `mediaType` counts only documents of that kind. */
   async getKnowledgeTimeseries(bankId: string, period: ActivityPeriod, mediaType?: MediaType) {
     const search = new URLSearchParams({ period });
     if (mediaType) search.set("media_type", mediaType);
-    return this.fetchApi<{
-      bank_id: string;
-      period: string;
-      trunc: "hour" | "day";
-      buckets: ActivityBucket[];
-    }>(`${knowledgeApi(bankId, "stats", "timeseries")}?${search}`, {
-      cache: "no-store" as RequestCache,
-    });
+    return this.fetchApi<KnowledgeTimeseriesResponse>(
+      `${knowledgeApi(bankId, "stats", "timeseries")}?${search}`,
+      {
+        cache: "no-store" as RequestCache,
+      }
+    );
   }
 
   /**

@@ -1,21 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { DATAPLANE_URL, getDataplaneHeaders } from "@/lib/hindsight-client";
 import { parseByteRange } from "@/lib/byte-range";
 
 /**
- * Forwards everything under /api/knowledge-banks to the dataplane's
- * /v1/default/knowledge-banks. The generated SDK does not cover knowledge banks, and
- * the endpoints are a thin tree (banks, documents, passages, search), so one
- * catch-all route forwards them instead of one file per endpoint.
+ * The three knowledge-bank routes the SDK cannot serve: a file upload, which must stream
+ * through without being buffered here, and the two binary downloads (a document's original
+ * file and a passage's media), which need their headers kept and, for media, byte ranges.
  *
- * - Request bodies are streamed through untouched with the browser's Content-Type, so
- *   a multipart upload keeps its boundary and is never buffered here.
- * - Binary responses (original files, passage media) are streamed back with their
- *   Content-Type. The dataplane does not answer Range requests, which <video> and
- *   Safari's <audio> need to seek; passage media are bounded clips (one page, one
- *   30-60s window), so for those this route buffers the clip and serves the range
- *   itself. Original files can be hundreds of MB and are only ever downloaded, so they
- *   are never buffered.
+ * - The upload body is streamed with the browser's Content-Type, so the multipart
+ *   boundary survives and a large upload is never held in memory.
+ * - The dataplane does not answer Range requests, which <video> and Safari's <audio>
+ *   need to seek. Passage media are bounded clips (one page, one 30-60s window), so the
+ *   clip is buffered and the range served here. Original files can be hundreds of MB and
+ *   are only ever downloaded, so they are never buffered.
  */
 
 // Response headers worth keeping from the dataplane. Not content-length or
@@ -30,9 +27,6 @@ const PASSTHROUGH_HEADERS = [
   "etag",
   "last-modified",
 ];
-
-const MEDIA_PATH = /^[^/]+\/documents\/[^/]+\/passages\/\d+\/media$/;
-const FILE_PATH = /^[^/]+\/documents\/[^/]+\/file$/;
 
 // An original stored as application/octet-stream (a client that sent no type) would
 // download instead of previewing; its file name says what it is.
@@ -65,12 +59,11 @@ function dispositionFilename(header: string | null): string | null {
   return header?.match(/filename="?([^";]+)"?/i)?.[1] ?? null;
 }
 
-function upstreamUrl(path: string[], search: string): string | null {
+function upstreamUrl(segments: string[]): string | null {
   // An encoded ".." still normalises as a dot segment in the URL parser, which would
   // let a caller step out of the knowledge-banks prefix.
-  if (path.some((segment) => segment === "." || segment === ".." || segment === "")) return null;
-  const suffix = path.map(encodeURIComponent).join("/");
-  return `${DATAPLANE_URL}/v1/default/knowledge-banks${suffix ? `/${suffix}` : ""}${search}`;
+  if (segments.some((s) => s === "." || s === ".." || s === "")) return null;
+  return `${DATAPLANE_URL}/v1/default/knowledge-banks/${segments.map(encodeURIComponent).join("/")}`;
 }
 
 function copyHeaders(from: Headers): Headers {
@@ -82,61 +75,73 @@ function copyHeaders(from: Headers): Headers {
   return headers;
 }
 
-async function forward(request: NextRequest, { params }: { params: Promise<{ path?: string[] }> }) {
-  const { path = [] } = await params;
-  const url = upstreamUrl(path, request.nextUrl.search);
-  if (!url) {
-    return NextResponse.json({ error: "Invalid path" }, { status: 400 });
-  }
-
-  const hasBody = !["GET", "HEAD", "DELETE"].includes(request.method);
-  const extra: Record<string, string> = {};
-  const contentType = request.headers.get("content-type");
-  if (hasBody && contentType) extra["Content-Type"] = contentType;
-  const range = request.headers.get("range");
-  if (range) extra["Range"] = range;
-
-  let upstream: Response;
+async function send(
+  segments: string[],
+  init: RequestInit & { duplex?: "half" }
+): Promise<Response | NextResponse> {
+  const url = upstreamUrl(segments);
+  if (!url) return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   try {
-    upstream = await fetch(url, {
-      method: request.method,
-      headers: getDataplaneHeaders(extra),
-      body: hasBody ? request.body : undefined,
-      // Required by Node's fetch to send a streamed request body.
-      ...(hasBody ? { duplex: "half" } : {}),
-      cache: "no-store",
-    } as RequestInit);
+    return await fetch(url, { ...init, cache: "no-store" } as RequestInit);
   } catch (error) {
-    console.error("Knowledge bank proxy error:", error);
+    console.error("Knowledge bank stream error:", error);
     return NextResponse.json(
       { error: "Failed to reach the Hindsight API", details: (error as Error).message },
       { status: 502 }
     );
   }
+}
+
+/** `POST /{bank}/files/ingest`: the multipart body streamed through, the JSON answer passed back. */
+export async function streamUpload(request: Request, segments: string[]): Promise<Response> {
+  const contentType = request.headers.get("content-type");
+  const upstream = await send(segments, {
+    method: "POST",
+    headers: getDataplaneHeaders(contentType ? { "Content-Type": contentType } : {}),
+    body: request.body,
+    // Required by Node's fetch to send a streamed request body.
+    duplex: "half",
+  });
+  if (upstream instanceof NextResponse) return upstream;
+  return new NextResponse(upstream.body, {
+    status: upstream.status,
+    headers: copyHeaders(upstream.headers),
+  });
+}
+
+/**
+ * A document's original file (`kind: "file"`) or a passage's media (`kind: "media"`),
+ * with the headers that keep an uploaded file from running on the control plane's origin.
+ */
+export async function streamBinary(
+  request: Request,
+  segments: string[],
+  kind: "file" | "media"
+): Promise<Response> {
+  const range = request.headers.get("range");
+  const upstream = await send(segments, {
+    method: "GET",
+    headers: getDataplaneHeaders(range ? { Range: range } : {}),
+  });
+  if (upstream instanceof NextResponse) return upstream;
 
   const headers = copyHeaders(upstream.headers);
-  if (
-    FILE_PATH.test(path.join("/")) &&
-    /^application\/octet-stream/.test(headers.get("content-type") || "")
-  ) {
+  if (kind === "file" && /^application\/octet-stream/.test(headers.get("content-type") || "")) {
     const ext = dispositionFilename(headers.get("content-disposition"))?.split(".").pop();
     const inferred = ext && TYPE_BY_EXTENSION[ext.toLowerCase()];
     if (inferred) headers.set("content-type", inferred);
   }
-  const upstreamType = headers.get("content-type") || "";
-  if (!upstreamType.startsWith("application/json")) {
+  const type = headers.get("content-type") || "";
+  if (!type.startsWith("application/json")) {
     // Bytes from an upload are served on the control plane's origin: never let the
     // browser sniff them into HTML, and never let an uploaded page run script. Not for a
     // PDF: Chrome will not start its PDF viewer in a sandboxed document, so the original
     // showed blank, and the viewer keeps a PDF's own script out of this origin anyway.
     headers.set("X-Content-Type-Options", "nosniff");
-    if (!upstreamType.startsWith("application/pdf")) {
-      headers.set("Content-Security-Policy", "sandbox");
-    }
+    if (!type.startsWith("application/pdf")) headers.set("Content-Security-Policy", "sandbox");
   }
 
-  const isMedia = request.method === "GET" && MEDIA_PATH.test(path.join("/"));
-  if (isMedia && upstream.ok && upstream.status !== 206) {
+  if (kind === "media" && upstream.ok && upstream.status !== 206) {
     const bytes = new Uint8Array(await upstream.arrayBuffer());
     headers.set("Accept-Ranges", "bytes");
     const parsed = parseByteRange(range, bytes.length);
@@ -153,5 +158,3 @@ async function forward(request: NextRequest, { params }: { params: Promise<{ pat
 
   return new NextResponse(upstream.body, { status: upstream.status, headers });
 }
-
-export { forward as GET, forward as POST, forward as PUT, forward as PATCH, forward as DELETE };

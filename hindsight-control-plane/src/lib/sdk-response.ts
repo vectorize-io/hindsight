@@ -7,6 +7,8 @@ const SUCCESS_STATUS = 200 as const;
 type SdkErrorOptions = {
   request?: RequestLike;
   errorKey?: string;
+  /** Also pass on the reason of a 503, where the endpoint makes it a deliberate, user-facing state. */
+  exposeUnavailable?: boolean;
 };
 
 const failureErrorKeys: Record<string, string> = {
@@ -93,7 +95,9 @@ export function respondWithSdk<T>(
 
   if (result.error !== undefined || result.data === undefined) {
     const upstreamStatus = result.response?.status ?? DEFAULT_UPSTREAM_STATUS;
-    const exposeDetails = upstreamStatus >= 400 && upstreamStatus < 500;
+    const exposeDetails =
+      (upstreamStatus >= 400 && upstreamStatus < 500) ||
+      (errorOptions?.exposeUnavailable === true && upstreamStatus === 503);
     const details = exposeDetails ? extractErrorDetail(result.error ?? null) : null;
     const errorKey = errorOptions?.errorKey ?? failureErrorKeys[failureLabel];
     console.error(`${failureLabel}:`, {
