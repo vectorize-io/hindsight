@@ -748,3 +748,110 @@ const canSpyOnModules = typeof (globalThis as any).Deno === "undefined";
     spy.mockRestore();
   });
 });
+
+// Knowledge banks are PostgreSQL-only: on Oracle the kb_* tables don't exist, yet the server
+// still reports the feature as on and answers 500 (#6821), so the backend is the only signal.
+const describeKb =
+  process.env.HINDSIGHT_API_DATABASE_BACKEND === "oracle" ? describe.skip : describe;
+
+describeKb("TestKnowledgeBanks", () => {
+  let kbId: string;
+
+  beforeEach(async () => {
+    kbId = `test_kb_${Math.random().toString(36).slice(2, 14)}`;
+    await client.createKnowledgeBank(kbId);
+  });
+
+  afterEach(async () => {
+    await client.deleteKnowledgeBank(kbId).catch(() => {});
+  });
+
+  test("ingest texts then search finds them", async () => {
+    const result = await client.ingestKnowledgeTexts(kbId, [
+      { document_id: "returns", text: "You can return an X200 within 30 days.", tags: ["policy"] },
+      { document_id: "warranty", text: "The X200 warranty lasts two years.", tags: ["warranty"] },
+    ]);
+    expect(result.document_ids).toEqual(["returns", "warranty"]);
+
+    // A sync ingest returns once the documents are searchable: no polling.
+    let found = await client.searchKnowledgeBank(kbId, {
+      query: "How long do I have to return an X200?",
+    });
+    expect(found.results[0].document_id).toBe("returns");
+
+    // Filters reach the server: only the warranty carries this tag.
+    found = await client.searchKnowledgeBank(kbId, {
+      query: "X200",
+      tags: ["warranty"],
+      tagsMatch: "any_strict",
+    });
+    expect(new Set(found.results.map((h) => h.document_id))).toEqual(new Set(["warranty"]));
+    found = await client.searchKnowledgeBank(kbId, { query: "X200", documentIds: ["returns"] });
+    expect(new Set(found.results.map((h) => h.document_id))).toEqual(new Set(["returns"]));
+
+    const tags = await client.listKnowledgeBankTags(kbId);
+    expect(new Set(tags.items.map((t) => t.tag))).toEqual(new Set(["policy", "warranty"]));
+    expect((await client.getKnowledgeBank(kbId)).ready_count).toBe(2);
+  });
+
+  test("ingest files runs in the background until searchable", async () => {
+    const result = await client.ingestKnowledgeFiles(
+      kbId,
+      [
+        new File(
+          ["# Setup\n\nHold the power button for two seconds to pair the X200.\n"],
+          "guide.md"
+        ),
+        new File(["# FAQ\n\nThe X200 charges over USB-C.\n"], "faq.md"),
+      ],
+      { filesOptions: [{ document_id: "guide", tags: ["setup"] }, { document_id: "faq" }] }
+    );
+    expect(result.document_ids).toEqual(["guide", "faq"]);
+    expect(result.operation_ids.length).toBeGreaterThan(0);
+
+    for (const docId of ["guide", "faq"]) {
+      let doc = await client.getKnowledgeDocument(kbId, docId);
+      for (let i = 0; i < 120 && doc.status !== "ready" && doc.status !== "failed"; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        doc = await client.getKnowledgeDocument(kbId, docId);
+      }
+      expect(doc.status).toBe("ready");
+    }
+
+    let found = await client.searchKnowledgeBank(kbId, {
+      query: "how do I pair the X200",
+      maxTokens: 512,
+    });
+    expect(found.results[0].document_id).toBe("guide");
+    const listed = await client.listKnowledgeDocuments(kbId, { tags: ["setup"] });
+    expect(listed.documents.map((d) => d.document_id)).toEqual(["guide"]);
+
+    await client.deleteKnowledgeDocument(kbId, "guide");
+    found = await client.searchKnowledgeBank(kbId, { query: "how do I pair the X200" });
+    expect(found.results.every((h) => h.document_id !== "guide")).toBe(true);
+  }, 150_000);
+
+  test("config override round-trips", async () => {
+    await client.updateKnowledgeBankConfig(kbId, { text_passage_tokens: 256 });
+    expect((await client.getKnowledgeBankConfig(kbId)).overrides.text_passage_tokens).toBe(256);
+    await client.updateKnowledgeBankConfig(kbId, { text_passage_tokens: null });
+    expect(
+      (await client.getKnowledgeBankConfig(kbId)).overrides.text_passage_tokens ?? null
+    ).toBeNull();
+    await client.updateKnowledgeBankConfig(kbId, { text_passage_tokens: 300, pdf_bands: true });
+    await client.resetKnowledgeBankConfig(kbId);
+    const overrides = (await client.getKnowledgeBankConfig(kbId)).overrides;
+    expect([overrides.text_passage_tokens ?? null, overrides.pdf_bands ?? null]).toEqual([
+      null,
+      null,
+    ]);
+  });
+
+  test("list and delete", async () => {
+    let listed = await client.listKnowledgeBanks({ q: kbId });
+    expect(listed.banks.map((b) => b.bank_id)).toContain(kbId);
+    await client.deleteKnowledgeBank(kbId);
+    listed = await client.listKnowledgeBanks({ q: kbId });
+    expect(listed.banks.map((b) => b.bank_id)).not.toContain(kbId);
+  });
+});

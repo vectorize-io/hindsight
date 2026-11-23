@@ -79,6 +79,38 @@ curl -sf -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/sear
 curl -sf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/tags" | grep -q '"policy"'
 curl -sf "$HINDSIGHT_URL/v1/default/banks/support-agent/config" | grep -q '"product-manuals"'
 curl -sf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" | grep -q '"text_passage_tokens": *256'
+# The file ingest runs in the background: wait for the quick start to be ready.
+for _ in $(seq 1 120); do
+  curl -sf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents/x200-quickstart" \
+    | grep -qE '"status": *"(ready|failed)"' && break
+  sleep 1
+done
+curl -sf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents/x200-quickstart" | grep -qE '"status": *"ready"'
+
+# [docs:documents]
+curl "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents?status=ready"
+curl "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents/x200-quickstart"
+curl -o manual-copy.pdf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents/x200-manual/file"
+# [/docs:documents]
+curl -sf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents?status=ready" | grep -q '"x200-quickstart"'
+
+# [docs:settings]
+# Every setting as the bank uses it, then only what the bank changes
+curl "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config"
+
+# Drop one override, or all of them
+curl -X PATCH "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" \
+  -H "Content-Type: application/json" \
+  -d '{"updates": {"disabled_media_types": null}}'
+curl -X DELETE "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config"
+# [/docs:settings]
+if curl -sf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" | grep -q '"text_passage_tokens": *256'; then
+  echo "override not reset" >&2; exit 1
+fi
+
+# [docs:delete-document]
+curl -X DELETE "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents/returns-policy"
+# [/docs:delete-document]
 
 # [docs:delete-knowledge-bank]
 curl -X DELETE "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals"

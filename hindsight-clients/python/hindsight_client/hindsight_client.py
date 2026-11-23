@@ -55,6 +55,7 @@ from hindsight_client_api.api import (
     documents_api,
     entities_api,
     files_api,
+    knowledge_banks_api,
     knowledge_base_api,  # deprecated alias, remove in 2.x
     memory_api,
     mental_models_api,
@@ -70,7 +71,21 @@ from hindsight_client_api.models import (
     retain_request,
 )
 from hindsight_client_api.models.bank_profile_response import BankProfileResponse
+from hindsight_client_api.models.create_knowledge_bank_request import CreateKnowledgeBankRequest
 from hindsight_client_api.models.file_retain_response import FileRetainResponse
+from hindsight_client_api.models.knowledge_bank_config_response import KnowledgeBankConfigResponse
+from hindsight_client_api.models.knowledge_bank_config_update import KnowledgeBankConfigUpdate
+from hindsight_client_api.models.knowledge_bank_list_response import KnowledgeBankListResponse
+from hindsight_client_api.models.knowledge_bank_response import KnowledgeBankResponse
+from hindsight_client_api.models.knowledge_deleted_response import KnowledgeDeletedResponse
+from hindsight_client_api.models.knowledge_document_detail_response import KnowledgeDocumentDetailResponse
+from hindsight_client_api.models.knowledge_document_list_response import KnowledgeDocumentListResponse
+from hindsight_client_api.models.knowledge_ingest_request import KnowledgeIngestRequest
+from hindsight_client_api.models.knowledge_ingest_response import KnowledgeIngestResponse
+from hindsight_client_api.models.knowledge_ingest_text_item import KnowledgeIngestTextItem
+from hindsight_client_api.models.knowledge_search_request import KnowledgeSearchRequest
+from hindsight_client_api.models.knowledge_search_response import KnowledgeSearchResponse
+from hindsight_client_api.models.knowledge_tags_response import KnowledgeTagsResponse
 from hindsight_client_api.models.list_memory_units_response import ListMemoryUnitsResponse
 from hindsight_client_api.models.recall_response import RecallResponse
 from hindsight_client_api.models.reflect_include_options import ReflectIncludeOptions
@@ -290,6 +305,7 @@ class Hindsight:
         - ``client.operations``: Async operation tracking (OperationsApi)
         - ``client.webhooks``: Webhook management (WebhooksApi)
         - ``client.files``: File upload (FilesApi)
+        - ``client.knowledge_banks``: Knowledge banks (KnowledgeBanksApi)
         - ``client.monitoring``: Health/version checks (MonitoringApi)
     """
 
@@ -339,6 +355,7 @@ class Hindsight:
         self._banks_api = banks_api.BanksApi(self._api_client)
         self._mental_models_api = mental_models_api.MentalModelsApi(self._api_client)
         self._pages_api = pages_api.PagesApi(self._api_client)
+        self._knowledge_banks_api = knowledge_banks_api.KnowledgeBanksApi(self._api_client)
         # Deprecated alias (old paths), backs the `knowledge_base` property. Remove in 2.x.
         self._knowledge_base_api = knowledge_base_api.KnowledgeBaseApi(self._api_client)
         self._directives_api = directives_api.DirectivesApi(self._api_client)
@@ -420,6 +437,11 @@ class Hindsight:
     def pages(self) -> pages_api.PagesApi:
         """Low-level Pages API — folder/page tree, page CRUD, search, export."""
         return self._pages_api
+
+    @property
+    def knowledge_banks(self) -> knowledge_banks_api.KnowledgeBanksApi:
+        """Low-level Knowledge Banks API — banks, ingest, search, documents, operations, config."""
+        return self._knowledge_banks_api
 
     @property
     def knowledge_base(self) -> knowledge_base_api.KnowledgeBaseApi:
@@ -2343,6 +2365,475 @@ class Hindsight:
             PageBundleResponse with files (index.md, one file per page, history logs)
         """
         return await self._pages_api.export_pages(bank_id, _request_timeout=self._timeout)
+
+    # Knowledge bank methods
+
+    def create_knowledge_bank(self, bank_id: str) -> KnowledgeBankResponse:
+        """
+        Create a knowledge bank (sync wrapper — prefer :meth:`acreate_knowledge_bank` in async code).
+
+        See :meth:`acreate_knowledge_bank` for the full argument and return documentation.
+        """
+        return _run_async(self.acreate_knowledge_bank(bank_id=bank_id))
+
+    async def acreate_knowledge_bank(self, bank_id: str) -> KnowledgeBankResponse:
+        """
+        Create a knowledge bank (async — preferred over :meth:`create_knowledge_bank`).
+
+        A knowledge bank holds authoritative files, split into passages and searched as they are
+        written. It shares the id space of memory banks.
+
+        Args:
+            bank_id: Id of the new knowledge bank
+
+        Returns:
+            KnowledgeBankResponse
+        """
+        return await self._knowledge_banks_api.create_knowledge_bank(
+            CreateKnowledgeBankRequest(bank_id=bank_id), _request_timeout=self._timeout
+        )
+
+    def get_knowledge_bank(self, bank_id: str) -> KnowledgeBankResponse:
+        """
+        Get a knowledge bank with its document counts (sync wrapper — prefer :meth:`aget_knowledge_bank` in async code).
+
+        See :meth:`aget_knowledge_bank` for the full argument and return documentation.
+        """
+        return _run_async(self.aget_knowledge_bank(bank_id=bank_id))
+
+    async def aget_knowledge_bank(self, bank_id: str) -> KnowledgeBankResponse:
+        """
+        Get a knowledge bank with its document counts (async — preferred over :meth:`get_knowledge_bank`).
+
+        Args:
+            bank_id: The knowledge bank ID
+
+        Returns:
+            KnowledgeBankResponse
+        """
+        return await self._knowledge_banks_api.get_knowledge_bank(bank_id, _request_timeout=self._timeout)
+
+    def list_knowledge_banks(
+        self, q: str | None = None, limit: int | None = None, offset: int | None = None
+    ) -> KnowledgeBankListResponse:
+        """
+        List knowledge banks (sync wrapper — prefer :meth:`alist_knowledge_banks` in async code).
+
+        See :meth:`alist_knowledge_banks` for the full argument and return documentation.
+        """
+        return _run_async(self.alist_knowledge_banks(q=q, limit=limit, offset=offset))
+
+    async def alist_knowledge_banks(
+        self, q: str | None = None, limit: int | None = None, offset: int | None = None
+    ) -> KnowledgeBankListResponse:
+        """
+        List knowledge banks (async — preferred over :meth:`list_knowledge_banks`).
+
+        Args:
+            q: Part of the bank id, case-insensitive
+            limit: Page size
+            offset: Page offset
+
+        Returns:
+            KnowledgeBankListResponse
+        """
+        return await self._knowledge_banks_api.list_knowledge_banks(
+            limit=limit, offset=offset, q=q, _request_timeout=self._timeout
+        )
+
+    def delete_knowledge_bank(self, bank_id: str) -> KnowledgeDeletedResponse:
+        """
+        Delete a knowledge bank and every document in it (sync wrapper — prefer :meth:`adelete_knowledge_bank` in async code).
+
+        See :meth:`adelete_knowledge_bank` for the full argument and return documentation.
+        """
+        return _run_async(self.adelete_knowledge_bank(bank_id=bank_id))
+
+    async def adelete_knowledge_bank(self, bank_id: str) -> KnowledgeDeletedResponse:
+        """
+        Delete a knowledge bank and every document in it (async — preferred over :meth:`delete_knowledge_bank`).
+
+        Args:
+            bank_id: The knowledge bank ID
+
+        Returns:
+            KnowledgeDeletedResponse
+        """
+        return await self._knowledge_banks_api.delete_knowledge_bank(bank_id, _request_timeout=self._timeout)
+
+    def ingest_knowledge_texts(
+        self, bank_id: str, items: list[dict[str, Any]], ingest_async: bool = False
+    ) -> KnowledgeIngestResponse:
+        """
+        Ingest text documents into a knowledge bank (sync wrapper — prefer :meth:`aingest_knowledge_texts` in async code).
+
+        See :meth:`aingest_knowledge_texts` for the full argument and return documentation.
+        """
+        return _run_async(self.aingest_knowledge_texts(bank_id=bank_id, items=items, ingest_async=ingest_async))
+
+    async def aingest_knowledge_texts(
+        self, bank_id: str, items: list[dict[str, Any]], ingest_async: bool = False
+    ) -> KnowledgeIngestResponse:
+        """
+        Ingest text documents into a knowledge bank (async — preferred over :meth:`ingest_knowledge_texts`).
+
+        Each item becomes one document. Re-ingesting a document id replaces that document.
+
+        Args:
+            bank_id: The knowledge bank ID
+            items: Up to 100 dicts, each with ``text`` (markdown) and optional ``document_id``,
+                ``filename``, ``tags`` and ``strategy``
+            ingest_async: If True, queue each document and return at once with its operation.
+                If False (default), return once every document is searchable.
+
+        Returns:
+            KnowledgeIngestResponse with document_ids, operation_ids and unchanged_document_ids
+        """
+        request = KnowledgeIngestRequest(
+            items=[KnowledgeIngestTextItem(**item) for item in items], var_async=ingest_async
+        )
+        return await self._knowledge_banks_api.ingest_knowledge_texts(bank_id, request, _request_timeout=self._timeout)
+
+    def ingest_knowledge_files(
+        self,
+        bank_id: str,
+        files: list[str | Path | tuple[str, bytes]],
+        files_options: list[dict[str, Any]] | None = None,
+    ) -> KnowledgeIngestResponse:
+        """
+        Upload files into a knowledge bank (sync wrapper — prefer :meth:`aingest_knowledge_files` in async code).
+
+        See :meth:`aingest_knowledge_files` for the full argument and return documentation.
+        """
+        return _run_async(self.aingest_knowledge_files(bank_id=bank_id, files=files, files_options=files_options))
+
+    async def aingest_knowledge_files(
+        self,
+        bank_id: str,
+        files: list[str | Path | tuple[str, bytes]],
+        files_options: list[dict[str, Any]] | None = None,
+    ) -> KnowledgeIngestResponse:
+        """
+        Upload files into a knowledge bank (async — preferred over :meth:`ingest_knowledge_files`).
+
+        PDF, images, audio, video, text and Office files are accepted. Each file becomes one
+        document, split and embedded in the background: poll the document's status (or the
+        returned operation) to know when it is searchable.
+
+        Args:
+            bank_id: The knowledge bank ID
+            files: File paths, or ``(filename, bytes)`` pairs for content already in memory
+            files_options: Optional per-file options, one per file when given. Each entry can have
+                ``document_id``, ``tags`` and ``strategy``.
+
+        Returns:
+            KnowledgeIngestResponse with document_ids and operation_ids
+        """
+        if files_options is not None and len(files_options) != len(files):
+            raise ValueError("files_options must have one entry per file")
+        file_data: list[tuple[str, bytes]] = []
+        for f in files:
+            if isinstance(f, tuple):
+                file_data.append(f)
+            else:
+                path = Path(f)
+                file_data.append((path.name, await asyncio.to_thread(path.read_bytes)))
+        return await self._knowledge_banks_api.ingest_knowledge_files(
+            bank_id=bank_id,
+            files=file_data,
+            request=json.dumps({"files": files_options}) if files_options else None,
+            _request_timeout=self._timeout,
+        )
+
+    def search_knowledge_bank(
+        self,
+        bank_id: str,
+        query: str | None = None,
+        query_image: str | None = None,
+        query_video: str | None = None,
+        budget: Literal["low", "mid", "high"] = "mid",
+        max_tokens: int = 4096,
+        tags: list[str] | None = None,
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
+        tag_groups: list[dict[str, Any]] | None = None,
+        document_ids: list[str] | None = None,
+        media_types: list[str] | None = None,
+        enable_reranking: bool | None = None,
+        trace: bool = False,
+    ) -> KnowledgeSearchResponse:
+        """
+        Search a knowledge bank (sync wrapper — prefer :meth:`asearch_knowledge_bank` in async code).
+
+        See :meth:`asearch_knowledge_bank` for the full argument and return documentation.
+        """
+        return _run_async(
+            self.asearch_knowledge_bank(
+                bank_id=bank_id,
+                query=query,
+                query_image=query_image,
+                query_video=query_video,
+                budget=budget,
+                max_tokens=max_tokens,
+                tags=tags,
+                tags_match=tags_match,
+                tag_groups=tag_groups,
+                document_ids=document_ids,
+                media_types=media_types,
+                enable_reranking=enable_reranking,
+                trace=trace,
+            )
+        )
+
+    async def asearch_knowledge_bank(
+        self,
+        bank_id: str,
+        query: str | None = None,
+        query_image: str | None = None,
+        query_video: str | None = None,
+        budget: Literal["low", "mid", "high"] = "mid",
+        max_tokens: int = 4096,
+        tags: list[str] | None = None,
+        tags_match: Literal["any", "all", "any_strict", "all_strict", "exact"] = "any",
+        tag_groups: list[dict[str, Any]] | None = None,
+        document_ids: list[str] | None = None,
+        media_types: list[str] | None = None,
+        enable_reranking: bool | None = None,
+        trace: bool = False,
+    ) -> KnowledgeSearchResponse:
+        """
+        Search a knowledge bank (async — preferred over :meth:`search_knowledge_bank`).
+
+        Hits come best first, each text hit with the passages around it joined into its ``text``.
+
+        Args:
+            bank_id: The knowledge bank ID
+            query: Text query (give at least one of query, query_image, query_video)
+            query_image: Image to search by, as a data URL or base64
+            query_video: Video to search by, as a data URL or base64
+            budget: How deep the search ranks: "low", "mid" (default) or "high"
+            max_tokens: What the results may weigh in all, in tokens of their text (default 4096)
+            tags: Only documents carrying these tags, matched per ``tags_match``
+            tags_match: 'any' (default), 'all', 'any_strict', 'all_strict' or 'exact'
+            tag_groups: Compound boolean tag filter, same shape as recall's ``tag_groups``
+            document_ids: Only these documents
+            media_types: Only these media types (document, image, audio, video, text)
+            enable_reranking: Rerank with the cross-encoder; None uses the bank's setting
+            trace: Also return how the search ranked and what the token budget kept
+
+        Returns:
+            KnowledgeSearchResponse with results (and trace when asked)
+        """
+        request = KnowledgeSearchRequest(
+            query=query,
+            query_image=query_image,
+            query_video=query_video,
+            budget=budget,
+            max_tokens=max_tokens,
+            tags=tags,
+            tags_match=tags_match,
+            tag_groups=_tag_groups_to_models(KnowledgeSearchRequest, tag_groups),
+            document_ids=document_ids,
+            media_types=media_types,
+            enable_reranking=enable_reranking,
+            trace=trace,
+        )
+        return await self._knowledge_banks_api.search_knowledge_bank(bank_id, request, _request_timeout=self._timeout)
+
+    def list_knowledge_documents(
+        self,
+        bank_id: str,
+        q: str | None = None,
+        status: str | None = None,
+        media_type: str | None = None,
+        tags: list[str] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> KnowledgeDocumentListResponse:
+        """
+        List a knowledge bank's documents (sync wrapper — prefer :meth:`alist_knowledge_documents` in async code).
+
+        See :meth:`alist_knowledge_documents` for the full argument and return documentation.
+        """
+        return _run_async(
+            self.alist_knowledge_documents(
+                bank_id=bank_id, q=q, status=status, media_type=media_type, tags=tags, limit=limit, offset=offset
+            )
+        )
+
+    async def alist_knowledge_documents(
+        self,
+        bank_id: str,
+        q: str | None = None,
+        status: str | None = None,
+        media_type: str | None = None,
+        tags: list[str] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> KnowledgeDocumentListResponse:
+        """
+        List a knowledge bank's documents (async — preferred over :meth:`list_knowledge_documents`).
+
+        Args:
+            bank_id: The knowledge bank ID
+            q: Substring of the document id or filename
+            status: Only documents in this status (e.g. "pending", "ready", "failed")
+            media_type: Only documents of this media type
+            tags: Only documents carrying these tags
+            limit: Page size (server default 50)
+            offset: Page offset
+
+        Returns:
+            KnowledgeDocumentListResponse
+        """
+        return await self._knowledge_banks_api.list_knowledge_documents(
+            bank_id,
+            limit=limit,
+            offset=offset,
+            q=q,
+            status=status,
+            media_type=media_type,
+            tags=tags,
+            _request_timeout=self._timeout,
+        )
+
+    def get_knowledge_document(self, bank_id: str, document_id: str) -> KnowledgeDocumentDetailResponse:
+        """
+        Get one knowledge document with its status (sync wrapper — prefer :meth:`aget_knowledge_document` in async code).
+
+        See :meth:`aget_knowledge_document` for the full argument and return documentation.
+        """
+        return _run_async(self.aget_knowledge_document(bank_id=bank_id, document_id=document_id))
+
+    async def aget_knowledge_document(self, bank_id: str, document_id: str) -> KnowledgeDocumentDetailResponse:
+        """
+        Get one knowledge document with its status (async — preferred over :meth:`get_knowledge_document`).
+
+        Args:
+            bank_id: The knowledge bank ID
+            document_id: The document ID
+
+        Returns:
+            KnowledgeDocumentDetailResponse (``status`` is "ready" once the document is searchable)
+        """
+        return await self._knowledge_banks_api.get_knowledge_document(
+            bank_id, document_id, _request_timeout=self._timeout
+        )
+
+    def delete_knowledge_document(self, bank_id: str, document_id: str) -> KnowledgeDeletedResponse:
+        """
+        Delete one knowledge document (sync wrapper — prefer :meth:`adelete_knowledge_document` in async code).
+
+        See :meth:`adelete_knowledge_document` for the full argument and return documentation.
+        """
+        return _run_async(self.adelete_knowledge_document(bank_id=bank_id, document_id=document_id))
+
+    async def adelete_knowledge_document(self, bank_id: str, document_id: str) -> KnowledgeDeletedResponse:
+        """
+        Delete one knowledge document (async — preferred over :meth:`delete_knowledge_document`).
+
+        Args:
+            bank_id: The knowledge bank ID
+            document_id: The document ID
+
+        Returns:
+            KnowledgeDeletedResponse
+        """
+        return await self._knowledge_banks_api.delete_knowledge_document(
+            bank_id, document_id, _request_timeout=self._timeout
+        )
+
+    def list_knowledge_bank_tags(
+        self, bank_id: str, q: str | None = None, limit: int | None = None, offset: int | None = None
+    ) -> KnowledgeTagsResponse:
+        """
+        List the tags on a knowledge bank's documents (sync wrapper — prefer :meth:`alist_knowledge_bank_tags` in async code).
+
+        See :meth:`alist_knowledge_bank_tags` for the full argument and return documentation.
+        """
+        return _run_async(self.alist_knowledge_bank_tags(bank_id=bank_id, q=q, limit=limit, offset=offset))
+
+    async def alist_knowledge_bank_tags(
+        self, bank_id: str, q: str | None = None, limit: int | None = None, offset: int | None = None
+    ) -> KnowledgeTagsResponse:
+        """
+        List the tags on a knowledge bank's documents (async — preferred over :meth:`list_knowledge_bank_tags`).
+
+        Args:
+            bank_id: The knowledge bank ID
+            q: Wildcard pattern to filter tags (e.g. 'team:*'), case-insensitive
+            limit: Page size
+            offset: Page offset
+
+        Returns:
+            KnowledgeTagsResponse with items (tag, count)
+        """
+        return await self._knowledge_banks_api.list_knowledge_bank_tags(
+            bank_id, q=q, limit=limit, offset=offset, _request_timeout=self._timeout
+        )
+
+    def get_knowledge_bank_config(self, bank_id: str) -> KnowledgeBankConfigResponse:
+        """
+        Get a knowledge bank's settings (sync wrapper — prefer :meth:`aget_knowledge_bank_config` in async code).
+
+        See :meth:`aget_knowledge_bank_config` for the full argument and return documentation.
+        """
+        return _run_async(self.aget_knowledge_bank_config(bank_id=bank_id))
+
+    async def aget_knowledge_bank_config(self, bank_id: str) -> KnowledgeBankConfigResponse:
+        """
+        Get a knowledge bank's settings (async — preferred over :meth:`get_knowledge_bank_config`).
+
+        Args:
+            bank_id: The knowledge bank ID
+
+        Returns:
+            KnowledgeBankConfigResponse with the resolved ``config`` and the bank's ``overrides``
+        """
+        return await self._knowledge_banks_api.get_knowledge_bank_config(bank_id, _request_timeout=self._timeout)
+
+    def update_knowledge_bank_config(self, bank_id: str, updates: dict[str, Any]) -> KnowledgeBankConfigResponse:
+        """
+        Override a knowledge bank's settings (sync wrapper — prefer :meth:`aupdate_knowledge_bank_config` in async code).
+
+        See :meth:`aupdate_knowledge_bank_config` for the full argument and return documentation.
+        """
+        return _run_async(self.aupdate_knowledge_bank_config(bank_id=bank_id, updates=updates))
+
+    async def aupdate_knowledge_bank_config(self, bank_id: str, updates: dict[str, Any]) -> KnowledgeBankConfigResponse:
+        """
+        Override a knowledge bank's settings (async — preferred over :meth:`update_knowledge_bank_config`).
+
+        Args:
+            bank_id: The knowledge bank ID
+            updates: Settings to override, named as in ``config`` (e.g. ``{"text_passage_tokens": 256}``);
+                a None value clears that override. A change applies to files ingested after it.
+
+        Returns:
+            KnowledgeBankConfigResponse
+        """
+        return await self._knowledge_banks_api.update_knowledge_bank_config(
+            bank_id, KnowledgeBankConfigUpdate(updates=updates), _request_timeout=self._timeout
+        )
+
+    def reset_knowledge_bank_config(self, bank_id: str) -> KnowledgeBankConfigResponse:
+        """
+        Drop every override of a knowledge bank's settings (sync wrapper — prefer :meth:`areset_knowledge_bank_config`).
+
+        See :meth:`areset_knowledge_bank_config` for the full argument and return documentation.
+        """
+        return _run_async(self.areset_knowledge_bank_config(bank_id=bank_id))
+
+    async def areset_knowledge_bank_config(self, bank_id: str) -> KnowledgeBankConfigResponse:
+        """
+        Drop every override of a knowledge bank's settings (async — preferred over :meth:`reset_knowledge_bank_config`).
+
+        Args:
+            bank_id: The knowledge bank ID
+
+        Returns:
+            KnowledgeBankConfigResponse, now with the server's settings
+        """
+        return await self._knowledge_banks_api.reset_knowledge_bank_config(bank_id, _request_timeout=self._timeout)
 
     # Deprecated names from when pages were called "knowledge pages". Remove in 2.x.
 
