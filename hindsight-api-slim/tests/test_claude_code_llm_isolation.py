@@ -34,6 +34,7 @@ class _FakeOptions:
     model: str | None = None
     cwd: str | None = None
     setting_sources: list[str] | None = None
+    settings: str | None = None
 
 
 class _FakeAssistantMessage:
@@ -47,7 +48,7 @@ class _FakeTextBlock:
         self.text = text
 
 
-def _instantiate_provider(api_key: str = ""):
+def _instantiate_provider(api_key: str = "", reasoning_effort: str | None = "low"):
     from hindsight_api.engine.providers.claude_code_llm import ClaudeCodeLLM
 
     return ClaudeCodeLLM(
@@ -55,8 +56,26 @@ def _instantiate_provider(api_key: str = ""):
         api_key=api_key,
         base_url="",
         model="claude-haiku-4-5",
-        reasoning_effort="low",
+        reasoning_effort=reasoning_effort,
     )
+
+
+async def _captured_options(monkeypatch, provider) -> _FakeOptions:
+    """Run one call() against a fake SDK and return the ClaudeAgentOptions it built."""
+    import claude_agent_sdk
+
+    captured: dict[str, _FakeOptions] = {}
+
+    async def fake_query(prompt: str, options: _FakeOptions):
+        captured["options"] = options
+        yield _FakeAssistantMessage(content=[_FakeTextBlock(text="ok")])
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeAgentOptions", _FakeOptions)
+    monkeypatch.setattr(claude_agent_sdk, "AssistantMessage", _FakeAssistantMessage)
+    monkeypatch.setattr(claude_agent_sdk, "TextBlock", _FakeTextBlock)
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    await provider.call(messages=[{"role": "user", "content": "hi"}], max_retries=0, scope="test")
+    return captured["options"]
 
 
 def _assert_isolation(options: _FakeOptions) -> None:
@@ -154,3 +173,54 @@ def test_setup_token_is_passed_to_cli_as_oauth_token():
     assert "claude setup-token" in with_token._auth_hint
     assert "claude auth login" not in with_token._auth_hint
     assert "claude auth login" in without._auth_hint
+
+
+def test_reasoning_effort_reaches_cli_per_instance():
+    """Each instance's effort goes to its own CLI env and never into the shared one (issue #6762)."""
+    from hindsight_api.engine.providers.claude_code_llm import _get_isolated_claude_env
+
+    low = _instantiate_provider(reasoning_effort="low")
+    high = _instantiate_provider(reasoning_effort="high")
+    unset = _instantiate_provider(reasoning_effort=None)
+    token = _instantiate_provider(api_key="sk-ant-oat01-x", reasoning_effort="medium")
+
+    assert low._env["CLAUDE_CODE_EFFORT_LEVEL"] == "low"
+    assert high._env["CLAUDE_CODE_EFFORT_LEVEL"] == "high"
+    assert token._env["CLAUDE_CODE_EFFORT_LEVEL"] == "medium"
+    # Unset sends nothing, so a process-wide CLAUDE_CODE_EFFORT_LEVEL still applies.
+    assert "CLAUDE_CODE_EFFORT_LEVEL" not in unset._env
+    assert "CLAUDE_CODE_EFFORT_LEVEL" not in _get_isolated_claude_env(), "effort must not leak into the shared env"
+
+
+def test_reasoning_effort_the_cli_rejects_is_not_sent(caplog):
+    """A value the CLI does not accept is dropped with the startup warning, not passed through."""
+    with caplog.at_level("WARNING"):
+        provider = _instantiate_provider(reasoning_effort="none")
+    assert "CLAUDE_CODE_EFFORT_LEVEL" not in provider._env
+    assert "reasoning_effort='none' is ignored" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_settings_file_is_passed_to_cli(monkeypatch):
+    """HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS reaches the CLI as --settings, isolation intact (issue #6500)."""
+    from hindsight_api.config import clear_config_cache
+
+    monkeypatch.setenv("HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS", "/etc/hindsight/claude-settings.json")
+    clear_config_cache()
+    try:
+        options = await _captured_options(monkeypatch, _instantiate_provider())
+    finally:
+        monkeypatch.delenv("HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS")
+        clear_config_cache()
+    assert options.settings == "/etc/hindsight/claude-settings.json"
+    _assert_isolation(options)
+
+
+@pytest.mark.asyncio
+async def test_no_settings_file_by_default(monkeypatch):
+    monkeypatch.delenv("HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS", raising=False)
+    from hindsight_api.config import clear_config_cache
+
+    clear_config_cache()
+    options = await _captured_options(monkeypatch, _instantiate_provider())
+    assert options.settings is None
