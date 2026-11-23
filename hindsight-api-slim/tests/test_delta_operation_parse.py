@@ -7,18 +7,19 @@ from typing import Any
 
 import pytest
 
+from hindsight_api.engine.llm_interface import OutputTooLongError
 from hindsight_api.engine.reflect.delta_ops import (
     AddSectionOp,
     AppendBlockOp,
-    DeltaOperationsInvalidError,
     DeltaOperationList,
+    DeltaOperationsInvalidError,
     ReplaceSectionBlocksOp,
     apply_operations,
     parse_delta_operation_list,
     request_delta_operations,
 )
-from hindsight_api.engine.response_models import LLMCallResult
 from hindsight_api.engine.reflect.structured_doc import Block, Section, StructuredDocument
+from hindsight_api.engine.response_models import LLMCallResult
 
 
 def test_parse_delta_operation_list_trailing_brackets():
@@ -265,7 +266,10 @@ class _ScriptedLLM:
 
     async def call(self, *, messages, scope, **kwargs):
         self.calls.append(messages)
-        return LLMCallResult(content=self._replies[len(self.calls) - 1])
+        reply = self._replies[len(self.calls) - 1]
+        if isinstance(reply, Exception):
+            raise reply
+        return LLMCallResult(content=reply)
 
 
 class _RequestBodyRefused(Exception):
@@ -563,3 +567,28 @@ async def test_request_delta_operations_tells_a_guessed_new_section_id_to_use_th
     outcome = apply_operations(_DOC, op_list.operations)
     assert not outcome.skipped
     assert [s.heading for s in outcome.document.sections] == ["Preferences", "Who's On Call", "Rollback"]
+
+
+_RUNAWAY = OutputTooLongError("reply hit the output cap")
+
+
+async def test_request_delta_operations_samples_once_more_when_a_reply_runs_to_the_cap():
+    """A repetition loop to the cap is a sampling accident (#6265): the same request, once more, comes back whole."""
+    llm = _ScriptedLLM(_RUNAWAY, _GOOD)
+    op_list = await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test")
+    assert len(op_list.operations) == 1
+    assert llm.calls[0] == llm.calls[1]
+
+
+async def test_request_delta_operations_resamples_the_correction_turn_too():
+    llm = _ScriptedLLM(_STRAY, _RUNAWAY, _GOOD)
+    op_list = await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test")
+    assert len(op_list.operations) == 1
+    assert len(llm.calls) == 3
+
+
+async def test_request_delta_operations_raises_when_the_resample_runs_away_too():
+    llm = _ScriptedLLM(_RUNAWAY, _RUNAWAY)
+    with pytest.raises(OutputTooLongError):
+        await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test")
+    assert len(llm.calls) == 2
