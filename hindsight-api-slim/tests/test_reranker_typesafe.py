@@ -55,6 +55,8 @@ class _FakeSession:
         self.posted: list[dict] = []
         self.urls: list[str] = []
         self.refused: list[dict] = []
+        # Jev's refusal; a test swaps it for another server's (#6522).
+        self.refusal = UpstreamHTTPError(400, '{"detail":{"error_type":"max_tokens_exceeded"}}', {}, "")
 
     def get(self):
         return self
@@ -84,7 +86,7 @@ class _FakeSession:
     def post(self, url, headers=None, json=None):
         if self.window is not None and 2 * count_tokens(jsonlib.dumps(json)) > self.window:
             self.refused.append(json)
-            raise UpstreamHTTPError(400, '{"detail":{"error_type":"max_tokens_exceeded"}}', {}, url)
+            raise self.refusal
         return self._post(url, headers=headers, json=json)
 
     @property
@@ -792,6 +794,26 @@ class TestOverflowingJevsWindow:
         assert session.refused, "the first request must have been over the window for this to mean anything"
         assert all(2 * count_tokens(jsonlib.dumps(body)) <= 32_000 for body in session.posted)
         assert len(set(scores)) == size, "every candidate keeps a distinct rank"
+
+    @pytest.mark.asyncio
+    async def test_a_422_context_limit_refusal_is_repacked_too(self):
+        """Other System One servers refuse with a 422 and a plain message (#6522)."""
+        size = 20
+        encoder, session = _encoder({f"c{i}": 1.0 / (i + 1) for i in range(size)})
+        session.window = 32_000
+        session.refusal = UpstreamHTTPError(
+            422,
+            '{"detail":"invalid model request: Question prompt exceeds the 32768-token context limit '
+            'including the decision token"}',
+            {},
+            "",
+        )
+        docs = [f"{i} " + "long document words " * 300 for i in range(size)]
+
+        scores = await encoder._predict([("q", doc) for doc in docs])
+
+        assert session.refused
+        assert len(set(scores)) == size
 
     @pytest.mark.asyncio
     async def test_evidence_is_cut_shorter_until_it_fits(self):

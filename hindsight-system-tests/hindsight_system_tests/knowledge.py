@@ -113,10 +113,10 @@ class KnowledgeBanks:
 
     async def operations(self, bank_id: str, **query: Any) -> Response:
         """The bank's background jobs: a knowledge bank's own, never ``/banks/{id}/operations``."""
-        return await self.call("GET", f"{KB}/{bank_id}/operations", query=query)
+        return await _read(self._api.list_knowledge_bank_operations_without_preload_content(bank_id, **query))
 
     async def operation(self, bank_id: str, operation_id: str) -> Response:
-        return await self.call("GET", f"{KB}/{bank_id}/operations/{operation_id}")
+        return await _read(self._api.get_knowledge_bank_operation_without_preload_content(bank_id, operation_id))
 
     async def wait_until_processed(self, bank_id: str, count: int, timeout: float = 30.0) -> None:
         """Until ``count`` documents of the bank are ready or failed: an async ingest's worker is done."""

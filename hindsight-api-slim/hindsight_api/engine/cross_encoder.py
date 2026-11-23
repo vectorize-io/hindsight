@@ -1420,7 +1420,7 @@ class TypeSafeCrossEncoder(CrossEncoderModel):
                 if not overflowed_window(e) or budget // 2 < self.MIN_QUESTION_TOKENS:
                     raise
             budget //= 2
-            logger.warning(f"Reranker: TypeSafe request overflowed Jev's window, retrying at {budget} tokens")
+            logger.warning(f"Reranker: TypeSafe request overflowed the model's window, retrying at {budget} tokens")
 
     async def _rank_once(self, query: str, docs: list[str], indices: list[int]) -> list[int]:
         """Rank one group of candidates, returning their indices best first."""

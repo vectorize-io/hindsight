@@ -128,10 +128,15 @@ def overflowed_window(exc: BaseException) -> bool:
     The window is counted in the model's own tokens, which a client can only estimate:
     on mixed-script text Jev's tokenizer ran twice o200k_base (#5715), which is why requests
     are now sized with ``tokenizer`` ('jev' for typesafe). An estimate still misses, so a
-    request sized to fit can still come back ``400 {"detail": {"error_type": "max_tokens_exceeded"}}``. Not
-    retryable as sent; the caller has to send less.
+    request sized to fit can still come back ``400 {"detail": {"error_type": "max_tokens_exceeded"}}``, or,
+    from other System One servers, ``422 {"detail": "... exceeds the 32768-token context limit ..."}`` (#6522).
+    Not retryable as sent; the caller has to send less.
     """
-    return isinstance(exc, UpstreamHTTPError) and exc.status_code == 400 and "max_tokens_exceeded" in exc.body
+    return (
+        isinstance(exc, UpstreamHTTPError)
+        and exc.status_code in (400, 422)
+        and ("max_tokens_exceeded" in exc.body or "context limit" in exc.body)
+    )
 
 
 class DecisionRefusedError(Exception):
