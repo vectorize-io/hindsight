@@ -1,9 +1,9 @@
 ---
 title: "Claude Code Auto Compact: Keep Rules in a Repo Memory Bank"
-slug: "2026/11/21/claude-code-auto-compact-rules"
+slug: "2026/11/25/claude-code-auto-compact-rules"
 description: "How the Hindsight Coding Agents hooks keep Claude Code rules in a repo memory bank, and what comes back after auto compact."
 authors: [chrislatimer]
-date: 2026-11-21
+date: 2026-11-25
 tags: [claude-code, coding-agents, memory, deep-dive]
 hide_table_of_contents: false
 image: /img/blog/claude-code-auto-compact-rules/featured.png
