@@ -186,6 +186,11 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True, knowledge_b
     if global_config.mcp_enabled_tools is not None:
         allowed = frozenset(canonical_tool_names(global_config.mcp_enabled_tools))
         base_tools = (base_tools if base_tools is not None else _ALL_TOOLS) & allowed
+        if not base_tools:
+            logger.warning(
+                "MCP enabled-tools allowlist %s names no built-in tool; no built-in MCP tools are registered",
+                sorted(global_config.mcp_enabled_tools),
+            )
 
     retain_description, recall_description = _build_mcp_tool_descriptions(
         getattr(global_config, "mcp_instructions", None)
