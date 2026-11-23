@@ -74,7 +74,12 @@ Without it a story about in-flight work can only submit and hope the worker has
 not finished yet, which makes the assertion a race between request latency and
 claim latency — story 33 failed that way about one run in fifty. A hold changes
 *when* the answer is sent, never what it is: the rule still has to be declared,
-and an unscripted call still fails the test.
+and an unscripted call still fails the test. `llm.hold("<step>", contains=...)`
+parks only the calls that also carry those substrings, so one operation can be
+held while another goes through.
+
+**A provider blip is `fails_with_status(503, times=1)`**: that many calls fail,
+then the next matching rule answers — declare it after the failing one.
 
 ## Conventions
 
