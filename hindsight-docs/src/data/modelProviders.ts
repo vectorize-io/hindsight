@@ -49,6 +49,7 @@ const LLM_ANCHORS: Record<string, string> = {
   'openai-codex': 'openai-codex-setup-chatgpt-pluspro',
   'claude-code': 'claude-code-setup-claude-promax',
   cursor: 'cursor-setup-cursor-subscription',
+  antigravity: 'google-antigravity-setup-google-ai-subscription',
   'xai-oauth': 'supergrok-subscription-setup-device-code-oauth',
 };
 
@@ -70,6 +71,7 @@ const BRAND: Record<string, string | {light: string; dark: string} | IconType> =
   'jina-mlx': '/img/icons/providers/jina.png',
   typesafe: '/img/icons/providers/typesafe.webp',
   cursor: '/img/icons/cursor.svg',
+  antigravity: '/img/harness/antigravity-cli.png',
   'github-copilot': '/img/icons/github-copilot.svg',
   'claude-code': '/img/icons/claude-code.png',
   chatgpt: '/img/icons/chatgpt.svg',

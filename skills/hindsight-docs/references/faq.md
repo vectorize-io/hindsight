@@ -93,6 +93,7 @@ Browse all supported integrations in the Integrations Hub.
 - ChatGPT
 - Claude Code
 - Cursor
+- Antigravity
 - GitHub Copilot
 - AWS Bedrock
 - Fireworks AI

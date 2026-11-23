@@ -146,6 +146,7 @@ PROVIDER_NAME_MAPPING = {
     "chatgpt": "openai",
     "claude-code": "anthropic",
     "cursor": "cursor",
+    "antigravity": "google",
     "github-copilot": "github",
     "mock": "mock",
 }

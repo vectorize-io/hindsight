@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from hindsight_api.engine.llm_interface import (
     LLMInterface,
+    ProviderAuthError,
     ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
@@ -247,11 +248,20 @@ class CursorLLM(LLMInterface):
     ):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, timeout, **kwargs)
         self._warn_reasoning_effort_unsupported()
-        self._binary = _resolve_binary()
-        logger.info(f"Cursor: using CLI at {self._binary} (model={self.model})")
+        self._binary = self._resolve_binary()
+        logger.info(f"{self.provider}: using CLI at {self._binary} (model={self.model})")
 
-    async def _run(self, prompt: str, scope: str) -> _CliTurn:
-        """Run one headless agent turn."""
+    def _resolve_binary(self) -> str:
+        """Find the CLI on PATH; ``AntigravityLLM`` overrides it to find ``agy``."""
+        return _resolve_binary()
+
+    async def _run(self, prompt: str, scope: str, schema: dict[str, Any] | None) -> _CliTurn:
+        """Run one headless agent turn.
+
+        ``schema`` is the response JSON schema, for a CLI that can enforce one natively
+        (``antigravity_llm.py``). ``cursor-agent`` has no such flag, so it is ignored here
+        and the schema rides in the prompt instead.
+        """
         # --mode ask is Cursor's read-only Q&A mode: no edits, no shell. That is the
         # only tool restriction the CLI offers (there is no --tools/--max-turns), so
         # it carries the weight claude_code_llm.py spreads over tools=[] and
@@ -364,16 +374,16 @@ class CursorLLM(LLMInterface):
                 error=None,
             )
         except Exception:
-            logger.debug("Cursor span recording failed", exc_info=True)
+            logger.debug(f"{self.provider} span recording failed", exc_info=True)
         if duration > 10.0:
             logger.info(f"slow llm call: scope={scope}, model={self.provider}/{self.model}, time={duration:.3f}s")
 
     async def verify_connection(self) -> None:
         try:
             await self.call(messages=[{"role": "user", "content": "test"}], scope="verification", max_retries=0)
-            logger.info("Cursor connection verified successfully")
+            logger.info(f"{self.provider} connection verified successfully")
         except Exception as e:
-            raise RuntimeError(f"Failed to verify Cursor connection: {e}") from e
+            raise RuntimeError(f"Failed to verify {self.provider} connection: {e}") from e
 
     async def call(
         self,
@@ -391,6 +401,7 @@ class CursorLLM(LLMInterface):
     ) -> LLMCallResult:
         start = time.perf_counter()
         prompt = _messages_to_prompt(messages)
+        schema: dict[str, Any] | None = None
         if response_format is not None and hasattr(response_format, "model_json_schema"):
             schema = provider_json_schema(response_format)
             prompt += (
@@ -404,8 +415,8 @@ class CursorLLM(LLMInterface):
             attempt_started = time.perf_counter()
             try:
                 async with attempt_context() if attempt_context is not None else nullcontext():
-                    set_stage(f"llm.cursor.{scope}.attempt={attempt + 1}/{max_retries + 1}")
-                    turn = await self._run(prompt, scope)
+                    set_stage(f"llm.{self.provider}.{scope}.attempt={attempt + 1}/{max_retries + 1}")
+                    turn = await self._run(prompt, scope, schema)
                 text, in_tok, out_tok = turn.text, turn.input_tokens, turn.output_tokens
 
                 stash_response_usage(LLMResponseUsage(input_tokens=in_tok, output_tokens=out_tok))
@@ -416,7 +427,9 @@ class CursorLLM(LLMInterface):
                     try:
                         data = _extract_json(text)
                     except json.JSONDecodeError as e:
-                        logger.warning(f"Cursor JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                        logger.warning(
+                            f"{self.provider} JSON parse error (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                        )
                         if attempt < max_retries:
                             last_exception = e
                             await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
@@ -433,13 +446,13 @@ class CursorLLM(LLMInterface):
             except ValidationError:
                 # Replaying the same prompt earns the same schema violation (#1412).
                 raise
-            except ProviderContentPolicyError:
-                # Permanent refusal: every replay earns the same block.
+            except (ProviderContentPolicyError, ProviderAuthError):
+                # Permanent: every replay earns the same block, or the same missing login.
                 raise
             except Exception as e:
                 last_exception = e
                 if attempt < max_retries:
-                    logger.warning(f"Cursor error (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                    logger.warning(f"{self.provider} error (attempt {attempt + 1}/{max_retries + 1}): {e}")
                     record_retried_attempt(
                         provider=self.provider,
                         model=self.model,
@@ -450,7 +463,7 @@ class CursorLLM(LLMInterface):
                     )
                     await asyncio.sleep(min(initial_backoff * (2**attempt), max_backoff))
                     continue
-                logger.error(f"Cursor error after {max_retries + 1} attempts: {e}")
+                logger.error(f"{self.provider} error after {max_retries + 1} attempts: {e}")
                 raise
 
         assert last_exception is not None

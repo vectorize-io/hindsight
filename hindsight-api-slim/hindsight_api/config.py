@@ -1350,6 +1350,7 @@ PROVIDER_DEFAULT_MODELS = {
     "chatgpt": "gpt-6-luna",
     "claude-code": "claude-sonnet-5-5",
     "cursor": "auto",
+    "antigravity": "gemini-3.8-flash-low",
     "github-copilot": "gpt-5.6-terra",
     "mock": "mock-model",
     "none": "none",

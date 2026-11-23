@@ -22,6 +22,7 @@ _PROVIDERS_WITHOUT_API_KEY = frozenset(
         "chatgpt",
         "claude-code",
         "cursor",
+        "antigravity",
         "github-copilot",
         "mock",
         "none",

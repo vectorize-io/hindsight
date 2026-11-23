@@ -63,6 +63,7 @@ def test_openai_compatible_provider_impl_receives_timeout():
         ("gemini", {}),
         ("github-copilot", {}),
         ("cursor", {}),
+        ("antigravity", {}),
         ("llamacpp", {}),
     ],
 )
@@ -84,6 +85,7 @@ async def test_every_network_provider_receives_the_resolved_timeout(provider, ex
         patch.object(CodexLLM, "_load_codex_refresh_token", return_value=None),
         # The cursor provider resolves its CLI at construction; CI has no cursor-agent.
         patch("hindsight_api.engine.providers.cursor_llm.shutil.which", return_value="/usr/bin/cursor-agent"),
+        patch("hindsight_api.engine.providers.antigravity_llm.shutil.which", return_value="/usr/bin/agy"),
     ):
         llm = LLMConfig(provider=provider, api_key="k", base_url="", model="m", timeout=222.0, **extra)
     try:
