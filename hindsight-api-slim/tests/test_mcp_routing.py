@@ -519,4 +519,4 @@ def test_global_mcp_enabled_tools_with_no_built_in_registers_no_built_in(mock_me
         mcp_server = create_mcp_server(mock_memory, multi_bank=multi_bank)
 
     assert set(_tools(mcp_server)) & set(_ALL_TOOLS) == set()
-    assert "names no built-in tool" in caplog.text
+    assert "matches no built-in tool" in caplog.text

@@ -188,7 +188,8 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True, knowledge_b
         base_tools = (base_tools if base_tools is not None else _ALL_TOOLS) & allowed
         if not base_tools:
             logger.warning(
-                "MCP enabled-tools allowlist %s names no built-in tool; no built-in MCP tools are registered",
+                "MCP enabled-tools allowlist %s matches no built-in tool this endpoint offers; "
+                "no built-in MCP tools are registered",
                 sorted(global_config.mcp_enabled_tools),
             )
 
