@@ -181,6 +181,9 @@ warm-once-under-a-lock over locking the hot path.
 - **Always start new feature branches from `origin/main`** — rebase to ensure a clean base.
 - **Only include commits relevant to the PR/branch/feature** — no unrelated changes. If the branch contains commits that don't belong, they must be removed before merging.
 
+### Naming: knowledge banks are `kb`
+Knowledge-bank names use `kb`, never `knowledge`: env vars `HINDSIGHT_API_KB_*` (or `..._KB_...` inside a group, e.g. `HINDSIGHT_API_ADMISSION_KB_SEARCH_MAX_WAIT_MS`), config fields `kb_*`, lane/metric/operation ids `kb_search`. Flag any new `KNOWLEDGE`/`knowledge_` in those names. Module paths (`hindsight_api/knowledge/`) and user-facing prose ("knowledge bank") stay as they are.
+
 ### General Principles
 - Don't add features, refactor code, or make "improvements" beyond what was asked
 - Don't add unnecessary error handling for impossible scenarios

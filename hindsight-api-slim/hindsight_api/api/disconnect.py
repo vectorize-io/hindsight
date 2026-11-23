@@ -20,8 +20,8 @@ reflect also copy the token onto their ``RequestContext`` so the engine checks i
 at stage boundaries, which is what stops work running in worker threads. Either
 way, abandoned work stops instead of running to completion.
 
-It only wraps recall, reflect, the retain POST and the graph GET (small or no
-bodies); every other request — uploads, MCP streams, etc. — passes straight
+It only wraps recall, reflect, the retain POST, the graph GET and knowledge-bank
+search; every other request — uploads, MCP streams, etc. — passes straight
 through untouched, so there is no buffering or latency cost elsewhere. The pump
 queue is bounded at one message so a monitored request's body is never held in
 memory ahead of the app reading it.
@@ -63,6 +63,11 @@ def _should_monitor(scope: Scope) -> bool:
     # The graph read behind the control plane's Memories tabs: several MB and
     # seconds of work on a big bank, abandoned whenever the user switches tab.
     if path.endswith("/graph") and scope.get("method") == "GET":
+        return True
+    # Knowledge-bank search: a read like recall, queued in the same kind of admission
+    # lane. Its body can carry a base64 image or clip, which is fine: the pump holds
+    # at most one message ahead of the app.
+    if path.startswith("/v1/default/knowledge-banks/") and path.endswith("/search"):
         return True
     return path.endswith("/memories") and scope.get("method") == "POST"
 

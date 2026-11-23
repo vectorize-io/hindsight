@@ -860,6 +860,8 @@ ENV_ADMISSION_REFLECT_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_REFLECT_MAX_IN_FL
 ENV_ADMISSION_REFLECT_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_REFLECT_MAX_WAIT_MS"
 ENV_ADMISSION_RETAIN_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_RETAIN_MAX_IN_FLIGHT"
 ENV_ADMISSION_RETAIN_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_RETAIN_MAX_WAIT_MS"
+ENV_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT = "HINDSIGHT_API_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT"
+ENV_ADMISSION_KB_SEARCH_MAX_WAIT_MS = "HINDSIGHT_API_ADMISSION_KB_SEARCH_MAX_WAIT_MS"
 ENV_RECALL_CONNECTION_BUDGET = "HINDSIGHT_API_RECALL_CONNECTION_BUDGET"
 ENV_RECALL_MAX_QUERY_TOKENS = "HINDSIGHT_API_RECALL_MAX_QUERY_TOKENS"
 ENV_RECALL_DIAGNOSTIC_PHASES = "HINDSIGHT_API_RECALL_DIAGNOSTIC_PHASES"
@@ -1981,6 +1983,11 @@ DEFAULT_ADMISSION_REFLECT_MAX_WAIT_MS = 5000
 DEFAULT_ADMISSION_RETAIN_IN_FLIGHT_PER_CORE = 32
 DEFAULT_ADMISSION_RETAIN_MAX_IN_FLIGHT = 0
 DEFAULT_ADMISSION_RETAIN_MAX_WAIT_MS = 2000
+# Knowledge-bank search is a read like recall (embed the query, search, maybe rerank),
+# so it gets recall's depth and patience.
+DEFAULT_ADMISSION_KB_SEARCH_IN_FLIGHT_PER_CORE = 16
+DEFAULT_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT = 0
+DEFAULT_ADMISSION_KB_SEARCH_MAX_WAIT_MS = 30000
 DEFAULT_RECALL_CONNECTION_BUDGET = 4  # Max concurrent DB connections per recall operation
 DEFAULT_RECALL_MAX_QUERY_TOKENS = 500  # Maximum tokens allowed in recall query
 DEFAULT_RECALL_DIAGNOSTIC_PHASES = True  # Record the subset (diagnostic=true) recall phase metrics
@@ -4031,6 +4038,8 @@ class HindsightConfig:
     admission_reflect_max_wait_seconds: float
     admission_retain_max_in_flight: int
     admission_retain_max_wait_seconds: float
+    admission_kb_search_max_in_flight: int
+    admission_kb_search_max_wait_seconds: float
     recall_connection_budget: int
     recall_max_query_tokens: int
     recall_diagnostic_phases: bool
@@ -5815,6 +5824,20 @@ class HindsightConfig:
             ),
             admission_retain_max_wait_seconds=float(
                 os.getenv(ENV_ADMISSION_RETAIN_MAX_WAIT_MS, str(DEFAULT_ADMISSION_RETAIN_MAX_WAIT_MS))
+            )
+            / 1000.0,
+            admission_kb_search_max_in_flight=admission_in_flight_for(
+                int(
+                    os.getenv(
+                        ENV_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT,
+                        str(DEFAULT_ADMISSION_KB_SEARCH_MAX_IN_FLIGHT),
+                    )
+                ),
+                DEFAULT_ADMISSION_KB_SEARCH_IN_FLIGHT_PER_CORE,
+                int(os.getenv(ENV_WORKERS, "1")),
+            ),
+            admission_kb_search_max_wait_seconds=float(
+                os.getenv(ENV_ADMISSION_KB_SEARCH_MAX_WAIT_MS, str(DEFAULT_ADMISSION_KB_SEARCH_MAX_WAIT_MS))
             )
             / 1000.0,
             recall_connection_budget=int(
