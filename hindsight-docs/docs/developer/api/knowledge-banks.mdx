@@ -6,21 +6,33 @@ import CodeSnippet from '@site/src/components/CodeSnippet';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import kbSh from '!!raw-loader!@site/examples/api/knowledge-banks.sh';
+import kbPy from '!!raw-loader!@site/examples/api/knowledge-banks.py';
+import kbMjs from '!!raw-loader!@site/examples/api/knowledge-banks.mjs';
+import kbGo from '!!raw-loader!@site/examples/api/knowledge-banks.go';
 import kbHttpSh from '!!raw-loader!@site/examples/api/knowledge-banks-http.sh';
 
 # Knowledge Banks
 
 Create knowledge banks, ingest files and text into them, and search their passages. For what a knowledge bank is and how ingest and search work, see [Knowledge Banks](../knowledge-banks).
 
-All endpoints live under `/v1/default/knowledge-banks`. Each example shows the [CLI](../../sdks/cli#knowledge-banks) command (`hindsight kb`) and the same call with `curl`.
+All endpoints live under `/v1/default/knowledge-banks`. Each example shows the call with the Python, Node.js and Go clients, the [CLI](../../sdks/cli#knowledge-banks) (`hindsight kb`), and `curl`.
 
 ---
 
 ## Create a Knowledge Bank
 
 <Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="create-knowledge-bank" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="create-knowledge-bank" language="javascript" />
+</TabItem>
 <TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="create-knowledge-bank" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={kbGo} section="create-knowledge-bank" language="go" />
 </TabItem>
 <TabItem value="http" label="HTTP">
 <CodeSnippet code={kbHttpSh} section="create-knowledge-bank" language="bash" />
@@ -54,8 +66,17 @@ List banks with `GET /v1/default/knowledge-banks`, with `limit` (default 100), `
 Upload one or more files (PDFs, Office documents, images, audio, video, text, Markdown, JSON, CSV, HTML) as `multipart/form-data`. Each file becomes one document. The call returns `202` right away and the files are processed in the background.
 
 <Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="ingest-files" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="ingest-files" language="javascript" />
+</TabItem>
 <TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="ingest-files" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={kbGo} section="ingest-files" language="go" />
 </TabItem>
 <TabItem value="http" label="HTTP">
 <CodeSnippet code={kbHttpSh} section="ingest-files" language="bash" />
@@ -90,8 +111,17 @@ The optional `request` field is JSON with one entry per file, in the same order:
 Send text as JSON, up to 100 items per call. By default the call returns once every document can be searched. If some items can't be ingested (an empty text, say), the others are still saved and the call fails with `400`, naming the ones that failed.
 
 <Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="ingest-text" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="ingest-text" language="javascript" />
+</TabItem>
 <TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="ingest-text" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={kbGo} section="ingest-text" language="go" />
 </TabItem>
 <TabItem value="http" label="HTTP">
 <CodeSnippet code={kbHttpSh} section="ingest-text" language="bash" />
@@ -114,8 +144,17 @@ The response has the same shape as a file ingest. `operation_ids` is empty when 
 ## Search
 
 <Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="search" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="search" language="javascript" />
+</TabItem>
 <TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="search" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={kbGo} section="search" language="go" />
 </TabItem>
 <TabItem value="http" label="HTTP">
 <CodeSnippet code={kbHttpSh} section="search" language="bash" />
@@ -197,8 +236,17 @@ With `"trace": true`, the response also has a `trace`:
 ## Tags
 
 <Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="list-tags" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="list-tags" language="javascript" />
+</TabItem>
 <TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="list-tags" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={kbGo} section="list-tags" language="go" />
 </TabItem>
 <TabItem value="http" label="HTTP">
 <CodeSnippet code={kbHttpSh} section="list-tags" language="bash" />
@@ -272,8 +320,17 @@ A bank can change how its files are split. See [Per-Bank Settings](../knowledge-
 ## Delete a Knowledge Bank
 
 <Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="delete-knowledge-bank" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="delete-knowledge-bank" language="javascript" />
+</TabItem>
 <TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="delete-knowledge-bank" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={kbGo} section="delete-knowledge-bank" language="go" />
 </TabItem>
 <TabItem value="http" label="HTTP">
 <CodeSnippet code={kbHttpSh} section="delete-knowledge-bank" language="bash" />

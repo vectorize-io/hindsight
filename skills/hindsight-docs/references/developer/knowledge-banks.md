@@ -137,10 +137,32 @@ You can narrow a search by `tags`, with the same rules as memory recall (`tags_m
 
 A memory bank can read one or more knowledge banks. Add their ids to the memory bank's config:
 
+### Python
+
+```python
+client.update_bank_config("support-agent", knowledge_banks=["product-manuals"])
+```
+
+### Node.js
+
+```javascript
+await client.updateBankConfig('support-agent', { knowledgeBanks: ['product-manuals'] });
+```
+
 ### CLI
 
 ```bash
 hindsight bank set-config support-agent --knowledge-banks product-manuals
+```
+
+### Go
+
+```go
+_, _, err = client.BanksAPI.UpdateBankConfig(ctx, "support-agent").
+	BankConfigUpdate(hindsight.BankConfigUpdate{
+		Updates: map[string]interface{}{"knowledge_banks": []string{"product-manuals"}},
+	}).
+	Execute()
 ```
 
 ### HTTP
@@ -207,12 +229,45 @@ export HINDSIGHT_API_KB_EMBEDDINGS_API_KEY=...
 
 A knowledge bank can change how its files are split, and nothing else: the embedder, keys, search weights and server limits stay the server's.
 
+### Python
+
+```python
+await kb.update_knowledge_bank_config(
+    "product-manuals",
+    KnowledgeBankConfigUpdate(updates={"text_passage_tokens": 256, "disabled_media_types": ["video"]}),
+)
+```
+
+### Node.js
+
+```javascript
+await sdk.updateKnowledgeBankConfig({
+    client: apiClient,
+    path: { bank_id: 'product-manuals' },
+    body: { updates: { text_passage_tokens: 256, disabled_media_types: ['video'] } },
+    throwOnError: true,
+});
+```
+
 ### CLI
 
 ```bash
 hindsight kb set-config product-manuals \
   --set text_passage_tokens=256 \
   --set 'disabled_media_types=["video"]'
+```
+
+### Go
+
+```go
+_, _, err = client.KnowledgeBanksAPI.UpdateKnowledgeBankConfig(ctx, "product-manuals").
+	KnowledgeBankConfigUpdate(hindsight.KnowledgeBankConfigUpdate{
+		Updates: map[string]interface{}{
+			"text_passage_tokens":  256,
+			"disabled_media_types": []string{"video"},
+		},
+	}).
+	Execute()
 ```
 
 ### HTTP
