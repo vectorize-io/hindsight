@@ -2053,7 +2053,13 @@ async def retain_batch(
             # their parts were newline-joined into `[...]\n[...]`.
             _parts = [_item.get("content", "") for _item in contents_dicts]
             _merged_text = merge_json_array_parts(_parts)
-            if _merged_text is None and _same_fields_but_content(contents_dicts):
+            # NOT for a slice of an oversized item (`full_document_body` set): a slice can be a piece
+            # of one huge message, not a JSON array, and "\n"-joining it onto a stored JSON
+            # conversation makes the whole body invalid JSON. It then chunks as prose, no stored
+            # chunk matches, and delta re-extracts the entire document (#6766). Kept as its own
+            # item, the stored body chunks exactly as before and only the slice's chunks are new,
+            # which is also the count the splitter's chunk offsets already assume.
+            if _merged_text is None and full_document_body is None and _same_fields_but_content(contents_dicts):
                 # Plain text and JSONL too (#6293): ONE item with the very body join_document_parts
                 # stores, so this append is chunked the way the next append re-chunks the stored
                 # body. As two items, the new text started its own chunks apart from the stored
