@@ -208,7 +208,7 @@ Point a self-hosted server at them and you get a knowledge bank without running 
 
 ## At scale: Memlake on Hindsight Enterprise
 
-Open-source Hindsight keeps knowledge banks in Postgres, with a pgvector index. On Hindsight Enterprise they can live on [Hindsight Memlake](/blog/2026/10/13/memlake) instead, the storage engine that already serves agent memory from object storage: a bank's documents and passages go to a bucket you control, and the API, SDKs and CLI don't change. See [Hindsight Enterprise](/cloud-enterprise/enterprise).
+Open-source Hindsight keeps knowledge banks in the same Postgres as your memory banks: the passages, their vectors for the search by meaning, and a full-text index for the search by keywords. On Hindsight Enterprise they can live on [Hindsight Memlake](/blog/2026/10/13/memlake) instead, the storage engine that already serves agent memory from object storage: a bank's documents and passages go to a bucket you control, and the API, SDKs and CLI don't change. See [Hindsight Enterprise](/cloud-enterprise/enterprise).
 
 ## Try it
 
