@@ -32,8 +32,11 @@ Design Rationale:
      immediately after each file's stream without ever seeking backwards.
    - Zip64 Archive Support: Transparently emits Zip64 End of Central Directory and
      Zip64 Locator records when the overall archive size, member count (>= 65,535), or
-     central directory offset exceeds 32-bit limits (4 GB). Individual member streams
-     are bounded to 4 GB, avoiding invalid 64-bit data descriptors with 32-bit local headers.
+     central directory offset exceeds 32-bit limits (4 GB). A member whose size is not
+     known up front and may pass 4 GB is opened with `zip64=True`: its local header
+     carries a Zip64 extra field and its data descriptor 64-bit sizes, as Python's own
+     `zipfile` does for `force_zip64`. Members not opened that way stay plain PKZIP 2.0
+     and are refused past 4 GB, since their 32-bit header can no longer be amended.
    - Deflate Level 0 (Method 8) with Data Descriptors: Text and JSON documents use standard
      Deflate compression (level 6), while binary multimodal attachments bypass CPU compression
      overhead by wrapping into uncompressed Deflate blocks (level 0 / Method 8).
@@ -89,6 +92,7 @@ class _ZipEntry:
     comp_size: int
     uncomp_size: int
     offset: int
+    zip64: bool
 
 
 async def _bounded(chunk_stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
@@ -109,7 +113,8 @@ class ZipStreamer:
 
     Employs PKZIP General Purpose Bit 3 (0x0008) so that files can be compressed
     and emitted on the fly without knowing the compressed or uncompressed size or CRC
-    in advance. Supports Zip64 transparently when exceeding 32-bit limits (4 GB).
+    in advance. The archive-level Zip64 records (offsets, entry count) are emitted
+    when needed; a single entry may pass 4 GB only when opened with ``zip64=True``.
     """
 
     def __init__(self, compression_level: int = 6) -> None:
@@ -133,8 +138,12 @@ class ZipStreamer:
         compress: bool = True,
         compression_level: int | None = None,
         dt: datetime | None = None,
+        zip64: bool = False,
     ) -> AsyncIterator[bytes]:
         """Stream an entry into the ZIP from an async iterator of chunks.
+
+        ``zip64=True`` lets the entry pass 4 GB. It must be chosen before the first
+        byte, because the local header announcing it is written first.
 
         When compress=True and compression_level=0 (Z_NO_COMPRESSION), chunks are
         wrapped into standard Deflate blocks (Method 8) without compression overhead.
@@ -148,9 +157,13 @@ class ZipStreamer:
         flags = 0x0808  # Bit 3 (Data descriptor) + Bit 11 (UTF-8 filename)
         dos_dt = self._dos_datetime(dt)
         local_offset = self.offset
-        version_needed = 20
+        version_needed = 45 if zip64 else 20
+        # Zip64 local header: 32-bit sizes are 0xFFFFFFFF and the real (still unknown,
+        # so zero) sizes live in the extra field; the data descriptor carries them.
+        extra = struct.pack("<HHQQ", 0x0001, 16, 0, 0) if zip64 else b""
+        placeholder = 0xFFFFFFFF if zip64 else 0
 
-        # Local file header (sizes & crc zeroed out because of Bit 3)
+        # Local file header (crc and sizes deferred to the data descriptor, Bit 3)
         local_header = (
             struct.pack(
                 "<4sHHHHHIIIHH",
@@ -161,12 +174,13 @@ class ZipStreamer:
                 dos_dt.time,
                 dos_dt.date,
                 0,
-                0,
-                0,
+                placeholder,
+                placeholder,
                 len(fn_bytes),
-                0,  # extra field length
+                len(extra),
             )
             + fn_bytes
+            + extra
         )
         self.offset += len(local_header)
         yield local_header
@@ -196,14 +210,14 @@ class ZipStreamer:
                 yield tail
 
         # Data descriptor (emitted immediately following the entry data)
-        if comp_size >= 0xFFFFFFFF or uncomp_size >= 0xFFFFFFFF:
+        if not zip64 and (comp_size >= 0xFFFFFFFF or uncomp_size >= 0xFFFFFFFF):
             raise OverflowError(
                 f"Archive entry '{filename}' exceeds 4 GB limit ({max(comp_size, uncomp_size)} bytes). "
-                "Streaming single entries exceeding 4 GB requires pre-allocated Zip64 extra headers."
+                "Open entries that may pass 4 GB with zip64=True."
             )
 
         dd = struct.pack(
-            "<4sIII",
+            "<4sIQQ" if zip64 else "<4sIII",
             SIG_DATA_DESCRIPTOR,
             crc,
             comp_size,
@@ -223,6 +237,7 @@ class ZipStreamer:
                 comp_size=comp_size,
                 uncomp_size=uncomp_size,
                 offset=local_offset,
+                zip64=zip64,
             )
         )
 
@@ -260,9 +275,10 @@ class ZipStreamer:
         )
 
         for e in self.entries:
-            use_e_zip64 = e.offset >= 0xFFFFFFFF
-            rec_offset = 0xFFFFFFFF if use_e_zip64 else e.offset
-            extra = struct.pack("<HHQ", 0x0001, 8, e.offset) if use_e_zip64 else b""
+            # Zip64 extra field: only the values that overflow, in the spec's order.
+            big = [v for v in (e.uncomp_size, e.comp_size, e.offset) if v >= 0xFFFFFFFF]
+            extra = struct.pack(f"<HH{len(big)}Q", 0x0001, 8 * len(big), *big) if big else b""
+            use_e_zip64 = e.zip64 or bool(big)
 
             cd_record = (
                 struct.pack(
@@ -275,15 +291,15 @@ class ZipStreamer:
                     e.dos_time,
                     e.dos_date,
                     e.crc,
-                    e.comp_size,
-                    e.uncomp_size,
+                    min(e.comp_size, 0xFFFFFFFF),
+                    min(e.uncomp_size, 0xFFFFFFFF),
                     len(e.fn_bytes),
                     len(extra),
                     0,  # comment len
                     0,  # disk num start
                     0,  # int attr
                     0,  # ext attr
-                    rec_offset,
+                    min(e.offset, 0xFFFFFFFF),
                 )
                 + e.fn_bytes
                 + extra
