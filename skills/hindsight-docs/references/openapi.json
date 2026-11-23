@@ -16626,6 +16626,18 @@
             ],
             "title": "Knowledge Media Types"
           },
+          "enable_reranking": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enable Reranking",
+            "description": "false keeps the search's own order. Unset (or true) reranks the best hits when the server has a knowledge reranker (HINDSIGHT_API_KB_RERANKER_URL); without one, true does nothing."
+          },
           "trace": {
             "type": "boolean",
             "title": "Trace",
@@ -16989,7 +17001,7 @@
             },
             "type": "array",
             "title": "Found By",
-            "description": "The candidate searches that found it: vector, extra_vectors, keyword"
+            "description": "The candidate searches that found it: vector, extra_vectors, keyword, document (a text passage of one of the best documents)"
           },
           "similarity": {
             "type": "number",
@@ -17018,11 +17030,6 @@
             "type": "number",
             "title": "Keyword",
             "description": "Keyword score: the summed IDF of the query words it contains"
-          },
-          "reference_page": {
-            "type": "boolean",
-            "title": "Reference Page",
-            "description": "Read as a reference list, and pushed down"
           }
         },
         "type": "object",
@@ -17039,8 +17046,7 @@
           "roles",
           "passage_score",
           "with_document",
-          "keyword",
-          "reference_page"
+          "keyword"
         ],
         "title": "KnowledgeSearchTraceHit",
         "description": "One ranked candidate: its score step by step, and what the token budget did with it."
@@ -17171,7 +17177,8 @@
             "enum": [
               "vector",
               "extra_vectors",
-              "keyword"
+              "keyword",
+              "document"
             ],
             "title": "Name"
           },

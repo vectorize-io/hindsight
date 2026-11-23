@@ -189,11 +189,11 @@
                 "mark": "✓"
               },
               {
-                "text": "video → 12 clips of 30 s, 5 s overlap",
+                "text": "video → 15 clips of 30 s, 5 s overlap",
                 "mark": "✓"
               },
               {
-                "text": "text → ~256-token passages, each with its window",
+                "text": "text → ~512-token passages, each with its window",
                 "mark": "✓"
               }
             ]
@@ -227,7 +227,7 @@
               {
                 "tag": "ready",
                 "tone": "green",
-                "text": "3 documents · 55 passages"
+                "text": "3 documents · 58 passages"
               }
             ]
           },

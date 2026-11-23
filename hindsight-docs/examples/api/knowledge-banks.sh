@@ -66,7 +66,7 @@ curl -X PATCH "$HINDSIGHT_URL/v1/default/banks/support-agent/config" \
 # [docs:bank-config]
 curl -X PATCH "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" \
   -H "Content-Type: application/json" \
-  -d '{"updates": {"text_passage_tokens": 512, "disabled_media_types": ["video"]}}'
+  -d '{"updates": {"text_passage_tokens": 256, "disabled_media_types": ["video"]}}'
 # [/docs:bank-config]
 
 # =============================================================================
@@ -78,7 +78,7 @@ curl -sf -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/sear
   -d '{"query": "return an X200 within 30 days"}' | grep -q '"returns-policy"'
 curl -sf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/tags" | grep -q '"policy"'
 curl -sf "$HINDSIGHT_URL/v1/default/banks/support-agent/config" | grep -q '"product-manuals"'
-curl -sf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" | grep -q '"text_passage_tokens": *512'
+curl -sf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" | grep -q '"text_passage_tokens": *256'
 
 # [docs:delete-knowledge-bank]
 curl -X DELETE "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals"

@@ -11351,6 +11351,7 @@ components:
           - tags
         query_image: query_image
         query: query
+        enable_reranking: true
         tags_match: any
         media_types:
         - document
@@ -11431,6 +11432,9 @@ components:
             type: string
           nullable: true
           type: array
+        enable_reranking:
+          nullable: true
+          type: boolean
         trace:
           default: false
           description: "Also return how the search ranked and what the token budget\
@@ -11466,7 +11470,6 @@ components:
             - found_by
             end_ms: 5
             keyword: 6.438423552598547
-            reference_page: true
             outcome: returned
             start_ms: 4
           - snippet: snippet
@@ -11489,7 +11492,6 @@ components:
             - found_by
             end_ms: 5
             keyword: 6.438423552598547
-            reference_page: true
             outcome: returned
             start_ms: 4
           candidates: 9
@@ -11660,7 +11662,6 @@ components:
           - found_by
           end_ms: 5
           keyword: 6.438423552598547
-          reference_page: true
           outcome: returned
           start_ms: 4
         - snippet: snippet
@@ -11683,7 +11684,6 @@ components:
           - found_by
           end_ms: 5
           keyword: 6.438423552598547
-          reference_page: true
           outcome: returned
           start_ms: 4
         candidates: 9
@@ -11821,7 +11821,6 @@ components:
         - found_by
         end_ms: 5
         keyword: 6.438423552598547
-        reference_page: true
         outcome: returned
         start_ms: 4
       properties:
@@ -11877,7 +11876,7 @@ components:
           type: number
         found_by:
           description: "The candidate searches that found it: vector, extra_vectors,\
-            \ keyword"
+            \ keyword, document (a text passage of one of the best documents)"
           items:
             type: string
           type: array
@@ -11903,10 +11902,6 @@ components:
           description: "Keyword score: the summed IDF of the query words it contains"
           title: Keyword
           type: number
-        reference_page:
-          description: "Read as a reference list, and pushed down"
-          title: Reference Page
-          type: boolean
       required:
       - document_id
       - filename
@@ -11917,7 +11912,6 @@ components:
       - outcome
       - passage_score
       - rank
-      - reference_page
       - roles
       - score
       - similarity
@@ -12052,6 +12046,7 @@ components:
           - vector
           - extra_vectors
           - keyword
+          - document
           title: Name
           type: string
         results:

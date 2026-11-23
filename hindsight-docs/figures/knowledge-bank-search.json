@@ -250,7 +250,7 @@
               {
                 "tag": "p.31",
                 "tone": "blue",
-                "text": "sent with its page around it",
+                "text": "sent as its passage, under its title",
                 "mark": "✓"
               },
               {
@@ -266,7 +266,7 @@
               }
             ]
           },
-          "say": "Each candidate is scored from all its vectors, with keyword matches mixed in. With a reranker set, the best go to it in one request: a text hit with the page around it, a page as its picture and its text. Its scores reorder them.",
+          "say": "Each candidate is scored from all its vectors, with keyword matches mixed in. With a reranker set, the best go to it in one request: a text hit as its passage, a page as its picture and its text. Its order, blended with the search's order of documents, decides.",
           "ms": 3800
         },
         {

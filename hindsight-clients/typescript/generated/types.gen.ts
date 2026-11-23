@@ -3674,6 +3674,12 @@ export type KnowledgeSearchRequest = {
    */
   media_types?: Array<"document" | "image" | "audio" | "video" | "text"> | null;
   /**
+   * Enable Reranking
+   *
+   * false keeps the search's own order. Unset (or true) reranks the best hits when the server has a knowledge reranker (HINDSIGHT_API_KB_RERANKER_URL); without one, true does nothing.
+   */
+  enable_reranking?: boolean | null;
+  /**
    * Trace
    *
    * Also return how the search ranked and what the token budget kept: every ranked candidate with its score step by step, the keyword words and their weights, and each phase's time.
@@ -3896,7 +3902,7 @@ export type KnowledgeSearchTraceHit = {
   /**
    * Found By
    *
-   * The candidate searches that found it: vector, extra_vectors, keyword
+   * The candidate searches that found it: vector, extra_vectors, keyword, document (a text passage of one of the best documents)
    */
   found_by: Array<string>;
   /**
@@ -3931,12 +3937,6 @@ export type KnowledgeSearchTraceHit = {
    * Keyword score: the summed IDF of the query words it contains
    */
   keyword: number;
-  /**
-   * Reference Page
-   *
-   * Read as a reference list, and pushed down
-   */
-  reference_page: boolean;
 };
 
 /**
@@ -4034,7 +4034,7 @@ export type KnowledgeTraceArm = {
   /**
    * Name
    */
-  name: "vector" | "extra_vectors" | "keyword";
+  name: "vector" | "extra_vectors" | "keyword" | "document";
   /**
    * Results
    */

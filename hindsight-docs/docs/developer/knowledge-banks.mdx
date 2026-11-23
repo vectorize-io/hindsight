@@ -52,7 +52,7 @@ Each kind of file is split its own way. None of them goes through OCR or an LLM:
 | Image | one passage | `.png` `.jpg` `.webp` `.gif` `.bmp` `.tiff` `.heic` |
 | Audio | windows of 60 seconds, 5 seconds of overlap | `.mp3` `.wav` `.m4a` `.aac` `.flac` `.ogg` `.opus` `.wma` |
 | Video | windows of 30 seconds (picture and sound), 5 seconds of overlap | `.mp4` `.mov` `.mkv` `.webm` `.avi` `.m4v` `.mpeg` |
-| Text | passages of about 256 tokens that follow the document's structure (see [how text is split](#how-text-is-split)) | `.txt` `.md` `.json` `.jsonl` `.csv` `.yaml` `.xml` `.rst` |
+| Text | passages of about 512 tokens that follow the document's structure (see [how text is split](#how-text-is-split)) | `.txt` `.md` `.json` `.jsonl` `.csv` `.yaml` `.xml` `.rst` |
 | Office and web | their text, then split as text | `.docx` `.pptx` `.xlsx` `.xls` `.html` `.epub` |
 
 Audio and video are cut and decoded in-process (PyAV), with nothing to install on the server. Every size above can be changed for the whole server or [for one bank](#per-bank-settings).
@@ -62,8 +62,8 @@ Audio and video are cut and decoded in-process (PyAV), with nothing to install o
 - **Files** are always ingested in the background: the call returns right away with the document ids and one operation id. Poll the operation, or each document's `status` (`pending`, `processing`, `ready`, `failed`), to know when it can be searched.
 - **Text** sent as JSON is ingested before the call returns, unless you ask for `async`.
 - **Same id, new content:** ingesting a document id again replaces that document. Its old passages stay searchable until the new ones are ready, then they swap in all at once.
-- **Same id, same content:** nothing is done. The id comes back in `unchanged_document_ids`.
-- **The original file is kept** in the server's [file storage](./configuration#file-storage) (local disk, S3, GCS or Azure), so you can download it and stream the page or clip a result points to.
+- **Same id, same content:** nothing is done, as long as the tags, file name and bank settings are the same too and the old document is `ready`. The id comes back in `unchanged_document_ids`.
+- **The original file is kept** in the server's [file storage](./configuration#file-storage) (PostgreSQL by default, or S3, GCS or Azure), so you can download it and stream the page or clip a result points to. A file that fails for good (it can't be read, or it's over a limit) is deleted.
 
 Tags on a document let a search look at only part of a bank. See the [API reference](./api/knowledge-banks#ingest-files).
 
@@ -72,11 +72,11 @@ Tags on a document let a search look at only part of a bank. See the [API refere
 Text, and the text of Office and web files, is split by its structure first:
 
 - **A heading starts a new passage**, and waits for its content: a heading is never a passage on its own. A few words like "## Observations" alone used to match short questions better than any real answer.
-- **Paragraphs are merged** until the passage reaches about 256 tokens (`text_passage_tokens`).
+- **Paragraphs are merged** until the passage reaches about 512 tokens (`text_passage_tokens`).
 - **A paragraph bigger than that is cut by sentences.** If a heading was waiting, it leads the first piece.
 - **No overlap** between passages: it didn't improve search.
 
-Each passage is an exact slice of the original text, in order.
+Each passage is an exact slice of the original text, in order. It's embedded under its document's title: the title from its file name, or its first 40 words when the name gives none. So a clear file name helps search find the right document.
 
 A small passage alone loses what its page says about it: a table's rows without the table's title, or the company named only in the footer. So each passage also gets a **window**: the consecutive passages around it, up to 2048 tokens, embedded once as one more vector shared by every passage in it. Search finds a passage by its own vector or its window's, whichever is closer, and still returns the small passage. On ViDoRe V3's markdown subsets the window raised nDCG@10 by up to 7 points (finance: 54.1 → 61.0).
 
@@ -88,18 +88,19 @@ A search takes text, an image, a short video, or any mix of them, embedded toget
 
 <Figure doc={searchFigure} />
 
-**1. Find candidates.** Two searches run side by side:
+**1. Find candidates.** Three searches run side by side:
 
 - **by meaning:** the passages whose vectors are nearest to the query. A PDF page also has vectors for its text, in short sections and sentence by sentence, so a question can match a single line on a page. A text passage also has its [window](#how-text-is-split)'s vector.
-- **by keywords:** only the query's rarer words take part, so "X200" counts and "the" doesn't. Words are matched as they are, with no stemming, so this works in any language, and a product code or a name finds its document whatever language the question is in.
+- **by keywords:** only the query's rarer words take part (the rarest, and any other word that is rare in the bank), so "X200" counts and "the" doesn't. Words are matched as they are, with no stemming, so this works in any language, and a product code or a name finds its document whatever language the question is in.
+- **by document:** every text passage of the three documents the meaning search ranks best is scored too, so the right passage of the right document is found even when it's worded unlike the question.
 
-**2. Score them.** Each candidate is scored from all its vectors. On a PDF page, the text counts for 70% of the score and the page image for 30%. A text passage takes the better of its own score and its window's. Keyword matches are then mixed in at 20%.
+**2. Score them.** Each candidate is scored from all its vectors. On a PDF page, the text counts for 70% of the score and the page image for 30%. A text passage takes the better of its own score and its window's. Each score is then averaged with the best score in its document, so a passage of a document that matches well climbs. Keyword matches are then mixed in at 20%.
 
-**3. Rerank them (optional).** With a reranker set (`HINDSIGHT_API_KB_RERANKER_URL` and `_MODEL`: any service that speaks Cohere's rerank API), the best candidates go to it in one request, in search order, and its scores reorder them.
+**3. Rerank them (optional).** With a reranker set (`HINDSIGHT_API_KB_RERANKER_URL` and `_MODEL`: any service that speaks Cohere's rerank API), the best candidates go to it in one request, in search order. Its order is then blended with the search's order of documents: the search is better at finding which document a question is about, the reranker at finding the passage inside it. The search's document order counts most when a few long documents hold all the candidates, and hardly at all when each candidate is its own document (a PDF page, an image or a clip counts as its own document here).
 
 - **How deep it goes:** as many candidates as fit in `HINDSIGHT_API_KB_RERANKER_MAX_TOKENS` (120,000 tokens; at most 26,000 on a `low` budget), not a fixed count. The rest keep the search's order, and so do ties.
-- **What the reranker reads:** a text hit with the text around it, up to 2048 tokens, so it sees the page and not just the passage. Hits that would show it the same text (pieces of one short page) go once, as one candidate. An image or PDF page goes as its picture with its text; with `HINDSIGHT_API_KB_RERANKER_IMAGES=false`, or a picture under 280 or over 1568 pixels a side, it goes as its text. A video is not sent and keeps its place.
-- **When it runs:** for a query with text. A search by an image is reranked with the picture as the query too when `HINDSIGHT_API_KB_RERANKER_QUERY_IMAGES` is on (off by default: turn it on only for a reranker that takes an image query). A search by a video is reranked by its text alone. If the reranker can't be reached, the search fails with `503`.
+- **What the reranker reads:** a text hit as its passage, up to 512 tokens, under its document's title. Hits that would show it the same text (pieces of one short page) go once, as one candidate. An image or PDF page goes as its picture with its text; with `HINDSIGHT_API_KB_RERANKER_IMAGES=false`, or a picture under 280 or over 1568 pixels a side, it goes as its text. A video is not sent and keeps its place.
+- **When it runs:** for a query with text, unless the search sets `enable_reranking: false`. A search by an image is reranked with the picture as the query too when `HINDSIGHT_API_KB_RERANKER_QUERY_IMAGES` is on (off by default: turn it on only for a reranker that takes an image query). A search by a video is reranked by its text alone. If the reranker can't be reached, the search fails with `503`.
 
 Reflect's search of [linked knowledge banks](#linking-to-a-memory-bank) is reranked the same way.
 
@@ -186,7 +187,7 @@ A knowledge bank can change how its files are split, and nothing else: the embed
 | `image_tokens` | how much detail the embedder reads from each image | 70–1120 |
 | `audio_window_seconds` | length of an audio window | 1–3600 |
 | `video_window_seconds` | length of a video window | 1–3600 |
-| `media_overlap_seconds` | overlap between windows | 0–3599 |
+| `media_overlap_seconds` | overlap between windows | 0 to half the shorter window |
 | `max_media_seconds` | longest audio or video file accepted | up to the server's limit |
 | `max_pdf_pages` | longest PDF accepted | up to the server's limit |
 | `disabled_media_types` | kinds of file this bank refuses | `document`, `image`, `audio`, `video`, `text` |
