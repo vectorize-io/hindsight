@@ -35,7 +35,6 @@ from . import get_embed_manager
 # supporting `python -m hindsight_embed.cli`, and the note there explains why a
 # global in this module breaks that form.
 from .profile_manager import (
-    ProfileLockTimeout,
     get_cli_profile_override,
     lock_file,
     set_cli_profile_override,
@@ -1221,7 +1220,9 @@ def do_profile_command(args: list[str]) -> int:
             print(f"  \033[2mConfig:\033[0m {config_path}")
             print(f"  \033[2mPort:\033[0m {port}")
             return 0
-        except (ValueError, ProfileLockTimeout) as e:
+        # OSError covers ProfileLockTimeout (a TimeoutError) and a .env swap that
+        # Windows refused because another process had the file open.
+        except (ValueError, OSError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 

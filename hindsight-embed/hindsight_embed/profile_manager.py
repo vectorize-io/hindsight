@@ -445,9 +445,15 @@ class ProfileManager:
         # mid-rewrite saw it empty and wrote it back without the user's
         # DATABASE_URL, so the next daemon start fell back to a new, empty pg0
         # (#6485). The temp name is per-process so two writers never share one.
+        # On Windows the swap fails while another process has the .env open; the
+        # old file then stays intact, so drop the temp file and let it raise.
         temp_path = config_path.with_name(f"{config_path.name}.{os.getpid()}.tmp")
-        temp_path.write_text(render_config(config), encoding="utf-8")
-        temp_path.replace(config_path)
+        try:
+            temp_path.write_text(render_config(config), encoding="utf-8")
+            temp_path.replace(config_path)
+        except OSError:
+            temp_path.unlink(missing_ok=True)
+            raise
 
         # Metadata now only tracks discovery + timestamps; the port moved to .env.
         now_iso = datetime.now(timezone.utc).isoformat()

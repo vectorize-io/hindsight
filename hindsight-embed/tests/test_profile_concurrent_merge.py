@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 DB_LINE = "HINDSIGHT_EMBED_API_DATABASE_URL=postgresql://u:p@127.0.0.1:5433/real"
 
 # Many merges per process: one process start buys many interleavings with the others.
@@ -91,3 +93,24 @@ def test_delete_removes_the_merge_lock(tmp_path: Path) -> None:
 
     assert deleted.returncode == 0, deleted.stderr
     assert not lock_path.exists()
+
+
+def test_a_refused_swap_keeps_the_old_profile_and_no_temp_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows refuses the swap while another process has the .env open: nothing may be lost."""
+    from hindsight_embed import profile_manager
+
+    monkeypatch.setattr(profile_manager.Path, "home", lambda: tmp_path)
+    pm = profile_manager.ProfileManager()
+    pm.create_profile("coding-agent", 9077, {"HINDSIGHT_EMBED_API_DATABASE_URL": "postgresql://real"})
+    env_path = pm._get_profiles_dir() / "coding-agent.env"
+    before = env_path.read_text(encoding="utf-8")
+
+    def refuse(self: Path, target: Path) -> Path:
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(profile_manager.Path, "replace", refuse)
+    with pytest.raises(PermissionError):
+        pm.create_profile("coding-agent", 9077, {})
+
+    assert env_path.read_text(encoding="utf-8") == before
+    assert not list(env_path.parent.glob("*.tmp"))
