@@ -2,8 +2,8 @@
 title: "Claude Code token usage: why the bill grows each turn"
 description: "One developer found about 70% of their Claude Code token cost, at API prices, was re-read context. Keep sessions short, and let recall return what helps."
 authors: [chrislatimer]
-date: 2026-11-21
-slug: "2026/11/21/claude-code-token-usage-recall-prune-dedup"
+date: 2026-11-26
+slug: "2026/11/26/claude-code-token-usage-recall-prune-dedup"
 tags: [claude-code, coding-agents, recall, agent-memory, hindsight]
 image: /img/blog/claude-code-token-usage-recall-prune-dedup/featured.png
 ---
