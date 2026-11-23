@@ -19399,7 +19399,9 @@ class MemoryEngine(MemoryEngineInterface):
                     # op-by-op parser sees it. A reply that misses the schema is
                     # refused whole and asked for again with the errors attached —
                     # ``request_delta_operations`` owns that, for this call and the
-                    # retraction pass alike.
+                    # retraction pass alike. It also samples once more a reply that
+                    # runs to the output cap, a repetition loop rather than a long
+                    # answer (#6265).
                     #
                     # This was a text-mode call until #3901: pydantic renders the
                     # eight-op discriminated union as ``oneOf`` + ``discriminator``,
