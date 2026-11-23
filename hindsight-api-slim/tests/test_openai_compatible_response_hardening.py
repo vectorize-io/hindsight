@@ -601,3 +601,33 @@ def test_rate_limit_retry_at_ignores_a_non_positive_or_unparsable_retry_after() 
     for value in (0, -5, "soon", None):
         error = SimpleNamespace(body={"detail": {"retry_after": value}}, response=SimpleNamespace(headers={}))
         assert _rate_limit_retry_at(error) is None
+
+
+_MISTRAL_THINKING = {"type": "thinking", "thinking": [{"type": "text", "text": "Let me think. <think>"}]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "blocks,response_format,expected",
+    [
+        ([_MISTRAL_THINKING, {"type": "text", "text": "ok"}], None, "ok"),
+        (
+            [_MISTRAL_THINKING, {"type": "text", "text": '{"ok": '}, {"type": "text", "text": "true}"}],
+            SimpleJsonResponse,
+            SimpleJsonResponse(ok=True),
+        ),
+    ],
+)
+async def test_mistral_content_blocks_are_read_as_their_text(blocks, response_format, expected):
+    """Mistral reasoning models send content as typed blocks; every call crashed on them (#6758)."""
+    llm = _llm()
+    llm._client.chat.completions.create = AsyncMock(return_value=_response(content=blocks))
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        result = await llm.call(
+            messages=[{"role": "user", "content": "Return whether this worked."}],
+            response_format=response_format,
+            max_retries=0,
+        )
+
+    assert result.content == expected
