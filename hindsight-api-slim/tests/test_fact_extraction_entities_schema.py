@@ -58,6 +58,16 @@ def test_entities_defaults_to_empty_list_and_accepts_legacy_objects(model):
     assert model.model_validate({**fields, "entities": None}).entities == []
 
 
+@pytest.mark.parametrize("model", LLM_FACT_MODELS)
+def test_entities_coerces_numbers_and_drops_junk(model):
+    """A bare number used to pass through and crash `.lower()` downstream (#6443)."""
+    fields = {name: "x" for name, f in model.model_fields.items() if f.is_required()}
+    fields["fact_type"] = "world"
+
+    entities = model.model_validate({**fields, "entities": ["Bob", 2026, 1.5, True, None, ["x"]]}).entities
+    assert entities == ["Bob", "2026", "1.5"]
+
+
 def test_concise_prompt_demands_plain_string_entities():
     prompt = _build_extraction_prompt_and_schema(_baseline_config()).system_prompt
 
