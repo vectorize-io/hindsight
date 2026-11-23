@@ -34,7 +34,12 @@ from . import get_embed_manager
 # The --profile override is stored in profile_manager, not here: we must keep
 # supporting `python -m hindsight_embed.cli`, and the note there explains why a
 # global in this module breaks that form.
-from .profile_manager import get_cli_profile_override, set_cli_profile_override
+from .profile_manager import (
+    get_cli_profile_override,
+    lock_file,
+    set_cli_profile_override,
+    unlock_file,
+)
 
 CONFIG_DIR = Path.home() / ".hindsight"
 CONFIG_FILE = CONFIG_DIR / "embed"
@@ -1187,35 +1192,37 @@ def do_profile_command(args: list[str]) -> int:
             key, value = env_str.split("=", 1)
             new_config[key.strip()] = value.strip()
 
-        # If merging, read existing config and merge
-        config = {}
-        if merge and profile_exists:
-            if profile_name:
-                config_path = CONFIG_DIR / "profiles" / f"{profile_name}.env"
-            else:
-                config_path = CONFIG_FILE
+        if profile_name:
+            config_path = CONFIG_DIR / "profiles" / f"{profile_name}.env"
+        else:
+            config_path = CONFIG_FILE
 
-            config = parse_env_file(config_path)
-            config.pop("PORT", None)  # Don't copy PORT, we'll set it explicitly
-
-        # Merge new config into existing
-        config.update(new_config)
-
-        # Create/update profile
+        # Create/update profile. Read, merge and write under one lock: two
+        # concurrent merges (one per starting session) must not each write back
+        # a copy that drops what the other added (#6485).
         try:
-            pm.create_profile(profile_name, port, config)
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_path.with_name(f"{config_path.name}.lock"), "w") as lock_fd:
+                lock_file(lock_fd)
+                try:
+                    config = {}
+                    if merge and profile_exists:
+                        config = parse_env_file(config_path)
+                        config.pop("PORT", None)  # Don't copy PORT, we'll set it explicitly
+                    config.update(new_config)
+                    pm.create_profile(profile_name, port, config)
+                finally:
+                    unlock_file(lock_fd)
             display_name = profile_name or "default"
             action = "updated" if (merge and profile_exists) else "created"
             print(f"\033[32m✓\033[0m Profile '{display_name}' {action} successfully!")
             print()
-            if profile_name:
-                config_path = CONFIG_DIR / "profiles" / f"{profile_name}.env"
-            else:
-                config_path = CONFIG_FILE
             print(f"  \033[2mConfig:\033[0m {config_path}")
             print(f"  \033[2mPort:\033[0m {port}")
             return 0
-        except ValueError as e:
+        # OSError covers ProfileLockTimeout (a TimeoutError) and a .env swap that
+        # Windows refused because another process had the file open.
+        except (ValueError, OSError) as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
 

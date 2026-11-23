@@ -440,7 +440,20 @@ class ProfileManager:
         # the profile carries the full documented option set as comments.
         from .env_template import render_config
 
-        config_path.write_text(render_config(config), encoding="utf-8")
+        # Swap a finished file in, never truncate in place: every plugin session
+        # start re-runs `profile create --merge`, and one that read the file
+        # mid-rewrite saw it empty and wrote it back without the user's
+        # DATABASE_URL, so the next daemon start fell back to a new, empty pg0
+        # (#6485). The temp name is per-process so two writers never share one.
+        # On Windows the swap fails while another process has the .env open; the
+        # old file then stays intact, so drop the temp file and let it raise.
+        temp_path = config_path.with_name(f"{config_path.name}.{os.getpid()}.tmp")
+        try:
+            temp_path.write_text(render_config(config), encoding="utf-8")
+            temp_path.replace(config_path)
+        except OSError:
+            temp_path.unlink(missing_ok=True)
+            raise
 
         # Metadata now only tracks discovery + timestamps; the port moved to .env.
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -474,9 +487,10 @@ class ProfileManager:
 
         # Remove the lock file and the sidecar recording its holder (a crash
         # while holding the lock leaves the sidecar behind).
-        lock_path = self._get_profiles_dir() / f"{name}.lock"
-        lock_path.unlink(missing_ok=True)
-        lock_path.with_name(f"{lock_path.name}.owner").unlink(missing_ok=True)
+        # Same for the lock `profile create` holds while it rewrites the .env.
+        for lock_path in (self._get_profiles_dir() / f"{name}.lock", config_path.with_name(f"{config_path.name}.lock")):
+            lock_path.unlink(missing_ok=True)
+            lock_path.with_name(f"{lock_path.name}.owner").unlink(missing_ok=True)
 
         # Remove the active log and any retained rotation backups. A log that
         # cannot be removed (still held open on Windows, say) must not abort the

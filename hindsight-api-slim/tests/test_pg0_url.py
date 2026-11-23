@@ -172,3 +172,34 @@ async def test_start_without_a_uri_fails_with_a_clear_error() -> None:
     with pytest.raises(RuntimeError, match="returned no connection URI"):
         await pg0.start(max_retries=2, retry_delay=0)
     assert pg0._pg0.start.call_count == 2
+
+
+@pytest.mark.parametrize(("data_dir", "warns"), [(None, True), ("/home/u/.pg0/instances/mine/data", False)])
+async def test_start_warns_only_when_it_creates_a_new_instance(
+    data_dir: str | None, warns: bool, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A profile whose DATABASE_URL went missing silently got a new, empty pg0 (#6485): say so."""
+    pg0 = EmbeddedPostgres(name="mine", port=None)
+    pg0._pg0 = MagicMock(
+        info=MagicMock(return_value=SimpleNamespace(data_dir=data_dir)),
+        start=MagicMock(return_value=SimpleNamespace(uri="postgresql://h:h@127.0.0.1:5432/hindsight")),
+    )
+
+    with caplog.at_level("WARNING", logger="hindsight_api.pg0"):
+        await pg0.start(max_retries=1, retry_delay=0)
+
+    assert any("NEW, EMPTY embedded PostgreSQL instance 'mine'" in r.message for r in caplog.records) is warns
+
+
+async def test_start_still_starts_when_the_new_instance_check_fails(caplog: pytest.LogCaptureFixture) -> None:
+    """The check only feeds the #6485 warning; it must never block the start."""
+    pg0 = EmbeddedPostgres(name="mine", port=None)
+    pg0._pg0 = MagicMock(
+        info=MagicMock(side_effect=RuntimeError("pg0 info failed")),
+        start=MagicMock(return_value=SimpleNamespace(uri="postgresql://h:h@127.0.0.1:5432/hindsight")),
+    )
+
+    with caplog.at_level("WARNING", logger="hindsight_api.pg0"):
+        assert await pg0.start(max_retries=1, retry_delay=0) == "postgresql://h:h@127.0.0.1:5432/hindsight"
+
+    assert not any("NEW, EMPTY" in r.message for r in caplog.records)
