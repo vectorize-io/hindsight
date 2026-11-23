@@ -32,6 +32,9 @@ class _FakeDialect:
         self.bm25_arms = 0
         self.prepared_text: str | None = None
 
+    def build_semantic_arms(self, *, fact_types, **kwargs):
+        return [self.build_semantic_arm(fact_type=ft, **kwargs) for ft in fact_types]
+
     def build_semantic_arm(self, **kwargs) -> str:
         self.semantic_arms += 1
         return "SELECT 'semantic' AS source"

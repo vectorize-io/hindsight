@@ -630,10 +630,11 @@ async def newest_memory_updated_at(
     scope = _refresh_scope_where(bank_id, until, since, fact_types, tags, tags_match, tag_groups, is_oracle=is_oracle)
     if is_oracle:
         # Oracle's DESC index key is SYS_EXTRACT_UTC(updated_at), so MAX(timestamp
-        # with time zone) cannot use it while preserving the original zone.
+        # with time zone) cannot use it while preserving the original zone. The hint
+        # stops a peeked bind from settling on IDX_MU_BANK_ID plus a sort (#6771).
         return await conn.fetchval(
-            f"SELECT updated_at FROM {fq_table('memory_units')} WHERE {scope.sql} "
-            "ORDER BY SYS_EXTRACT_UTC(updated_at) DESC FETCH FIRST 1 ROW ONLY",
+            f"SELECT /*+ INDEX(m idx_mu_bank_updated_at) */ updated_at FROM {fq_table('memory_units')} m "
+            f"WHERE {scope.sql} ORDER BY SYS_EXTRACT_UTC(updated_at) DESC FETCH FIRST 1 ROW ONLY",
             *scope.params,
         )
     return await conn.fetchval(
@@ -734,8 +735,8 @@ async def latest_memory_write_at(
         # Selecting the row, rather than MAX(timestamp with time zone), lets Oracle
         # walk its SYS_EXTRACT_UTC-based index and still return the original timestamp.
         return await conn.fetchval(
-            f"SELECT updated_at FROM {fq_table('memory_units')} WHERE bank_id = $1 "
-            "ORDER BY SYS_EXTRACT_UTC(updated_at) DESC FETCH FIRST 1 ROW ONLY",
+            f"SELECT /*+ INDEX(m idx_mu_bank_updated_at) */ updated_at FROM {fq_table('memory_units')} m "
+            "WHERE bank_id = $1 ORDER BY SYS_EXTRACT_UTC(updated_at) DESC FETCH FIRST 1 ROW ONLY",
             bank_id,
         )
     return await conn.fetchval(

@@ -56,7 +56,7 @@ async def test_newest_memory_updated_at_uses_utc_index_ordering_on_oracle() -> N
 
     assert result == expected
     query = conn.fetchval.await_args.args[0]
-    assert "SELECT updated_at FROM" in query
+    assert "SELECT /*+ INDEX(m idx_mu_bank_updated_at) */ updated_at FROM" in query
     assert "SYS_EXTRACT_UTC(updated_at) <= SYS_EXTRACT_UTC(CAST($2 AS TIMESTAMP WITH TIME ZONE))" in query
     assert "SYS_EXTRACT_UTC(updated_at) > SYS_EXTRACT_UTC(CAST($3 AS TIMESTAMP WITH TIME ZONE))" in query
     assert "ORDER BY SYS_EXTRACT_UTC(updated_at) DESC FETCH FIRST 1 ROW ONLY" in query
@@ -152,7 +152,7 @@ async def test_latest_memory_write_at_uses_utc_index_ordering_on_oracle() -> Non
 
     assert result == expected
     query = conn.fetchval.await_args.args[0]
-    assert "SELECT updated_at FROM" in query
+    assert "SELECT /*+ INDEX(m idx_mu_bank_updated_at) */ updated_at FROM" in query
     assert "ORDER BY SYS_EXTRACT_UTC(updated_at) DESC FETCH FIRST 1 ROW ONLY" in query
     rewritten, _, _ = _rewrite_pg_to_oracle(query)
     assert "FETCH FIRST 1 ROW ONLY" in rewritten

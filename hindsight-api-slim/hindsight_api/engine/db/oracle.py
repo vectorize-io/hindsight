@@ -14,7 +14,9 @@ Supports multi-tenant schema isolation via ALTER SESSION SET CURRENT_SCHEMA.
 """
 
 import datetime
+import functools
 import inspect
+import itertools
 import json
 import logging
 import re
@@ -49,7 +51,8 @@ class RewriteResult(NamedTuple):
 
     query: str
     ignore_dup: bool
-    returning_cols: list[str] | None
+    # A tuple: results are cached and shared between callers.
+    returning_cols: tuple[str, ...] | None
 
 
 # ---------------------------------------------------------------------------
@@ -90,6 +93,11 @@ _JSON_ARROW_TEXT_RE = re.compile(r'("?\w+"?)\s*->>\s*\'(\w+)\'')  # handles both
 _JSON_HAS_KEY_RE = re.compile(r"(\"?\w+\"?)\s*\?\s*'(\w+)'")
 _JSONB_CONTAINS_RE = re.compile(r"(\w+)\s*@>\s*:(\d+)")
 _RESULT_METADATA_CONTAINS_RE = re.compile(r"((?:\w+\.)?result_metadata)\s*@>\s*:(\d+)", re.IGNORECASE)
+
+# Oracle caps an IN list at 1000 expressions (ORA-01795); IN lists up to that
+# size are padded to one of these, so a query has at most 11 distinct SQL texts.
+_ORACLE_IN_LIMIT = 1000
+_ORACLE_IN_BUCKETS = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, _ORACLE_IN_LIMIT)
 
 # ---------------------------------------------------------------------------
 # Argument conversion helpers
@@ -341,6 +349,9 @@ def _rewrite_upsert_to_merge(query: str) -> str | None:
     return merge_query
 
 
+# The rewrite is a pure function of the query text and the same few hundred query
+# shapes repeat, so caching it skips re-running ~60 regexes on every statement.
+@functools.lru_cache(maxsize=512)
 def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     """Rewrite PostgreSQL-style SQL to Oracle-compatible SQL.
 
@@ -349,7 +360,7 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     - returning_cols: column names from RETURNING clause (None if no RETURNING)
     """
     ignore_dup = False
-    returning_cols: list[str] | None = None
+    returning_cols: tuple[str, ...] | None = None
 
     # $N → :N
     query = _PG_PARAM_RE.sub(r":\1", query)
@@ -714,7 +725,7 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
         m = _RETURNING_RE.search(query)
         if m:
             ret_cols_str = m.group(1).strip()
-            returning_cols = [c.strip() for c in ret_cols_str.split(",") if c.strip()]
+            returning_cols = tuple(c.strip() for c in ret_cols_str.split(",") if c.strip())
             into_vars = ", ".join(f":ret_{i}" for i in range(len(returning_cols)))
             query = query[: m.start()] + f"RETURNING {ret_cols_str} INTO {into_vars}" + query[m.end() :]
 
@@ -813,7 +824,7 @@ class OracleConnection(DatabaseConnection):
     # -- helpers ----------------------------------------------------------
 
     def _make_bind_params(
-        self, cursor: Any, args: tuple[Any, ...], returning_cols: list[str] | None
+        self, cursor: Any, args: tuple[Any, ...], returning_cols: tuple[str, ...] | None
     ) -> dict[str, Any] | None:
         """Build bind params as a dict (named binding).
 
@@ -933,8 +944,6 @@ class OracleConnection(DatabaseConnection):
         if sizes:
             cursor.setinputsizes(**sizes)
 
-    _expand_counter = 0
-
     @staticmethod
     def _resolve_list_param(params: dict[str, Any], key: str) -> list | None:
         """Resolve a parameter that may be a list or a JSON-encoded list string."""
@@ -963,7 +972,10 @@ class OracleConnection(DatabaseConnection):
         Converts: col /*NOT_LIKE_ALL:1:col*/ with params["1"] = [a, b]
         Into:     (col NOT LIKE :nlk_0 AND col NOT LIKE :nlk_1)
 
-        Uses a unique prefix to avoid name collisions with other bind vars.
+        Bind names are numbered per query (``any0_*``, ``any1_*``...), not by a global
+        counter, and an IN list of up to 1000 items is padded with its last item to
+        the next power of two. Both keep the SQL text the same across calls, so
+        Oracle reuses the parsed cursor instead of hard-parsing a new one each time.
         The original param is kept (for other references to :N in the query).
         """
         if params is None or "/*" not in query:
@@ -971,6 +983,7 @@ class OracleConnection(DatabaseConnection):
 
         expand_re = re.compile(r"/\*EXPAND:(\d+)\*/")
         keys_to_remove: set[str] = set()
+        slots = {"any": itertools.count(), "lk": itertools.count(), "nlk": itertools.count(), "ap": itertools.count()}
 
         def _replace(m):
             param_key = m.group(1)
@@ -995,8 +1008,11 @@ class OracleConnection(DatabaseConnection):
                 return f":{param_key}"
             if len(val) == 0:
                 return "NULL"
-            OracleConnection._expand_counter += 1
-            prefix = f"any{OracleConnection._expand_counter}"
+            prefix = f"any{next(slots['any'])}"
+            if len(val) <= _ORACLE_IN_LIMIT:
+                # Repeating an item leaves IN / NOT IN semantics unchanged.
+                bucket = next(b for b in _ORACLE_IN_BUCKETS if b >= len(val))
+                val = list(val) + [val[-1]] * (bucket - len(val))
             expanded_keys = []
             for i, item in enumerate(val):
                 k = f"{prefix}_{i}"
@@ -1017,8 +1033,7 @@ class OracleConnection(DatabaseConnection):
             val = OracleConnection._resolve_list_param(params, param_key)
             if val is None or len(val) == 0:
                 return "1=0"  # no patterns → no match
-            OracleConnection._expand_counter += 1
-            prefix = f"lk{OracleConnection._expand_counter}"
+            prefix = f"lk{next(slots['lk'])}"
             clauses = []
             for i, item in enumerate(val):
                 k = f"{prefix}_{i}"
@@ -1039,8 +1054,7 @@ class OracleConnection(DatabaseConnection):
             val = OracleConnection._resolve_list_param(params, param_key)
             if val is None or len(val) == 0:
                 return "1=1"  # no patterns → everything matches
-            OracleConnection._expand_counter += 1
-            prefix = f"nlk{OracleConnection._expand_counter}"
+            prefix = f"nlk{next(slots['nlk'])}"
             clauses = []
             for i, item in enumerate(val):
                 k = f"{prefix}_{i}"
@@ -1062,8 +1076,7 @@ class OracleConnection(DatabaseConnection):
             val = OracleConnection._resolve_list_param(params, param_key)
             if not val:
                 return "NULL"
-            OracleConnection._expand_counter += 1
-            prefix = f"ap{OracleConnection._expand_counter}"
+            prefix = f"ap{next(slots['ap'])}"
             whens = []
             for i, item in enumerate(val):
                 # Same UUID handling as /*EXPAND*/: JSON-serialized UUIDs bind as RAW(16).
@@ -1086,7 +1099,9 @@ class OracleConnection(DatabaseConnection):
 
         return query, params
 
-    async def _read_returning_values(self, returning_cols: list[str], params: dict[str, Any]) -> dict[str, Any] | None:
+    async def _read_returning_values(
+        self, returning_cols: tuple[str, ...], params: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Read values from RETURNING INTO output variables after execute."""
         row: dict[str, Any] = {}
         for i, col in enumerate(returning_cols):

@@ -84,6 +84,9 @@ class FakeDialect:
         self.fetch_limits.append(fetch_limit)
         return "SELECT 'semantic' AS source"
 
+    def build_semantic_arms(self, *, fact_types, **kwargs):
+        return [self.build_semantic_arm(fact_type=ft, **kwargs) for ft in fact_types]
+
     def build_bm25_arm(self, **kwargs):
         return "SELECT 'bm25' AS source"
 

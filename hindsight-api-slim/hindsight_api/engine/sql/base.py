@@ -402,6 +402,40 @@ class SQLDialect(ABC):
         """
         ...
 
+    def build_semantic_arms(
+        self,
+        *,
+        table: str,
+        cols: str,
+        fact_types: list[str],
+        embedding_param: str,
+        bank_id_param: str,
+        fetch_limit: int,
+        min_similarity: float,
+        tags_clause: str = "",
+        groups_clause: str = "",
+        extra_where: str = "",
+    ) -> list[str]:
+        """The semantic arms for ``fact_types``, to join with UNION ALL: one per fact type.
+
+        A backend that ranks every fact type in a single scan overrides this.
+        """
+        return [
+            self.build_semantic_arm(
+                table=table,
+                cols=cols,
+                fact_type=ft,
+                embedding_param=embedding_param,
+                bank_id_param=bank_id_param,
+                fetch_limit=fetch_limit,
+                min_similarity=min_similarity,
+                tags_clause=tags_clause,
+                groups_clause=groups_clause,
+                extra_where=extra_where,
+            )
+            for ft in fact_types
+        ]
+
     @abstractmethod
     def build_bm25_arm(
         self,

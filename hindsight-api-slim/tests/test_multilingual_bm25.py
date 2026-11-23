@@ -408,6 +408,9 @@ async def test_combined_retrieval_rejects_config_missing_bm25_cap(monkeypatch):
     class FakeDialect:
         max_query_terms: int | None = None
 
+        def build_semantic_arms(self, *, fact_types, **kwargs):
+            return [self.build_semantic_arm(fact_type=ft, **kwargs) for ft in fact_types]
+
         def build_semantic_arm(self, **kwargs):
             return "SELECT 'semantic' AS source"
 
@@ -456,6 +459,9 @@ async def test_selective_terms_flag_gates_the_pg_stats_lookup(monkeypatch, selec
 
     class FakeDialect:
         received_tokens: list[str] | None = None
+
+        def build_semantic_arms(self, *, fact_types, **kwargs):
+            return [self.build_semantic_arm(fact_type=ft, **kwargs) for ft in fact_types]
 
         def build_semantic_arm(self, **kwargs):
             return "SELECT 'semantic' AS source"
@@ -509,6 +515,9 @@ async def test_selective_terms_flag_gates_the_pg_stats_lookup(monkeypatch, selec
 @pytest.mark.asyncio
 async def test_combined_retrieval_reuses_raw_semantic_pool_for_graph_seeds(monkeypatch):
     class FakeDialect:
+        def build_semantic_arms(self, *, fact_types, **kwargs):
+            return [self.build_semantic_arm(fact_type=ft, **kwargs) for ft in fact_types]
+
         def build_semantic_arm(self, **kwargs):
             return "SELECT 'semantic' AS source"
 
@@ -543,6 +552,9 @@ async def test_combined_retrieval_reuses_raw_semantic_pool_for_graph_seeds(monke
 @pytest.mark.asyncio
 async def test_combined_retrieval_keeps_graph_query_when_semantic_threshold_is_stricter(monkeypatch):
     class FakeDialect:
+        def build_semantic_arms(self, *, fact_types, **kwargs):
+            return [self.build_semantic_arm(fact_type=ft, **kwargs) for ft in fact_types]
+
         def build_semantic_arm(self, **kwargs):
             return "SELECT 'semantic' AS source"
 

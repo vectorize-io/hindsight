@@ -670,19 +670,15 @@ class OracleOps(DataAccessOps):
         mu_table: str,
         unit_ids: list[str],
     ) -> list[ResultRow]:
-        # No ANY() array binding; query each unit individually
+        # One query per 1000 ids, not one per id: the rewriter expands ANY($1) into an
+        # IN list, which Oracle caps at 1000 items (ORA-01795).
         rows: list[ResultRow] = []
-        for uid in unit_ids:
-            row = await conn.fetchrow(
-                f"""
-                SELECT id, event_date, fact_type
-                FROM {mu_table}
-                WHERE id = $1
-                """,
-                uid,
+        for start in range(0, len(unit_ids), 1000):
+            batch = await conn.fetch(
+                f"SELECT id, event_date, fact_type FROM {mu_table} WHERE id = ANY($1)",
+                unit_ids[start : start + 1000],
             )
-            if row:
-                rows.append(cast(ResultRow, row))
+            rows.extend(cast(list[ResultRow], batch))
         return rows
 
     async def fetch_temporal_neighbors(
