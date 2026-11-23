@@ -47,20 +47,20 @@ async def clients(scoped_server):
 
 
 @pytest.mark.parametrize("retain_async", [False, True], ids=["sync", "async"])
-async def test_a_write_scope_refusal_keeps_no_attachment(clients, llm, bank_id, retain_async):
+async def test_a_write_scope_refusal_keeps_no_attachment(clients, llm, scoped_bank, retain_async):
     admin, dan = clients
-    await admin.acreate_bank(bank_id=bank_id, name="Whiteboards")
+    await admin.acreate_bank(bank_id=scoped_bank, name="Whiteboards")
 
     with pytest.raises(ForbiddenException):
         await dan.aretain(
-            bank_id=bank_id, content=CONTENT, document_id="kates", tags=["user:kate"], retain_async=retain_async
+            bank_id=scoped_bank, content=CONTENT, document_id="kates", tags=["user:kate"], retain_async=retain_async
         )
     with pytest.raises(NotFoundException):
-        await admin.memory.get_bank_attachment(bank_id, PNG_ID)
+        await admin.memory.get_bank_attachment(scoped_bank, PNG_ID)
 
     llm.on_step("extract_facts").returns(extracted(fact("Dan photographed the whiteboard", who="Dan", entities=["Dan"])))
     llm.on_step("consolidate").returns(consolidation())
-    await dan.aretain(bank_id=bank_id, content=CONTENT, document_id="dans", tags=["user:dan"])
-    await wait_until_settled(admin, bank_id)
+    await dan.aretain(bank_id=scoped_bank, content=CONTENT, document_id="dans", tags=["user:dan"])
+    await wait_until_settled(admin, scoped_bank)
 
-    assert await admin.memory.get_bank_attachment(bank_id, PNG_ID) == PNG
+    assert await admin.memory.get_bank_attachment(scoped_bank, PNG_ID) == PNG

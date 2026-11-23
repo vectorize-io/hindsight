@@ -30,17 +30,17 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-async def banks(scoped_server, llm, bank_id) -> AsyncIterator[tuple[Hindsight, str, str]]:
-    """An admin client, the key's own bank (``bank_id``, holding one document) and a neighbour
+async def banks(scoped_server, llm, scoped_bank) -> AsyncIterator[tuple[Hindsight, str, str]]:
+    """An admin client, the key's own bank (``scoped_bank``, holding one document) and a neighbour
     bank that already exists but is empty."""
     admin = Hindsight(base_url=scoped_server.url)
     neighbour = f"systest-{uuid.uuid4().hex[:12]}"
     llm.on_step("extract_facts").returns(extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice"])))
     llm.on_step("consolidate").returns(consolidation())
-    await admin.aretain(bank_id=bank_id, content="Alice moved to Berlin.", document_id="d1")
+    await admin.aretain(bank_id=scoped_bank, content="Alice moved to Berlin.", document_id="d1")
     await admin.acreate_bank(neighbour)
-    await wait_until_settled(admin, bank_id)
-    yield admin, bank_id, neighbour
+    await wait_until_settled(admin, scoped_bank)
+    yield admin, scoped_bank, neighbour
     await admin.banks.delete_bank(neighbour)
     await admin.aclose()
 

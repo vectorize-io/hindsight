@@ -29,20 +29,20 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-async def banks(scoped_server, llm, bank_id) -> AsyncIterator[tuple[Hindsight, str, str, str]]:
-    """An admin client, an ordinary bank (``bank_id``), a bank holding an over-quota document,
+async def banks(scoped_server, llm, scoped_bank) -> AsyncIterator[tuple[Hindsight, str, str, str]]:
+    """An admin client, an ordinary bank (``scoped_bank``), a bank holding an over-quota document,
     and an empty neighbour to import into."""
     admin = Hindsight(base_url=scoped_server.url)
     heavy = f"systest-{uuid.uuid4().hex[:12]}"
     neighbour = f"systest-{uuid.uuid4().hex[:12]}"
     llm.on_step("extract_facts").returns(extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice"])))
     llm.on_step("consolidate").returns(consolidation())
-    await admin.aretain(bank_id=bank_id, content="Alice moved to Berlin.", document_id="d1")
+    await admin.aretain(bank_id=scoped_bank, content="Alice moved to Berlin.", document_id="d1")
     await admin.aretain(bank_id=heavy, content="OVER-QUOTA: Alice moved to Berlin.", document_id="d2")
     await admin.acreate_bank(neighbour)
-    await wait_until_settled(admin, bank_id)
+    await wait_until_settled(admin, scoped_bank)
     await wait_until_settled(admin, heavy)
-    yield admin, bank_id, heavy, neighbour
+    yield admin, scoped_bank, heavy, neighbour
     for bank in (heavy, neighbour):
         await admin.banks.delete_bank(bank)
     await admin.aclose()

@@ -168,27 +168,33 @@ class TestUpgrade:
             server = old.start()
             client = httpx.Client(base_url=server.url, timeout=60)
 
-            # Store memory with document
-            resp = client.post(
-                f"/v1/default/banks/{bank_id}/memories",
-                json={
-                    "items": [
-                        {
-                            "content": "The quarterly report shows 25% revenue growth.",
-                            "context": "Q1 financial review",
-                            "document_id": doc_id,
-                        }
-                    ]
-                },
-            )
-            assert resp.status_code == 200, f"Failed to store document: {resp.text}"
+            # Store memory with document. Retain is synchronous here, but the old version's
+            # real-LLM extraction sometimes returns no facts for this one sentence ("0 facts
+            # extracted ... document tracked, no facts"), which leaves the document with no
+            # units before the upgrade even starts (#6795). Re-retain until it has some, so
+            # the post-upgrade count is a real check on the upgrade.
+            old_unit_count = 0
+            for _ in range(3):
+                resp = client.post(
+                    f"/v1/default/banks/{bank_id}/memories",
+                    json={
+                        "items": [
+                            {
+                                "content": "The quarterly report shows 25% revenue growth.",
+                                "context": "Q1 financial review",
+                                "document_id": doc_id,
+                            }
+                        ]
+                    },
+                )
+                assert resp.status_code == 200, f"Failed to store document: {resp.text}"
 
-            # Verify document exists
-            resp = client.get(f"/v1/default/banks/{bank_id}/documents")
-            assert resp.status_code == 200
-            docs = resp.json()["items"]
-            doc_ids = [d["id"] for d in docs]
-            assert doc_id in doc_ids, f"Document not found in old version: {doc_ids}"
+                resp = client.get(f"/v1/default/banks/{bank_id}/documents/{doc_id}")
+                assert resp.status_code == 200, f"Document not found in old version: {resp.text}"
+                old_unit_count = resp.json()["memory_unit_count"]
+                if old_unit_count > 0:
+                    break
+            assert old_unit_count > 0, f"{old_version} extracted no facts from the document in 3 retains"
 
             client.close()
 
@@ -218,7 +224,9 @@ class TestUpgrade:
             assert resp.status_code == 200
             doc_info = resp.json()
             assert doc_info["id"] == doc_id
-            assert doc_info["memory_unit_count"] > 0
+            assert doc_info["memory_unit_count"] >= old_unit_count, (
+                f"Lost memory units after upgrade: {old_unit_count} -> {doc_info['memory_unit_count']}"
+            )
 
             # Cleanup
             resp = client.delete(f"/v1/default/banks/{bank_id}")

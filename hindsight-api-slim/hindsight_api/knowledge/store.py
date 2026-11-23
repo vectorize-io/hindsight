@@ -1126,7 +1126,10 @@ class PostgresKnowledgeStore(KnowledgeStore):
                 raise KnowledgeBankNotFound(bank_id)
             score_started = time.perf_counter()
             terms = dict(zip(rows[0]["term_words"] or [], rows[0]["term_idfs"] or [], strict=True))
-            rows = [r for r in rows if r["document_id"] is not None]
+            # In a fixed order: the statement's GROUP BY returns rows in whatever order its plan gives, and
+            # every sort below is stable, so passages of equal score (near-identical text) came back in a
+            # different order from one search to the next (#6697). Ties now go to the earlier passage.
+            rows = sorted((r for r in rows if r["document_id"] is not None), key=lambda r: (r["document_id"], r["idx"]))
             found_by = {(r["document_id"], r["idx"]): [f.partition(":") for f in r["found"]] for r in rows}
             if trace is not None:
                 trace.keyword_terms = terms

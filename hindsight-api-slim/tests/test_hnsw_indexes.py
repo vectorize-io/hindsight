@@ -90,21 +90,28 @@ def name_ends_with(name: str, suffix: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def _get_bank_vector_indexes(pool, bank_id: str) -> list[str]:
-    """Return index names for memory_units that match the per-bank pattern."""
+async def _bank_internal_id(pool, bank_id: str) -> str:
+    async with pool.acquire() as conn:
+        return str(await conn.fetchval("SELECT internal_id FROM banks WHERE bank_id = $1", bank_id))
+
+
+async def _get_bank_vector_indexes(pool, internal_id: str) -> list[str]:
+    """Return which of the bank's three per-bank index names exist.
+
+    Looks up only this bank's own names. The previous version filtered
+    ``pg_indexes.indexdef``, which runs ``pg_get_indexdef()`` on every index on
+    memory_units — including other xdist workers' per-bank indexes — and failed
+    with "cache lookup failed for attribute 1 of relation N" when one of those was
+    dropped mid-scan (#6748). The names come from internal_id, unique per bank, so
+    they cannot match another bank's index.
+    """
+    names = [_bank_index_name(ft, internal_id) for ft in _BANK_INDEX_FACT_TYPES]
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            """
-            SELECT indexname
-            FROM pg_indexes
-            WHERE tablename = 'memory_units'
-              AND indexname LIKE 'idx_mu_emb_%'
-              AND indexdef LIKE $1
-            ORDER BY indexname
-            """,
-            f"%bank_id = '{bank_id}'%",
+            "SELECT name FROM unnest($1::text[]) AS name WHERE to_regclass(name) IS NOT NULL ORDER BY name",
+            names,
         )
-    return [row["indexname"] for row in rows]
+    return [row["name"] for row in rows]
 
 
 async def _build_bank_vector_indexes(pool, bank_id: str) -> list[str]:
@@ -152,7 +159,7 @@ async def test_retain_still_ends_up_with_per_bank_indexes(memory, request_contex
             content="Alice is a software engineer.",
             request_context=request_context,
         )
-        indexes = await _get_bank_vector_indexes(memory._pool, bank_id)
+        indexes = await _get_bank_vector_indexes(memory._pool, await _bank_internal_id(memory._pool, bank_id))
         assert indexes, "a retained bank should end up with per-bank vector indexes at the default threshold"
         for name in indexes:
             assert "_" in name
@@ -174,7 +181,7 @@ async def test_bank_creation_alone_creates_no_vector_indexes(memory, request_con
     try:
         await memory.ensure_bank_profile(bank_id=bank_id, request_context=request_context)
 
-        indexes = await _get_bank_vector_indexes(memory._pool, bank_id)
+        indexes = await _get_bank_vector_indexes(memory._pool, await _bank_internal_id(memory._pool, bank_id))
         assert indexes == [], f"bank creation must not create vector indexes, got: {indexes}"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
@@ -196,12 +203,14 @@ async def test_delete_bank_drops_vector_indexes(memory, request_context):
         request_context=request_context,
     )
     await _build_bank_vector_indexes(memory._pool, bank_id)
-    indexes_before = await _get_bank_vector_indexes(memory._pool, bank_id)
+    # Read before delete: the bank row, and with it internal_id, is gone after.
+    internal_id = await _bank_internal_id(memory._pool, bank_id)
+    indexes_before = await _get_bank_vector_indexes(memory._pool, internal_id)
     assert len(indexes_before) == 3, "setup: the bank should have indexes to drop"
 
     await memory.delete_bank(bank_id, request_context=request_context)
 
-    indexes_after = await _get_bank_vector_indexes(memory._pool, bank_id)
+    indexes_after = await _get_bank_vector_indexes(memory._pool, internal_id)
     assert indexes_after == [], f"Indexes should be dropped after bank deletion, got: {indexes_after}"
 
 
@@ -219,7 +228,8 @@ async def test_retain_idempotent_bank_creation(memory, request_context):
             content="Carol is a product manager.",
             request_context=request_context,
         )
-        after_first = await _get_bank_vector_indexes(memory._pool, bank_id)
+        internal_id = await _bank_internal_id(memory._pool, bank_id)
+        after_first = await _get_bank_vector_indexes(memory._pool, internal_id)
 
         await memory.retain_async(
             bank_id=bank_id,
@@ -227,7 +237,7 @@ async def test_retain_idempotent_bank_creation(memory, request_context):
             request_context=request_context,
         )
 
-        assert await _get_bank_vector_indexes(memory._pool, bank_id) == after_first
+        assert await _get_bank_vector_indexes(memory._pool, internal_id) == after_first
         submitted = await memory.submit_async_vector_index_maintenance(
             bank_id=bank_id, request_context=request_context, trigger=CoverageTrigger.GREW
         )
