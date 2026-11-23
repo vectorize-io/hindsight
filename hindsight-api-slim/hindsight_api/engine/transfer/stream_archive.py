@@ -113,7 +113,8 @@ class ZipStreamer:
 
     Employs PKZIP General Purpose Bit 3 (0x0008) so that files can be compressed
     and emitted on the fly without knowing the compressed or uncompressed size or CRC
-    in advance. Supports Zip64 transparently when exceeding 32-bit limits (4 GB).
+    in advance. The archive-level Zip64 records (offsets, entry count) are emitted
+    when needed; a single entry may pass 4 GB only when opened with ``zip64=True``.
     """
 
     def __init__(self, compression_level: int = 6) -> None:

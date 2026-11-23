@@ -3167,6 +3167,51 @@ async def _seed_attachment(memory, bank_id: str, payload: bytes, attachment_hash
     return stored[0].storage_key
 
 
+@pytest.mark.asyncio
+# Forges the attachment's recorded size with a raw UPDATE: a real 4 GB blob is too big for a test.
+@pytest.mark.memory_backend_incompatible
+async def test_an_attachment_recorded_over_4_gb_is_written_as_zip64(memory, request_context):
+    """An attachment over 4 GB opens its entry as Zip64 instead of failing the export (#6745).
+
+    The entry header is sent before the bytes, so the recorded size is what decides it.
+    History tables grow without bound, so they are always Zip64; small attachments stay plain.
+    """
+    from hindsight_api.engine.transfer import TransferScope, export_bank
+
+    source = _unique_bank("att_z64_src")
+    target = _unique_bank("att_z64_dst")
+    payload = b"\x89PNG\r\n\x1a\n-small-bytes-big-recorded-size"
+    try:
+        await _retain(memory, source, "Grace shared a diagram.", request_context, "doc-1")
+        await _seed_attachment(memory, source, payload, "c" * 64)
+        await _seed_attachment(memory, source, payload + b"-plain", "d" * 64)
+        backend = await memory._get_backend()
+        async with acquire_with_retry(backend) as conn:
+            await conn.execute(
+                f"UPDATE {fq_store_table('attachments')} SET byte_size = $1 "
+                f"WHERE bank_id = $2 AND attachment_hash = $3",
+                0xFFFFFFFF + 1,
+                source,
+                "c" * 64,
+            )
+            archive = await export_bank(
+                conn, source, file_storage=memory._file_storage, scope=TransferScope(history=True)
+            )
+
+        with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+            assert zf.testzip() is None
+            blobs = {zf.read(i.filename): i.extract_version for i in zf.infolist() if i.filename.startswith("blobs/")}
+            history = [i.extract_version for i in zf.infolist() if i.filename.startswith("history/")]
+        assert blobs == {payload: 45, payload + b"-plain": 20}
+        assert history and set(history) == {45}
+
+        result = await memory.import_bank_async(archive, request_context, target_bank_id=target)
+        assert result.attachments_imported == 2
+    finally:
+        await memory.delete_bank(source, request_context=request_context)
+        await memory.delete_bank(target, request_context=request_context)
+
+
 def _archive_entries(archive: bytes) -> dict[str, Any]:
     """Every entry of an archive, parsed where it is JSON; ``exported_at`` is the one field allowed to differ."""
     entries: dict[str, Any] = {}

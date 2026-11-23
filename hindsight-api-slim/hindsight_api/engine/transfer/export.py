@@ -783,9 +783,10 @@ async def _stream_attachments(
         # DEFLATE at level 0: attachments are images/PDFs that are already
         # compressed, but a deflate stream (unlike STORED) is self-terminating,
         # which sequential ZIP readers need when sizes only follow the data.
-        # Zip64 is announced in the entry header, so decide it from the recorded size.
-        big = row["byte_size"] is None or row["byte_size"] >= 0xFFFFFFFF
-        async for chunk in streamer.write_file_chunks(entry, rest(), compression_level=0, zip64=big):
+        # Zip64 is announced in the entry header, before any byte is streamed, so it is
+        # decided from the recorded size. Attachments over 4 GB used to fail the export.
+        zip64 = row["byte_size"] >= 0xFFFFFFFF
+        async for chunk in streamer.write_file_chunks(entry, rest(), compression_level=0, zip64=zip64):
             yield chunk
         exported.append(
             TransferAttachment(
