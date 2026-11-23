@@ -123,6 +123,23 @@ describe("respondWithSdk", () => {
       expect(body.upstream.detail).toBeNull();
     });
 
+    it("passes a 503's reason on when the caller exposes it, and only a 503's", async () => {
+      const unavailable = respondWithSdk(
+        fail({ detail: "knowledge embedder unavailable" }, HTTP_UPSTREAM_503),
+        "Failed to search knowledge bank",
+        { exposeUnavailable: true }
+      );
+      expect(unavailable.status).toBe(HTTP_UPSTREAM_503);
+      expect((await unavailable.json()).details).toBe("knowledge embedder unavailable");
+
+      const crashed = respondWithSdk(
+        fail({ detail: "Traceback ..." }, HTTP_UPSTREAM_500),
+        "Failed to search knowledge bank",
+        { exposeUnavailable: true }
+      );
+      expect((await crashed.json()).details).toBeNull();
+    });
+
     it("logs the upstream status and error to console.error", () => {
       const upstreamError = { detail: "boom" };
       respondWithSdk(fail(upstreamError, HTTP_UPSTREAM_500), "Failed to fetch stats");

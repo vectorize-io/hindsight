@@ -92,6 +92,7 @@ describe("/api/knowledge-banks routes", () => {
     );
     const init = fetchSpy.mock.calls[0][1]!;
     expect((init.headers as Record<string, string>)["Content-Type"]).toBe(contentType);
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer secret");
     expect(contentType).toMatch(/^multipart\/form-data; boundary=/);
     expect(res.status).toBe(202);
   });

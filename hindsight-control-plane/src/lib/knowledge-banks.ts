@@ -70,7 +70,7 @@ const API_PREFIX = "/v1/default/knowledge-banks";
 /** Fired by the header's "Add Document" on a knowledge bank page; the documents view opens its upload dialog. */
 export const KNOWLEDGE_UPLOAD_EVENT = "hindsight:knowledge-upload";
 
-/** Control-plane proxy path for a knowledge-bank endpoint; ids are percent-encoded. */
+/** Control-plane route for a knowledge-bank endpoint; ids are percent-encoded. */
 export function knowledgeApi(...segments: string[]): string {
   const suffix = segments.map(encodeURIComponent).join("/");
   return `/api/knowledge-banks${suffix ? `/${suffix}` : ""}`;
@@ -78,7 +78,8 @@ export function knowledgeApi(...segments: string[]): string {
 
 /**
  * The API hands out `passage_url`/`document_url` as dataplane paths
- * (`/v1/default/knowledge-banks/...`); the browser reaches them through the proxy.
+ * (`/v1/default/knowledge-banks/...`); the browser reaches them through the control plane's
+ * routes, which sit at the same paths under `/api/knowledge-banks`.
  */
 export function proxiedMediaUrl(apiPath: string): string {
   const path = apiPath.startsWith(API_PREFIX)
@@ -225,7 +226,7 @@ export function uploadKnowledgeFiles(
   });
 }
 
-/** The readable part of an API error body (`{detail}` from FastAPI, `{error}` from the proxy). */
+/** The readable part of an API error body (`{detail}` from FastAPI, `{error}` from a control-plane route). */
 export function errorMessage(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const { detail, error } = body as { detail?: unknown; error?: unknown };
