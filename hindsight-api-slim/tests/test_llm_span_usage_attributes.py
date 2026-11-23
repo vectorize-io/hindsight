@@ -32,12 +32,15 @@ def test_reported_usage_reaches_the_span():
 
     assert attrs["gen_ai.usage.input_tokens"] == 100
     assert attrs["gen_ai.usage.output_tokens"] == 20
-    assert attrs["gen_ai.usage.cached_tokens"] == 30
+    # Cached input goes under the semconv cache-read key, not a bespoke one that
+    # Langfuse adds on top of the (already inclusive) input count (#6446).
+    assert attrs["gen_ai.usage.cache_read.input_tokens"] == 30
+    assert "gen_ai.usage.cached_tokens" not in attrs
     assert attrs["gen_ai.usage.reasoning_tokens"] == 60
 
 
 def test_unreported_usage_adds_no_attribute():
     attrs = _record(input_tokens=100, output_tokens=20)
 
-    assert "gen_ai.usage.cached_tokens" not in attrs
+    assert "gen_ai.usage.cache_read.input_tokens" not in attrs
     assert "gen_ai.usage.reasoning_tokens" not in attrs

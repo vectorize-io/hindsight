@@ -115,6 +115,10 @@ class GenAIAttributes:
     # Token usage
     USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
     USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+    # Semconv key for the cached share of USAGE_INPUT_TOKENS (which includes it).
+    # Langfuse subtracts it from input; the old bespoke ``gen_ai.usage.cached_tokens``
+    # was counted on top instead, double-billing every cache hit (#6446).
+    USAGE_CACHE_READ_INPUT_TOKENS = "gen_ai.usage.cache_read.input_tokens"
 
     # Messages and prompts
     SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions"
@@ -524,7 +528,7 @@ class LLMSpanRecorder:
                 span.set_attribute(GenAIAttributes.USAGE_INPUT_TOKENS, input_tokens)
                 span.set_attribute(GenAIAttributes.USAGE_OUTPUT_TOKENS, output_tokens)
                 if cached_tokens:
-                    span.set_attribute("gen_ai.usage.cached_tokens", cached_tokens)
+                    span.set_attribute(GenAIAttributes.USAGE_CACHE_READ_INPUT_TOKENS, cached_tokens)
                 # Providers pass this alongside cached_tokens; without an explicit
                 # parameter it fell into **_extra and never reached the span, so the
                 # reasoning half of the billed output was invisible to OTel consumers.
