@@ -104,14 +104,22 @@ async def test_a_text_hit_comes_back_with_the_passages_around_it_as_the_budget_a
     sections[3] = "# Step 3\n\nOpen the valve slowly until the gauge reads green."
     await kb.ingest(knowledge_bank, [{"document_id": "manual", "text": "\n\n".join(sections)}])
 
-    r = await kb.search(knowledge_bank, query="open the valve until the gauge reads green")
+    # Traced, so a failure says which searches found what: this once came back without Step 0 (#6792)
+    # and never again in ~900 runs, so the next one must explain itself.
+    r = await kb.search(knowledge_bank, query="open the valve until the gauge reads green", trace=True)
+    trace = r.body["trace"]
+    why = {
+        "searches": {s["name"]: [h["index"] for h in s["results"]] for s in trace["candidate_searches"]},
+        "hits": [(h["index"], h["score"], h["outcome"]) for h in trace["hits"]],
+        "budget": trace["budget_steps"],
+    }
     hit = r.body["results"][0]
-    assert hit["document_id"] == "manual" and "Open the valve slowly" in hit["text"]
+    assert hit["document_id"] == "manual" and "Open the valve slowly" in hit["text"], why
     # The hit comes with a passage on each side; the rest of the manual comes back as results of their
     # own, each step once (a result no longer grows to take the whole document in).
-    assert "Step 2" in hit["text"] and "Step 4" in hit["text"] and "context" not in hit
+    assert "Step 2" in hit["text"] and "Step 4" in hit["text"] and "context" not in hit, why
     texts = [h["text"] for h in r.body["results"] if h["document_id"] == "manual"]
-    assert sorted(n for n in range(6) for t in texts if f"# Step {n}" in t) == list(range(6))
+    assert sorted(n for n in range(6) for t in texts if f"# Step {n}" in t) == list(range(6)), why
 
 
 async def test_a_traced_search_explains_its_words_its_candidates_and_how_the_budget_filled(kb, knowledge_bank):
