@@ -1,5 +1,9 @@
 {
   "title": "Memory Banks and Knowledge Banks",
+  "view": {
+    "width": 1448,
+    "height": 680
+  },
   "speed": 2400,
   "elements": [
     {
@@ -143,7 +147,9 @@
         "direction": "row",
         "gap": 90,
         "align": "center"
-      }
+      },
+      "x": 40,
+      "y": 40
     },
     {
       "id": "a-retain",

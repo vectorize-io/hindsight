@@ -1,5 +1,6 @@
 ---
 sidebar_position: 12
+toc_max_heading_level: 4
 ---
 
 import CodeSnippet from '@site/src/components/CodeSnippet';
@@ -161,22 +162,57 @@ The response has the same shape as a file ingest. `operation_ids` is empty when 
 </TabItem>
 </Tabs>
 
-| Field | Description | Default |
-|---|---|---|
-| `query` | Text to search with. | - |
-| `query_image` | A base64 image to search with. | - |
-| `query_video` | A base64 MP4 clip to search with. | - |
-| `budget` | `low`, `mid` or `high`: how many scored candidates stay in the running (50, 200, 500). | `mid` |
-| `max_tokens` | How much text the results can add up to, from 1 to 1,000,000. | `4096` |
-| `tags` | Only documents with these tags. | - |
-| `tags_match` | How `tags` match, as in memory recall: `any`, `all` (both keep untagged documents), `any_strict`, `all_strict`, `exact`. | `any` |
-| `tag_groups` | And/or/not groups of tag filters, as in memory recall. A leaf with `resolve: "fuzzy"` matches its tags against the bank's own. | - |
-| `document_ids` | Only these documents. | - |
-| `media_types` | Only these kinds: `document`, `image`, `audio`, `video`, `text`. | - |
-| `enable_reranking` | `false` keeps the search's own order. Unset or `true` reranks when the server has a [reranker for knowledge banks](../knowledge-banks#searching); without one, it does nothing. | - |
-| `trace` | Also return how the search ranked, step by step. | `false` |
+### Parameters
 
-Text, image and video can be sent together: they are embedded as one query. At least one is needed.
+#### query
+
+The text to search with. It drives both the search by meaning (it is embedded) and the search by keywords (its rare words are matched as they are, in any language). Send `query`, `query_image`, `query_video`, or any mix of them: at least one is needed.
+
+#### query_image
+
+A base64 image to search with: a photo of a part, a screenshot, a page. Alone, it finds the pages, images and clips that look like it. With a `query`, the two are embedded together as one query. Needs an embedder that reads images: with one that doesn't, the search fails with `415`.
+
+#### query_video
+
+A base64 MP4 clip to search with, alone or with text and an image, embedded together as one query. Needs an embedder that reads video: with one that doesn't, the search fails with `415`.
+
+#### budget
+
+How deep the search ranks before `max_tokens` picks the results: `low`, `mid` (default) or `high`, keeping the best 50, 200 or 500 scored candidates. A higher budget reaches further down the list but takes longer, as in memory recall.
+
+#### max_tokens
+
+How much text the results can add up to, from 1 to 1,000,000. Defaults to `4096`. The best hits go in first, each text hit with the passages around it, so you get the paragraph rather than a cut sentence. Any budget left over widens the best hits a little more. An image, page or clip costs a small fixed amount plus its text. Set it to however much of your context window the documents should take.
+
+#### tags
+
+Only documents with these tags, matched as memory recall matches memory tags. See [`tags` in recall](./recall#tags) for how each mode treats untagged documents.
+
+#### tags_match
+
+How `tags` match: `any` (default: any of the tags, untagged documents included), `all` (every tag, untagged included), `any_strict` and `all_strict` (the same, untagged documents left out), or `exact` (exactly these tags). With `exact` and no tags, only untagged documents match.
+
+#### tag_groups
+
+And/or/not groups of tag filters, as memory recall takes them (see [`tag_groups` in recall](./recall#tag_groups)). The groups in the list must all match. A leaf with `resolve: "fuzzy"` matches its tags against the bank's own tags by similarity, so a typo still finds them.
+
+#### document_ids
+
+Only these documents. Useful to search inside one manual, or the files a user picked.
+
+#### media_types
+
+Only these kinds of passage: `document` (PDF pages), `image`, `audio`, `video` or `text`. Leave it out to search them all.
+
+#### enable_reranking
+
+`false` keeps the search's own order and skips the reranker. Leave it out (or `true`) to rerank the best hits when the server has a [reranker for knowledge banks](../knowledge-banks#searching); without one, it does nothing.
+
+#### trace
+
+`true` also returns how the search ranked, step by step: every candidate and its score, the keywords used, what the budget kept, and how long each step took. See [Trace](#trace) below.
+
+### Response
 
 ```json
 {
@@ -317,7 +353,38 @@ With the CLI (`cancel`, `retry` and `delete` take the same arguments as `get`):
 
 ## Settings
 
-A bank can change how its files are split. See [Per-Bank Settings](../knowledge-banks#per-bank-settings) for every field.
+A bank can change how its files are split, and nothing else: the embedder, keys, search and server limits stay the server's. A change applies to files ingested after it: ingesting an unchanged file again splits it with the new settings.
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="bank-config" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="bank-config" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
+<CodeSnippet code={kbSh} section="bank-config" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={kbGo} section="bank-config" language="go" />
+</TabItem>
+<TabItem value="http" label="HTTP">
+<CodeSnippet code={kbHttpSh} section="bank-config" language="bash" />
+</TabItem>
+</Tabs>
+
+| Setting | What it changes | Range |
+|---|---|---|
+| `text_passage_tokens` | size of a text passage | 16–8192 |
+| `pdf_page_pixels` | longest side of a rendered PDF page | 256–8192 |
+| `pdf_bands` | also embed three horizontal strips of each PDF page: slightly better search, half the ingest speed | `true` / `false` |
+| `image_tokens` | how much detail the embedder reads from each image | 70–1120 |
+| `audio_window_seconds` | length of an audio window | 1–3600 |
+| `video_window_seconds` | length of a video window | 1–3600 |
+| `media_overlap_seconds` | overlap between windows | 0 to half the shorter window |
+| `max_media_seconds` | longest audio or video file accepted | up to the server's limit |
+| `max_pdf_pages` | longest PDF accepted | up to the server's limit |
+| `disabled_media_types` | kinds of file this bank refuses | `document`, `image`, `audio`, `video`, `text` |
 
 | Call | What it does |
 |---|---|
@@ -327,7 +394,7 @@ A bank can change how its files are split. See [Per-Bank Settings](../knowledge-
 
 `PATCH` and `DELETE` need `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` on.
 
-With the CLI (`set-config` is shown under [Per-Bank Settings](../knowledge-banks#per-bank-settings)):
+With the CLI, to see the settings or undo changes:
 
 <CodeSnippet code={kbSh} section="settings" language="bash" />
 

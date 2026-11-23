@@ -89,7 +89,7 @@ Text, and the text of Office and web files, is split by its structure first:
 
 Each passage is an exact slice of the original text, in order. It's embedded under its document's title: the title from its file name, or its first 40 words when the name gives none. So a clear file name helps search find the right document.
 
-A small passage alone loses what its page says about it: a table's rows without the table's title, or the company named only in the footer. So each passage also gets a **window**: the consecutive passages around it, up to 2048 tokens, embedded once as one more vector shared by every passage in it. Search finds a passage by its own vector or its window's, whichever is closer, and still returns the small passage. On ViDoRe V3's markdown subsets the window raised nDCG@10 by up to 7 points (finance: 54.1 → 61.0).
+A small passage alone loses what its page says about it: a table's rows without the table's title, or the company named only in the footer. So each passage also gets a **window**: the consecutive passages around it, up to 2048 tokens, embedded once as one more vector shared by every passage in it. Search finds a passage by its own vector or its window's, whichever is closer, and still returns the small passage.
 
 ---
 
@@ -173,178 +173,37 @@ curl -X PATCH "$HINDSIGHT_URL/v1/default/banks/support-agent/config" \
   -d '{"updates": {"knowledge_banks": ["product-manuals"]}}'
 ```
 
-From then on, when [reflect](./reflect.md) searches its memories, it also searches every linked knowledge bank at the same time, with the same search as above. Each bank's best hits are taken in turn, within the same `max_tokens`. The passages reach the agent next to the memories, marked as documents. **When a document and a memory disagree, the document wins**: the agent is told to answer from the document and say the memory is out of date.
+From then on, when [reflect](./reflect.md) searches its memories, it also searches every linked knowledge bank. The passages reach the agent next to the memories, marked as documents, and filtered by the same tags as the reflect. **When a document and a memory disagree, the document wins**: the agent answers from the document and says the memory is out of date.
 
-How reflect searches them:
-
-| Setting | What it does | Default |
-|---|---|---|
-| `reflect_kb_search_apply_tags` | Filter the documents by the reflect's `tags`, `tags_match` and `tag_groups`, with the same rules as its memories. `false` searches every document. | `true` |
-| `reflect_kb_search_media_types` | The kinds of passage the search may return. | all |
-| `reflect_kb_search_budget` | The search's `budget`. Server-wide. | `mid` |
-| `reflect_kb_search_images` | Show the model the picture behind an image or PDF page hit, when the model reads images (`HINDSIGHT_API_LLM_VISION`). Server-wide. | `true` |
-| `reflect_kb_search_max_images` | The most pictures one search hands the model. Server-wide. | `4` |
-
-Each is also a server setting (`HINDSIGHT_API_REFLECT_KB_SEARCH_*`). With `HINDSIGHT_API_DECISION_MODEL_VISION` on, the [decision model](./decision-models.md) also sees those pictures when it checks whether the evidence already answers the question.
-
-If a linked bank can't be searched (it was deleted, or the caller may not read it), reflect skips it and goes on with the memories.
-
-A link only reaches reflect:
-
-- **Recall** over HTTP does not return documents.
-- **Consolidation and mental model refreshes** never read them, so a manual is never folded into the bank's memories.
-- **Exporting** a memory bank exports the link, not the knowledge bank's documents.
-
-Permissions are checked for the caller of the reflect, not for a background job: a caller who can't read a linked knowledge bank doesn't get its passages.
+The link only reaches reflect. Recall doesn't return documents, and consolidation never reads them, so a manual is never folded into the bank's memories. How reflect searches linked banks can be tuned with the `HINDSIGHT_API_REFLECT_KB_SEARCH_*` settings in [Configuration](./configuration.md#reflect).
 
 ---
 
-## Choosing an Embedder
+## Images, Audio and Video
 
-One embedder serves every knowledge bank on a server. What it can embed decides which kinds of files you can ingest.
+A knowledge bank isn't limited to text. Every passage, whatever it came from, goes through the same embedding model, into one space:
 
-| Provider | Model (default) | Text | Image | Audio | Video |
-|---|---|:-:|:-:|:-:|:-:|
-| `local` (default) | `google/embeddinggemma-2`, in-process, open weights | ✓ | ✓ | ✓ | ✓ |
-| `gemini` | `gemini-embedding-2` | ✓ | ✓ | ✓ | ✓ |
-| `vertex` | `gemini-embedding-2` on Vertex AI | ✓ | ✓ | ✓ | ✓ |
-| `voyage` | `voyage-multimodal-3.5` | ✓ | ✓ | | ✓ |
-| `cohere` | `embed-v4.0` | ✓ | ✓ | | |
-| `openai` | any OpenAI-compatible `/v1/embeddings` server | set with `..._MODALITIES` (default `text,image`) | | | |
-| `text` | any [memory bank embeddings provider](./models.md#embedding-model), text only | ✓ | | | |
+- **Ask in text, find a picture or a clip.** A question can land on a chart in a PDF, a photo, or the 2:40 mark of a training video.
+- **Search with an image or a clip.** Send a photo of a part, or a short video, and get back the pages and clips that look like it.
+- **Results point to the moment.** A PDF hit points to its page and an audio or video hit to its seconds. The API streams just that page or clip.
+- **Reflect sees the pictures.** When the reflect model can read images, a page or image hit from a linked knowledge bank reaches it as the picture, not only its text.
 
-- A file the embedder can't embed is refused: a text-only model refuses video. A PDF is embedded from its text layer alone when the model takes no images.
-- `vertex` uses the memory banks' Vertex project, region and credentials. `text` uses the memory banks' own embedder, or its own one set with `HINDSIGHT_API_KB_TEXT_EMBEDDINGS_*` (each takes the same values as the `HINDSIGHT_API_EMBEDDINGS_*` setting of the same name).
-- **Pick the embedder before you ingest.** The first time it runs, the server fixes the vector size for every knowledge bank. To switch to a model with another size, delete the knowledge banks and ingest again: the server refuses to start knowledge banks with vectors of two sizes.
-
-```bash
-# Gemini Embedding 2 instead of the in-process model
-export HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER=gemini
-export HINDSIGHT_API_KB_EMBEDDINGS_API_KEY=...
-```
-
----
-
-## Per-Bank Settings
-
-A knowledge bank can change how its files are split, and nothing else: the embedder, keys, search weights and server limits stay the server's.
-
-### Python
-
-```python
-await kb.update_knowledge_bank_config(
-    "product-manuals",
-    KnowledgeBankConfigUpdate(updates={"text_passage_tokens": 256, "disabled_media_types": ["video"]}),
-)
-```
-
-### Node.js
-
-```javascript
-await sdk.updateKnowledgeBankConfig({
-    client: apiClient,
-    path: { bank_id: 'product-manuals' },
-    body: { updates: { text_passage_tokens: 256, disabled_media_types: ['video'] } },
-    throwOnError: true,
-});
-```
-
-### CLI
-
-```bash
-hindsight kb set-config product-manuals \
-  --set text_passage_tokens=256 \
-  --set 'disabled_media_types=["video"]'
-```
-
-### Go
-
-```go
-_, _, err = client.KnowledgeBanksAPI.UpdateKnowledgeBankConfig(ctx, "product-manuals").
-	KnowledgeBankConfigUpdate(hindsight.KnowledgeBankConfigUpdate{
-		Updates: map[string]interface{}{
-			"text_passage_tokens":  256,
-			"disabled_media_types": []string{"video"},
-		},
-	}).
-	Execute()
-```
-
-### HTTP
-
-```bash
-curl -X PATCH "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" \
-  -H "Content-Type: application/json" \
-  -d '{"updates": {"text_passage_tokens": 256, "disabled_media_types": ["video"]}}'
-```
-
-| Setting | What it changes | Range |
-|---|---|---|
-| `text_passage_tokens` | size of a text passage | 16–8192 |
-| `pdf_page_pixels` | longest side of a rendered PDF page | 256–8192 |
-| `pdf_bands` | also embed three horizontal strips of each PDF page: slightly better search, half the ingest speed | `true` / `false` |
-| `image_tokens` | how much detail the embedder reads from each image | 70–1120 |
-| `audio_window_seconds` | length of an audio window | 1–3600 |
-| `video_window_seconds` | length of a video window | 1–3600 |
-| `media_overlap_seconds` | overlap between windows | 0 to half the shorter window |
-| `max_media_seconds` | longest audio or video file accepted | up to the server's limit |
-| `max_pdf_pages` | longest PDF accepted | up to the server's limit |
-| `disabled_media_types` | kinds of file this bank refuses | `document`, `image`, `audio`, `video`, `text` |
-
-A `null` value goes back to the server's setting, and `DELETE .../config` resets them all. A change applies to files ingested after it: ingesting an unchanged file again splits it with the new settings. Writes need `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` on, the same switch as memory bank config.
-
----
-
-## Configuration
-
-Knowledge banks are on by default; `HINDSIGHT_API_ENABLE_KB=false` turns them off (their endpoints answer `404`, reflect ignores linked knowledge banks and the control plane hides them). Every setting starts with `HINDSIGHT_API_KB_`: the embedder, file limits, split sizes, search weights, the rerank and ingest workers. The full list is in [Configuration](./configuration.md#knowledge-banks); the split settings can also be changed [per bank](#per-bank-settings).
-
----
-
-## Extending It
-
-### Ingestion Strategies
-
-An ingestion strategy runs your own code on some file types before the knowledge bank splits them: unpack an archive, run OCR on scanned PDFs, cut a file format the bank doesn't know. A strategy maps file types (an extension or a content type) to an extension class:
-
-```bash
-export HINDSIGHT_API_KB_INGEST_STRATEGIES='{
-  "uploads": {
-    ".zip": {"extension": "acme.archive:Unpack"},
-    ".pdf": {"extension": "acme.ocr:OcrPdf", "settings": {"dpi": 300}}
-  }
-}'
-```
-
-An ingest picks a strategy with `strategy` on each item, or gets `HINDSIGHT_API_KB_INGEST_DEFAULT_STRATEGY`. A file whose type the strategy doesn't map is split as usual.
-
-For each file, the extension returns either **files**, each ingested as its own document of the same bank (`<document_id>/<name>`, which records the document it came from), or **passages** already cut, which are embedded as they are. It runs on the worker with the ingest's retries: a `ValueError` fails the document for good, any other error is retried. Raise its `version` to make unchanged files go through it again.
-
-### Your Own Store
-
-Documents and passages live in Postgres by default, in their own tables with a pgvector index. To keep them somewhere else, implement `KnowledgeStore` (`hindsight_api/knowledge/store.py`) and set `HINDSIGHT_API_KB_STORE_EXTENSION=module.path:ClassName`. The bank itself always stays in the `banks` table, so operations, audit and bank deletion work the same.
+Which kinds of file a server takes depends on its embedder. The default, EmbeddingGemma 2, runs inside the server and reads text, images, audio and video. A text-only embedder takes text, and PDFs through their text layer. See [Configuration](./configuration.md#knowledge-banks) for the embedders and their settings.
 
 ---
 
 ## Over MCP
 
-Connect an agent to `/mcp/kb/{bank_id}/` and it gets that knowledge bank's tools: search, text ingest, and listing, reading and deleting documents and tags. The multi-bank endpoint `/mcp/` has the same tools with a `bank_id` argument, plus listing and creating knowledge banks. See [Knowledge-Bank Tools](./mcp-server.md#knowledge-bank-tools).
+Connect an agent to `/mcp/kb/{bank_id}/` and it can search that knowledge bank, add text to it, and read its documents. See [Knowledge-Bank Tools](./mcp-server.md#knowledge-bank-tools).
 
 ---
 
-## In the Control Plane
+## Per-Bank Settings
 
-With knowledge banks on, the control plane lists them next to memory banks. Each knowledge bank has:
-
-- a home page with its documents and passages over time;
-- a documents list, where you can upload files or text, open a document to see its passages, and download the original;
-- a search panel that takes text, an image or an MP4 clip, shows each result's page or clip, and the full trace;
-- settings, with the bank's ingest operations and its [per-bank settings](#per-bank-settings).
-
-A memory bank's settings show the knowledge banks it links, where you can add or remove them.
+Each knowledge bank can change how its own files are split: the size of a text passage, the resolution of PDF pages, the length of audio and video windows, and which kinds of file it accepts. Everything else (the embedder, search, server limits) is the server's. See [Settings](./api/knowledge-banks.md#settings) in the API reference for every field.
 
 ---
 
-## Deleting
+## Ingestion Strategies
 
-Deleting a document removes its passages, its stored file, and any documents an [ingestion strategy](#ingestion-strategies) split out of it. Deleting a knowledge bank first cancels its queued and running ingests, then removes its documents in batches, so a bank with a hundred thousand documents deletes without timing out. Memory banks that link a deleted knowledge bank keep working; reflect skips the missing bank.
+An ingestion strategy runs your own code on some file types before a knowledge bank splits them: unpack an archive, run OCR on scanned PDFs, or read a file format the bank doesn't know. Your code returns either more files, each ingested as its own document, or passages already cut. You set strategies up on the server (see [Configuration](./configuration.md#knowledge-banks)), and each ingest can pick one by name.
