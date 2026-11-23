@@ -1145,3 +1145,21 @@ def test_lost_session_names_the_refresh_error_that_cleared_it(tmp_path):
     _write(tmp_path, _credential(access_token=None, refresh_token=None, last_auth_error="invalid_grant"))
     with pytest.raises(auth.ChatGPTLoginRequiredError, match="last token refresh failed with invalid_grant"):
         auth.ChatGPTAuth.from_home(tmp_path)
+
+
+async def test_a_content_filter_block_is_a_refusal_sent_once(make_llm):
+    """#6503: a stream that ends incomplete on the content filter is permanent, not retried."""
+    from hindsight_api.engine.llm_interface import ProviderContentPolicyError
+
+    blocked = _sse(
+        {
+            "type": "response.incomplete",
+            "sequence_number": 1,
+            "response": _response([], status="incomplete", incomplete_details={"reason": "content_filter"}),
+        }
+    )
+    upstream = _Upstream([(200, blocked)])
+    llm = await make_llm(upstream)
+    with pytest.raises(ProviderContentPolicyError):
+        await llm.call(messages=[{"role": "user", "content": "hi"}], max_retries=2)
+    assert len(upstream.requests) == 1

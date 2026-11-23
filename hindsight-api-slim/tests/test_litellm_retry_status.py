@@ -52,3 +52,21 @@ async def _attempts(monkeypatch: pytest.MonkeyPatch, error: Exception) -> int:
 )
 async def test_retry_follows_status_code(monkeypatch, make_error, expected_attempts):
     assert await _attempts(monkeypatch, make_error()) == expected_attempts
+
+
+async def test_a_content_filter_block_is_a_refusal_sent_once(monkeypatch):
+    """#6503: an empty content_filter answer is permanent, so it is not retried."""
+    from hindsight_api.engine.llm_interface import ProviderContentPolicyError
+
+    provider = LiteLLMLLM(provider="litellm", api_key="unused", base_url="http://localhost:0/v1", model="m")
+    calls = 0
+
+    async def _blocked(**kwargs):
+        nonlocal calls
+        calls += 1
+        return litellm.ModelResponse(choices=[{"message": {"content": None}, "finish_reason": "content_filter"}])
+
+    monkeypatch.setattr(provider, "_acompletion", _blocked)
+    with pytest.raises(ProviderContentPolicyError):
+        await provider.call(messages=[{"role": "user", "content": "hi"}], max_retries=2, initial_backoff=0.0)
+    assert calls == 1

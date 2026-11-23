@@ -262,8 +262,9 @@ class ChatGPTLLM(OpenAIResponsesLLM):
                 elif kind == "response.incomplete":
                     response = event.response
                     reason = getattr(response.incomplete_details, "reason", None)
-                    if reason == "max_output_tokens":
-                        return response  # the parent maps this to OutputTooLongError
+                    if reason in ("max_output_tokens", "content_filter"):
+                        # The parent maps these to OutputTooLongError / ProviderContentPolicyError.
+                        return response
                     raise ChatGPTRequestError(f"ChatGPT plan response incomplete ({label}): {reason}")
                 elif kind in ("response.failed", "error"):
                     error = event.response.error if kind == "response.failed" else event

@@ -59,7 +59,7 @@ from hindsight_api.config import (
 )
 from hindsight_api.engine.aiohttp_session import LoopLocalSession
 from hindsight_api.engine.cache_affinity import XAI_CONV_ID_HEADER, cache_affinity_id
-from hindsight_api.engine.llm_interface import LLMInterface
+from hindsight_api.engine.llm_interface import LLMInterface, ProviderContentPolicyError
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
 from hindsight_api.engine.llm_transport import build_aiohttp_timeout
 from hindsight_api.engine.providers.openai_compatible_llm import _strip_code_fences, record_retried_attempt
@@ -883,6 +883,12 @@ class XaiOAuthLLM(LLMInterface):
             )
         choice = completion.choices[0]
         content = choice.message.content if choice.message is not None else None
+        if not content and choice.finish_reason == "content_filter":
+            # A content block is permanent: fail once, don't retry (#6503).
+            raise ProviderContentPolicyError(
+                f"{_actual_host(self.base_url)} blocked the request (model={self.model}, scope={scope}, "
+                "finish_reason=content_filter); not retrying"
+            )
         if not content:
             raise _UpstreamStatusError(
                 f"{_actual_host(self.base_url)} returned empty message content (model={self.model}, scope={scope}, "
