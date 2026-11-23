@@ -26,11 +26,15 @@ import TabItem from '@theme/TabItem';
 
 ## Why memory
 
+<ThemedImage alt={"A memory bank turns a chat into facts and observations that update"} sources={{light: "/img/blog/knowledge-banks/why-memory-light.png", dark: "/img/blog/knowledge-banks/why-memory-dark.png"}} />
+
 A memory bank is built to change its mind. Retain sends what your agent hears to an LLM, which pulls out facts, people and dates. Consolidation folds them into observations, and updates them when something new comes in. Ask about a customer and you get what's true about them now, not a pile of old chat logs.
 
 That's exactly right for a person's history. It's wrong for a manual. A manual sent through retain comes out as loose facts, cut from the page they were on. A newer chat message can quietly outweigh the warranty terms. And the LLM reads every page on the way in, which costs money and loses whatever it gets wrong.
 
 ## Why knowledge
+
+<ThemedImage alt={"A knowledge bank splits files into passages and returns the page or the second"} sources={{light: "/img/blog/knowledge-banks/why-knowledge-light.png", dark: "/img/blog/knowledge-banks/why-knowledge-dark.png"}} />
 
 A knowledge bank does the opposite: it never changes what you give it. A PDF stays a PDF, one passage per page, as image and text. A video is split into short clips. A search returns the paragraph with the text around it, and points to its page or its second in the original file. Nothing is summarised or rewritten, and no LLM reads it at ingest.
 
@@ -38,11 +42,15 @@ That's exactly right for a manual. It's wrong for a person. A knowledge bank doe
 
 ## Why together
 
+<ThemedImage alt={"One reflect call combines Lukas's version from memory with the support policy from the manual"} sources={{light: "/img/blog/knowledge-banks/why-together-light.png", dark: "/img/blog/knowledge-banks/why-together-dark.png"}} />
+
 Most real questions need both. "Does my server still get updates?" needs the customer's version, which is in memory, and the support policy, which is in the manual. "How long do you keep my activity log?" has one answer in the manual, and a different one for Amara, whose account has an approved exception.
 
 So link them. Add a knowledge bank to a memory bank's config, and reflect searches both at once. The exception note is tagged to Amara, so her question finds it and every other customer's question doesn't. On the benchmark below, that's the difference between 61% and 83% on exceptions.
 
 ### Isn't this just RAG next to memory?
+
+<ThemedImage alt={"A vector store next to memory, against a knowledge bank linked to a memory bank"} sources={{light: "/img/blog/knowledge-banks/rag-vs-link-light.png", dark: "/img/blog/knowledge-banks/rag-vs-link-dark.png"}} />
 
 You could put a vector store beside your memory and search both. Three things make a link different:
 
@@ -60,11 +68,7 @@ We ran it three ways, with the same model (Gemma 4 26B) answering through reflec
 - **All in a knowledge bank:** everything is kept as documents.
 - **Together:** the chats go into the memory bank, and the manuals and exception notes go into a linked knowledge bank.
 
-| Setup | All (114) | Manual only (26) | Manual + chat history (26) | Chat contradicts manual (26) | Approved exception (36) |
-|---|---|---|---|---|---|
-| All in memory | 74.6% | 81% | 69% | 73% | 75% |
-| All in a knowledge bank | 71.1% | 96% | 62% | 69% | 61% |
-| **Together** | **85.1%** | **100%** | **85%** | 73% | **83%** |
+<ThemedImage alt={"SupportBench scores by kind of question for the three setups"} sources={{light: "/img/blog/knowledge-banks/supportbench-categories-light.png", dark: "/img/blog/knowledge-banks/supportbench-categories-dark.png"}} />
 
 Each setup fails where you'd expect. All in memory loses the manual's exact wording (81% on questions the manual alone answers). All in a knowledge bank keeps the manual but can't put a customer's history together (62% when an answer needs both, 61% on exceptions). Together gets both. The one place it doesn't help is a chat that contradicts the manual: 73%, the same as memory alone (19 of 26).
 
@@ -109,6 +113,8 @@ Two customers ask the exact same question, and only Amara has an exception. Both
 
 ## How it works
 
+<ThemedImage alt={"Ingest splits each kind of file; search runs by meaning and rare words, reranks and fills the token budget"} sources={{light: "/img/blog/knowledge-banks/how-it-works-light.png", dark: "/img/blog/knowledge-banks/how-it-works-dark.png"}} />
+
 **Ingest: every file split its own way, then embedded as it is.** A PDF becomes one passage per page: the page as an image, and its text layer next to it (a scanned page has no text layer and is found by its picture). Audio and video become short overlapping clips. Text and Office files become passages that keep a heading with the content under it. Every passage goes through the same embedding model, so a question in text can land on a page image or the 2:40 mark of a video. Nothing is OCR'd, summarised or rewritten.
 
 **Search: meaning, the rare words, then a token budget.** A search runs two searches side by side: one by meaning, and one by the query's rare words ("X200", a policy number, a name), in any language. Every candidate is scored from all its vectors, keyword matches are mixed in, a reranker can reorder the top ones, and the best hits come back with the text around them until your `max_tokens` is full. Your agent gets the paragraph, not a cut sentence, and every result points to its page or its second in the original file.
@@ -131,24 +137,9 @@ Eight sets of real enterprise documents (HR, finance in English and French, phar
 
 We ran it two ways. From the **raw PDFs**, the server reads and splits every file itself. From the **page text** the dataset ships, every page is already plain text.
 
-| Raw PDFs | nDCG@10 |
-|---|---|
-| Mixedbread + reranker | 69.5 |
-| **Hindsight knowledge bank** | **68.0** |
-| Cohere Embed 4 + Rerank 4 Pro | 67.4 |
-| Mixedbread | 64.2 |
-| Voyage Multimodal 3.5 | 57.5 |
-| Gemini Embedding 2 | 48.5 |
+<ThemedImage alt={"ViDoRe V3 raw PDFs, nDCG@10: Mixedbread with reranker 69.5, Hindsight 68.0, Cohere Embed 4 with Rerank 4 Pro 67.4"} sources={{light: "/img/blog/knowledge-banks/bench-vidore-pdf-light.png", dark: "/img/blog/knowledge-banks/bench-vidore-pdf-dark.png"}} />
 
-| Page text | nDCG@10 |
-|---|---|
-| Mixedbread + reranker | 69.9 |
-| **Hindsight knowledge bank** | **66.2** |
-| Mixedbread | 62.3 |
-| Voyage 4 Large | 60.6 |
-| Gemini Embedding 2 | 58.7 |
-| Cohere Embed 4 | 56.6 |
-| OpenAI text-embedding-3-large | 51.2 |
+<ThemedImage alt={"ViDoRe V3 page text, nDCG@10: Mixedbread with reranker 69.9, Hindsight 66.2, Mixedbread 62.3"} sources={{light: "/img/blog/knowledge-banks/bench-vidore-text-light.png", dark: "/img/blog/knowledge-banks/bench-vidore-text-dark.png"}} />
 
 A knowledge bank does better on the raw PDFs than on the clean text, because it reads each page as an image as well as its text. Mixedbread with its reranker stays ahead on both.
 
@@ -156,15 +147,7 @@ A knowledge bank does better on the raw PDFs than on the clean text, because it 
 
 776 questions over 714 contracts (NDAs, M&A agreements, commercial contracts, privacy policies): the benchmark's official mini set. The score is the share of the exact text lawyers marked that the top 5 results contain.
 
-| System | Recall@5 |
-|---|---|
-| **Hindsight knowledge bank** | **87.2** |
-| Conare | 85.4 |
-| Voyage context-3 | 63.7 |
-| Cohere Embed v5 + Rerank v5 Pro | 49.4 |
-| OpenAI file search | 47.8 |
-| NVIDIA Nemotron 3.5 Embed 8B | 44.5 |
-| Qwen3 Embedding 8B | 42.5 |
+<ThemedImage alt={"LegalBench-RAG mini, recall@5: Hindsight 95.0 with file names and 87.2 without, Conare 85.4"} sources={{light: "/img/blog/knowledge-banks/bench-legalbench-light.png", dark: "/img/blog/knowledge-banks/bench-legalbench-dark.png"}} />
 
 This metric rewards returning more text, so here is how much we return: the search runs at the API's default 4,096-token budget, and the 5 results average about 3,800 tokens, about what 5 chunks of a typical RAG setup hold. The other systems ran without the contracts' file names, so this is our score without them too. With the file names, which a real contract store would have, a knowledge bank reaches **95.0**. Competitor numbers are from [Conare's table](https://conare.ai/benchmarks), as of 9 November 2026.
 
@@ -172,20 +155,15 @@ This metric rewards returning more text, so here is how much we return: the sear
 
 Four years of one person's data: 3,759 photos, 533 videos and 6,742 emails, and 1,013 questions about them. A knowledge bank finds **93.1%** of the evidence in its top 10 results, above every entry on the [ATM-Bench leaderboard](https://atmbench.github.io/leaderboard.html) (we haven't submitted there yet).
 
-| System | Recall@10 |
-|---|---|
-| **Hindsight knowledge bank** | **93.1** |
-| Memexa v2* | 92.3 |
-| RE-call | 90.1 |
-| Graphon V1 | 90.0 |
-| Memexa | 79.1 |
-| ATM-RAG (paper baseline) | 68.7 |
+<ThemedImage alt={"ATM-Bench, recall@10: Hindsight 93.1, Memexa v2 92.3, RE-call 90.1"} sources={{light: "/img/blog/knowledge-banks/bench-atm-light.png", dark: "/img/blog/knowledge-banks/bench-atm-dark.png"}} />
 
 Each photo and video goes in twice: as the raw file, and as the text record the benchmark ships with it (time, place, caption, OCR, tags). A hit on either counts. Memexa v2 and Graphon V1, the closest behind, run an LLM over every item to build their memory. A knowledge bank runs no LLM of its own: it embeds the files and the records as they come.
 
-\* Memexa v2's recall counts the items it passes to its answer model, which may not be the same cut as a top 10.
+Memexa v2's recall counts the items it passes to its answer model, which may not be the same cut as a top 10.
 
 ## A fraction of the cost
+
+<ThemedImage alt={"LLM cost to fill, hosted search price, and Hindsight Inference prices"} sources={{light: "/img/blog/knowledge-banks/cost-light.png", dark: "/img/blog/knowledge-banks/cost-dark.png"}} />
 
 **Filling it: no LLM.** A knowledge bank costs only the embedding. On the support benchmark, putting the manuals into a memory bank cost **$0.95** in LLM calls, because retain reads every page. With the manuals in a knowledge bank and only the chats in memory, it cost **$0.34**: about 3× cheaper, and it scored higher. The linked setup sends the agent more context, so a question costs more: $0.00059 against $0.00031 with memory alone. On LLM spend, memory alone only catches up after about 2,200 questions.
 
