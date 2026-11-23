@@ -19494,6 +19494,12 @@ class MemoryEngine(MemoryEngineInterface):
                                 "operations for the reason each was dropped."
                             )
                 except Exception as exc:
+                    # A provider that is rate-limited or down answers later: let it escape
+                    # as itself, so the refresh fails as temporary and does not pause
+                    # automatic refresh — the same verdict the reflect loop gets (#6674).
+                    # Turned into ``delta_ops_failed`` it lost its type and paused the model.
+                    if is_transient_remote_error(exc) or isinstance(exc, ProviderRateLimitResetError):
+                        raise
                     logger.warning(
                         f"[MENTAL_MODELS] Structured delta failed for {mental_model_id} "
                         f"({exc}); delta operations were not applied"

@@ -249,6 +249,33 @@ async def test_a_failed_gated_edit_says_why(memory, request_context, gated, monk
     assert preserved["reflect_response"]["refresh_skipped"] == "delta_ops_failed"
 
 
+class _ProviderStatusError(Exception):
+    """A provider SDK error carrying an HTTP status, like openai's APIStatusError."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"provider answered {status_code}")
+        self.status_code = status_code
+
+
+async def test_a_rate_limited_edit_fails_as_temporary_and_does_not_pause(memory, request_context, gated, monkeypatch):
+    """#6674: a 429 on the delta edit was turned into ``delta_ops_failed``, which lost the
+    error's type and paused automatic refresh. The same 429 in reflect does not pause."""
+    page = await _page_with_new_memories(memory, request_context)
+
+    async def rate_limited(*, messages, **kwargs):
+        raise _ProviderStatusError(429)
+
+    monkeypatch.setattr(memory._mental_model_refresh_llm_config, "call", rate_limited)
+    with pytest.raises(_ProviderStatusError):
+        await memory._handle_refresh_mental_model({"bank_id": page.bank_id, "mental_model_id": page.mm_id})
+
+    assert await memory._automatic_refresh_paused(page.bank_id, page.mm_id) is False
+    preserved = await memory.get_mental_model(
+        bank_id=page.bank_id, mental_model_id=page.mm_id, request_context=request_context
+    )
+    assert preserved["content"] == "# Preferences\n\nThe user prefers concise answers.\n"
+
+
 async def test_the_store_lists_new_memories_in_the_page_scope(memory: MemoryEngine, request_context):
     """The gate's read: the watermark's scope and window, oldest first, capped."""
     bank_id = f"test-delta-gate-scope-{uuid.uuid4().hex[:8]}"
