@@ -126,6 +126,24 @@ def extension_schema(conn: _Executable, name: str) -> str | None:
     return installed.schema if installed else None
 
 
+def stranded_extension_schemas(conn: _Executable, exclude: tuple[str, ...]) -> list[str]:
+    """Schemas outside ``exclude`` that still hold a managed extension.
+
+    The extension landed there because relocation failed (the migration role
+    does not own it — common on managed Postgres, where an admin role owns a
+    dedicated ``extensions`` schema) or because its control file pins it. Migrations add
+    these to ``search_path`` so ``VECTOR(...)`` and friends still resolve (#6662).
+    """
+    rows = conn.execute(
+        text(
+            "SELECT DISTINCT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace "
+            "WHERE e.extname = ANY(:names) AND n.nspname <> ALL(:exclude) ORDER BY 1"
+        ),
+        {"names": list(MANAGED_EXTENSIONS), "exclude": list(exclude)},
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
 def relocate_extension_to_public(conn: _Transactional, name: str) -> bool:
     """Move a misplaced extension into ``public``; return True if it moved.
 
