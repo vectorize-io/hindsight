@@ -198,29 +198,62 @@ def test_reasoning_effort_the_cli_rejects_is_not_sent(caplog):
         provider = _instantiate_provider(reasoning_effort="none")
     assert "CLAUDE_CODE_EFFORT_LEVEL" not in provider._env
     assert "reasoning_effort='none' is ignored" in caplog.text
+    assert "accepts high, low, max, medium, xhigh" in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_settings_file_is_passed_to_cli(monkeypatch):
-    """HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS reaches the CLI as --settings, isolation intact (issue #6500)."""
+@pytest.fixture
+def settings_env(monkeypatch):
+    """Set HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS for one test, with a fresh config read."""
     from hindsight_api.config import clear_config_cache
 
-    monkeypatch.setenv("HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS", "/etc/hindsight/claude-settings.json")
-    clear_config_cache()
-    try:
-        options = await _captured_options(monkeypatch, _instantiate_provider())
-    finally:
-        monkeypatch.delenv("HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS")
+    def _set(value: str | None) -> None:
+        if value is None:
+            monkeypatch.delenv("HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS", raising=False)
+        else:
+            monkeypatch.setenv("HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS", value)
         clear_config_cache()
-    assert options.settings == "/etc/hindsight/claude-settings.json"
-    _assert_isolation(options)
+
+    yield _set
+    monkeypatch.delenv("HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS", raising=False)
+    clear_config_cache()
 
 
 @pytest.mark.asyncio
-async def test_no_settings_file_by_default(monkeypatch):
-    monkeypatch.delenv("HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS", raising=False)
-    from hindsight_api.config import clear_config_cache
+async def test_settings_file_is_passed_to_cli(monkeypatch, settings_env, tmp_path):
+    """HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS reaches the CLI as --settings, isolation intact (issue #6500)."""
+    settings_file = tmp_path / "claude-settings.json"
+    settings_file.write_text('{"apiKeyHelper": "/usr/local/bin/get-key"}')
+    settings_env(str(settings_file))
 
-    clear_config_cache()
+    provider = _instantiate_provider(api_key="sk-ant-oat01-x")
+    options = await _captured_options(monkeypatch, provider)
+
+    assert options.settings == str(settings_file)
+    # The token path drops the keychain redirect by design; the rest of the isolation holds.
+    assert options.cwd == options.env["CLAUDE_CONFIG_DIR"]
+    assert options.setting_sources == []
+    # The CLI ranks an apiKeyHelper above the token, so a rejection points at the helper.
+    assert str(settings_file) in provider._auth_hint
+    assert "claude setup-token" not in provider._auth_hint
+
+
+def test_settings_path_expands_home(settings_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "claude-settings.json").write_text("{}")
+    settings_env("~/claude-settings.json")
+    assert _instantiate_provider()._settings == str(tmp_path / "claude-settings.json")
+
+
+def test_missing_settings_file_fails_at_startup(settings_env, tmp_path):
+    """A mistyped path fails once, by name, instead of as an opaque CLI error on every call."""
+    settings_env(str(tmp_path / "missing.json"))
+    with pytest.raises(RuntimeError, match="HINDSIGHT_API_LLM_CLAUDE_CODE_SETTINGS"):
+        _instantiate_provider()
+
+
+@pytest.mark.asyncio
+async def test_no_settings_file_by_default(monkeypatch, settings_env):
+    """Unset, the CLI gets no --settings: the isolation is exactly as before."""
+    settings_env(None)
     options = await _captured_options(monkeypatch, _instantiate_provider())
     assert options.settings is None
