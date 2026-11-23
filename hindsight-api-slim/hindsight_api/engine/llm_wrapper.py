@@ -673,6 +673,16 @@ def create_llm_provider(
             timeout=timeout,
         )
 
+    elif provider_lower == "antigravity":
+        return providers.AntigravityLLM(
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            timeout=timeout,
+        )
+
     elif provider_lower == "claude-code":
         return providers.ClaudeCodeLLM(
             provider=provider,
@@ -1091,6 +1101,7 @@ class LLMProvider:
             "chatgpt",
             "claude-code",
             "cursor",
+            "antigravity",
             "github-copilot",
             "mock",
             "none",

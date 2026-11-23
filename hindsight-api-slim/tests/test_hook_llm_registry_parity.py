@@ -36,6 +36,8 @@ HOOK_EXEMPT_PROVIDERS = frozenset(
         "litellmrouter",
         "nous",
         "xai-oauth",
+        # A hook that runs inside agy would spawn another agy: server-only.
+        "antigravity",
         "chatgpt",
         "mock",
         "none",

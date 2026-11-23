@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .anthropic_llm import AnthropicLLM
+    from .antigravity_llm import AntigravityLLM
     from .claude_code_llm import ClaudeCodeLLM
     from .codex_llm import CodexLLM
     from .cursor_llm import CursorLLM
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 
 _MODULES = {
     "AnthropicLLM": "anthropic_llm",
+    "AntigravityLLM": "antigravity_llm",
     "ClaudeCodeLLM": "claude_code_llm",
     "CodexLLM": "codex_llm",
     "CursorLLM": "cursor_llm",
@@ -47,6 +49,7 @@ _MODULES = {
 
 __all__ = [
     "AnthropicLLM",
+    "AntigravityLLM",
     "ClaudeCodeLLM",
     "CodexLLM",
     "CursorLLM",
