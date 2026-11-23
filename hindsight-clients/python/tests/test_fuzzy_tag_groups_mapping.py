@@ -3,8 +3,8 @@
 Mirrors the TypeScript wrapper's ``fuzzy_tag_groups_mapping`` regression tests. Two things
 are pinned here:
 
-* ``tag_groups`` reaches the request object at all. The wrapper used to import a
-  ``RecallRequestTagGroupsInner`` model the generator never emits, so every caller passing
+* ``tag_groups`` reaches the request object at all. The wrapper used to import the union by
+  a generator-chosen class name that changes with the spec (#6785), so every caller passing
   ``tag_groups`` got a ModuleNotFoundError instead of a filtered recall.
 * the leaf's ``resolve`` field survives the dict -> model conversion, so ``fuzzy`` matching
   (#4026) is reachable through the wrapper rather than only over raw HTTP.
