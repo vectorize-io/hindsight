@@ -1034,6 +1034,18 @@ async def test_a_search_can_skip_the_reranker(api_client, kb, judge):
     assert judge.queries == ["blue", "blue"]
 
 
+async def test_the_server_can_turn_the_reranker_off_by_default(api_client, kb, judge):
+    items = [{"document_id": "faq", "text": "a blue note"}, {"document_id": "faq2", "text": "another blue note"}]
+    r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
+    assert r.status_code == 200, r.text
+    judge.settings["kb_enable_reranking"] = False
+
+    await _search(api_client, kb, query="blue")
+    assert judge.queries == []  # a search that says nothing is not reranked
+    await _search(api_client, kb, query="blue", enable_reranking=True)
+    assert judge.queries == ["blue"]  # an explicit true still is
+
+
 async def test_the_query_picture_takes_its_share_of_the_rerank_window(api_client, kb, judge):
     items = [{"document_id": f"note{i}", "text": f"note {i} about the blue key. " + "detail " * 140} for i in range(10)]
     r = await api_client.post(f"{KB}/{kb}/ingest", json={"items": items})
