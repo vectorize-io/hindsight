@@ -48,10 +48,10 @@ async def clients(scoped_server):
 
 
 @pytest.fixture
-async def shared_bank(clients, llm, bank_id) -> str:
+async def shared_bank(clients, llm, scoped_bank) -> str:
     admin, dan, kate = clients
     await admin.banks.update_bank_config(
-        bank_id,
+        scoped_bank,
         {
             "updates": {
                 "retain_strategies": {
@@ -96,12 +96,12 @@ async def shared_bank(clients, llm, bank_id) -> str:
     llm.on_step("consolidate").returns(consolidation())
 
     await kate.aretain_batch(
-        bank_id=bank_id,
+        bank_id=scoped_bank,
         items=[{"content": KATE_NOTE, "document_id": "kate-sync", "tags": ["user:kate"], "strategy": "rules"}],
     )
-    await dan.aretain(bank_id=bank_id, content=DAN_NOTE, document_id="dan-notes", tags=["user:dan"])
-    await wait_until_settled(admin, bank_id)
-    return bank_id
+    await dan.aretain(bank_id=scoped_bank, content=DAN_NOTE, document_id="dan-notes", tags=["user:dan"])
+    await wait_until_settled(admin, scoped_bank)
+    return scoped_bank
 
 
 async def test_the_label_puts_only_the_rule_in_the_shared_scope(clients, shared_bank):

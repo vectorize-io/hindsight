@@ -351,24 +351,44 @@ def echo_primary_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -
     server.stop()
 
 
+#: The schema of the tag-scope server. Its own, so the validator also governs the work its
+#: worker runs: on the shared schema the default server's worker (no validator) claimed about
+#: half of its queued work, and its worker claimed other stories' work (issue #6387).
+SCOPED_SCHEMA = "systest_scoped"
+
+
 @pytest.fixture(scope="session")
 def scoped_server(stub_server, tmp_path_factory: pytest.TempPathFactory) -> Iterator[object]:
     """A server whose operation validator confines each API key to ``user:<key>`` + ``kind:rule``.
 
     The validator (``server_extensions/tag_scope_validator.py``) is server-level, so it costs
-    a process of its own. Session-scoped and started lazily, like ``typesafe_server``.
+    a process of its own. Session-scoped and started lazily, like ``typesafe_server``. Its
+    stories retain and import asynchronously, so it keeps its worker, on a schema of its own.
     """
     log_path: Path = tmp_path_factory.mktemp("scoped-server") / "server.log"
     server = start_hindsight_server(
         stub_url=stub_server.url,
         log_path=log_path,
         extra_env={
+            "HINDSIGHT_API_DATABASE_SCHEMA": SCOPED_SCHEMA,
             "HINDSIGHT_API_OPERATION_VALIDATOR_EXTENSION": "tag_scope_validator:UserTagScope",
             "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "server_extensions"),
         },
     )
+    asyncio.run(_delete_leftover_banks(server.url))
     yield server
     server.stop()
+
+
+@pytest.fixture
+async def scoped_bank(scoped_server) -> AsyncIterator[str]:
+    """A bank of this test's own on ``scoped_server``, deleted when the test ends."""
+    name = f"{BANK_PREFIX}{uuid.uuid4().hex[:12]}"
+    yield name
+    client = Hindsight(base_url=scoped_server.url)
+    with contextlib.suppress(Exception):
+        await client.banks.delete_bank(name)
+    await client.aclose()
 
 
 #: The schema of the publication-rules server. Its own, because the hook it tests runs in

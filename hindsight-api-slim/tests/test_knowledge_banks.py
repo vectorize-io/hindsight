@@ -2744,6 +2744,9 @@ async def test_a_traced_search_explains_every_rank_and_what_the_budget_kept(api_
     hits = trace["hits"]
     assert [h["rank"] for h in hits] == list(range(1, len(hits) + 1))
     assert [h["score"] for h in hits] == sorted((h["score"] for h in hits), reverse=True)
+    # The filler paragraphs score the same: they come in passage order, not the database's (#6697).
+    ties = [(a["index"], b["index"]) for a, b in zip(hits, hits[1:]) if a["score"] == b["score"]]
+    assert ties and all(a < b for a, b in ties)
     top = hits[0]
     assert top["index"] == 4 and top["keyword"] > 0 and "keyword" in top["found_by"] and top["result_rank"] == 1
     # Its neighbours came back inside its text, so they are merged into it, not results of their own.

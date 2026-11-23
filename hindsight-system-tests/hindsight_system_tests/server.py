@@ -9,6 +9,7 @@ environment variables that any deployment could set.
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import logging
 import os
 import signal
@@ -37,6 +38,12 @@ PG0_INSTANCE = "hindsight-systest"
 PG0_PORT = 15499
 
 SERVER_STARTUP_TIMEOUT = 180.0
+
+#: How long a run waits for another run to release the database before giving up.
+DATABASE_LOCK_TIMEOUT = 1800.0
+
+#: Held from this process's first server start until it exits (see `_hold_database_lock`).
+_database_lock: object | None = None
 
 #: How often the server's worker looks for queued work. Stories that assert on what
 #: the worker has *not* claimed wait a multiple of this.
@@ -254,7 +261,39 @@ def run_hindsight_admin(
     return output
 
 
+def _hold_database_lock() -> None:
+    """Make this run the only one on the pg0 instance until the process exits.
+
+    Every run, in every checkout, uses the one instance and port above. Two runs at once
+    share the queue: one run's worker claims the other's consolidation and asks its *own*
+    stub, which has no rule for it, so the operation ends with no observations and the
+    first run's `settled` returns over an empty bank (issue #6432). Its session-start sweep
+    also deletes the other run's banks. So a second run waits here instead. The OS drops
+    the lock when the process dies, so a killed run never leaves it held.
+    """
+    global _database_lock
+    if _database_lock is not None:
+        return
+    # Beside pg0's own instances, not in a temp dir: TMPDIR differs between shells.
+    lock_path = Path.home() / ".pg0" / f"{PG0_INSTANCE}.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = lock_path.open("w")
+    deadline = time.monotonic() + DATABASE_LOCK_TIMEOUT
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"another system-test run held pg0 instance {PG0_INSTANCE} for {DATABASE_LOCK_TIMEOUT}s"
+                ) from None
+            time.sleep(1)
+    _database_lock = lock
+
+
 def _server_env(stub_url: str, extra_env: dict[str, str] | None) -> dict[str, str]:
+    _hold_database_lock()
     env = os.environ.copy()
     # The repo .env is for the developer's own server; a system test must depend
     # only on what it sets here, or it passes on one machine and fails on another.

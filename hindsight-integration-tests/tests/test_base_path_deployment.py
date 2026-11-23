@@ -76,11 +76,11 @@ def check_docker_compose_available() -> bool:
 class APIServer:
     """Helper to manage API server lifecycle for direct testing."""
 
-    def __init__(self, base_path: str | None = None, port: int = 18888):
+    def __init__(self, base_path: str | None = None, port: int = 18888, env: dict[str, str] | None = None):
         self.base_path = base_path
         self.port = port
         self.process = None
-        self.env = os.environ.copy()
+        self.env = {**os.environ, **(env or {})}
         if base_path:
             self.env["HINDSIGHT_API_BASE_PATH"] = base_path
 
@@ -392,7 +392,10 @@ async def test_full_workflow_with_base_path():
     base_path = "/hindsight"
     bank_id = "integration_test_bank"
 
-    with APIServer(base_path=base_path, port=18891) as server:
+    # No LLM: retain stores the text as-is instead of extracting facts. This test checks
+    # routing under a base path; a sync retain waiting on the shared CI LLM (429 retries)
+    # outlasted the client timeout (#6788).
+    with APIServer(base_path=base_path, port=18891, env={"HINDSIGHT_API_LLM_PROVIDER": "none"}) as server:
         base_url = f"http://localhost:{server.port}{base_path}"
 
         async with httpx.AsyncClient(base_url=base_url, timeout=30.0) as client:

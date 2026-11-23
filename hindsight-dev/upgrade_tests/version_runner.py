@@ -197,6 +197,10 @@ class VersionRunner:
                 "HINDSIGHT_API_LLM_API_KEY": self.llm_api_key or "",
                 "HINDSIGHT_API_LLM_MODEL": self.llm_model,
                 "PYTHONUNBUFFERED": "1",
+                # The startup LLM ping fails the whole server on one 429 from the shared CI
+                # provider (#6811); these tests check migrations and data, not LLM reachability.
+                # Honoured since at least v0.3.0.
+                "HINDSIGHT_API_SKIP_LLM_VERIFICATION": "true",
             }
         )
 

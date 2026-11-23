@@ -199,6 +199,14 @@ else
     print_warn "npm install failed; package-lock.json may be stale"
 fi
 
+# hindsight-system-tests has its own uv.lock pinning the editable client;
+# without this every `uv run` there rewrites the lock after a release.
+if (cd hindsight-system-tests && uv lock > /dev/null 2>&1); then
+    print_info "✓ hindsight-system-tests/uv.lock refreshed"
+else
+    print_warn "uv lock failed; hindsight-system-tests/uv.lock may be stale"
+fi
+
 # Update documentation version (creates new version or syncs to existing)
 print_info "Updating documentation for version $VERSION..."
 if [ -f "scripts/update-docs-version.sh" ]; then
