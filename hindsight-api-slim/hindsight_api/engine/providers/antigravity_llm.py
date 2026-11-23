@@ -28,6 +28,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from hindsight_api.engine.llm_interface import ProviderAuthError
 from hindsight_api.engine.providers.cursor_llm import CursorLLM, _CliTurn
 
 logger = logging.getLogger(__name__)
@@ -112,12 +113,8 @@ class _AgyEvent(BaseModel):
 class AntigravityLLM(CursorLLM):
     """LLM provider backed by a Google Antigravity subscription via the ``agy`` CLI."""
 
-    def __init__(self, *args: Any, **kwargs: Any):
-        # Skip CursorLLM.__init__: it resolves cursor-agent, which need not exist here.
-        super(CursorLLM, self).__init__(*args, **kwargs)
-        self._warn_reasoning_effort_unsupported()
-        self._binary = _resolve_binary()
-        logger.info(f"Antigravity: using CLI at {self._binary} (model={self.model})")
+    def _resolve_binary(self) -> str:
+        return _resolve_binary()
 
     async def _run(self, prompt: str, scope: str, schema: dict[str, Any] | None) -> _CliTurn:
         args = [
@@ -180,7 +177,13 @@ class AntigravityLLM(CursorLLM):
             detail = (stderr.decode(errors="replace").strip() or stdout.decode(errors="replace").strip())[-2000:]
             raise RuntimeError(f"agy exited with {proc.returncode} and no result: {detail}")
         if result.status != "SUCCESS":
-            raise RuntimeError(f"agy reported an error: {result.error or result.status}")
+            message = f"agy reported an error: {result.error or result.status}"
+            # Signed out, agy opens a browser login on the server and waits 60s for it
+            # ("authentication failed or timed out"). Every retry would repeat that wait,
+            # so a missing login is permanent until someone runs `agy` and signs in.
+            if "authentication" in result.error.lower():
+                raise ProviderAuthError(f"{message}. Run `agy` once as the user running Hindsight and sign in.")
+            raise RuntimeError(message)
 
         # With a schema, read the validated object, not the reply text: the text can carry
         # the JSON twice (the model's own answer, then the final structured one), which

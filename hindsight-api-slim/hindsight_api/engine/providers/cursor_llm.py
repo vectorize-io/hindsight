@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from hindsight_api.engine.llm_interface import (
     LLMInterface,
+    ProviderAuthError,
     ProviderContentPolicyError,
 )
 from hindsight_api.engine.llm_trace import LLMResponseUsage, stash_response_usage
@@ -247,8 +248,12 @@ class CursorLLM(LLMInterface):
     ):
         super().__init__(provider, api_key, base_url, model, reasoning_effort, timeout, **kwargs)
         self._warn_reasoning_effort_unsupported()
-        self._binary = _resolve_binary()
-        logger.info(f"Cursor: using CLI at {self._binary} (model={self.model})")
+        self._binary = self._resolve_binary()
+        logger.info(f"{self.provider}: using CLI at {self._binary} (model={self.model})")
+
+    def _resolve_binary(self) -> str:
+        """Find the CLI on PATH; ``AntigravityLLM`` overrides it to find ``agy``."""
+        return _resolve_binary()
 
     async def _run(self, prompt: str, scope: str, schema: dict[str, Any] | None) -> _CliTurn:
         """Run one headless agent turn.
@@ -441,8 +446,8 @@ class CursorLLM(LLMInterface):
             except ValidationError:
                 # Replaying the same prompt earns the same schema violation (#1412).
                 raise
-            except ProviderContentPolicyError:
-                # Permanent refusal: every replay earns the same block.
+            except (ProviderContentPolicyError, ProviderAuthError):
+                # Permanent: every replay earns the same block, or the same missing login.
                 raise
             except Exception as e:
                 last_exception = e

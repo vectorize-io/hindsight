@@ -926,6 +926,9 @@ Antigravity a *client* of Hindsight. Here Antigravity is the model backend Hinds
   and do not save Hindsight's own calls back into memory. Other hooks you installed
   still run.
 - Each call is saved in `agy`'s own conversation history.
+- **If `agy` is signed out**, it opens a Google login page on the machine running Hindsight
+  and waits 60 seconds. The call then fails once, with no retries, and the error tells you
+  to run `agy` and sign in again.
 - Reasoning effort is not supported. Pick it through the model id instead
   (`-low`, `-medium`, `-high`).
 - Embeddings and reranking continue to use Hindsight's separately configured providers.
