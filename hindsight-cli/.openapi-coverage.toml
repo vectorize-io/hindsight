@@ -23,11 +23,14 @@
 [skip]
 # Knowledge banks: no CLI commands yet (the docs say so); the HTTP API, the generated SDKs and the
 # control plane cover them.
+cancel_knowledge_bank_operation = "Knowledge banks have no CLI commands yet"
 create_knowledge_bank = "Knowledge banks have no CLI commands yet"
 delete_knowledge_bank = "Knowledge banks have no CLI commands yet"
+delete_knowledge_bank_operation = "Knowledge banks have no CLI commands yet"
 delete_knowledge_document = "Knowledge banks have no CLI commands yet"
 get_knowledge_bank = "Knowledge banks have no CLI commands yet"
 get_knowledge_bank_config = "Knowledge banks have no CLI commands yet"
+get_knowledge_bank_operation = "Knowledge banks have no CLI commands yet"
 get_knowledge_bank_timeseries = "Knowledge banks have no CLI commands yet"
 get_knowledge_document = "Knowledge banks have no CLI commands yet"
 get_knowledge_document_file = "Knowledge banks have no CLI commands yet"
@@ -35,9 +38,11 @@ get_knowledge_passage_media = "Knowledge banks have no CLI commands yet"
 ingest_knowledge_files = "Knowledge banks have no CLI commands yet"
 ingest_knowledge_texts = "Knowledge banks have no CLI commands yet"
 list_knowledge_bank_tags = "Knowledge banks have no CLI commands yet"
+list_knowledge_bank_operations = "Knowledge banks have no CLI commands yet"
 list_knowledge_banks = "Knowledge banks have no CLI commands yet"
 list_knowledge_documents = "Knowledge banks have no CLI commands yet"
 reset_knowledge_bank_config = "Knowledge banks have no CLI commands yet"
+retry_knowledge_bank_operation = "Knowledge banks have no CLI commands yet"
 search_knowledge_bank = "Knowledge banks have no CLI commands yet"
 update_knowledge_bank_config = "Knowledge banks have no CLI commands yet"
 
