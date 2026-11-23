@@ -336,7 +336,15 @@ def _message_for_choice(choice: Any) -> Any:
 
 
 def _message_content(message: Any) -> Any:
-    return _response_get(message, "content")
+    content = _response_get(message, "content")
+    # Mistral's reasoning models send content as typed blocks, e.g.
+    # [{"type": "thinking", ...}, {"type": "text", "text": "ok"}]. Keep the text
+    # blocks and drop the thinking ones; usage already counts the reasoning (#6758).
+    if isinstance(content, list):
+        return "".join(
+            _response_get(block, "text") or "" for block in content if _response_get(block, "type") == "text"
+        )
+    return content
 
 
 def _message_tool_calls(message: Any) -> Any:
@@ -585,7 +593,7 @@ def batch_result_from_chat_completion(custom_id: str, body: dict[str, Any] | Non
     choices = body.get("choices") or []
     if not choices and body.get("error"):
         return BatchResult(custom_id=custom_id, error=str(body["error"]))
-    content = (choices[0].get("message") or {}).get("content") if choices else None
+    content = _message_content(choices[0].get("message") or {}) if choices else None
     usage = TokenUsage()
     if body.get("usage"):
         # The same usage block a live call returns, read the same way (cached and reasoning tokens included).
