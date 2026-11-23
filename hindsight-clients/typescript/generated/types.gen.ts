@@ -3676,7 +3676,7 @@ export type KnowledgeSearchRequest = {
   /**
    * Enable Reranking
    *
-   * false keeps the search's own order. Unset (or true) reranks the best hits when the server has a knowledge reranker (HINDSIGHT_API_KB_RERANKER_URL); without one, true does nothing.
+   * false keeps the search's own order; true reranks the best hits when the server has a knowledge reranker (HINDSIGHT_API_KB_RERANKER_URL); without one, true does nothing. Unset follows the server's HINDSIGHT_API_KB_ENABLE_RERANKING (default true).
    */
   enable_reranking?: boolean | null;
   /**
