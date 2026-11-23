@@ -127,5 +127,6 @@ client.delete_knowledge_bank("product-manuals")
 # Cleanup (not shown in docs)
 # =============================================================================
 requests.delete(f"{HINDSIGHT_URL}/v1/default/banks/support-agent")
+client.close()
 
 print("knowledge-banks.py: All examples passed")

@@ -150,6 +150,47 @@ func main() {
 	}
 	check(status == "ready", "quick start ready")
 
+	// [docs:documents]
+	docs, _, err := client.KnowledgeBanksAPI.ListKnowledgeDocuments(ctx, "product-manuals").
+		Status("ready").Execute()
+	must(err)
+	for _, d := range docs.Documents {
+		fmt.Println(d.DocumentId, d.MediaType, d.PassageCount)
+	}
+	detail, _, err := client.KnowledgeBanksAPI.GetKnowledgeDocument(ctx, "product-manuals", "x200-quickstart").Execute()
+	must(err)
+	for _, p := range detail.Passages {
+		fmt.Println(p.GetText())
+	}
+	// [/docs:documents]
+	check(len(docs.Documents) > 0, "ready documents listed")
+
+	// [docs:settings]
+	// Every setting as the bank uses it, then only what the bank changes
+	settings, _, err := client.KnowledgeBanksAPI.GetKnowledgeBankConfig(ctx, "product-manuals").Execute()
+	must(err)
+	asJSON, _ := json.Marshal(settings)
+	fmt.Println(string(asJSON))
+
+	// Drop one override, or all of them
+	_, _, err = client.KnowledgeBanksAPI.UpdateKnowledgeBankConfig(ctx, "product-manuals").
+		KnowledgeBankConfigUpdate(*hindsight.NewKnowledgeBankConfigUpdate(map[string]any{
+			"disabled_media_types": nil,
+		})).
+		Execute()
+	must(err)
+	_, _, err = client.KnowledgeBanksAPI.ResetKnowledgeBankConfig(ctx, "product-manuals").Execute()
+	// [/docs:settings]
+	must(err)
+	settings, _, err = client.KnowledgeBanksAPI.GetKnowledgeBankConfig(ctx, "product-manuals").Execute()
+	must(err)
+	check(!settings.Overrides.HasTextPassageTokens(), "overrides reset")
+
+	// [docs:delete-document]
+	_, _, err = client.KnowledgeBanksAPI.DeleteKnowledgeDocument(ctx, "product-manuals", "returns-policy").Execute()
+	// [/docs:delete-document]
+	must(err)
+
 	// [docs:delete-knowledge-bank]
 	_, _, err = client.KnowledgeBanksAPI.DeleteKnowledgeBank(ctx, "product-manuals").Execute()
 	// [/docs:delete-knowledge-bank]

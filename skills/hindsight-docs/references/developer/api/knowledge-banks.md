@@ -509,6 +509,30 @@ hindsight kb download product-manuals x200-manual --out manual-copy.pdf
 hindsight kb passage-media product-manuals x200-manual 0 --out page-1.png
 ```
 
+### Go
+
+```go
+docs, _, err := client.KnowledgeBanksAPI.ListKnowledgeDocuments(ctx, "product-manuals").
+	Status("ready").Execute()
+must(err)
+for _, d := range docs.Documents {
+	fmt.Println(d.DocumentId, d.MediaType, d.PassageCount)
+}
+detail, _, err := client.KnowledgeBanksAPI.GetKnowledgeDocument(ctx, "product-manuals", "x200-quickstart").Execute()
+must(err)
+for _, p := range detail.Passages {
+	fmt.Println(p.GetText())
+}
+```
+
+### HTTP
+
+```bash
+curl "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents?status=ready"
+curl "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents/x200-quickstart"
+curl -o manual-copy.pdf "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents/x200-manual/file"
+```
+
 Delete one:
 
 ### Python
@@ -527,6 +551,18 @@ await client.deleteKnowledgeDocument('product-manuals', 'returns-policy');
 
 ```bash
 hindsight kb delete-document product-manuals returns-policy
+```
+
+### Go
+
+```go
+_, _, err = client.KnowledgeBanksAPI.DeleteKnowledgeDocument(ctx, "product-manuals", "returns-policy").Execute()
+```
+
+### HTTP
+
+```bash
+curl -X DELETE "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/documents/returns-policy"
 ```
 
 ---
@@ -659,6 +695,38 @@ hindsight kb config product-manuals --overrides-only
 # Drop one override, or all of them
 hindsight kb set-config product-manuals --unset disabled_media_types
 hindsight kb reset-config product-manuals -y
+```
+
+### Go
+
+```go
+// Every setting as the bank uses it, then only what the bank changes
+settings, _, err := client.KnowledgeBanksAPI.GetKnowledgeBankConfig(ctx, "product-manuals").Execute()
+must(err)
+asJSON, _ := json.Marshal(settings)
+fmt.Println(string(asJSON))
+
+// Drop one override, or all of them
+_, _, err = client.KnowledgeBanksAPI.UpdateKnowledgeBankConfig(ctx, "product-manuals").
+	KnowledgeBankConfigUpdate(*hindsight.NewKnowledgeBankConfigUpdate(map[string]any{
+		"disabled_media_types": nil,
+	})).
+	Execute()
+must(err)
+_, _, err = client.KnowledgeBanksAPI.ResetKnowledgeBankConfig(ctx, "product-manuals").Execute()
+```
+
+### HTTP
+
+```bash
+# Every setting as the bank uses it, then only what the bank changes
+curl "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config"
+
+# Drop one override, or all of them
+curl -X PATCH "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" \
+  -H "Content-Type: application/json" \
+  -d '{"updates": {"disabled_media_types": null}}'
+curl -X DELETE "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config"
 ```
 
 ---
