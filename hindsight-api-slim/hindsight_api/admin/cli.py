@@ -1519,9 +1519,9 @@ def export_bank_command(
         size = asyncio.run(_run_export_bank(config.database_url, bank_id, output, target_schema, include_history))
     except BankNotFoundError:
         # Name the instance: a bank missing here is often a bank that lives on another one.
+        database = mask_network_location(config.database_url)
         typer.echo(
-            f"Error: bank '{bank_id}' not found in schema '{target_schema}' of {mask_network_location(config.database_url)}; "
-            "no archive written.",
+            f"Error: bank '{bank_id}' not found in schema '{target_schema}' of {database}; no archive written.",
             err=True,
         )
         raise typer.Exit(1)

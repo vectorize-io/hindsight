@@ -67,14 +67,16 @@ async def test_run_export_bank_declares_decoded_json_rows(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
-async def test_export_of_missing_bank_fails_and_writes_no_archive(memory, tmp_path: Path) -> None:
+async def test_export_of_missing_bank_raises_before_any_chunk(memory) -> None:
     """A typo'd bank id must not export as a well-formed empty archive (#6776)."""
     from hindsight_api.engine.transfer import BankNotFoundError, stream_export_bank
 
     backend = await memory._get_backend()
+    chunks: list[bytes] = []
     with pytest.raises(BankNotFoundError):
-        async for _ in stream_export_bank(backend, "zzz-no-such-bank"):
-            pass
+        async for chunk in stream_export_bank(backend, "zzz-no-such-bank"):
+            chunks.append(chunk)
+    assert chunks == []
 
 
 def test_export_bank_command_exits_nonzero_for_missing_bank(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

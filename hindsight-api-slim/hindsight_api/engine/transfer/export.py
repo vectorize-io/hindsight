@@ -563,6 +563,9 @@ async def stream_export_bank(
     read. The clone takes the same reads: it once read under one transaction
     instead, which on a large bank stayed open until a pooler cut it (#6666) and,
     at READ COMMITTED, never gave a single snapshot anyway.
+
+    Raises :class:`BankNotFoundError` before the first chunk when the bank has no
+    row, so a caller writing the stream to a file never gets an archive for it.
     """
     # A missing bank would otherwise export as a well-formed, empty archive that an
     # operator only finds out is useless at restore time (#6776).
