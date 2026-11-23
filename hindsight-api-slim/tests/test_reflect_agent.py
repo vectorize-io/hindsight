@@ -9,6 +9,7 @@ These tests verify:
 """
 
 import asyncio
+import dataclasses
 import json
 import logging
 from unittest.mock import AsyncMock, MagicMock
@@ -16,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from hindsight_api.cancellation import OperationCancelledError
+from hindsight_api.config import HindsightConfig
 from hindsight_api.engine.llm_interface import LLM_TOOL_CHOICE_REQUIRED, LLMToolChoice
 from hindsight_api.engine.reflect.agent import (
     ReflectNoAnswerError,
@@ -984,6 +986,41 @@ class TestReflectAgentMocked:
 
         assert result.text == "Nothing on ABC-123."
         assert mock_llm.call_with_tools.await_count == 3  # recall, the free turn's done, the closing done
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("strict", [True, False])
+    async def test_every_tool_turn_follows_the_reflect_strict_schema_flag(
+        self, mock_llm, mock_functions, monkeypatch, strict
+    ):
+        """HINDSIGHT_API_LLM_STRICT_SCHEMA_REFLECT reaches the loop turns and the closing done (#6673)."""
+        config = dataclasses.replace(HindsightConfig.from_env(), llm_strict_schema_reflect_tool_turns=strict)
+        monkeypatch.setattr("hindsight_api.engine.reflect.agent.get_config", lambda: config)
+        mock_llm.call_with_tools.side_effect = closing_echo(
+            [
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="1", name="recall", arguments={"reason": "facts", "query": "ABC-123"})],
+                    finish_reason="tool_calls",
+                ),
+                LLMToolCallResult(
+                    tool_calls=[LLMToolCall(id="2", name="done", arguments={"answer": "Open.", "memory_ids": []})],
+                    finish_reason="tool_calls",
+                ),
+            ]
+        )
+
+        await run_reflect_agent(
+            llm_config=mock_llm,
+            bank_id="test-bank",
+            query="where are we on ABC-123",
+            bank_profile={"name": "Test", "mission": "Testing"},
+            budget="low",
+            max_iterations=5,
+            **mock_functions,
+        )
+
+        calls = mock_llm.call_with_tools.await_args_list
+        assert [c.kwargs["scope"] for c in calls] == ["reflect_tool_call", "reflect_tool_call", "reflect"]
+        assert [c.kwargs["strict_schema"] for c in calls] == [strict, strict, strict]
 
     @pytest.mark.asyncio
     async def test_stale_mental_model_keeps_forced_retrieval(self, mock_llm, mock_functions):
