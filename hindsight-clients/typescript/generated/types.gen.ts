@@ -3796,7 +3796,7 @@ export type KnowledgeSearchTrace = {
   /**
    * Keyword Terms
    *
-   * Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) as the query's rarest word is left out
+   * Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) as the query's rarest word is left out, unless its IDF reaches 2 (in under ~13% of the bank's passages)
    */
   keyword_terms: {
     [key: string]: number;
@@ -3804,7 +3804,7 @@ export type KnowledgeSearchTrace = {
   /**
    * Timings Ms
    *
-   * Each phase's time: open_bank, embed, store.search, context
+   * Each phase's time: open_bank, embed, store.search (and its store.* parts), rerank, context
    */
   timings_ms: {
     [key: string]: number;

@@ -11762,12 +11762,14 @@ components:
           additionalProperties:
             type: number
           description: "Each query word the keyword search used, with its IDF; a word\
-            \ less than half as rare (IDF) as the query's rarest word is left out"
+            \ less than half as rare (IDF) as the query's rarest word is left out,\
+            \ unless its IDF reaches 2 (in under ~13% of the bank's passages)"
           title: Keyword Terms
         timings_ms:
           additionalProperties:
             type: number
-          description: "Each phase's time: open_bank, embed, store.search, context"
+          description: "Each phase's time: open_bank, embed, store.search (and its\
+            \ store.* parts), rerank, context"
           title: Timings Ms
         candidate_searches:
           description: "Step 1: each candidate search's own list"

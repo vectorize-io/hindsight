@@ -16829,7 +16829,7 @@
             },
             "type": "object",
             "title": "Keyword Terms",
-            "description": "Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) as the query's rarest word is left out"
+            "description": "Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) as the query's rarest word is left out, unless its IDF reaches 2 (in under ~13% of the bank's passages)"
           },
           "timings_ms": {
             "additionalProperties": {
@@ -16837,7 +16837,7 @@
             },
             "type": "object",
             "title": "Timings Ms",
-            "description": "Each phase's time: open_bank, embed, store.search, context"
+            "description": "Each phase's time: open_bank, embed, store.search (and its store.* parts), rerank, context"
           },
           "candidate_searches": {
             "items": {

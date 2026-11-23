@@ -31,9 +31,9 @@ type KnowledgeSearchTrace struct {
 	Candidates int32 `json:"candidates"`
 	// The keyword score's share of the final score
 	KeywordWeight float32 `json:"keyword_weight"`
-	// Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) as the query's rarest word is left out
+	// Each query word the keyword search used, with its IDF; a word less than half as rare (IDF) as the query's rarest word is left out, unless its IDF reaches 2 (in under ~13% of the bank's passages)
 	KeywordTerms map[string]float32 `json:"keyword_terms"`
-	// Each phase's time: open_bank, embed, store.search, context
+	// Each phase's time: open_bank, embed, store.search (and its store.* parts), rerank, context
 	TimingsMs map[string]float32 `json:"timings_ms"`
 	// Step 1: each candidate search's own list
 	CandidateSearches []KnowledgeTraceArm `json:"candidate_searches"`
