@@ -327,11 +327,17 @@ A bank can change how its files are split. See [Per-Bank Settings](../knowledge-
 
 `PATCH` and `DELETE` need `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` on.
 
+With the CLI (`set-config` is shown under [Per-Bank Settings](../knowledge-banks#per-bank-settings)):
+
+<CodeSnippet code={kbSh} section="settings" language="bash" />
+
 ---
 
 ## Stats
 
 `GET /{bank_id}/stats/timeseries` returns documents and passages added over time. `period` is `1d` (by hour), `7d`, `30d` or `90d` (by day; default `7d`). `media_type` limits it to one kind of file.
+
+It feeds the control plane's chart and has no CLI command; `hindsight kb get` shows the bank's current counts.
 
 ---
 
