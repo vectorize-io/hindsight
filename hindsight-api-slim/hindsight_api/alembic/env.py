@@ -120,19 +120,32 @@ def _configure_pg_session(engine: Engine, connection: Connection, target_schema:
     """PG-only: ensure the session is RW (Supabase) and bind ``search_path``."""
     from sqlalchemy import event, text
 
+    from hindsight_api._pg_extensions import stranded_extension_schemas
+
+    # Read-write first: the catalog lookup below would otherwise open the
+    # session's first transaction read-only (Supabase's default).
+    connection.execute(text("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE"))
+    connection.commit()
+    search_path = ""
+    if target_schema:
+        # Keep extensions we could not move into public (we don't own them)
+        # reachable: replacing the role's search_path used to hide them, and the
+        # first VECTOR(...) column failed with 'type "vector" does not exist' (#6662).
+        stranded = stranded_extension_schemas(connection, ("public", target_schema))
+        search_path = ", ".join(['"' + s.replace('"', '""') + '"' for s in (target_schema, "public", *stranded)])
+
     @event.listens_for(engine, "connect")
     def set_read_write_mode(dbapi_connection, connection_record):
         cursor = dbapi_connection.cursor()
         cursor.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
         if target_schema:
             cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{target_schema}"')
-            cursor.execute(f'SET search_path TO "{target_schema}", public')
+            cursor.execute(f"SET search_path TO {search_path}")
         cursor.close()
 
-    connection.execute(text("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE"))
     if target_schema:
         connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{target_schema}"'))
-        connection.execute(text(f'SET search_path TO "{target_schema}", public'))
+        connection.execute(text(f"SET search_path TO {search_path}"))
     connection.commit()
 
 
