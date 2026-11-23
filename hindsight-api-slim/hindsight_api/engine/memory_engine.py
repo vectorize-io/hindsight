@@ -19857,6 +19857,9 @@ class MemoryEngine(MemoryEngineInterface):
                 logger.warning(f"[MENTAL_MODELS] Refresh for {mental_model_id} failed ({reason}); {detail}")
                 reflect_response_payload["refresh_skipped"] = reason
                 reflect_response_payload["outcome"] = outcome
+                # The content stays, so its structured view must stay too (#6499).
+                if prev_structured_output is not None:
+                    reflect_response_payload["structured_output"] = prev_structured_output
                 await self.update_mental_model(
                     bank_id,
                     mental_model_id,

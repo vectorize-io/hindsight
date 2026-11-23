@@ -10,15 +10,20 @@ match no memories — a project not started yet, a tag renamed, a document delet
 as "no content", a working answer is replaced by an empty one, and the only way
 back is to notice and re-derive it. Silence has to mean "keep what you have".
 
+A refresh that fails is the same accident from the other side: it keeps the
+page, and must keep the page's structured answer with it.
+
 The dry run is the other half: a way to see what a refresh *would* do before
 letting it. That is only useful if it is genuinely read-only.
 """
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from hindsight_system_tests import reflect_loop
+from hindsight_system_tests import reflect_loop, wait_until_settled
 from hindsight_system_tests.payloads import consolidation, extracted, fact
 
 pytestmark = pytest.mark.asyncio
@@ -122,6 +127,49 @@ async def test_a_sibling_page_does_not_stand_in_for_an_empty_memory_scope(client
 
     current = await _read(client, bank_id, scoped.mental_model_id)
     assert current.content.strip() == ANSWER, "a sibling page let an empty refresh overwrite the answer"
+
+
+async def test_a_failed_refresh_keeps_the_structured_answer_with_the_prose(client, llm, bank_id, settled):
+    """A failed refresh keeps the structured answer along with the page (#6499).
+
+    A model with a response_schema has two readers: one reads the page, the other
+    reads its structured_output. A refresh that fails keeps the page as it was —
+    and used to blank the structured half, so the machine reader lost the very
+    answer the human reader still saw. Here the refresh fails because the new
+    page cannot be shaped to the schema; every refresh failure takes the same path.
+    """
+    schema = {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}
+    llm.on_step("extract_facts").returns(
+        extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
+    )
+    llm.on_step("consolidate").returns(consolidation())
+    reflect_loop(llm, answer=ANSWER)
+    llm.on_step("reflect_structured").returns_text(json.dumps({"city": "Berlin"}))
+
+    await client.aretain(bank_id=bank_id, content="Alice moved to Berlin.")
+    await settled(bank_id)
+    created = await client.mental_models.create_mental_model(
+        bank_id,
+        {"name": "Housing", "source_query": "Where does Alice live?", "trigger": {"response_schema": schema}},
+    )
+    await settled(bank_id)
+    before = await _read(client, bank_id, created.mental_model_id)
+    assert before.content.strip() == ANSWER
+    assert before.reflect_response["structured_output"] == {"city": "Berlin"}
+
+    llm.reset()
+    reflect_loop(llm, answer="Alice lives in Munich.")
+    llm.on_step("reflect_structured").returns_text("absolutely not json")
+    await client.mental_models.refresh_mental_model(bank_id, created.mental_model_id)
+    # The failed refresh is this story's subject.
+    await wait_until_settled(client, bank_id, allow_failed=True)
+
+    after = await _read(client, bank_id, created.mental_model_id)
+    assert after.content == before.content
+    assert after.reflect_response["refresh_skipped"] == "structured_output_failed"
+    assert after.reflect_response["structured_output"] == {"city": "Berlin"}, (
+        "a failed refresh kept the page but dropped its structured answer"
+    )
 
 
 async def test_a_dry_run_reports_what_would_happen(client, llm, bank_id, model, settled):
