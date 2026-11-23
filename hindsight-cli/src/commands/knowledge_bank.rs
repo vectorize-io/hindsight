@@ -308,13 +308,15 @@ pub fn run(client: &ApiClient, cmd: Cmd, verbose: bool, format: OutputFormat) ->
                 Some(path) => path,
                 None => {
                     let doc = client.get_knowledge_document(&bank_id, &document_id)?;
-                    // Only the file name: a stored name must not write outside the current dir.
-                    let name = doc
-                        .filename
-                        .as_deref()
-                        .and_then(|f| Path::new(f).file_name())
-                        .map(PathBuf::from);
-                    name.unwrap_or_else(|| PathBuf::from(&document_id))
+                    let name = default_download_name(doc.filename.as_deref(), &document_id)?;
+                    // Nobody named this file, so don't clobber one that is already there.
+                    if name.exists() {
+                        anyhow::bail!(
+                            "{} already exists; pass --out to choose where to write",
+                            name.display()
+                        );
+                    }
+                    name
                 }
             };
             write_to(&output, format, |out| {
@@ -482,7 +484,20 @@ fn ingest(
     Ok(())
 }
 
+/// The file name a download defaults to: the document's filename, else its id. Only the last
+/// path segment is kept, so a stored name like `../x` cannot write outside the current dir.
+fn default_download_name(filename: Option<&str>, document_id: &str) -> Result<PathBuf> {
+    filename
+        .and_then(|f| Path::new(f).file_name())
+        .or_else(|| Path::new(document_id).file_name())
+        .map(PathBuf::from)
+        .with_context(|| format!("no file name for '{document_id}'; pass --out"))
+}
+
 /// Every file under `paths`: files as given, folders walked recursively without hidden entries.
+/// Unlike `memory retain-files`, folders are not filtered by extension here: which types a
+/// knowledge bank reads (and which an ingestion strategy adds) is the server's call, so a file it
+/// refuses fails alone and is reported, instead of a client-side list drifting from the server's.
 fn collect_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for path in paths {
@@ -779,6 +794,21 @@ mod tests {
         assert_eq!(names, vec!["a.md", "sub/b.pdf"]);
         assert!(collect_files(&[dir.join("missing")]).is_err());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn default_download_name_keeps_only_the_last_segment() {
+        let name = |f: Option<&str>, id: &str| default_download_name(f, id).ok();
+        assert_eq!(
+            name(Some("manual.pdf"), "x"),
+            Some(PathBuf::from("manual.pdf"))
+        );
+        assert_eq!(
+            name(Some("../../etc/x.pdf"), "x"),
+            Some(PathBuf::from("x.pdf"))
+        );
+        assert_eq!(name(None, "docs/a/b.md"), Some(PathBuf::from("b.md")));
+        assert_eq!(name(None, ".."), None);
     }
 
     #[test]

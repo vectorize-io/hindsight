@@ -1357,7 +1357,8 @@ enum KnowledgeBankCommands {
         /// Knowledge bank ID
         bank_id: String,
 
-        /// Files or folders (folders are read recursively, skipping hidden files)
+        /// Files or folders (folders are read recursively, skipping hidden files). A file the
+        /// server can't read fails on its own; the rest still upload.
         #[arg(required = true)]
         paths: Vec<PathBuf>,
 
