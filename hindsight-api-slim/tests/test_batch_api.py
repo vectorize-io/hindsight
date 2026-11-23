@@ -291,6 +291,27 @@ async def test_batch_api_usage_keeps_cached_and_reasoning_tokens(mock_llm_config
     assert extraction.usage == usage
 
 
+def test_batch_result_from_chat_completion_reads_typed_content_blocks_as_text():
+    """A batch line whose content is Mistral-style typed blocks reads as its text blocks (#6758)."""
+    result = batch_result_from_chat_completion(
+        "chunk_0",
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": [
+                            {"type": "thinking", "thinking": [{"type": "text", "text": "hmm"}]},
+                            {"type": "text", "text": '{"facts": []}'},
+                        ]
+                    }
+                }
+            ]
+        },
+    )
+
+    assert result.content == '{"facts": []}'
+
+
 def test_batch_result_from_chat_completion_reads_usage_like_a_live_call():
     """An OpenAI batch output line's usage is read like a live call's: cached prompt
     and reasoning tokens survive, and folded reasoning is split out of output (#5487)."""
