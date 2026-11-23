@@ -2769,6 +2769,8 @@ export HINDSIGHT_API_MCP_ENABLED_TOOLS=recall,reflect
 
 Available tool names: `retain`, `recall`, `reflect`, `list_banks`, `create_bank`, `list_mental_models`, `get_mental_model`, `create_mental_model`, `update_mental_model`, `delete_mental_model`, `refresh_mental_model`, `list_directives`, `create_directive`, `delete_directive`, `list_memories`, `get_memory`, `list_documents`, `get_document`, `delete_document`, `list_operations`, `get_operation`, `cancel_operation`, `list_tags`, `get_bank`, `get_bank_stats`, `update_bank`, `delete_bank`, `clear_memories`, `get_page_tree`, `search_pages`, `get_page`, `create_page_folder`, `create_page`, `update_page_node`, `delete_page_node`.
 
+The list is exact. If it names no built-in tool (only MCP extension tools, or a misspelled name), no built-in tool is registered and the server logs a warning at startup.
+
 The page tools used to be named `get_knowledge_base_tree`, `search_knowledge_base`, `get_knowledge_page`, `create_knowledge_folder`, `create_knowledge_page`, `update_knowledge_node` and `delete_knowledge_node`. Those names, like the old `/knowledge-base/...` paths, still work but are deprecated and will be removed in 2.x.
 
 This can also be overridden per bank via the [config API](#hierarchical-configuration):
