@@ -5,6 +5,7 @@ whitespace until a time limit) could be taken off it for every reflect call but 
 turns, which sent ``strict_schema=True`` as a literal.
 """
 
+import inspect
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,6 +16,7 @@ from hindsight_api.config import (
     HindsightConfig,
 )
 from hindsight_api.engine.llm_wrapper import LLMProvider
+from hindsight_api.engine.providers.mock_llm import MockLLM
 from hindsight_api.engine.response_models import LLMCallResult, TokenUsage
 
 TOOLS = [
@@ -62,3 +64,10 @@ async def test_tool_turn_sends_the_strict_flag_it_is_given(strict):
 
     assert [c.name for c in result.tool_calls] == ["recall"]
     assert call.call_args.kwargs["strict_schema"] is strict
+
+
+def test_mock_llm_takes_every_argument_the_real_tool_turn_takes():
+    """Reflect is handed MockLLM directly in tests; a missing argument there fails only in CI."""
+    real = set(inspect.signature(LLMProvider.call_with_tools).parameters)
+    mock = set(inspect.signature(MockLLM.call_with_tools).parameters)
+    assert real - mock == set()
