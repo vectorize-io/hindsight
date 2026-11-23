@@ -36,14 +36,18 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any, cast
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.routing import APIRoute, request_response
 from pydantic import BaseModel
 
+from ..extensions.operation_validator import OperationValidationError
 from ..extensions.tenant import AuthenticationError
 from .observability import SCOPE_IGNORED_PARAMS, SCOPE_RESOLVED_ALIAS
 
 logger = logging.getLogger(__name__)
+
+#: Every route under this prefix is for memory banks only (see ``_refuse_knowledge_bank``).
+MEMORY_BANK_PATH = "/v1/default/banks/{bank_id}"
 
 
 def _known_body_names(body_field: Any) -> set[str] | None:
@@ -113,6 +117,8 @@ class UnknownParamsRoute(APIRoute):
             # request costs nothing, and routes with no bank in the path leave
             # after it.
             await self._resolve_bank_alias(request)
+            if self.path_format.startswith(MEMORY_BANK_PATH):
+                await self._refuse_knowledge_bank(request)
             ignored = await self._collect_ignored(request)
             if ignored:
                 joined = ", ".join(ignored)
@@ -170,6 +176,30 @@ class UnknownParamsRoute(APIRoute):
         if canonical != bank_id:
             request.path_params["bank_id"] = canonical
             request.scope[SCOPE_RESOLVED_ALIAS] = bank_id
+
+    @staticmethod
+    async def _refuse_knowledge_bank(request: Request) -> None:
+        """400 for a knowledge bank on a memory-bank route: every route under ``/v1/default/banks/{bank_id}``
+        is for memory banks only, and a knowledge bank answers only to ``/v1/default/knowledge-banks``.
+
+        One check here, rather than one per endpoint, so a new memory-bank endpoint cannot forget it.
+        Runs after alias resolution, so an alias of a knowledge bank is refused too. The refusal comes
+        from ``app.state.refuse_knowledge_bank`` (supplied by ``create_app``, like the alias resolver).
+        A lookup that cannot run is swallowed like the alias one: the engine's own guards still refuse
+        a knowledge bank on every memory write.
+        """
+        bank_id = request.path_params.get("bank_id")
+        refuse = getattr(request.app.state, "refuse_knowledge_bank", None)
+        if not isinstance(bank_id, str) or not bank_id or refuse is None:
+            return
+        try:
+            await refuse(request, bank_id)
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason) from e
+        except AuthenticationError:
+            return
+        except Exception:  # noqa: BLE001
+            logger.warning("Knowledge-bank check failed for %r; letting the request through", bank_id, exc_info=True)
 
     async def _collect_ignored(self, request: Request) -> list[str]:
         ignored: list[str] = []

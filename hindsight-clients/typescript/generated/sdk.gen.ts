@@ -14,6 +14,9 @@ import type {
   AuditLogStatsData,
   AuditLogStatsErrors,
   AuditLogStatsResponses,
+  CancelKnowledgeBankOperationData,
+  CancelKnowledgeBankOperationErrors,
+  CancelKnowledgeBankOperationResponses,
   CancelOperationData,
   CancelOperationErrors,
   CancelOperationResponses,
@@ -76,6 +79,9 @@ import type {
   DeleteDocumentResponses,
   DeleteKnowledgeBankData,
   DeleteKnowledgeBankErrors,
+  DeleteKnowledgeBankOperationData,
+  DeleteKnowledgeBankOperationErrors,
+  DeleteKnowledgeBankOperationResponses,
   DeleteKnowledgeBankResponses,
   DeleteKnowledgeDocumentData,
   DeleteKnowledgeDocumentErrors,
@@ -168,6 +174,9 @@ import type {
   GetKnowledgeBankConfigResponses,
   GetKnowledgeBankData,
   GetKnowledgeBankErrors,
+  GetKnowledgeBankOperationData,
+  GetKnowledgeBankOperationErrors,
+  GetKnowledgeBankOperationResponses,
   GetKnowledgeBankResponses,
   GetKnowledgeBankTimeseriesData,
   GetKnowledgeBankTimeseriesErrors,
@@ -258,6 +267,9 @@ import type {
   ListEntitiesData,
   ListEntitiesErrors,
   ListEntitiesResponses,
+  ListKnowledgeBankOperationsData,
+  ListKnowledgeBankOperationsErrors,
+  ListKnowledgeBankOperationsResponses,
   ListKnowledgeBanksData,
   ListKnowledgeBanksErrors,
   ListKnowledgeBanksResponses,
@@ -329,6 +341,9 @@ import type {
   RetainMemoriesData,
   RetainMemoriesErrors,
   RetainMemoriesResponses,
+  RetryKnowledgeBankOperationData,
+  RetryKnowledgeBankOperationErrors,
+  RetryKnowledgeBankOperationResponses,
   RetryOperationData,
   RetryOperationErrors,
   RetryOperationResponses,
@@ -515,7 +530,7 @@ export const getKnowledgeBankTimeseries = <ThrowOnError extends boolean = false>
 /**
  * Ingest files (PDF, images, audio, video, text, Office)
  *
- * Each file becomes one document, chunked into passages (or pre-processed first by the extension its ingestion strategy maps its type to) and embedded in the background. Poll the operation, or the document's status, to know when it is searchable.
+ * Each file becomes one document, chunked into passages (or pre-processed first by the extension its ingestion strategy maps its type to) and embedded in the background. Poll the operation (GET /v1/default/knowledge-banks/{bank_id}/operations/{operation_id}), or the document's status, to know when it is searchable.
  */
 export const ingestKnowledgeFiles = <ThrowOnError extends boolean = false>(
   options: Options<IngestKnowledgeFilesData, ThrowOnError>
@@ -590,6 +605,66 @@ export const getKnowledgeDocument = <ThrowOnError extends boolean = false>(
     GetKnowledgeDocumentErrors,
     ThrowOnError
   >({ url: "/v1/default/knowledge-banks/{bank_id}/documents/{document_id}", ...options });
+
+/**
+ * List a knowledge bank's background operations, most recent first
+ */
+export const listKnowledgeBankOperations = <ThrowOnError extends boolean = false>(
+  options: Options<ListKnowledgeBankOperationsData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    ListKnowledgeBankOperationsResponses,
+    ListKnowledgeBankOperationsErrors,
+    ThrowOnError
+  >({ url: "/v1/default/knowledge-banks/{bank_id}/operations", ...options });
+
+/**
+ * Cancel a pending or in-flight knowledge bank operation
+ */
+export const cancelKnowledgeBankOperation = <ThrowOnError extends boolean = false>(
+  options: Options<CancelKnowledgeBankOperationData, ThrowOnError>
+) =>
+  (options.client ?? client).delete<
+    CancelKnowledgeBankOperationResponses,
+    CancelKnowledgeBankOperationErrors,
+    ThrowOnError
+  >({ url: "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}", ...options });
+
+/**
+ * Get a knowledge bank operation's status
+ */
+export const getKnowledgeBankOperation = <ThrowOnError extends boolean = false>(
+  options: Options<GetKnowledgeBankOperationData, ThrowOnError>
+) =>
+  (options.client ?? client).get<
+    GetKnowledgeBankOperationResponses,
+    GetKnowledgeBankOperationErrors,
+    ThrowOnError
+  >({ url: "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}", ...options });
+
+/**
+ * Retry a failed or cancelled knowledge bank operation
+ */
+export const retryKnowledgeBankOperation = <ThrowOnError extends boolean = false>(
+  options: Options<RetryKnowledgeBankOperationData, ThrowOnError>
+) =>
+  (options.client ?? client).post<
+    RetryKnowledgeBankOperationResponses,
+    RetryKnowledgeBankOperationErrors,
+    ThrowOnError
+  >({ url: "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}/retry", ...options });
+
+/**
+ * Delete a finished knowledge bank operation's record
+ */
+export const deleteKnowledgeBankOperation = <ThrowOnError extends boolean = false>(
+  options: Options<DeleteKnowledgeBankOperationData, ThrowOnError>
+) =>
+  (options.client ?? client).delete<
+    DeleteKnowledgeBankOperationResponses,
+    DeleteKnowledgeBankOperationErrors,
+    ThrowOnError
+  >({ url: "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}/delete", ...options });
 
 /**
  * List a knowledge bank's document tags, with how many documents carry each

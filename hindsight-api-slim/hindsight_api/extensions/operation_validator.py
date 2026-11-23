@@ -804,6 +804,10 @@ class KnowledgeBankReadOperation(StrEnum):
     GET_KNOWLEDGE_BANK_CONFIG = "get_knowledge_bank_config"
     #: The bank's document tags with their counts (``GET /knowledge-banks/{bank_id}/tags``).
     LIST_KNOWLEDGE_BANK_TAGS = "list_knowledge_bank_tags"
+    #: The bank's background jobs (``GET /knowledge-banks/{bank_id}/operations``).
+    LIST_KNOWLEDGE_BANK_OPERATIONS = "list_knowledge_bank_operations"
+    #: One background job (``GET /knowledge-banks/{bank_id}/operations/{operation_id}``).
+    GET_KNOWLEDGE_BANK_OPERATION = "get_knowledge_bank_operation"
 
 
 class KnowledgeBankWriteOperation(StrEnum):
@@ -814,6 +818,9 @@ class KnowledgeBankWriteOperation(StrEnum):
     DELETE_KNOWLEDGE_BANK = "delete_knowledge_bank"
     UPDATE_KNOWLEDGE_BANK_CONFIG = "update_knowledge_bank_config"
     RESET_KNOWLEDGE_BANK_CONFIG = "reset_knowledge_bank_config"
+    CANCEL_KNOWLEDGE_BANK_OPERATION = "cancel_knowledge_bank_operation"
+    RETRY_KNOWLEDGE_BANK_OPERATION = "retry_knowledge_bank_operation"
+    DELETE_KNOWLEDGE_BANK_OPERATION = "delete_knowledge_bank_operation"
 
 
 @dataclass

@@ -342,6 +342,10 @@ class MCPToolsConfig:
     # register_mcp_tools, which has the engine; None leaves every id untouched.
     bank_alias_resolver: Callable[[str], Awaitable[str]] | None = None
 
+    # Raises for a knowledge bank: every tool here is for memory banks, the same rule the HTTP
+    # route class applies to /v1/default/banks/{bank_id}. Set by register_mcp_tools.
+    knowledge_bank_refuser: Callable[[str], Awaitable[None]] | None = None
+
     # How to resolve API key for tenant auth (optional)
     api_key_resolver: Callable[[], str | None] | None = None
 
@@ -405,12 +409,19 @@ async def _resolve_bank(config: MCPToolsConfig, bank_id: str | None) -> str | No
     already holds a real bank id. Only an id passed as a tool *argument* has
     bypassed that edge, so only that one is resolved — which also keeps every
     session-bank tool call free of a database round trip it does not need.
+
+    Either way a knowledge bank is refused (``knowledge_bank_refuser``): its kind is
+    cached, so the session-bank path still takes no round trip on a warm bank.
     """
     if bank_id is None:
-        return config.bank_id_resolver()
-    if config.bank_alias_resolver is None:
-        return bank_id
-    return await config.bank_alias_resolver(bank_id)
+        resolved = config.bank_id_resolver()
+    elif config.bank_alias_resolver is None:
+        resolved = bank_id
+    else:
+        resolved = await config.bank_alias_resolver(bank_id)
+    if resolved and config.knowledge_bank_refuser is not None:
+        await config.knowledge_bank_refuser(resolved)
+    return resolved
 
 
 async def _run_tool(
@@ -670,6 +681,12 @@ def register_mcp_tools(
             return await memory.resolve_bank_alias(bank_id, request_context=_get_request_context(config))
 
         config.bank_alias_resolver = _resolve_alias
+    if config.knowledge_bank_refuser is None:
+
+        async def _refuse_knowledge_bank(bank_id: str) -> None:
+            await memory.refuse_knowledge_bank(bank_id, request_context=_get_request_context(config))
+
+        config.knowledge_bank_refuser = _refuse_knowledge_bank
 
     tools_to_register = (
         canonical_tool_names(config.tools)

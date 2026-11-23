@@ -266,6 +266,7 @@ class TestMcpTransport:
         memory = MagicMock()
         memory._tenant_extension = AcceptingTenantExtension({})
         memory.resolve_bank_alias = AsyncMock(side_effect=lambda bank_id, **_: bank_id)
+        memory.refuse_knowledge_bank = AsyncMock(return_value=None)
         mcp_app = AsyncMock()
         middleware = MCPMiddleware(app=None, memory=memory, multi_bank_app=mcp_app, single_bank_app=mcp_app)
 

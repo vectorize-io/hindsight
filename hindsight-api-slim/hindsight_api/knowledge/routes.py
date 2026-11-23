@@ -6,6 +6,7 @@ import base64
 import binascii
 import json
 import mimetypes
+import uuid
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Literal
@@ -725,7 +726,8 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
         status_code=202,
         summary="Ingest files (PDF, images, audio, video, text, Office)",
         description="Each file becomes one document, chunked into passages (or pre-processed first by the "
-        "extension its ingestion strategy maps its type to) and embedded in the background. Poll the operation, or the document's status, to "
+        "extension its ingestion strategy maps its type to) and embedded in the background. Poll the operation "
+        "(GET /v1/default/knowledge-banks/{bank_id}/operations/{operation_id}), or the document's status, to "
         "know when it is searchable.",
         operation_id="ingest_knowledge_files",
     )
@@ -861,6 +863,126 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
         except Exception as exc:
             raise _http_error(exc) from exc
         return KnowledgeDeletedResponse()
+
+    # --- background jobs: a knowledge bank's own, since /v1/default/banks/{bank_id}/operations is
+    # memory banks only. Same job table, engine code and response shapes as the memory routes.
+    from ..api.http import (
+        CancelOperationResponse,
+        DeleteOperationResponse,
+        OperationResponse,
+        OperationsListResponse,
+        OperationStatusResponse,
+        RetryOperationResponse,
+    )
+
+    def _operation_uuid(operation_id: str) -> None:
+        try:
+            uuid.UUID(operation_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid operation_id format: {operation_id}") from None
+
+    @router.get(
+        "/{bank_id}/operations",
+        response_model=OperationsListResponse,
+        summary="List a knowledge bank's background operations, most recent first",
+        operation_id="list_knowledge_bank_operations",
+    )
+    async def list_operations(
+        bank_id: str,
+        request: Request,
+        status: str | None = Query(
+            default=None, description="Filter by status: pending, processing, completed, failed, or cancelled"
+        ),
+        type: str | None = Query(default=None, description="Filter by operation type"),
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        exclude_parents: bool = Query(default=False, description="Exclude parent batch operations from results"),
+        rc: RequestContext = Depends(get_request_context),
+    ) -> OperationsListResponse:
+        try:
+            result = await service(request).list_operations(
+                bank_id,
+                rc,
+                status=status,
+                task_type=type,
+                limit=limit,
+                offset=offset,
+                exclude_parents=exclude_parents,
+            )
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return OperationsListResponse(
+            bank_id=bank_id,
+            total=result["total"],
+            limit=limit,
+            offset=offset,
+            operations=[OperationResponse(**op) for op in result["operations"]],
+        )
+
+    @router.get(
+        "/{bank_id}/operations/{operation_id}",
+        response_model=OperationStatusResponse,
+        summary="Get a knowledge bank operation's status",
+        operation_id="get_knowledge_bank_operation",
+    )
+    async def get_operation(
+        bank_id: str,
+        operation_id: str,
+        request: Request,
+        include_payload: bool = Query(default=False, description="Include the raw task payload in the response."),
+        rc: RequestContext = Depends(get_request_context),
+    ) -> OperationStatusResponse:
+        _operation_uuid(operation_id)
+        try:
+            result = await service(request).get_operation(bank_id, operation_id, rc, include_payload=include_payload)
+        except Exception as exc:
+            raise _http_error(exc) from exc
+        return OperationStatusResponse(**result)
+
+    @router.delete(
+        "/{bank_id}/operations/{operation_id}",
+        response_model=CancelOperationResponse,
+        summary="Cancel a pending or in-flight knowledge bank operation",
+        operation_id="cancel_knowledge_bank_operation",
+    )
+    async def cancel_operation(
+        bank_id: str, operation_id: str, request: Request, rc: RequestContext = Depends(get_request_context)
+    ) -> CancelOperationResponse:
+        _operation_uuid(operation_id)
+        try:
+            return CancelOperationResponse(**await service(request).cancel_operation(bank_id, operation_id, rc))
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @router.post(
+        "/{bank_id}/operations/{operation_id}/retry",
+        response_model=RetryOperationResponse,
+        summary="Retry a failed or cancelled knowledge bank operation",
+        operation_id="retry_knowledge_bank_operation",
+    )
+    async def retry_operation(
+        bank_id: str, operation_id: str, request: Request, rc: RequestContext = Depends(get_request_context)
+    ) -> RetryOperationResponse:
+        _operation_uuid(operation_id)
+        try:
+            return RetryOperationResponse(**await service(request).retry_operation(bank_id, operation_id, rc))
+        except Exception as exc:
+            raise _http_error(exc) from exc
+
+    @router.delete(
+        "/{bank_id}/operations/{operation_id}/delete",
+        response_model=DeleteOperationResponse,
+        summary="Delete a finished knowledge bank operation's record",
+        operation_id="delete_knowledge_bank_operation",
+    )
+    async def delete_operation(
+        bank_id: str, operation_id: str, request: Request, rc: RequestContext = Depends(get_request_context)
+    ) -> DeleteOperationResponse:
+        _operation_uuid(operation_id)
+        try:
+            return DeleteOperationResponse(**await service(request).delete_operation(bank_id, operation_id, rc))
+        except Exception as exc:
+            raise _http_error(exc) from exc
 
     @router.get(
         "/{bank_id}/tags",

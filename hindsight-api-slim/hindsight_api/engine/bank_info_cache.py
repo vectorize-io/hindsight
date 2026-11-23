@@ -27,8 +27,15 @@ loudly instead of silently.
 
 What that permits is bounded by what these two rows carry: a bank's display name, its
 disposition, its mission and its config. None is a correctness gate on a write, and this cache is
-deliberately NOT used for anything that authorises or routes a request. Set the TTL to 0 to
+deliberately NOT used for anything that authorises a request. Set the TTL to 0 to
 disable it and read on every call.
+
+One routing fact rides along: the bank's ``kind`` (memory or knowledge), which the HTTP and MCP
+layers read on every request to refuse a knowledge bank on a memory-bank endpoint. A bank's kind
+never changes while its row lives, so the only stale answer is a bank deleted on one pod and
+recreated under the same id as the other kind on another, within the TTL. Writes stay guarded by
+the uncached checks below that layer (``_ensure_bank_exists`` refuses a knowledge bank), so the
+window can only misroute a read.
 
 Keyed on ``(schema, bank_id)``, never ``bank_id`` alone: schema is the tenant boundary, and a
 cache keyed on the bank id alone would serve one tenant's bank row to another whenever two
@@ -83,7 +90,7 @@ def _schema() -> str:
 
 
 async def get_or_load(bank_id: str, kind: str, loader: Callable[[], Awaitable[dict[str, Any]]]) -> dict[str, Any]:
-    """Cached read of one bank row. `kind` is "profile" or "config"."""
+    """Cached read of one bank row. `kind` is "profile", "config" or "kind"."""
     cache = _get_cache()
     schema, key = _key(bank_id, kind)
     value = await cache.get_or_load(schema, key, loader)
@@ -98,13 +105,13 @@ async def get_or_load(bank_id: str, kind: str, loader: Callable[[], Awaitable[di
 
 
 async def invalidate(bank_id: str, kind: str | None = None) -> None:
-    """Drop this bank's cached rows. `kind` narrows it to "profile" or "config"; None drops both.
+    """Drop this bank's cached rows. `kind` narrows it to "profile", "config" or "kind"; None drops all.
 
     Called by every path that writes the bank row. The two kinds are dropped together by default
     because a caller that has just written one rarely knows which reads the request will make next,
     and dropping the other costs a single re-read.
     """
     cache = _get_cache()
-    for k in (kind,) if kind else ("profile", "config"):
+    for k in (kind,) if kind else ("profile", "config", "kind"):
         schema, key = _key(bank_id, k)
         await cache.invalidate(schema, key)

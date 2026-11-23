@@ -25,6 +25,130 @@ import (
 // KnowledgeBanksAPIService KnowledgeBanksAPI service
 type KnowledgeBanksAPIService service
 
+type ApiCancelKnowledgeBankOperationRequest struct {
+	ctx context.Context
+	ApiService *KnowledgeBanksAPIService
+	bankId string
+	operationId string
+	authorization *string
+}
+
+func (r ApiCancelKnowledgeBankOperationRequest) Authorization(authorization string) ApiCancelKnowledgeBankOperationRequest {
+	r.authorization = &authorization
+	return r
+}
+
+func (r ApiCancelKnowledgeBankOperationRequest) Execute() (*CancelOperationResponse, *http.Response, error) {
+	return r.ApiService.CancelKnowledgeBankOperationExecute(r)
+}
+
+/*
+CancelKnowledgeBankOperation Cancel a pending or in-flight knowledge bank operation
+
+ @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+ @param bankId
+ @param operationId
+ @return ApiCancelKnowledgeBankOperationRequest
+*/
+func (a *KnowledgeBanksAPIService) CancelKnowledgeBankOperation(ctx context.Context, bankId string, operationId string) ApiCancelKnowledgeBankOperationRequest {
+	return ApiCancelKnowledgeBankOperationRequest{
+		ApiService: a,
+		ctx: ctx,
+		bankId: bankId,
+		operationId: operationId,
+	}
+}
+
+// Execute executes the request
+//  @return CancelOperationResponse
+func (a *KnowledgeBanksAPIService) CancelKnowledgeBankOperationExecute(r ApiCancelKnowledgeBankOperationRequest) (*CancelOperationResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod   = http.MethodDelete
+		localVarPostBody     interface{}
+		formFiles            []formFile
+		localVarReturnValue  *CancelOperationResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBanksAPIService.CancelKnowledgeBankOperation")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}"
+	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"operation_id"+"}", url.PathEscape(parameterValueToString(r.operationId, "operationId")), -1)
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	if r.authorization != nil {
+		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 422 {
+			var v HTTPValidationError
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+					newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
 type ApiCreateKnowledgeBankRequest struct {
 	ctx context.Context
 	ApiService *KnowledgeBanksAPIService
@@ -200,6 +324,130 @@ func (a *KnowledgeBanksAPIService) DeleteKnowledgeBankExecute(r ApiDeleteKnowled
 
 	localVarPath := localBasePath + "/v1/default/knowledge-banks/{bank_id}"
 	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	if r.authorization != nil {
+		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 422 {
+			var v HTTPValidationError
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+					newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type ApiDeleteKnowledgeBankOperationRequest struct {
+	ctx context.Context
+	ApiService *KnowledgeBanksAPIService
+	bankId string
+	operationId string
+	authorization *string
+}
+
+func (r ApiDeleteKnowledgeBankOperationRequest) Authorization(authorization string) ApiDeleteKnowledgeBankOperationRequest {
+	r.authorization = &authorization
+	return r
+}
+
+func (r ApiDeleteKnowledgeBankOperationRequest) Execute() (*DeleteOperationResponse, *http.Response, error) {
+	return r.ApiService.DeleteKnowledgeBankOperationExecute(r)
+}
+
+/*
+DeleteKnowledgeBankOperation Delete a finished knowledge bank operation's record
+
+ @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+ @param bankId
+ @param operationId
+ @return ApiDeleteKnowledgeBankOperationRequest
+*/
+func (a *KnowledgeBanksAPIService) DeleteKnowledgeBankOperation(ctx context.Context, bankId string, operationId string) ApiDeleteKnowledgeBankOperationRequest {
+	return ApiDeleteKnowledgeBankOperationRequest{
+		ApiService: a,
+		ctx: ctx,
+		bankId: bankId,
+		operationId: operationId,
+	}
+}
+
+// Execute executes the request
+//  @return DeleteOperationResponse
+func (a *KnowledgeBanksAPIService) DeleteKnowledgeBankOperationExecute(r ApiDeleteKnowledgeBankOperationRequest) (*DeleteOperationResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod   = http.MethodDelete
+		localVarPostBody     interface{}
+		formFiles            []formFile
+		localVarReturnValue  *DeleteOperationResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBanksAPIService.DeleteKnowledgeBankOperation")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}/delete"
+	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"operation_id"+"}", url.PathEscape(parameterValueToString(r.operationId, "operationId")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}
@@ -569,6 +817,143 @@ func (a *KnowledgeBanksAPIService) GetKnowledgeBankConfigExecute(r ApiGetKnowled
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	if r.authorization != nil {
+		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 422 {
+			var v HTTPValidationError
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+					newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type ApiGetKnowledgeBankOperationRequest struct {
+	ctx context.Context
+	ApiService *KnowledgeBanksAPIService
+	bankId string
+	operationId string
+	includePayload *bool
+	authorization *string
+}
+
+// Include the raw task payload in the response.
+func (r ApiGetKnowledgeBankOperationRequest) IncludePayload(includePayload bool) ApiGetKnowledgeBankOperationRequest {
+	r.includePayload = &includePayload
+	return r
+}
+
+func (r ApiGetKnowledgeBankOperationRequest) Authorization(authorization string) ApiGetKnowledgeBankOperationRequest {
+	r.authorization = &authorization
+	return r
+}
+
+func (r ApiGetKnowledgeBankOperationRequest) Execute() (*OperationStatusResponse, *http.Response, error) {
+	return r.ApiService.GetKnowledgeBankOperationExecute(r)
+}
+
+/*
+GetKnowledgeBankOperation Get a knowledge bank operation's status
+
+ @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+ @param bankId
+ @param operationId
+ @return ApiGetKnowledgeBankOperationRequest
+*/
+func (a *KnowledgeBanksAPIService) GetKnowledgeBankOperation(ctx context.Context, bankId string, operationId string) ApiGetKnowledgeBankOperationRequest {
+	return ApiGetKnowledgeBankOperationRequest{
+		ApiService: a,
+		ctx: ctx,
+		bankId: bankId,
+		operationId: operationId,
+	}
+}
+
+// Execute executes the request
+//  @return OperationStatusResponse
+func (a *KnowledgeBanksAPIService) GetKnowledgeBankOperationExecute(r ApiGetKnowledgeBankOperationRequest) (*OperationStatusResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod   = http.MethodGet
+		localVarPostBody     interface{}
+		formFiles            []formFile
+		localVarReturnValue  *OperationStatusResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBanksAPIService.GetKnowledgeBankOperation")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}"
+	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"operation_id"+"}", url.PathEscape(parameterValueToString(r.operationId, "operationId")), -1)
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+
+	if r.includePayload != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "include_payload", r.includePayload, "form", "")
+	} else {
+		var defaultValue bool = false
+		r.includePayload = &defaultValue
+	}
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 
@@ -1163,7 +1548,7 @@ func (r ApiIngestKnowledgeFilesRequest) Execute() (*KnowledgeIngestResponse, *ht
 /*
 IngestKnowledgeFiles Ingest files (PDF, images, audio, video, text, Office)
 
-Each file becomes one document, chunked into passages (or pre-processed first by the extension its ingestion strategy maps its type to) and embedded in the background. Poll the operation, or the document's status, to know when it is searchable.
+Each file becomes one document, chunked into passages (or pre-processed first by the extension its ingestion strategy maps its type to) and embedded in the background. Poll the operation (GET /v1/default/knowledge-banks/{bank_id}/operations/{operation_id}), or the document's status, to know when it is searchable.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId
@@ -1376,6 +1761,183 @@ func (a *KnowledgeBanksAPIService) IngestKnowledgeTextsExecute(r ApiIngestKnowle
 	}
 	// body params
 	localVarPostBody = r.knowledgeIngestRequest
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 422 {
+			var v HTTPValidationError
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+					newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type ApiListKnowledgeBankOperationsRequest struct {
+	ctx context.Context
+	ApiService *KnowledgeBanksAPIService
+	bankId string
+	status *string
+	type_ *string
+	limit *int32
+	offset *int32
+	excludeParents *bool
+	authorization *string
+}
+
+// Filter by status: pending, processing, completed, failed, or cancelled
+func (r ApiListKnowledgeBankOperationsRequest) Status(status string) ApiListKnowledgeBankOperationsRequest {
+	r.status = &status
+	return r
+}
+
+// Filter by operation type
+func (r ApiListKnowledgeBankOperationsRequest) Type_(type_ string) ApiListKnowledgeBankOperationsRequest {
+	r.type_ = &type_
+	return r
+}
+
+func (r ApiListKnowledgeBankOperationsRequest) Limit(limit int32) ApiListKnowledgeBankOperationsRequest {
+	r.limit = &limit
+	return r
+}
+
+func (r ApiListKnowledgeBankOperationsRequest) Offset(offset int32) ApiListKnowledgeBankOperationsRequest {
+	r.offset = &offset
+	return r
+}
+
+// Exclude parent batch operations from results
+func (r ApiListKnowledgeBankOperationsRequest) ExcludeParents(excludeParents bool) ApiListKnowledgeBankOperationsRequest {
+	r.excludeParents = &excludeParents
+	return r
+}
+
+func (r ApiListKnowledgeBankOperationsRequest) Authorization(authorization string) ApiListKnowledgeBankOperationsRequest {
+	r.authorization = &authorization
+	return r
+}
+
+func (r ApiListKnowledgeBankOperationsRequest) Execute() (*OperationsListResponse, *http.Response, error) {
+	return r.ApiService.ListKnowledgeBankOperationsExecute(r)
+}
+
+/*
+ListKnowledgeBankOperations List a knowledge bank's background operations, most recent first
+
+ @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+ @param bankId
+ @return ApiListKnowledgeBankOperationsRequest
+*/
+func (a *KnowledgeBanksAPIService) ListKnowledgeBankOperations(ctx context.Context, bankId string) ApiListKnowledgeBankOperationsRequest {
+	return ApiListKnowledgeBankOperationsRequest{
+		ApiService: a,
+		ctx: ctx,
+		bankId: bankId,
+	}
+}
+
+// Execute executes the request
+//  @return OperationsListResponse
+func (a *KnowledgeBanksAPIService) ListKnowledgeBankOperationsExecute(r ApiListKnowledgeBankOperationsRequest) (*OperationsListResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod   = http.MethodGet
+		localVarPostBody     interface{}
+		formFiles            []formFile
+		localVarReturnValue  *OperationsListResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBanksAPIService.ListKnowledgeBankOperations")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/v1/default/knowledge-banks/{bank_id}/operations"
+	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+
+	if r.status != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "status", r.status, "form", "")
+	}
+	if r.type_ != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "type", r.type_, "form", "")
+	}
+	if r.limit != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "limit", r.limit, "form", "")
+	} else {
+		var defaultValue int32 = 20
+		r.limit = &defaultValue
+	}
+	if r.offset != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "offset", r.offset, "form", "")
+	} else {
+		var defaultValue int32 = 0
+		r.offset = &defaultValue
+	}
+	if r.excludeParents != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "exclude_parents", r.excludeParents, "form", "")
+	} else {
+		var defaultValue bool = false
+		r.excludeParents = &defaultValue
+	}
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	if r.authorization != nil {
+		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
+	}
 	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err
@@ -1964,6 +2526,130 @@ func (a *KnowledgeBanksAPIService) ResetKnowledgeBankConfigExecute(r ApiResetKno
 
 	localVarPath := localBasePath + "/v1/default/knowledge-banks/{bank_id}/config"
 	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	if r.authorization != nil {
+		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 422 {
+			var v HTTPValidationError
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+					newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type ApiRetryKnowledgeBankOperationRequest struct {
+	ctx context.Context
+	ApiService *KnowledgeBanksAPIService
+	bankId string
+	operationId string
+	authorization *string
+}
+
+func (r ApiRetryKnowledgeBankOperationRequest) Authorization(authorization string) ApiRetryKnowledgeBankOperationRequest {
+	r.authorization = &authorization
+	return r
+}
+
+func (r ApiRetryKnowledgeBankOperationRequest) Execute() (*RetryOperationResponse, *http.Response, error) {
+	return r.ApiService.RetryKnowledgeBankOperationExecute(r)
+}
+
+/*
+RetryKnowledgeBankOperation Retry a failed or cancelled knowledge bank operation
+
+ @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+ @param bankId
+ @param operationId
+ @return ApiRetryKnowledgeBankOperationRequest
+*/
+func (a *KnowledgeBanksAPIService) RetryKnowledgeBankOperation(ctx context.Context, bankId string, operationId string) ApiRetryKnowledgeBankOperationRequest {
+	return ApiRetryKnowledgeBankOperationRequest{
+		ApiService: a,
+		ctx: ctx,
+		bankId: bankId,
+		operationId: operationId,
+	}
+}
+
+// Execute executes the request
+//  @return RetryOperationResponse
+func (a *KnowledgeBanksAPIService) RetryKnowledgeBankOperationExecute(r ApiRetryKnowledgeBankOperationRequest) (*RetryOperationResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod   = http.MethodPost
+		localVarPostBody     interface{}
+		formFiles            []formFile
+		localVarReturnValue  *RetryOperationResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "KnowledgeBanksAPIService.RetryKnowledgeBankOperation")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}/retry"
+	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+	localVarPath = strings.Replace(localVarPath, "{"+"operation_id"+"}", url.PathEscape(parameterValueToString(r.operationId, "operationId")), -1)
 
 	localVarHeaderParams := make(map[string]string)
 	localVarQueryParams := url.Values{}

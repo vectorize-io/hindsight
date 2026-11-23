@@ -113,6 +113,7 @@ async def test_validator_filters_tools_list():
     """Validator filter is applied during tools/list via _get_enabled_tools."""
     mock_memory = MagicMock()
     mock_memory.resolve_bank_alias = _alias_passthrough()
+    mock_memory.refuse_knowledge_bank = AsyncMock(return_value=None)
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()
@@ -159,6 +160,7 @@ async def test_bank_config_and_validator_compose():
     """Bank config sets ceiling, validator narrows further."""
     mock_memory = MagicMock()
     mock_memory.resolve_bank_alias = _alias_passthrough()
+    mock_memory.refuse_knowledge_bank = AsyncMock(return_value=None)
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()
@@ -216,6 +218,7 @@ async def test_validator_cannot_add_tools_beyond_bank_config():
 
     mock_memory = MagicMock()
     mock_memory.resolve_bank_alias = _alias_passthrough()
+    mock_memory.refuse_knowledge_bank = AsyncMock(return_value=None)
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()
@@ -278,6 +281,7 @@ async def test_validator_exception_fails_open(caplog):
 
     mock_memory = MagicMock()
     mock_memory.resolve_bank_alias = _alias_passthrough()
+    mock_memory.refuse_knowledge_bank = AsyncMock(return_value=None)
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()
@@ -324,6 +328,7 @@ async def test_no_validator_returns_unfiltered():
     """Without an operation validator, tools/list returns all tools."""
     mock_memory = MagicMock()
     mock_memory.resolve_bank_alias = _alias_passthrough()
+    mock_memory.refuse_knowledge_bank = AsyncMock(return_value=None)
     mock_memory._tenant_extension = MagicMock()
     mock_memory._tenant_extension.authenticate_mcp = AsyncMock()
     mock_memory.retain_batch_async = AsyncMock()

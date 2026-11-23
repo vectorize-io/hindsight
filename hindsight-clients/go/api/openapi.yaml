@@ -353,8 +353,8 @@ paths:
     post:
       description: "Each file becomes one document, chunked into passages (or pre-processed\
         \ first by the extension its ingestion strategy maps its type to) and embedded\
-        \ in the background. Poll the operation, or the document's status, to know\
-        \ when it is searchable."
+        \ in the background. Poll the operation (GET /v1/default/knowledge-banks/{bank_id}/operations/{operation_id}),\
+        \ or the document's status, to know when it is searchable."
       operationId: ingest_knowledge_files
       parameters:
       - explode: false
@@ -624,6 +624,279 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
           description: Validation Error
       summary: Get a document and its passages
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/operations:
+    get:
+      operationId: list_knowledge_bank_operations
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: "Filter by status: pending, processing, completed, failed, or\
+          \ cancelled"
+        explode: true
+        in: query
+        name: status
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - description: Filter by operation type
+        explode: true
+        in: query
+        name: type
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: form
+      - explode: true
+        in: query
+        name: limit
+        required: false
+        schema:
+          default: 20
+          maximum: 100
+          minimum: 1
+          title: Limit
+          type: integer
+        style: form
+      - explode: true
+        in: query
+        name: offset
+        required: false
+        schema:
+          default: 0
+          minimum: 0
+          title: Offset
+          type: integer
+        style: form
+      - description: Exclude parent batch operations from results
+        explode: true
+        in: query
+        name: exclude_parents
+        required: false
+        schema:
+          default: false
+          description: Exclude parent batch operations from results
+          title: Exclude Parents
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationsListResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: "List a knowledge bank's background operations, most recent first"
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/operations/{operation_id}:
+    delete:
+      operationId: cancel_knowledge_bank_operation
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: operation_id
+        required: true
+        schema:
+          title: Operation Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelOperationResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Cancel a pending or in-flight knowledge bank operation
+      tags:
+      - Knowledge Banks
+    get:
+      operationId: get_knowledge_bank_operation
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: operation_id
+        required: true
+        schema:
+          title: Operation Id
+          type: string
+        style: simple
+      - description: Include the raw task payload in the response.
+        explode: true
+        in: query
+        name: include_payload
+        required: false
+        schema:
+          default: false
+          description: Include the raw task payload in the response.
+          title: Include Payload
+          type: boolean
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationStatusResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Get a knowledge bank operation's status
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/operations/{operation_id}/retry:
+    post:
+      operationId: retry_knowledge_bank_operation
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: operation_id
+        required: true
+        schema:
+          title: Operation Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetryOperationResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Retry a failed or cancelled knowledge bank operation
+      tags:
+      - Knowledge Banks
+  /v1/default/knowledge-banks/{bank_id}/operations/{operation_id}/delete:
+    delete:
+      operationId: delete_knowledge_bank_operation
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - explode: false
+        in: path
+        name: operation_id
+        required: true
+        schema:
+          title: Operation Id
+          type: string
+        style: simple
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteOperationResponse'
+          description: Successful Response
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: Delete a finished knowledge bank operation's record
       tags:
       - Knowledge Banks
   /v1/default/knowledge-banks/{bank_id}/tags:

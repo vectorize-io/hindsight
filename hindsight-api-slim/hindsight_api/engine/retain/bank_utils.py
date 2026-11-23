@@ -266,6 +266,19 @@ async def bank_kind(pool, bank_id: str) -> str | None:
         return await bank_kind_on_conn(conn, bank_id)
 
 
+async def bank_kind_cached(pool, bank_id: str) -> str | None:
+    """:func:`bank_kind` through ``bank_info_cache`` -- for the per-request routing check, where an
+    uncached read would cost every request a pooled connection. Misses are never cached."""
+    from .. import bank_info_cache
+
+    async def _load() -> dict:
+        kind = await bank_kind(pool, bank_id)
+        return {"kind": kind} if kind else {}
+
+    row = await bank_info_cache.get_or_load(bank_id, "kind", _load)
+    return row.get("kind")
+
+
 async def bank_exists(pool, bank_id: str) -> bool:
     """Dedicated-connection variant of ``bank_exists_on_conn``.
 

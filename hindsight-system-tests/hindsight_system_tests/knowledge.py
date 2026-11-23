@@ -111,6 +111,13 @@ class KnowledgeBanks:
         request = KnowledgeSearchRequest.from_dict(body)
         return await _read(self._api.search_knowledge_bank_without_preload_content(bank_id, request))
 
+    async def operations(self, bank_id: str, **query: Any) -> Response:
+        """The bank's background jobs: a knowledge bank's own, never ``/banks/{id}/operations``."""
+        return await self.call("GET", f"{KB}/{bank_id}/operations", query=query)
+
+    async def operation(self, bank_id: str, operation_id: str) -> Response:
+        return await self.call("GET", f"{KB}/{bank_id}/operations/{operation_id}")
+
     async def wait_until_processed(self, bank_id: str, count: int, timeout: float = 30.0) -> None:
         """Until ``count`` documents of the bank are ready or failed: an async ingest's worker is done."""
         deadline = time.monotonic() + timeout

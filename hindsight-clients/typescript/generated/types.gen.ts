@@ -9218,6 +9218,246 @@ export type GetKnowledgeDocumentResponses = {
 export type GetKnowledgeDocumentResponse =
   GetKnowledgeDocumentResponses[keyof GetKnowledgeDocumentResponses];
 
+export type ListKnowledgeBankOperationsData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query?: {
+    /**
+     * Status
+     *
+     * Filter by status: pending, processing, completed, failed, or cancelled
+     */
+    status?: string | null;
+    /**
+     * Type
+     *
+     * Filter by operation type
+     */
+    type?: string | null;
+    /**
+     * Limit
+     */
+    limit?: number;
+    /**
+     * Offset
+     */
+    offset?: number;
+    /**
+     * Exclude Parents
+     *
+     * Exclude parent batch operations from results
+     */
+    exclude_parents?: boolean;
+  };
+  url: "/v1/default/knowledge-banks/{bank_id}/operations";
+};
+
+export type ListKnowledgeBankOperationsErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type ListKnowledgeBankOperationsError =
+  ListKnowledgeBankOperationsErrors[keyof ListKnowledgeBankOperationsErrors];
+
+export type ListKnowledgeBankOperationsResponses = {
+  /**
+   * Successful Response
+   */
+  200: OperationsListResponse;
+};
+
+export type ListKnowledgeBankOperationsResponse =
+  ListKnowledgeBankOperationsResponses[keyof ListKnowledgeBankOperationsResponses];
+
+export type CancelKnowledgeBankOperationData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Operation Id
+     */
+    operation_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}";
+};
+
+export type CancelKnowledgeBankOperationErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type CancelKnowledgeBankOperationError =
+  CancelKnowledgeBankOperationErrors[keyof CancelKnowledgeBankOperationErrors];
+
+export type CancelKnowledgeBankOperationResponses = {
+  /**
+   * Successful Response
+   */
+  200: CancelOperationResponse;
+};
+
+export type CancelKnowledgeBankOperationResponse =
+  CancelKnowledgeBankOperationResponses[keyof CancelKnowledgeBankOperationResponses];
+
+export type GetKnowledgeBankOperationData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Operation Id
+     */
+    operation_id: string;
+  };
+  query?: {
+    /**
+     * Include Payload
+     *
+     * Include the raw task payload in the response.
+     */
+    include_payload?: boolean;
+  };
+  url: "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}";
+};
+
+export type GetKnowledgeBankOperationErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetKnowledgeBankOperationError =
+  GetKnowledgeBankOperationErrors[keyof GetKnowledgeBankOperationErrors];
+
+export type GetKnowledgeBankOperationResponses = {
+  /**
+   * Successful Response
+   */
+  200: OperationStatusResponse;
+};
+
+export type GetKnowledgeBankOperationResponse =
+  GetKnowledgeBankOperationResponses[keyof GetKnowledgeBankOperationResponses];
+
+export type RetryKnowledgeBankOperationData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Operation Id
+     */
+    operation_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}/retry";
+};
+
+export type RetryKnowledgeBankOperationErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type RetryKnowledgeBankOperationError =
+  RetryKnowledgeBankOperationErrors[keyof RetryKnowledgeBankOperationErrors];
+
+export type RetryKnowledgeBankOperationResponses = {
+  /**
+   * Successful Response
+   */
+  200: RetryOperationResponse;
+};
+
+export type RetryKnowledgeBankOperationResponse =
+  RetryKnowledgeBankOperationResponses[keyof RetryKnowledgeBankOperationResponses];
+
+export type DeleteKnowledgeBankOperationData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+    /**
+     * Operation Id
+     */
+    operation_id: string;
+  };
+  query?: never;
+  url: "/v1/default/knowledge-banks/{bank_id}/operations/{operation_id}/delete";
+};
+
+export type DeleteKnowledgeBankOperationErrors = {
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type DeleteKnowledgeBankOperationError =
+  DeleteKnowledgeBankOperationErrors[keyof DeleteKnowledgeBankOperationErrors];
+
+export type DeleteKnowledgeBankOperationResponses = {
+  /**
+   * Successful Response
+   */
+  200: DeleteOperationResponse;
+};
+
+export type DeleteKnowledgeBankOperationResponse =
+  DeleteKnowledgeBankOperationResponses[keyof DeleteKnowledgeBankOperationResponses];
+
 export type ListKnowledgeBankTagsData = {
   body?: never;
   headers?: {

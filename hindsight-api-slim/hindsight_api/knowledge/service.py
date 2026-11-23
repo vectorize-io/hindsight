@@ -761,10 +761,12 @@ class KnowledgeService:
         request_context: RequestContext,
         rerank: bool | None = None,
     ) -> None:
-        """The operation validator's knowledge-bank hook for one operation (the memory-bank hooks never run
-        for a knowledge bank). Run before the bank's existence is checked, so a caller who may not touch
-        a bank cannot learn whether it exists from a 404. ``rerank`` is a search's: whether it is to be
-        reranked, None for any other operation."""
+        """The operation validator's knowledge-bank hook for one operation. The memory-bank hooks never run
+        for a knowledge bank: every /v1/default/banks/{bank_id} route and MCP tool refuses one
+        (``MemoryEngine.refuse_knowledge_bank``), and the engine calls made from here pass
+        ``_knowledge_bank=True`` where they would otherwise run them. Run before the bank's existence is
+        checked, so a caller who may not touch a bank cannot learn whether it exists from a 404.
+        ``rerank`` is a search's: whether it is to be reranked, None for any other operation."""
         validator = self._engine._operation_validator
         if validator is None:
             return
@@ -2017,6 +2019,85 @@ class KnowledgeService:
     ) -> TagPage:
         await self._open_bank(bank_id, KnowledgeBankReadOperation.LIST_KNOWLEDGE_BANK_TAGS, request_context)
         return await self.store.list_tags(bank_id, pattern=pattern, limit=limit, offset=offset)
+
+    # --- background jobs --------------------------------------------------------------------
+    # The same job table and code as a memory bank's, reached only through here: the memory-bank job
+    # endpoints refuse a knowledge bank, and ``_knowledge_bank=True`` skips the memory hooks.
+
+    async def list_operations(
+        self,
+        bank_id: str,
+        request_context: RequestContext,
+        *,
+        status: str | None,
+        task_type: str | None,
+        limit: int,
+        offset: int,
+        exclude_parents: bool,
+    ) -> dict[str, Any]:
+        await self._open_bank(
+            bank_id, KnowledgeBankReadOperation.LIST_KNOWLEDGE_BANK_OPERATIONS, request_context, needs_vectors=False
+        )
+        return await self._engine.list_operations(
+            bank_id,
+            status=status,
+            task_type=task_type,
+            limit=limit,
+            offset=offset,
+            exclude_parents=exclude_parents,
+            request_context=request_context,
+            _knowledge_bank=True,
+        )
+
+    async def get_operation(
+        self, bank_id: str, operation_id: str, request_context: RequestContext, *, include_payload: bool
+    ) -> dict[str, Any]:
+        await self._open_bank(
+            bank_id, KnowledgeBankReadOperation.GET_KNOWLEDGE_BANK_OPERATION, request_context, needs_vectors=False
+        )
+        return await self._engine.get_operation_status(
+            bank_id,
+            operation_id,
+            request_context=request_context,
+            include_payload=include_payload,
+            _knowledge_bank=True,
+        )
+
+    async def cancel_operation(
+        self, bank_id: str, operation_id: str, request_context: RequestContext
+    ) -> dict[str, Any]:
+        await self._open_bank(
+            bank_id, KnowledgeBankWriteOperation.CANCEL_KNOWLEDGE_BANK_OPERATION, request_context, needs_vectors=False
+        )
+        return await self._job_call(
+            self._engine.cancel_operation(bank_id, operation_id, request_context=request_context, _knowledge_bank=True)
+        )
+
+    async def retry_operation(self, bank_id: str, operation_id: str, request_context: RequestContext) -> dict[str, Any]:
+        await self._open_bank(
+            bank_id, KnowledgeBankWriteOperation.RETRY_KNOWLEDGE_BANK_OPERATION, request_context, needs_vectors=False
+        )
+        return await self._job_call(
+            self._engine.retry_operation(bank_id, operation_id, request_context=request_context, _knowledge_bank=True)
+        )
+
+    async def delete_operation(
+        self, bank_id: str, operation_id: str, request_context: RequestContext
+    ) -> dict[str, Any]:
+        await self._open_bank(
+            bank_id, KnowledgeBankWriteOperation.DELETE_KNOWLEDGE_BANK_OPERATION, request_context, needs_vectors=False
+        )
+        return await self._job_call(
+            self._engine.delete_operation(bank_id, operation_id, request_context=request_context, _knowledge_bank=True)
+        )
+
+    @staticmethod
+    async def _job_call(call: Awaitable[dict[str, Any]]) -> dict[str, Any]:
+        """The engine's job writes say "no such job" with a ValueError, which the memory routes answer 404."""
+        try:
+            return await call
+        except ValueError as e:
+            raise KnowledgeBankError(str(e), 404) from e
 
     async def timeseries(
         self,

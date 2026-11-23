@@ -2539,6 +2539,61 @@ export class ControlPlaneClient {
     });
   }
 
+  // A knowledge bank's background jobs: the same shapes as a memory bank's (one job table), but
+  // under /knowledge-banks — the memory banks' operations endpoints refuse a knowledge bank.
+
+  async listKnowledgeBankOperations(
+    bankId: string,
+    options?: Parameters<ControlPlaneClient["listOperations"]>[1]
+  ): ReturnType<ControlPlaneClient["listOperations"]> {
+    const params = new URLSearchParams();
+    if (options?.status) params.append("status", options.status);
+    if (options?.type) params.append("type", options.type);
+    if (options?.limit) params.append("limit", options.limit.toString());
+    if (options?.offset) params.append("offset", options.offset.toString());
+    if (options?.excludeParents) params.append("exclude_parents", "true");
+    const query = params.toString();
+    return this.fetchApi(knowledgeApi(bankId, "operations") + (query ? `?${query}` : ""), {
+      cache: "no-store" as RequestCache,
+    });
+  }
+
+  async getKnowledgeBankOperation(
+    bankId: string,
+    operationId: string,
+    opts?: { includePayload?: boolean }
+  ): ReturnType<ControlPlaneClient["getOperationStatus"]> {
+    const qs = opts?.includePayload ? "?include_payload=true" : "";
+    return this.fetchApi(knowledgeApi(bankId, "operations", operationId) + qs, {
+      cache: "no-store" as RequestCache,
+    });
+  }
+
+  async cancelKnowledgeBankOperation(
+    bankId: string,
+    operationId: string
+  ): ReturnType<ControlPlaneClient["cancelOperation"]> {
+    return this.fetchApi(knowledgeApi(bankId, "operations", operationId), { method: "DELETE" });
+  }
+
+  async retryKnowledgeBankOperation(
+    bankId: string,
+    operationId: string
+  ): ReturnType<ControlPlaneClient["retryOperation"]> {
+    return this.fetchApi(knowledgeApi(bankId, "operations", operationId, "retry"), {
+      method: "POST",
+    });
+  }
+
+  async deleteKnowledgeBankOperation(
+    bankId: string,
+    operationId: string
+  ): ReturnType<ControlPlaneClient["deleteOperation"]> {
+    return this.fetchApi(knowledgeApi(bankId, "operations", operationId, "delete"), {
+      method: "DELETE",
+    });
+  }
+
   async listKnowledgeDocuments(
     bankId: string,
     params: {

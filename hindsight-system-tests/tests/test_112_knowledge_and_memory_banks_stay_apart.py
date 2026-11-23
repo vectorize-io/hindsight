@@ -1,9 +1,11 @@
 """Knowledge banks and memory banks share one id space and never cross into each other's API.
 
 A knowledge bank is a row of the same ``banks`` table, so every memory endpoint that takes a bank
-id could reach it. Each side must refuse the other's banks: a retain must not land in a knowledge
-bank, the memory delete must not remove one (its files and its own access hooks belong to the
-knowledge side), and neither may take an id or an alias the other already holds.
+id could reach it. Each side must refuse the other's banks: no route under
+``/v1/default/banks/{bank_id}`` serves a knowledge bank (a retain must not land in one, the memory
+delete must not remove one, its background jobs are read and managed only under
+``/v1/default/knowledge-banks``, where its own access hooks decide), and neither may take an id or
+an alias the other already holds.
 """
 
 from __future__ import annotations
@@ -33,6 +35,20 @@ async def test_the_two_kinds_of_bank_refuse_each_others_api(client, bank_id):
             await client.banks.delete_bank(knowledge)
         assert delete.value.status == 400 and "is a knowledge bank" in str(delete.value.body)
         assert (await kb.get(knowledge)).status == 200
+
+        # Its jobs too: the memory operations API refuses it, its own lists the ingest it ran.
+        ingest = await kb.ingest(knowledge, [{"document_id": "doc", "text": "red pipeline"}], wait=False)
+        assert ingest.status == 202, ingest.body
+        [operation_id] = set(ingest.body["operation_ids"])
+        with pytest.raises(ApiException) as ops:
+            await client.operations.list_operations(knowledge)
+        assert ops.value.status == 400 and "/v1/default/knowledge-banks/" in str(ops.value.body)
+        with pytest.raises(ApiException) as op:
+            await client.operations.get_operation_status(knowledge, operation_id)
+        assert op.value.status == 400 and "is a knowledge bank" in str(op.value.body)
+        listed = (await kb.operations(knowledge)).body["operations"]
+        assert operation_id in [o["id"] for o in listed], listed
+        assert (await kb.operation(knowledge, operation_id)).body["operation_id"] == operation_id
 
         # The memory bank list leaves knowledge banks out; the knowledge list leaves memory banks out.
         memory_ids = [b.bank_id for b in (await client.banks.list_banks(q="systest-", limit=1000)).banks]
