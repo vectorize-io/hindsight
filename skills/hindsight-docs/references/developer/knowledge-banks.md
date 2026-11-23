@@ -137,6 +137,14 @@ You can narrow a search by `tags`, with the same rules as memory recall (`tags_m
 
 A memory bank can read one or more knowledge banks. Add their ids to the memory bank's config:
 
+### CLI
+
+```bash
+hindsight bank set-config support-agent --knowledge-banks product-manuals
+```
+
+### HTTP
+
 ```bash
 curl -X PATCH "$HINDSIGHT_URL/v1/default/banks/support-agent/config" \
   -H "Content-Type: application/json" \
@@ -198,6 +206,16 @@ export HINDSIGHT_API_KB_EMBEDDINGS_API_KEY=...
 ## Per-Bank Settings
 
 A knowledge bank can change how its files are split, and nothing else: the embedder, keys, search weights and server limits stay the server's.
+
+### CLI
+
+```bash
+hindsight kb set-config product-manuals \
+  --set text_passage_tokens=256 \
+  --set 'disabled_media_types=["video"]'
+```
+
+### HTTP
 
 ```bash
 curl -X PATCH "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config" \

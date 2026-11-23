@@ -4,11 +4,19 @@
 
 Create knowledge banks, ingest files and text into them, and search their passages. For what a knowledge bank is and how ingest and search work, see [Knowledge Banks](../knowledge-banks.md).
 
-All endpoints live under `/v1/default/knowledge-banks`. The examples use `curl` against a local server: no SDK or CLI command covers knowledge banks yet.
+All endpoints live under `/v1/default/knowledge-banks`. Each example shows the [CLI](../../sdks/cli.md#knowledge-banks) command (`hindsight kb`) and the same call with `curl`.
 
 ---
 
 ## Create a Knowledge Bank
+
+### CLI
+
+```bash
+hindsight kb create product-manuals
+```
+
+### HTTP
 
 ```bash
 curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks" \
@@ -42,6 +50,20 @@ List banks with `GET /v1/default/knowledge-banks`, with `limit` (default 100), `
 
 Upload one or more files (PDFs, Office documents, images, audio, video, text, Markdown, JSON, CSV, HTML) as `multipart/form-data`. Each file becomes one document. The call returns `202` right away and the files are processed in the background.
 
+### CLI
+
+```bash
+# Each file becomes one document; --wait returns once they are searchable.
+# Without --document-id, a file's id is its path (here: x200-manual.pdf),
+# and a folder uploads every file in it.
+hindsight kb ingest product-manuals x200-manual.pdf \
+  --document-id x200-manual --tags x200 --wait
+hindsight kb ingest product-manuals x200-quickstart.md \
+  --document-id x200-quickstart --tags x200,quickstart --wait
+```
+
+### HTTP
+
 ```bash
 curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/files/ingest" \
   -F "files=@x200-manual.pdf" \
@@ -71,13 +93,25 @@ The optional `request` field is JSON with one entry per file, in the same order:
 - `operation_ids` has the same id for every queued document: one background operation handles the whole upload.
 - `unchanged_document_ids` lists documents identical to what is already stored. Nothing is queued for them.
 
-**Knowing when it's done.** Poll the operation like any other, with `GET /v1/default/banks/{bank_id}/operations/{operation_id}`, or read each document's `status`. A document goes `pending` → `processing` → `ready`, or `failed` with an `error`.
+**Knowing when it's done.** `hindsight kb ingest --wait` waits for you. Otherwise poll the operation like any other, with `GET /v1/default/banks/{bank_id}/operations/{operation_id}`, or read each document's `status`. A document goes `pending` → `processing` → `ready`, or `failed` with an `error`.
 
 ---
 
 ## Ingest Text
 
 Send text as JSON, up to 100 items per call. By default the call returns once every document can be searched. If some items can't be ingested (an empty text, say), the others are still saved and the call fails with `400`, naming the ones that failed.
+
+### CLI
+
+```bash
+hindsight kb ingest-text product-manuals \
+  "# Returns
+
+You can return an X200 within 30 days..." \
+  --document-id returns-policy --tags policy
+```
+
+### HTTP
 
 ```bash
 curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/ingest" \
@@ -107,6 +141,14 @@ The response has the same shape as a file ingest. `operation_ids` is empty when 
 ---
 
 ## Search
+
+### CLI
+
+```bash
+hindsight kb search product-manuals "How long do I have to return an X200?" --max-tokens 2048
+```
+
+### HTTP
 
 ```bash
 curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/search" \
@@ -188,6 +230,14 @@ With `"trace": true`, the response also has a `trace`:
 
 ## Tags
 
+### CLI
+
+```bash
+hindsight kb list-tags product-manuals -q 'x2*'
+```
+
+### HTTP
+
 ```bash
 curl "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/tags?q=x2*"
 ```
@@ -228,6 +278,19 @@ A document looks like this:
 
 `source_document_id` is set when an [ingestion strategy](../knowledge-banks.md#ingestion-strategies) split this document out of another.
 
+With the CLI:
+
+```bash
+hindsight kb list-documents product-manuals --status ready
+hindsight kb get-document product-manuals x200-manual
+hindsight kb download product-manuals x200-manual --out manual-copy.pdf
+hindsight kb passage-media product-manuals x200-manual 0 --out page-1.png
+```
+
+```bash
+hindsight kb delete-document product-manuals returns-policy
+```
+
 ---
 
 ## Settings
@@ -251,6 +314,14 @@ A bank can change how its files are split. See [Per-Bank Settings](../knowledge-
 ---
 
 ## Delete a Knowledge Bank
+
+### CLI
+
+```bash
+hindsight kb delete product-manuals -y
+```
+
+### HTTP
 
 ```bash
 curl -X DELETE "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals"

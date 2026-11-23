@@ -577,7 +577,10 @@ pub fn alias_add(
     let result = client.create_bank_alias(bank_id, alias, verbose)?;
 
     if output_format == OutputFormat::Pretty {
-        ui::print_success(&format!("'{}' now reaches bank '{}'", alias, result.bank_id));
+        ui::print_success(&format!(
+            "'{}' now reaches bank '{}'",
+            alias, result.bank_id
+        ));
     } else {
         output::print_output(&result, output_format)?;
     }
@@ -605,7 +608,10 @@ pub fn alias_primary(
                 result.bank_id, alias, result.bank_id
             ));
         } else {
-            ui::print_success(&format!("Bank '{}' is shown under its own id again", result.bank_id));
+            ui::print_success(&format!(
+                "Bank '{}' is shown under its own id again",
+                result.bank_id
+            ));
         }
     } else {
         output::print_output(&result, output_format)?;
@@ -895,6 +901,7 @@ pub fn set_config(
     disposition_skepticism: Option<i64>,
     disposition_literalism: Option<i64>,
     disposition_empathy: Option<i64>,
+    knowledge_banks: Option<Vec<String>>,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -978,8 +985,14 @@ pub fn set_config(
         );
     }
 
+    if let Some(banks) = knowledge_banks {
+        // `--knowledge-banks ''` parses as [""]: drop empties so it unlinks every bank.
+        let banks: Vec<String> = banks.into_iter().filter(|b| !b.is_empty()).collect();
+        updates.insert("knowledge_banks".to_string(), serde_json::json!(banks));
+    }
+
     if updates.is_empty() {
-        return Err(anyhow!("No config updates provided. Use --llm-provider, --llm-model, --retain-mission, --retain-chunk-size, --observations-mission, or other flags".to_string()));
+        return Err(anyhow!("No config updates provided. Use --llm-provider, --llm-model, --retain-mission, --retain-chunk-size, --observations-mission, --knowledge-banks, or other flags".to_string()));
     }
 
     let spinner = if output_format == OutputFormat::Pretty {

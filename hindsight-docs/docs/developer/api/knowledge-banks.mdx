@@ -3,19 +3,29 @@ sidebar_position: 12
 ---
 
 import CodeSnippet from '@site/src/components/CodeSnippet';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import kbSh from '!!raw-loader!@site/examples/api/knowledge-banks.sh';
+import kbHttpSh from '!!raw-loader!@site/examples/api/knowledge-banks-http.sh';
 
 # Knowledge Banks
 
 Create knowledge banks, ingest files and text into them, and search their passages. For what a knowledge bank is and how ingest and search work, see [Knowledge Banks](../knowledge-banks).
 
-All endpoints live under `/v1/default/knowledge-banks`. The examples use `curl` against a local server: no SDK or CLI command covers knowledge banks yet.
+All endpoints live under `/v1/default/knowledge-banks`. Each example shows the [CLI](../../sdks/cli#knowledge-banks) command (`hindsight kb`) and the same call with `curl`.
 
 ---
 
 ## Create a Knowledge Bank
 
+<Tabs>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="create-knowledge-bank" language="bash" />
+</TabItem>
+<TabItem value="http" label="HTTP">
+<CodeSnippet code={kbHttpSh} section="create-knowledge-bank" language="bash" />
+</TabItem>
+</Tabs>
 
 The id shares one space with memory bank ids and bank aliases: creating a knowledge bank with one of those ids fails with `409`.
 
@@ -43,7 +53,14 @@ List banks with `GET /v1/default/knowledge-banks`, with `limit` (default 100), `
 
 Upload one or more files (PDFs, Office documents, images, audio, video, text, Markdown, JSON, CSV, HTML) as `multipart/form-data`. Each file becomes one document. The call returns `202` right away and the files are processed in the background.
 
+<Tabs>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="ingest-files" language="bash" />
+</TabItem>
+<TabItem value="http" label="HTTP">
+<CodeSnippet code={kbHttpSh} section="ingest-files" language="bash" />
+</TabItem>
+</Tabs>
 
 The optional `request` field is JSON with one entry per file, in the same order:
 
@@ -64,7 +81,7 @@ The optional `request` field is JSON with one entry per file, in the same order:
 - `operation_ids` has the same id for every queued document: one background operation handles the whole upload.
 - `unchanged_document_ids` lists documents identical to what is already stored. Nothing is queued for them.
 
-**Knowing when it's done.** Poll the operation like any other, with `GET /v1/default/banks/{bank_id}/operations/{operation_id}`, or read each document's `status`. A document goes `pending` → `processing` → `ready`, or `failed` with an `error`.
+**Knowing when it's done.** `hindsight kb ingest --wait` waits for you. Otherwise poll the operation like any other, with `GET /v1/default/banks/{bank_id}/operations/{operation_id}`, or read each document's `status`. A document goes `pending` → `processing` → `ready`, or `failed` with an `error`.
 
 ---
 
@@ -72,7 +89,14 @@ The optional `request` field is JSON with one entry per file, in the same order:
 
 Send text as JSON, up to 100 items per call. By default the call returns once every document can be searched. If some items can't be ingested (an empty text, say), the others are still saved and the call fails with `400`, naming the ones that failed.
 
+<Tabs>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="ingest-text" language="bash" />
+</TabItem>
+<TabItem value="http" label="HTTP">
+<CodeSnippet code={kbHttpSh} section="ingest-text" language="bash" />
+</TabItem>
+</Tabs>
 
 | Field | Description |
 |---|---|
@@ -89,7 +113,14 @@ The response has the same shape as a file ingest. `operation_ids` is empty when 
 
 ## Search
 
+<Tabs>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="search" language="bash" />
+</TabItem>
+<TabItem value="http" label="HTTP">
+<CodeSnippet code={kbHttpSh} section="search" language="bash" />
+</TabItem>
+</Tabs>
 
 | Field | Description | Default |
 |---|---|---|
@@ -165,7 +196,14 @@ With `"trace": true`, the response also has a `trace`:
 
 ## Tags
 
+<Tabs>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="list-tags" language="bash" />
+</TabItem>
+<TabItem value="http" label="HTTP">
+<CodeSnippet code={kbHttpSh} section="list-tags" language="bash" />
+</TabItem>
+</Tabs>
 
 Lists the tags on a bank's documents, with how many documents carry each. `q` is a wildcard pattern (`*`), case-insensitive. Paging: `limit` (default 100, up to 1000), `offset`.
 
@@ -203,6 +241,12 @@ A document looks like this:
 
 `source_document_id` is set when an [ingestion strategy](../knowledge-banks#ingestion-strategies) split this document out of another.
 
+With the CLI:
+
+<CodeSnippet code={kbSh} section="documents" language="bash" />
+
+<CodeSnippet code={kbSh} section="delete-document" language="bash" />
+
 ---
 
 ## Settings
@@ -227,7 +271,14 @@ A bank can change how its files are split. See [Per-Bank Settings](../knowledge-
 
 ## Delete a Knowledge Bank
 
+<Tabs>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="delete-knowledge-bank" language="bash" />
+</TabItem>
+<TabItem value="http" label="HTTP">
+<CodeSnippet code={kbHttpSh} section="delete-knowledge-bank" language="bash" />
+</TabItem>
+</Tabs>
 
 Cancels the bank's ingests, then deletes every document, passage and file in it.
 
