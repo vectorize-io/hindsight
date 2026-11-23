@@ -1312,7 +1312,9 @@ class TestAdvancedFeatures:
         """
         from hindsight_api.engine.db.ops import UpdatedWindow
         from hindsight_api.engine.db.ops_oracle import OracleOps
-        from hindsight_api.engine.schema import fq_table
+
+        # Seeds store tables directly, as the store would; fq_table refuses them (#4969).
+        from hindsight_api.engine.schema import fq_store_table as fq_table
 
         bank_id = _bank_id("obsexp")
         dim = oracle_memory.embeddings.dimension
