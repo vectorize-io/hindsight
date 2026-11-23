@@ -165,6 +165,9 @@ printf '# Warranty\n\nThe X200 warranty lasts two years.\n' > "$KB_DIR/manuals/w
 run_test "kb create" "$HINDSIGHT_CLI" kb create "$TEST_KB" || FAILED=1
 run_test_output "kb list" "$TEST_KB" "$HINDSIGHT_CLI" kb list -q "$TEST_KB" -o json || FAILED=1
 run_test_output "kb ingest folder --wait" '"ready"' "$HINDSIGHT_CLI" kb ingest "$TEST_KB" "$KB_DIR/manuals" --tags x200 --wait -o json || FAILED=1
+run_test_output "kb operation list" '"operations"' "$HINDSIGHT_CLI" kb operation list "$TEST_KB" -o json || FAILED=1
+KB_OP_ID=$("$HINDSIGHT_CLI" kb operation list "$TEST_KB" -o json | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+run_test_output "kb operation get" 'completed' "$HINDSIGHT_CLI" kb operation get "$TEST_KB" "$KB_OP_ID" -o json || FAILED=1
 run_test "kb ingest-text" "$HINDSIGHT_CLI" kb ingest-text "$TEST_KB" "Return an X200 within 30 days." --document-id returns --tags policy || FAILED=1
 run_test_output "kb search" '"returns"' "$HINDSIGHT_CLI" kb search "$TEST_KB" "return an X200 within 30 days" -o json || FAILED=1
 run_test_output "kb search --tags" 'warranty' "$HINDSIGHT_CLI" kb search "$TEST_KB" "warranty" --tags x200 --tags-match all_strict --trace -o json || FAILED=1

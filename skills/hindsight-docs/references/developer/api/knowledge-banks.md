@@ -170,7 +170,7 @@ The optional `request` field is JSON with one entry per file, in the same order:
 - `operation_ids` has the same id for every queued document: one background operation handles the whole upload.
 - `unchanged_document_ids` lists documents identical to what is already stored. Nothing is queued for them.
 
-**Knowing when it's done.** `hindsight kb ingest --wait` waits for you. Otherwise poll the operation like any other, with `GET /v1/default/banks/{bank_id}/operations/{operation_id}`, or read each document's `status`. A document goes `pending` → `processing` → `ready`, or `failed` with an `error`.
+**Knowing when it's done.** `hindsight kb ingest --wait` waits for you. Otherwise poll the [operation](#operations) with `GET /{bank_id}/operations/{operation_id}`, or read each document's `status`. A document goes `pending` → `processing` → `ready`, or `failed` with an `error`.
 
 ---
 
@@ -475,6 +475,27 @@ hindsight kb passage-media product-manuals x200-manual 0 --out page-1.png
 
 ```bash
 hindsight kb delete-document product-manuals returns-policy
+```
+
+---
+
+## Operations
+
+Ingests run as background operations, under the knowledge bank's own path. They answer with the same shapes as a [memory bank's operations](./operations.md).
+
+| Call | What it does |
+|---|---|
+| `GET /{bank_id}/operations` | List operations. Filters: `status`, `type`. Paging: `limit`, `offset`. |
+| `GET /{bank_id}/operations/{operation_id}` | One operation's status. |
+| `DELETE /{bank_id}/operations/{operation_id}` | Cancel a pending or running operation. |
+| `POST /{bank_id}/operations/{operation_id}/retry` | Retry a failed operation. |
+| `DELETE /{bank_id}/operations/{operation_id}/delete` | Delete a finished operation. |
+
+With the CLI (`cancel`, `retry` and `delete` take the same arguments as `get`):
+
+```bash
+hindsight kb operation list product-manuals
+hindsight kb operation get product-manuals "$OPERATION_ID"
 ```
 
 ---

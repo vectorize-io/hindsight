@@ -718,7 +718,8 @@ pub fn consolidate(
                 std::thread::sleep(std::time::Duration::from_secs(poll_interval));
                 let elapsed = start.elapsed().as_secs();
 
-                let ops_result = client.list_operations(bank_id, verbose);
+                let ops_result =
+                    client.list_operations(bank_id, crate::api::BankKind::Memory, verbose);
                 match ops_result {
                     Ok(ops) => {
                         // Find the operation by ID

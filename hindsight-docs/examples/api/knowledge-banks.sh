@@ -58,6 +58,13 @@ hindsight kb download product-manuals x200-manual --out manual-copy.pdf
 hindsight kb passage-media product-manuals x200-manual 0 --out page-1.png
 # [/docs:documents]
 
+OPERATION_ID=$(hindsight kb operation list product-manuals -o json | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+
+# [docs:operations]
+hindsight kb operation list product-manuals
+hindsight kb operation get product-manuals "$OPERATION_ID"
+# [/docs:operations]
+
 # [docs:link-memory-bank]
 hindsight bank set-config support-agent --knowledge-banks product-manuals
 # [/docs:link-memory-bank]

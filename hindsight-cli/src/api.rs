@@ -173,6 +173,14 @@ pub struct TagChange {
     pub remove_tags: Option<Vec<String>>,
 }
 
+/// Which kind of bank an operation belongs to: memory banks and knowledge banks keep their
+/// background operations behind separate endpoints that answer with the same shapes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BankKind {
+    Memory,
+    Knowledge,
+}
+
 #[derive(Clone)]
 pub struct ApiClient {
     client: AsyncClient,
@@ -583,13 +591,29 @@ impl ApiClient {
         })
     }
 
-    pub fn list_operations(&self, agent_id: &str, _verbose: bool) -> Result<OperationsResponse> {
+    pub fn list_operations(
+        &self,
+        agent_id: &str,
+        kind: BankKind,
+        _verbose: bool,
+    ) -> Result<OperationsResponse> {
         self.runtime.block_on(async {
-            let response = self
-                .client
-                .list_operations(agent_id, None, None, None, None, None, None)
-                .humanized()
-                .await?;
+            let response = match kind {
+                BankKind::Memory => {
+                    self.client
+                        .list_operations(agent_id, None, None, None, None, None, None)
+                        .humanized()
+                        .await?
+                }
+                BankKind::Knowledge => {
+                    self.client
+                        .list_knowledge_bank_operations(
+                            agent_id, None, None, None, None, None, None,
+                        )
+                        .humanized()
+                        .await?
+                }
+            };
             let value = response.into_inner();
             // Convert to JSON Value first, then parse into our type
             let json_value = serde_json::to_value(&value)?;
@@ -602,14 +626,24 @@ impl ApiClient {
         &self,
         agent_id: &str,
         operation_id: &str,
+        kind: BankKind,
         _verbose: bool,
     ) -> Result<types::DeleteResponse> {
         self.runtime.block_on(async {
-            let response = self
-                .client
-                .cancel_operation(agent_id, operation_id, None)
-                .humanized()
-                .await?;
+            let response = match kind {
+                BankKind::Memory => {
+                    self.client
+                        .cancel_operation(agent_id, operation_id, None)
+                        .humanized()
+                        .await?
+                }
+                BankKind::Knowledge => {
+                    self.client
+                        .cancel_knowledge_bank_operation(agent_id, operation_id, None)
+                        .humanized()
+                        .await?
+                }
+            };
             let value = response.into_inner();
             // Convert typed response to DeleteResponse
             Ok(types::DeleteResponse {
@@ -945,14 +979,24 @@ impl ApiClient {
         &self,
         bank_id: &str,
         operation_id: &str,
+        kind: BankKind,
         _verbose: bool,
     ) -> Result<types::OperationStatusResponse> {
         self.runtime.block_on(async {
-            let response = self
-                .client
-                .get_operation_status(bank_id, operation_id, None, None)
-                .humanized()
-                .await?;
+            let response = match kind {
+                BankKind::Memory => {
+                    self.client
+                        .get_operation_status(bank_id, operation_id, None, None)
+                        .humanized()
+                        .await?
+                }
+                BankKind::Knowledge => {
+                    self.client
+                        .get_knowledge_bank_operation(bank_id, operation_id, None, None)
+                        .humanized()
+                        .await?
+                }
+            };
             Ok(response.into_inner())
         })
     }
@@ -1739,14 +1783,24 @@ impl ApiClient {
         &self,
         bank_id: &str,
         operation_id: &str,
+        kind: BankKind,
         _verbose: bool,
     ) -> Result<types::RetryOperationResponse> {
         self.runtime.block_on(async {
-            let response = self
-                .client
-                .retry_operation(bank_id, operation_id, None)
-                .humanized()
-                .await?;
+            let response = match kind {
+                BankKind::Memory => {
+                    self.client
+                        .retry_operation(bank_id, operation_id, None)
+                        .humanized()
+                        .await?
+                }
+                BankKind::Knowledge => {
+                    self.client
+                        .retry_knowledge_bank_operation(bank_id, operation_id, None)
+                        .humanized()
+                        .await?
+                }
+            };
             Ok(response.into_inner())
         })
     }
@@ -1755,14 +1809,24 @@ impl ApiClient {
         &self,
         bank_id: &str,
         operation_id: &str,
+        kind: BankKind,
         _verbose: bool,
     ) -> Result<types::DeleteOperationResponse> {
         self.runtime.block_on(async {
-            let response = self
-                .client
-                .delete_operation(bank_id, operation_id, None)
-                .humanized()
-                .await?;
+            let response = match kind {
+                BankKind::Memory => {
+                    self.client
+                        .delete_operation(bank_id, operation_id, None)
+                        .humanized()
+                        .await?
+                }
+                BankKind::Knowledge => {
+                    self.client
+                        .delete_knowledge_bank_operation(bank_id, operation_id, None)
+                        .humanized()
+                        .await?
+                }
+            };
             Ok(response.into_inner())
         })
     }
@@ -1951,7 +2015,7 @@ impl ApiClient {
                 .multipart(form)
                 .send()
                 .await?;
-            Ok(json_or_error(response).await?)
+            json_or_error(response).await
         })
     }
 

@@ -402,6 +402,9 @@ hindsight kb list-tags my-docs
 hindsight kb download my-docs manuals_x200.pdf --out x200-copy.pdf
 hindsight kb passage-media my-docs manuals_x200.pdf 0 --out page-1.png
 
+# Background ingests, like a memory bank's operations
+hindsight kb operation list my-docs
+
 # How files are split: show, override, reset
 hindsight kb config my-docs
 hindsight kb set-config my-docs --set text_passage_tokens=256 --unset pdf_bands

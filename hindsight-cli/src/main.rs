@@ -1539,6 +1539,10 @@ enum KnowledgeBankCommands {
         out: PathBuf,
     },
 
+    /// Manage a knowledge bank's background operations (ingests): list, get, cancel, retry, delete
+    #[command(subcommand)]
+    Operation(OperationCommands),
+
     /// List the document tags of a knowledge bank, with how many documents carry each
     ListTags {
         /// Knowledge bank ID
@@ -2316,43 +2320,13 @@ fn run() -> Result<()> {
         },
 
         // Operation commands
-        Commands::Operation(op_cmd) => match op_cmd {
-            OperationCommands::List { bank_id } => {
-                commands::operation::list(&client, &bank_id, verbose, output_format)
-            }
-            OperationCommands::Get {
-                bank_id,
-                operation_id,
-            } => commands::operation::get(&client, &bank_id, &operation_id, verbose, output_format),
-            OperationCommands::Cancel {
-                bank_id,
-                operation_id,
-            } => commands::operation::cancel(
-                &client,
-                &bank_id,
-                &operation_id,
-                verbose,
-                output_format,
-            ),
-            OperationCommands::Retry {
-                bank_id,
-                operation_id,
-            } => {
-                commands::operation::retry(&client, &bank_id, &operation_id, verbose, output_format)
-            }
-            OperationCommands::Delete {
-                bank_id,
-                operation_id,
-                yes,
-            } => commands::operation::delete(
-                &client,
-                &bank_id,
-                &operation_id,
-                yes,
-                verbose,
-                output_format,
-            ),
-        },
+        Commands::Operation(op_cmd) => commands::operation::run(
+            &client,
+            op_cmd,
+            api::BankKind::Memory,
+            verbose,
+            output_format,
+        ),
 
         // Mental model commands
         Commands::MentalModel(mm_cmd) => match mm_cmd {

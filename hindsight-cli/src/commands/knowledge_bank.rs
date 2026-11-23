@@ -14,7 +14,7 @@ use base64::Engine;
 use serde_json::{json, Map, Value};
 use walkdir::WalkDir;
 
-use crate::api::{ApiClient, KnowledgeFileOptions};
+use crate::api::{ApiClient, BankKind, KnowledgeFileOptions};
 use crate::commands::memory::document_id_for_path;
 use crate::output::{self, OutputFormat};
 use crate::ui;
@@ -331,6 +331,9 @@ pub fn run(client: &ApiClient, cmd: Cmd, verbose: bool, format: OutputFormat) ->
         } => write_to(&out, format, |out| {
             client.get_knowledge_passage_media(&bank_id, &document_id, index, out)
         }),
+        Cmd::Operation(op) => {
+            crate::commands::operation::run(client, op, BankKind::Knowledge, verbose, format)
+        }
         Cmd::ListTags {
             bank_id,
             query,

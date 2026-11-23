@@ -1,7 +1,67 @@
-use crate::api::ApiClient;
+use crate::api::{ApiClient, BankKind};
 use crate::output::{self, OutputFormat};
 use crate::ui;
+use crate::OperationCommands;
 use anyhow::Result;
+
+/// Run an `operation` subcommand against a memory bank or, under `kb operation`, a knowledge bank.
+pub fn run(
+    client: &ApiClient,
+    cmd: OperationCommands,
+    kind: BankKind,
+    verbose: bool,
+    output_format: OutputFormat,
+) -> Result<()> {
+    match cmd {
+        OperationCommands::List { bank_id } => list(client, &bank_id, kind, verbose, output_format),
+        OperationCommands::Get {
+            bank_id,
+            operation_id,
+        } => get(
+            client,
+            &bank_id,
+            &operation_id,
+            kind,
+            verbose,
+            output_format,
+        ),
+        OperationCommands::Cancel {
+            bank_id,
+            operation_id,
+        } => cancel(
+            client,
+            &bank_id,
+            &operation_id,
+            kind,
+            verbose,
+            output_format,
+        ),
+        OperationCommands::Retry {
+            bank_id,
+            operation_id,
+        } => retry(
+            client,
+            &bank_id,
+            &operation_id,
+            kind,
+            verbose,
+            output_format,
+        ),
+        OperationCommands::Delete {
+            bank_id,
+            operation_id,
+            yes,
+        } => delete(
+            client,
+            &bank_id,
+            &operation_id,
+            kind,
+            yes,
+            verbose,
+            output_format,
+        ),
+    }
+}
 
 fn operation_summary_lines(op: &crate::api::Operation) -> Vec<String> {
     let mut lines = vec![
@@ -19,9 +79,10 @@ fn operation_summary_lines(op: &crate::api::Operation) -> Vec<String> {
     lines
 }
 
-pub fn list(
+fn list(
     client: &ApiClient,
     agent_id: &str,
+    kind: BankKind,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -31,7 +92,7 @@ pub fn list(
         None
     };
 
-    let response = client.list_operations(agent_id, verbose);
+    let response = client.list_operations(agent_id, kind, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -96,10 +157,11 @@ mod tests {
 }
 
 /// Get the status of a specific operation
-pub fn get(
+fn get(
     client: &ApiClient,
     agent_id: &str,
     operation_id: &str,
+    kind: BankKind,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -109,7 +171,7 @@ pub fn get(
         None
     };
 
-    let response = client.get_operation(agent_id, operation_id, verbose);
+    let response = client.get_operation(agent_id, operation_id, kind, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -146,10 +208,11 @@ pub fn get(
     }
 }
 
-pub fn cancel(
+fn cancel(
     client: &ApiClient,
     agent_id: &str,
     operation_id: &str,
+    kind: BankKind,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -159,7 +222,7 @@ pub fn cancel(
         None
     };
 
-    let response = client.cancel_operation(agent_id, operation_id, verbose);
+    let response = client.cancel_operation(agent_id, operation_id, kind, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -183,10 +246,11 @@ pub fn cancel(
 }
 
 /// Retry a failed async operation
-pub fn retry(
+fn retry(
     client: &ApiClient,
     agent_id: &str,
     operation_id: &str,
+    kind: BankKind,
     verbose: bool,
     output_format: OutputFormat,
 ) -> Result<()> {
@@ -196,7 +260,7 @@ pub fn retry(
         None
     };
 
-    let response = client.retry_operation(agent_id, operation_id, verbose);
+    let response = client.retry_operation(agent_id, operation_id, kind, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
@@ -217,10 +281,11 @@ pub fn retry(
 }
 
 /// Permanently delete a terminal async operation
-pub fn delete(
+fn delete(
     client: &ApiClient,
     bank_id: &str,
     operation_id: &str,
+    kind: BankKind,
     yes: bool,
     verbose: bool,
     output_format: OutputFormat,
@@ -242,7 +307,7 @@ pub fn delete(
         None
     };
 
-    let response = client.delete_operation(bank_id, operation_id, verbose);
+    let response = client.delete_operation(bank_id, operation_id, kind, verbose);
 
     if let Some(mut sp) = spinner {
         sp.finish();
