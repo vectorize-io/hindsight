@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 
+from ...config import DEFAULT_RECENCY_ALPHA
 from ..cross_encoder import RerankTimeoutError, _served_provider
 from ..decision_model import DecisionEngineFor, decision_engine
 from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
@@ -38,7 +39,7 @@ UTC = timezone.utc
 # Multiplicative boost alphas for recency and temporal proximity.
 # Each signal contributes at most ±(alpha/2) relative adjustment to the base CE score,
 # so the max combined boost is (1 + alpha/2)^2 ≈ +21% and min is (1 - alpha/2)^2 ≈ -19%.
-_RECENCY_ALPHA: float = 0.2
+_RECENCY_ALPHA: float = DEFAULT_RECENCY_ALPHA  # HINDSIGHT_API_RECENCY_ALPHA overrides it per server
 _TEMPORAL_ALPHA: float = 0.2
 _PROOF_COUNT_ALPHA: float = 0.1  # Conservative: max ±5% for evidence strength
 

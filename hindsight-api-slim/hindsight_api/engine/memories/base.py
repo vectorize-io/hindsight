@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from ...config import DEFAULT_RECENCY_ALPHA
 from ...extensions.base import Extension
 
 # The five tag-matching modes, as the HTTP layer already validates them. Declared here
@@ -912,7 +913,7 @@ class FullRecallRequest:
     recency_decay_linear_window_days: float = 365.0
     recency_decay_halflife_days: float = 90.0
     #: How much recency can move a score, from ``HINDSIGHT_API_RECENCY_ALPHA`` (±alpha/2).
-    recency_alpha: float = 0.2
+    recency_alpha: float = DEFAULT_RECENCY_ALPHA
     #: What recency is measured from — ``question_date`` when the caller gave one, else now.
     now: "datetime | None" = None
     min_reranker: "float | None" = None
