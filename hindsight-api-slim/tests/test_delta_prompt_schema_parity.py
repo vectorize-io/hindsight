@@ -85,7 +85,7 @@ class TestPromptsMatchTheSchema:
                 f"{op_name!r}; the schema accepts {sorted(allowed)}"
             )
 
-    def test_every_op_shape_carries_every_field_strict_mode_requires(self, prompt_name: str):
+    def test_every_op_shape_carries_every_field_strict_mode_requires(self, prompt_name: str) -> None:
         """Under strict mode every field is required, nullable or not. A shape that leaves one
         out — or prose that says "omit it" — tells the model to do what the grammar forbids,
         and small models pad whitespace up to the token cap instead (#6752, #6673)."""
