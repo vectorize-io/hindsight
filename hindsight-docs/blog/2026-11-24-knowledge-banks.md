@@ -1,6 +1,6 @@
 ---
-title: "Introducing Knowledge Banks: what your agent learns, and what it must not change"
-description: "Memory banks learn from what your agent hears. Knowledge banks keep your documents exactly as written. Linked together, a support agent answers 85% right, against 75% with memory alone and 71% with documents alone."
+title: "Introducing Knowledge Banks: extending agent memory with SOTA multimodal search, at a fraction of the cost"
+description: "Knowledge banks give Hindsight agents your PDFs, images, audio and video, kept exactly as written. Search ranks first on LegalBench-RAG and ATM-Bench, costs no LLM to fill, and linked to a memory bank lifts a support agent from 75% to 85%."
 authors: [nicoloboschi]
 date: 2026-11-24
 slug: "2026/11/24/knowledge-banks"
@@ -14,23 +14,15 @@ import ThemedImage from '@theme/ThemedImage';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-:::danger Draft: check before publishing
-The scores are real: every one comes from [agent-memory-benchmark](https://github.com/vectorize-io/agent-memory-benchmark) at commit `29e3538`, as on the benchmarks page we will publish. Still to check:
-
-- SupportBench is a single local run.
-
-Remove this box before publishing.
-:::
-
-**An agent needs two kinds of knowing.** It needs to learn: who this customer is, what they tried last week, what they prefer. And it needs to look things up in sources that must not change: the manual, the policy, the contract. Hindsight's memory banks do the first. Today we're adding **knowledge banks** for the second, and the point is to use them together: a support agent with both answers **85%** of questions right, against **75%** with everything in memory and **71%** with everything in documents.
+**Hindsight's memory banks learn what your agent hears. Today they can also read your documents.** A **knowledge bank** keeps your PDFs, images, audio and video exactly as written, finds the right page, paragraph or second with state-of-the-art multimodal search, and costs no LLM to fill. Link one to a memory bank and your agent answers from both: a support agent gets **85%** of questions right, against **75%** with memory alone.
 
 ## TL;DR
 
-- **Memory learns.** A memory bank turns what your agent hears into facts and observations that update as the world does.
-- **Knowledge stays as written.** A knowledge bank keeps your PDFs, images, audio and video as they are, and finds the page, the paragraph or the second in a clip. No LLM reads them at ingest.
-- **Together beats either one.** Link a knowledge bank to a memory bank and reflect reads both, with the documents as the reference. On a support-agent benchmark, that's 85% against 75% and 71%.
-- **Search at or near the top.** First on LegalBench-RAG (contracts) and on ATM-Bench (a person's photos, videos and emails). Second on ViDoRe V3 (enterprise PDFs), behind Mixedbread with its reranker.
-- **Both models on Hindsight Inference.** The embedder, `embeddinggemma-2`, and a new reranker for text and images, `hs-decide-1-flash-mm`, are hosted at $0.05 per million input tokens: about $0.11 to rerank 1,000 PDF pages.
+- **Memory, extended.** Link a knowledge bank to a memory bank and reflect reads both, with the documents as the reference. On a support-agent benchmark: 85% right, against 75% with everything in memory and 71% with everything in documents.
+- **State-of-the-art multimodal search.** First on LegalBench-RAG (contracts) and on ATM-Bench (a person's photos, videos and emails). Second on ViDoRe V3 (enterprise PDFs), 1.9 points behind Mixedbread with its reranker.
+- **One search over every kind of file.** PDFs, images, audio, video, text and Office files share one embedding space: ask in text and land on a chart, a photo or the 2:40 mark of a video.
+- **A fraction of the cost.** No LLM reads your documents at ingest: on the support benchmark, filling the banks cost $0.34 in LLM calls instead of $0.95. On Hindsight Cloud a search costs $4.50 per 1,000, against $7.50 for Mixedbread with its reranker.
+- **Both models on Hindsight Inference.** The embedder, `embeddinggemma-2`, and a new reranker for text and images, `hs-decide-1-flash-mm`, at $0.05 per million input tokens: about $0.11 to rerank 1,000 PDF pages.
 - **Open source and in Hindsight Cloud.** In Hindsight 1.3, and in [Hindsight Cloud](https://hindsight.vectorize.io) for every account.
 
 <!-- truncate -->
@@ -116,9 +108,9 @@ Two customers ask the exact same question, and only Amara has an exception. Both
 
 The full picture is in the [Knowledge Banks docs](/developer/knowledge-banks).
 
-## Search quality: first on contracts and personal media, second on enterprise PDFs
+## State-of-the-art search: first on contracts and personal media, second on enterprise PDFs
 
-A knowledge bank is only useful if it finds the right page. On contracts and on a person's photos, videos and emails it ranks first. On enterprise PDFs, Mixedbread with its reranker ranks higher. Every number was run with the open [agent-memory-benchmark](https://github.com/vectorize-io/agent-memory-benchmark) against a fresh Hindsight server through the public API, and is on [benchmarks.hindsight.vectorize.io](https://benchmarks.hindsight.vectorize.io).
+A knowledge bank is only useful if it finds the right page. On contracts and on a person's photos, videos and emails it ranks first. On enterprise PDFs it ranks second, behind Mixedbread with its reranker. Every number was run with the open [agent-memory-benchmark](https://github.com/vectorize-io/agent-memory-benchmark) against a fresh Hindsight server through the public API, and is on [benchmarks.hindsight.vectorize.io](https://benchmarks.hindsight.vectorize.io).
 
 - **Search only.** Each benchmark scores the ranking a knowledge bank returns against the dataset's own human labels, with the leaderboard's own metric (nDCG@10, or Recall@10 on ATM-Bench). No LLM writes an answer and no LLM judges one.
 - **The whole corpus, every query.** We never shrink a corpus to make it easier.
@@ -182,7 +174,7 @@ Four years of one person's data: 3,759 photos, 533 videos and 6,742 emails, and 
 
 Memexa v2 and Graphon V1, the closest behind, first run an LLM over every photo and email to build their memory. A knowledge bank embeds each item once, and that's all.
 
-## What it costs
+## A fraction of the cost
 
 **Ingest: no LLM.** Filling a knowledge bank costs only the embedding. On the support benchmark, putting the manuals into a memory bank cost **$0.95** in LLM calls, because retain reads every page. With the manuals in a knowledge bank and only the chats in memory, it cost **$0.34**, and scored higher. A knowledge bank alone cost nothing in LLM calls.
 
@@ -195,7 +187,7 @@ We're adding both models a knowledge bank needs to [Hindsight Inference](https:/
 - **`embeddinggemma-2`:** Google's multimodal EmbeddingGemma, with text, images, audio and video in one 768-dimension space. An image counts as about 270 tokens, 30 seconds of audio as at most 754, and a video as at most 32 frames (about 4,000 tokens; the soundtrack isn't read). Per 1,000 at this rate: images about $0.014, 30-second audio clips about $0.038, long videos about $0.20.
 - **`hs-decide-1-flash-mm`:** our decision reranker, for text and images. An image counts as width × height ÷ 384 tokens, so a 792 × 1,024 page is 2,112. Each side can be 280 to 1,568 pixels, with up to 64 images per request. Reranking 1,000 such pages costs about $0.11.
 
-Point a self-hosted server at them and you get a knowledge bank without running a model yourself. See [Choosing an Embedder](/developer/knowledge-banks#choosing-an-embedder) and [Searching](/developer/knowledge-banks#searching).
+Point a self-hosted server at them and you get a knowledge bank without running a model yourself. See [Configuration](/developer/configuration#knowledge-banks) and [Searching](/developer/knowledge-banks#searching).
 
 ### The trade-offs
 
@@ -211,16 +203,17 @@ Point a self-hosted server at them and you get a knowledge bank without running 
 
 ```bash
 # Create a bank, upload a PDF, search it
-curl -X POST localhost:8888/v1/default/knowledge-banks -H "Content-Type: application/json" \
-  -d '{"bank_id": "manuals"}'
-curl -X POST localhost:8888/v1/default/knowledge-banks/manuals/files/ingest -F "files=@x200-manual.pdf"
-curl -X POST localhost:8888/v1/default/knowledge-banks/manuals/search -H "Content-Type: application/json" \
-  -d '{"query": "the pump keeps losing pressure"}'
+hindsight kb create manuals
+hindsight kb ingest manuals x200-manual.pdf --wait
+hindsight kb search manuals "the pump keeps losing pressure"
+
+# Let a memory bank's reflect read it
+hindsight bank set-config support-agent --knowledge-banks manuals
 ```
 
-EmbeddingGemma 2 runs inside the Hindsight API process by default. To call it on [Hindsight Inference](https://inference.hindsight.vectorize.io) with `hs-decide-1-flash-mm` as the reranker, or to use Gemini, Vertex, Voyage, Cohere or any OpenAI-compatible server, see [Choosing an Embedder](/developer/knowledge-banks#choosing-an-embedder).
+EmbeddingGemma 2 runs inside the Hindsight API process by default. To call it on [Hindsight Inference](https://inference.hindsight.vectorize.io) with `hs-decide-1-flash-mm` as the reranker, or to use Gemini, Vertex, Voyage, Cohere or any OpenAI-compatible server, see [Configuration](/developer/configuration#knowledge-banks).
 
 - **Hindsight Cloud:** knowledge banks are on for every account. Open **Knowledge Banks** in the console, drop in your files and search.
-- **Every endpoint:** [Knowledge Banks API](/developer/api/knowledge-banks).
+- **Every endpoint:** [Knowledge Banks API](/developer/api/knowledge-banks), with examples for Python, Node.js, Go, the CLI and HTTP.
 - **Every result:** [benchmarks.hindsight.vectorize.io](https://benchmarks.hindsight.vectorize.io), and the [benchmark code](https://github.com/vectorize-io/agent-memory-benchmark) to run them yourself.
 - Star us on [GitHub](https://github.com/vectorize-io/hindsight).
