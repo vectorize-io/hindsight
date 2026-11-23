@@ -26,7 +26,11 @@ import TabItem from '@theme/TabItem';
 
 ## Why memory
 
+<div className="post-wide">
+
 <ThemedImage alt={"A memory bank turns a chat into facts and observations that update"} sources={{light: "/img/blog/knowledge-banks/why-memory-light.png", dark: "/img/blog/knowledge-banks/why-memory-dark.png"}} />
+
+</div>
 
 A memory bank is built to change its mind. Retain sends what your agent hears to an LLM, which pulls out facts, people and dates. Consolidation folds them into observations, and updates them when something new comes in. Ask about a customer and you get what's true about them now, not a pile of old chat logs.
 
@@ -34,7 +38,11 @@ That's exactly right for a person's history. It's wrong for a manual. A manual s
 
 ## Why knowledge
 
+<div className="post-wide">
+
 <ThemedImage alt={"A knowledge bank splits files into passages and returns the page or the second"} sources={{light: "/img/blog/knowledge-banks/why-knowledge-light.png", dark: "/img/blog/knowledge-banks/why-knowledge-dark.png"}} />
+
+</div>
 
 A knowledge bank does the opposite: it never changes what you give it. A PDF stays a PDF, one passage per page, as image and text. A video is split into short clips. A search returns the paragraph with the text around it, and points to its page or its second in the original file. Nothing is summarised or rewritten, and no LLM reads it at ingest.
 
@@ -42,7 +50,11 @@ That's exactly right for a manual. It's wrong for a person. A knowledge bank doe
 
 ## Why together
 
+<div className="post-wide">
+
 <ThemedImage alt={"One reflect call combines Lukas's version from memory with the support policy from the manual"} sources={{light: "/img/blog/knowledge-banks/why-together-light.png", dark: "/img/blog/knowledge-banks/why-together-dark.png"}} />
+
+</div>
 
 Most real questions need both. "Does my server still get updates?" needs the customer's version, which is in memory, and the support policy, which is in the manual. "How long do you keep my activity log?" has one answer in the manual, and a different one for Amara, whose account has an approved exception.
 
@@ -50,7 +62,11 @@ So link them. Add a knowledge bank to a memory bank's config, and reflect search
 
 ### Isn't this just RAG next to memory?
 
+<div className="post-wide">
+
 <ThemedImage alt={"A vector store next to memory, against a knowledge bank linked to a memory bank"} sources={{light: "/img/blog/knowledge-banks/rag-vs-link-light.png", dark: "/img/blog/knowledge-banks/rag-vs-link-dark.png"}} />
+
+</div>
 
 You could put a vector store beside your memory and search both. Three things make a link different:
 
@@ -68,7 +84,11 @@ We ran it three ways, with the same model (Gemma 4 26B) answering through reflec
 - **All in a knowledge bank:** everything is kept as documents.
 - **Together:** the chats go into the memory bank, and the manuals and exception notes go into a linked knowledge bank.
 
+<div className="post-wide">
+
 <ThemedImage alt={"SupportBench scores by kind of question for the three setups"} sources={{light: "/img/blog/knowledge-banks/supportbench-categories-light.png", dark: "/img/blog/knowledge-banks/supportbench-categories-dark.png"}} />
+
+</div>
 
 Each setup fails where you'd expect. All in memory loses the manual's exact wording (81% on questions the manual alone answers). All in a knowledge bank keeps the manual but can't put a customer's history together (62% when an answer needs both, 61% on exceptions). Together gets both. The one place it doesn't help is a chat that contradicts the manual: 73%, the same as memory alone (19 of 26).
 
@@ -113,7 +133,11 @@ Two customers ask the exact same question, and only Amara has an exception. Both
 
 ## How it works
 
+<div className="post-wide">
+
 <ThemedImage alt={"Ingest splits each kind of file; search runs by meaning and rare words, reranks and fills the token budget"} sources={{light: "/img/blog/knowledge-banks/how-it-works-light.png", dark: "/img/blog/knowledge-banks/how-it-works-dark.png"}} />
+
+</div>
 
 **Ingest: every file split its own way, then embedded as it is.** A PDF becomes one passage per page: the page as an image, and its text layer next to it (a scanned page has no text layer and is found by its picture). Audio and video become short overlapping clips. Text and Office files become passages that keep a heading with the content under it. Every passage goes through the same embedding model, so a question in text can land on a page image or the 2:40 mark of a video. Nothing is OCR'd, summarised or rewritten.
 
@@ -163,7 +187,11 @@ Memexa v2's recall counts the items it passes to its answer model, which may not
 
 ## A fraction of the cost
 
+<div className="post-wide">
+
 <ThemedImage alt={"LLM cost to fill, hosted search price, and Hindsight Inference prices"} sources={{light: "/img/blog/knowledge-banks/cost-light.png", dark: "/img/blog/knowledge-banks/cost-dark.png"}} />
+
+</div>
 
 **Filling it: no LLM.** A knowledge bank costs only the embedding. On the support benchmark, putting the manuals into a memory bank cost **$0.95** in LLM calls, because retain reads every page. With the manuals in a knowledge bank and only the chats in memory, it cost **$0.34**: about 3× cheaper, and it scored higher. The linked setup sends the agent more context, so a question costs more: $0.00059 against $0.00031 with memory alone. On LLM spend, memory alone only catches up after about 2,200 questions.
 
@@ -177,14 +205,6 @@ Both models a knowledge bank needs are now on [Hindsight Inference](https://infe
 - **`hs-decide-1-flash-mm`:** our decision reranker, for text and images. Reranking 1,000 PDF pages costs about $0.11.
 
 Point a self-hosted server at them and you get a knowledge bank without running a model yourself. See [Configuration](/next/developer/configuration#knowledge-banks) for the settings.
-
-### The trade-offs
-
-- **Not first everywhere, and the leads are small.** Mixedbread with its reranker is ahead on ViDoRe V3, by 1.5 points on the raw PDFs and 3.7 on page text. Our leads are 1.8 points over Conare on contracts, 0.8 over Memexa v2 on ATM-Bench, and 0.6 over Cohere with its reranker on the raw PDFs. Each score is one run, and the reranker moves results between runs, so read a lead under a couple of points as a tie at the top.
-- **Contradictions are still the hardest case.** When an old chat confidently contradicts the manual, the linked setup gets 73% right, no better than memory alone. Documents win when the agent finds both; it doesn't always find both.
-- **Our scores use a reranker.** Every search score above is reranked by `hs-decide-1-flash-mm`. You can [plug in your own](/next/developer/knowledge-banks#searching) (any service that speaks Cohere's rerank API, pictures included). We haven't published scores without one.
-- **Pick the embedder before you fill the bank.** Every passage is stored as a vector of the model's size. Switching to a model of another size means ingesting again.
-- **Video and audio take time to ingest.** Decoding clips is the slow part: a one-hour video takes about a minute on a GPU. You can turn either off per bank.
 
 ## Try it
 
