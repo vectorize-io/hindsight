@@ -388,8 +388,10 @@ Supports any OTLP-compatible backend (Grafana LGTM, Langfuse, OpenLIT, DataDog, 
 - `gen_ai.operation.name` - Always `"chat"`
 - `gen_ai.provider.name` - Provider (`openai`, `anthropic`, `google`, etc.)
 - `gen_ai.request.model` - Model name
-- `gen_ai.usage.input_tokens` - Input tokens
+- `gen_ai.usage.input_tokens` - Input tokens, cached ones included
 - `gen_ai.usage.output_tokens` - Output tokens
+- `gen_ai.usage.cache_read.input_tokens` - Cached input tokens, already counted in `input_tokens` (only when the provider reports them)
+- `gen_ai.usage.reasoning_tokens` - Reasoning tokens (only when the provider reports them)
 - `hindsight.scope` - LLM call purpose (`memory`, `reflect`, `consolidation`, etc.)
 - `hindsight.bank_id` - Memory bank ID. Every span started inside a bank operation carries it, so a collector can route spans, and their token usage, per bank
 
