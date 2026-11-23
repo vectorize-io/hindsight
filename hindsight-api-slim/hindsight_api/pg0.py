@@ -73,11 +73,22 @@ class EmbeddedPostgres:
         logger.info(f"Starting embedded PostgreSQL (name={self.name}, {port_info})...")
 
         pg0 = self._get_pg0()
+        loop = asyncio.get_event_loop()
+        # pg0 has no data dir for an instance that does not exist yet, and start()
+        # creates it. Say so loudly: a profile whose DATABASE_URL went missing lands
+        # here, and before this warning nothing told the user their memories were
+        # now going into a new, empty database (#6485). The check only feeds that
+        # warning, so a failing one must never stop the start.
+        try:
+            info = await loop.run_in_executor(None, pg0.info)
+            is_new = info.data_dir is None
+        except Exception:
+            logger.debug("Could not check whether pg0 instance %s exists", self.name, exc_info=True)
+            is_new = False
         last_error = None
 
         for attempt in range(1, max_retries + 1):
             try:
-                loop = asyncio.get_event_loop()
                 info = await loop.run_in_executor(None, pg0.start)
                 # Get URI from pg0 (includes auto-assigned port). A start that
                 # reports no URI did not give us a server; retry it like any failure.
@@ -85,6 +96,12 @@ class EmbeddedPostgres:
                 if not uri:
                     raise RuntimeError("pg0 reported a start but returned no connection URI")
                 logger.info(f"PostgreSQL started: {uri}")
+                if is_new:
+                    logger.warning(
+                        f"Created a NEW, EMPTY embedded PostgreSQL instance '{self.name}'. If you meant to use "
+                        "an existing database, set HINDSIGHT_API_DATABASE_URL (or "
+                        "HINDSIGHT_EMBED_API_DATABASE_URL for hindsight-embed) and restart."
+                    )
                 return uri
             except Exception as e:
                 last_error = str(e)
