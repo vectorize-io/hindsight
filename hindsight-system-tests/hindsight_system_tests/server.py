@@ -160,6 +160,9 @@ def stub_environment(stub_url: str) -> dict[str, str]:
         "HINDSIGHT_API_RERANKER_SILICONFLOW_API_KEY": "stub-key",
         "HINDSIGHT_API_RERANKER_SILICONFLOW_BASE_URL": stub_url,
         "HINDSIGHT_API_RERANKER_SILICONFLOW_MODEL": "stub-reranker",
+        # Stories check recall scores against the default recency weight; a value
+        # exported in the developer's shell must not change them.
+        "HINDSIGHT_API_RECENCY_ALPHA": "0.2",
         # Consolidation's decision model (triage), for consolidation only: set up globally it
         # would also rank recall. Triage is on by default wherever one is set up; it is off
         # here so no other story's consolidation changes, and test_22 turns it on per bank.
