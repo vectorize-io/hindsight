@@ -4574,7 +4574,9 @@ class MemoryEngine(MemoryEngineInterface):
                 # its retry delay does not hold the line. Running it would roll the document back
                 # and re-extract the older body (#6763). The orchestrator's own stale check cannot
                 # see this: it compares against when this run STARTED, which is after the newer
-                # version committed.
+                # version committed. Checked before `retain_batch_async` on purpose: nothing runs,
+                # so the retain's validator hooks and its retain.completed event (written only with
+                # stored memories, like the orchestrator's stale skip) have nothing to report.
                 logger.info(
                     f"[BATCH_RETAIN_TASK] Skipping retain {operation_id} for bank_id={bank_id}: "
                     f"retain {newer}, sent after it, already replaced the document"

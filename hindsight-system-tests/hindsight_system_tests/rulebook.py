@@ -130,6 +130,10 @@ class ChatRule:
     was supposed to write the answer.
     """
 
+    budget: list[int] | None = None
+    """When set, how many more calls this rule answers; at zero it stops matching, so the
+    next rule answers. A one-item list because the rule is frozen and the count is not."""
+
     tool: str | None = None
     """When set, match only a turn that offers this tool.
 
@@ -142,6 +146,8 @@ class ChatRule:
         if self.requires_tools and not request.tools:
             return False
         if self.tool is not None and self.tool not in request.tools:
+            return False
+        if self.budget is not None and self.budget[0] <= 0:
             return False
         return all(needle in request.all_text for needle in self.contains)
 
@@ -171,18 +177,27 @@ class RuleBuilder:
             )
         )
 
-    def fails_with_status(self, status: int, *, retry_after_seconds: int | None = None) -> LLMStub:
+    def fails_with_status(
+        self, status: int, *, retry_after_seconds: int | None = None, times: int | None = None
+    ) -> LLMStub:
         """Answer with a provider error at ``status`` — a 429 or a 5xx, say.
 
         For stories about how the server treats a provider that is down or
         rate-limited, which no successful reply can stand in for. ``retry_after_seconds``
         is the provider's reported quota reset, which the worker defers the operation to.
+        ``times`` makes it a blip: after that many failures the next matching rule answers.
         """
-        return self._register(
-            lambda _request: StubbedReply(
+        budget = None if times is None else [times]
+
+        def respond(_request: ChatRequest) -> StubbedReply:
+            if budget is not None:
+                budget[0] -= 1
+            return StubbedReply(
                 message={}, finish_reason="error", error_status=status, retry_after_seconds=retry_after_seconds
             )
-        )
+
+        self._stub.add_rule(ChatRule(contains=self._contains, respond=respond, tool=self._tool, budget=budget))
+        return self._stub
 
     def returns_text(self, text: str) -> LLMStub:
         return self._register(lambda _request: _assistant_message(text))
@@ -326,13 +341,14 @@ class Hold:
     loop first waits on it and raises on the other.
     """
 
-    def __init__(self, anchor: str) -> None:
+    def __init__(self, anchor: str, contains: tuple[str, ...] = ()) -> None:
         self.anchor = anchor
+        self.contains = contains
         self._released = threading.Event()
         self._arrived = threading.Event()
 
     def matches(self, request: ChatRequest) -> bool:
-        return self.anchor in request.all_text
+        return all(needle in request.all_text for needle in (self.anchor, *self.contains))
 
     @property
     def released(self) -> bool:
@@ -414,8 +430,11 @@ class LLMStub:
     def add_rule(self, rule: ChatRule) -> None:
         self._rules.append(rule)
 
-    def hold(self, step: str) -> Hold:
+    def hold(self, step: str, *, contains: str | list[str] | None = None) -> Hold:
         """Park this step's calls until the story releases them.
+
+        ``contains`` narrows it to the calls whose prompt also carries these substrings, as on
+        ``on_step`` — for a story that parks one operation's call while another's goes through.
 
         The rule that answers the step stays whatever the story declared — a hold
         decides *when* the answer is sent, not what it is, so it neither adds a call
@@ -423,7 +442,7 @@ class LLMStub:
         """
         from .steps import anchor_for
 
-        held = Hold(anchor_for(step))
+        held = Hold(anchor_for(step), _as_tuple(contains))
         with self._holds_guard:
             self._holds.append(held)
         return held

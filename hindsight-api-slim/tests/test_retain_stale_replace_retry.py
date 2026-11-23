@@ -1,4 +1,9 @@
-"""An old replace retried after a newer one finished must not roll the document back (#6763)."""
+"""An old replace retried after a newer one finished must not roll the document back (#6763).
+
+The queue rows are written directly: "the older one is waiting out its retry while the newer one
+completes" is queue state no public API can forge. The client-driven story is
+hindsight-system-tests/tests/test_115_retried_replace_keeps_the_newer_version.py.
+"""
 
 import json
 import uuid
