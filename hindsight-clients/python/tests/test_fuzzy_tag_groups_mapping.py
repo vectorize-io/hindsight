@@ -3,8 +3,8 @@
 Mirrors the TypeScript wrapper's ``fuzzy_tag_groups_mapping`` regression tests. Two things
 are pinned here:
 
-* ``tag_groups`` reaches the request object at all. The wrapper used to import a
-  ``RecallRequestTagGroupsInner`` model the generator never emits, so every caller passing
+* ``tag_groups`` reaches the request object at all. The wrapper used to import the union by
+  a generator-chosen class name that changes with the spec (#6785), so every caller passing
   ``tag_groups`` got a ModuleNotFoundError instead of a filtered recall.
 * the leaf's ``resolve`` field survives the dict -> model conversion, so ``fuzzy`` matching
   (#4026) is reachable through the wrapper rather than only over raw HTTP.
@@ -44,3 +44,16 @@ def test_wrapper_forwards_fuzzy_tag_groups(monkeypatch, api_attr, method, call):
 
     sent = captured["request"].to_dict()["tag_groups"]
     assert sent == [FUZZY_GROUP], "tag_groups must reach the request with `resolve` intact"
+
+
+def test_wrapper_does_not_name_the_generated_tag_groups_union():
+    """The union's class name is generator-chosen and moves with the spec (#6785).
+
+    The wrapper must read it off the request model's ``tag_groups`` field instead, so a
+    spec change elsewhere can't turn every tag_groups call into a ModuleNotFoundError.
+    """
+    import inspect
+
+    import hindsight_client.hindsight_client as wrapper
+
+    assert "TagGroupsInner" not in inspect.getsource(wrapper)

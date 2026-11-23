@@ -16,7 +16,7 @@ from contextvars import ContextVar
 from datetime import datetime
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 from urllib.parse import quote
 
 import aiohttp
@@ -83,6 +83,21 @@ from hindsight_client_api.models.version_response import VersionResponse
 # Sentinel for "argument not provided", where None is itself a meaningful value
 # the server distinguishes from absence (e.g. parent_id=None means "the root").
 _UNSET: Any = object()
+
+
+def _tag_groups_to_models(request_model: type, tag_groups: list[dict[str, Any]] | None) -> list[Any] | None:
+    """Turn tag_groups dicts into the request's own union model.
+
+    The generator names that one shared union after the first schema that uses it, so the
+    class name changes whenever the spec gains an earlier-sorting tag_groups field (#6785).
+    Reading it off the request's field annotation (Optional[List[Union]]) never goes stale.
+    """
+    if tag_groups is None:
+        return None
+    annotation = request_model.model_fields["tag_groups"].annotation
+    (list_type,) = [a for a in get_args(annotation) if a is not type(None)]
+    (union_model,) = get_args(list_type)
+    return [union_model.from_dict(tg) for tg in tag_groups]
 
 
 def _run_async(coro):
@@ -1446,17 +1461,7 @@ class Hindsight:
             else None,
         )
 
-        tag_groups_objs = None
-        if tag_groups is not None:
-            # The generator emits one union model for every tag_groups field and names it after
-            # the first schema that used it; there is no RecallRequest-specific class. Importing
-            # the non-existent name raised ModuleNotFoundError for every caller passing tag_groups.
-            # That first schema was MentalModelTriggerInput until knowledge banks entered the spec.
-            from hindsight_client_api.models.knowledge_search_request_tag_groups_inner import (
-                KnowledgeSearchRequestTagGroupsInner,
-            )
-
-            tag_groups_objs = [KnowledgeSearchRequestTagGroupsInner.from_dict(tg) for tg in tag_groups]
+        tag_groups_objs = _tag_groups_to_models(recall_request.RecallRequest, tag_groups)
 
         min_scores_obj = None
         if min_scores is not None:
@@ -1586,17 +1591,7 @@ class Hindsight:
                 tool_calls=ToolCallsIncludeOptions(output=include_tool_call_output) if include_tool_calls else None,
             )
 
-        tag_groups_objs = None
-        if tag_groups is not None:
-            # The generator emits one union model for every tag_groups field and names it after
-            # the first schema that used it; there is no RecallRequest-specific class. Importing
-            # the non-existent name raised ModuleNotFoundError for every caller passing tag_groups.
-            # That first schema was MentalModelTriggerInput until knowledge banks entered the spec.
-            from hindsight_client_api.models.knowledge_search_request_tag_groups_inner import (
-                KnowledgeSearchRequestTagGroupsInner,
-            )
-
-            tag_groups_objs = [KnowledgeSearchRequestTagGroupsInner.from_dict(tg) for tg in tag_groups]
+        tag_groups_objs = _tag_groups_to_models(reflect_request.ReflectRequest, tag_groups)
 
         request_obj = reflect_request.ReflectRequest(
             query=query,
