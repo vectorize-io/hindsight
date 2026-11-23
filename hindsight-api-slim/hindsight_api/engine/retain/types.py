@@ -190,6 +190,9 @@ class RetainContent:
     observation_scopes: Literal["per_tag", "combined", "all_combinations", "shared"] | list[list[str]] | None = (
         None  # Observation scopes
     )
+    #: True when the caller sent no timestamp and ``event_date`` is the retain's "now". A full
+    #: re-extraction may then reuse the date the same text was first retained on (#6783).
+    event_date_defaulted: bool = False
 
     def __post_init__(self) -> None:
         # Drop null-valued metadata keys (issue #3209): the retain API accepts

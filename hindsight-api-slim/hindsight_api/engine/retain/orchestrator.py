@@ -2681,6 +2681,55 @@ async def flush_document_bodies(body_accum: dict[str, DocumentBodyAccumulator]) 
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class _PriorChunkDates:
+    """When each of a document's chunk texts was first retained, read before a re-extraction."""
+
+    #: chunk content hash -> earliest ``mentioned_at`` of the facts that chunk produced
+    by_hash: dict[str, datetime]
+    #: For a chunk whose text matches no stored one: the newest stored date when the body itself is
+    #: unchanged (a re-chunk — all of it was there by then), else None (it may be new content).
+    fallback: datetime | None
+
+    def for_chunk(self, chunk_hash: str) -> datetime | None:
+        return self.by_hash.get(chunk_hash, self.fallback)
+
+
+async def _load_prior_chunk_dates(pool: Any, bank_id: str, document_id: str, new_content_hash: str) -> _PriorChunkDates:
+    """Read the stored chunks and facts of ``document_id`` into a :class:`_PriorChunkDates`."""
+    from ..memories import get_memories
+
+    store = get_memories()
+
+    async def _read(conn: Any) -> _PriorChunkDates:
+        chunks = await store.load_existing_chunks(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+        )
+        if not chunks:
+            return _PriorChunkDates(by_hash={}, fallback=None)
+        hash_by_chunk_id = {c.chunk_id: c.content_hash for c in chunks if c.content_hash}
+        memories = await store.scan_all_memories(
+            conn=conn, fq_table=fq_table, bank_id=bank_id, document_id=document_id, fact_types=["experience", "world"]
+        )
+        by_hash: dict[str, datetime] = {}
+        for memory in memories:
+            chunk_hash = hash_by_chunk_id.get(memory.chunk_id or "")
+            if chunk_hash and memory.mentioned_at is not None:
+                known = by_hash.get(chunk_hash)
+                by_hash[chunk_hash] = memory.mentioned_at if known is None else min(known, memory.mentioned_at)
+        stored_hash = await store.current_document_hash(
+            backend=pool, fq_table=fq_table, bank_id=bank_id, document_id=document_id
+        )
+        fallback = max(by_hash.values()) if by_hash and stored_hash == new_content_hash else None
+        return _PriorChunkDates(by_hash=by_hash, fallback=fallback)
+
+    # A store that owns its memories reads without a SQL connection (see `memory_ids_for_chunks`).
+    if store.store_owned_for(bank_id):
+        return await _read(None)
+    async with acquire_with_retry(pool) as conn:
+        return await _read(conn)
+
+
 async def _streaming_retain_batch(
     pool: Any,
     embeddings_model,
@@ -2815,6 +2864,16 @@ async def _streaming_retain_batch(
                 )
     except Exception:
         pass  # If we can't load, just process all chunks
+
+    # A full re-extraction deletes every fact of the document and extracts it again. Content the
+    # caller sent without a timestamp is dated "now", so facts first stated months ago came back
+    # as recent as the latest correction (#6783). Read when each chunk's text was first retained
+    # before the first batch deletes it, and extract an unchanged chunk under that date.
+    # ponytail: first sub-batch only — later slices of an oversized item run after the old facts
+    # are gone and keep "now"; carry the map across slices if that case matters.
+    prior_dates: _PriorChunkDates | None = None
+    if is_first_batch and not is_recovery and any(c.event_date_defaulted for c in contents):
+        prior_dates = await _load_prior_chunk_dates(pool, bank_id, effective_doc_id, new_content_hash)
 
     # ---------------------------------------------------------------------------
     # Document tracking is DEFERRED to the first consumer batch TXN.
@@ -3005,10 +3064,15 @@ async def _streaming_retain_batch(
     async def _llm_producer() -> None:
         async def _extract_one(global_idx: int, chunk_text: str) -> None:
             source = contents[chunk_to_content[global_idx]] if contents else _default_content
+            event_date = source.event_date
+            if prior_dates is not None and source.event_date_defaulted and event_date is not None:
+                first_retained = prior_dates.for_chunk(chunk_storage.compute_chunk_hash(chunk_text))
+                if first_retained is not None:
+                    event_date = first_retained.astimezone(event_date.tzinfo)
             content = RetainContent(
                 content=chunk_text,
                 context=source.context,
-                event_date=source.event_date,
+                event_date=event_date,
                 metadata=source.metadata,
                 entities=source.entities,
                 resolve_entities=source.resolve_entities,
@@ -4872,6 +4936,8 @@ def _build_contents(
             content=item["content"],
             context=item.get("context", ""),
             event_date=event_date_value,
+            event_date_defaulted="event_date" not in item
+            or (item["event_date"] is not None and not item["event_date"]),
             metadata=item.get("metadata", {}),
             entities=item.get("entities", []),
             resolve_entities=item.get("resolve_entities", True),
