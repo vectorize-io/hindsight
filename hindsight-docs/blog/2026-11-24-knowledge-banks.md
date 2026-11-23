@@ -24,6 +24,22 @@ import TabItem from '@theme/TabItem';
 
 <!-- truncate -->
 
+{/* Launch video. When the YouTube link is out, replace this placeholder <div> with:
+<div style={{position: "relative", paddingBottom: "56.25%", height: 0, margin: "1rem 0 2rem", borderRadius: "8px", overflow: "hidden"}}>
+  <iframe
+    style={{position: "absolute", top: 0, left: 0, width: "100%", height: "100%"}}
+    src="https://www.youtube.com/embed/VIDEO_ID"
+    title="Introducing Hindsight Knowledge Banks"
+    frameBorder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    allowFullScreen
+  ></iframe>
+</div>
+*/}
+<div style={{position: "relative", paddingBottom: "56.25%", height: 0, margin: "1rem 0 2rem", borderRadius: "8px", overflow: "hidden", border: "2px dashed var(--ifm-color-emphasis-400)"}}>
+  <div style={{position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--ifm-color-emphasis-600)"}}>Launch video</div>
+</div>
+
 ## Why memory
 
 <div className="post-wide">
