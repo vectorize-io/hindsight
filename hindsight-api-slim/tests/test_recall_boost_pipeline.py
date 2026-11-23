@@ -1,6 +1,7 @@
 """Exercise stage-2 scoring through recall_async without a database or model server."""
 
 import asyncio
+from datetime import UTC, datetime
 from dataclasses import dataclass
 from typing import Literal
 from unittest.mock import AsyncMock
@@ -190,3 +191,47 @@ async def test_concurrent_recalls_use_their_own_rerank_provider(
     assert [r.scores.final for r in by_query["primary"].results] == pytest.approx([0.7, 0.2 + 4 / 9, 0.6])
     assert all(r.scores.reranker is None for r in by_query["fallback"].results)
     assert [r.scores.final for r in by_query["fallback"].results] == pytest.approx([1.0, 0.55, 0.1])
+
+
+# Patches the SQL retrieval path, which a store-owned bank never takes: its recall goes to the
+# store for a bank this harness never created, so the patched arms are never reached.
+@pytest.mark.memory_backend_incompatible
+@pytest.mark.asyncio
+async def test_recency_alpha_config_reaches_recall_scoring(
+    recall_harness: _RecallHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HINDSIGHT_API_RECENCY_ALPHA sets how much a fresh fact gains (issue #6579)."""
+    config = _get_raw_config()
+    monkeypatch.setattr(config, "recall_strategy_boosts", {})
+    monkeypatch.setattr(config, "recency_decay_function", "linear")
+    now = datetime.now(UTC)
+
+    async def retrieve(*_args: object, **_kwargs: object) -> MultiFactTypeRetrievalResult:
+        fact = RetrievalResult(
+            id="00000000-0000-0000-0000-000000000001",
+            text="fresh fact",
+            fact_type="world",
+            occurred_start=now,
+            activation=1.0,
+        )
+        return MultiFactTypeRetrievalResult(
+            results_by_fact_type={
+                "world": ParallelRetrievalResult(
+                    semantic=[],
+                    bm25=[],
+                    graph=[fact],
+                    temporal=None,
+                    timings={"semantic": 0.0, "bm25": 0.0, "graph": 0.0, "temporal_extraction": 0.0},
+                )
+            }
+        )
+
+    monkeypatch.setattr("hindsight_api.engine.search.retrieval.retrieve_all_fact_types_parallel", retrieve)
+    finals = {}
+    for alpha in (0.0, 0.2, 0.6):
+        monkeypatch.setattr(config, "recency_alpha", alpha)
+        finals[alpha] = (await recall_harness.recall()).results[0].scores.final
+    # A fact from today has recency ~1.0, so its boost is 1 + alpha/2 on the CE score 0.2.
+    assert finals[0.0] == pytest.approx(0.2, abs=1e-3)
+    assert finals[0.2] == pytest.approx(0.2 * 1.1, abs=1e-3)
+    assert finals[0.6] == pytest.approx(0.2 * 1.3, abs=1e-3)

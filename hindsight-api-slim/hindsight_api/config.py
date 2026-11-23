@@ -1287,6 +1287,7 @@ ENV_RECALL_STRATEGY_BOOSTS = "HINDSIGHT_API_RECALL_STRATEGY_BOOSTS"
 ENV_RECENCY_DECAY_FUNCTION = "HINDSIGHT_API_RECENCY_DECAY_FUNCTION"
 ENV_RECENCY_DECAY_LINEAR_WINDOW_DAYS = "HINDSIGHT_API_RECENCY_DECAY_LINEAR_WINDOW_DAYS"
 ENV_RECENCY_DECAY_HALFLIFE_DAYS = "HINDSIGHT_API_RECENCY_DECAY_HALFLIFE_DAYS"
+ENV_RECENCY_ALPHA = "HINDSIGHT_API_RECENCY_ALPHA"
 
 # Audit log settings
 # AUDIT_LOG_ENABLED is the deployment-wide default and is overridable per bank
@@ -1589,6 +1590,8 @@ DEFAULT_RECENCY_DECAY_FUNCTION = "linear"
 DEFAULT_RECENCY_DECAY_LINEAR_WINDOW_DAYS = 365.0
 # Exponential: age (days) at which the recency signal is neutral (0.5).
 DEFAULT_RECENCY_DECAY_HALFLIFE_DAYS = 90.0
+# How much recency can move a recall score: at most ±(alpha/2). 0.2 → ±10%.
+DEFAULT_RECENCY_ALPHA = 0.2
 # Retrieval arms that can be boosted; mirrors fusion.py source_names.
 RECALL_STRATEGY_NAMES = ("semantic", "bm25", "graph", "temporal")
 # User-facing priority levels. Kept in sync with recall_boost.BOOST_LEVELS by a
@@ -3952,6 +3955,7 @@ class HindsightConfig:
     recency_decay_function: str
     recency_decay_linear_window_days: float
     recency_decay_halflife_days: float
+    recency_alpha: float
     reranker_cohere_api_key: str | None
     reranker_cohere_model: str
     reranker_cohere_base_url: str | None
@@ -4861,6 +4865,8 @@ class HindsightConfig:
                 f"Invalid entity_trgm_similarity_threshold: {self.entity_trgm_similarity_threshold}. "
                 "Must be greater than 0 and at most 1."
             )
+        if not (0.0 <= self.recency_alpha <= 1.0):
+            raise ValueError(f"Invalid recency_alpha: {self.recency_alpha}. Must be between 0 and 1.")
         if not (0.0 < self.entity_intrabatch_merge_similarity <= 1.0):
             raise ValueError(
                 f"Invalid entity_intrabatch_merge_similarity: {self.entity_intrabatch_merge_similarity}. "
@@ -5632,6 +5638,7 @@ class HindsightConfig:
             recency_decay_halflife_days=float(
                 os.getenv(ENV_RECENCY_DECAY_HALFLIFE_DAYS, str(DEFAULT_RECENCY_DECAY_HALFLIFE_DAYS))
             ),
+            recency_alpha=float(os.getenv(ENV_RECENCY_ALPHA, str(DEFAULT_RECENCY_ALPHA))),
             # Cohere reranker (with backward-compatible fallback to shared API key)
             reranker_cohere_api_key=os.getenv(ENV_RERANKER_COHERE_API_KEY) or os.getenv(ENV_COHERE_API_KEY),
             reranker_cohere_model=os.getenv(ENV_RERANKER_COHERE_MODEL, DEFAULT_RERANKER_COHERE_MODEL),

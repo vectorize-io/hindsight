@@ -10434,6 +10434,7 @@ class MemoryEngine(MemoryEngineInterface):
                     recency_decay_function=get_config().recency_decay_function,
                     recency_decay_linear_window_days=get_config().recency_decay_linear_window_days,
                     recency_decay_halflife_days=get_config().recency_decay_halflife_days,
+                    recency_alpha=get_config().recency_alpha,
                     # Resolved here, not in the store: `question_date` overrides "now", and two
                     # clocks would make an identical request score differently on the two paths.
                     now=_recall_scoring_now(request.question_date),
@@ -11031,6 +11032,7 @@ class MemoryEngine(MemoryEngineInterface):
                     recency_decay_function=scoring_config.recency_decay_function,
                     recency_decay_linear_window_days=scoring_config.recency_decay_linear_window_days,
                     recency_decay_halflife_days=scoring_config.recency_decay_halflife_days,
+                    recency_alpha=scoring_config.recency_alpha,
                 )
                 # Per-strategy bump after combined scoring. Passthrough recalls
                 # (explicit rrf, an rrf provider, or a chain that failed over to
