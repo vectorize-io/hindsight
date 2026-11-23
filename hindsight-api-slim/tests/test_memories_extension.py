@@ -2410,7 +2410,8 @@ class _NoRowsConn:
         return None
 
     async def fetchval(self, sql, *args):
-        return None
+        # Except the bank's own row: the export refuses a bank that does not exist.
+        return 1 if sql.startswith("SELECT 1 FROM") and "banks" in sql else None
 
 
 async def test_export_carries_a_store_owned_banks_archived_memories():

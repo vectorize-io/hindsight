@@ -167,8 +167,9 @@ async def test_stream_export_bank_empty_bank_manifest():
 
     from hindsight_api.engine.transfer import TransferScope, stream_export_bank
 
-    fake_conn = AsyncMock(spec=["fetch"])
+    fake_conn = AsyncMock(spec=["fetch", "fetchval"])
     fake_conn.fetch = AsyncMock(return_value=[])
+    fake_conn.fetchval = AsyncMock(return_value=1)  # the bank exists, it is just empty
 
     chunks = []
     async for chunk in stream_export_bank(

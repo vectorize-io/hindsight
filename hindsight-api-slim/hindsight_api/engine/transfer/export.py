@@ -24,6 +24,7 @@ import pydantic_core
 
 from ..db_utils import as_connection, iter_keyset_pages
 from ..metadata_utils import as_string_metadata
+from ..retain.bank_utils import bank_exists_on_conn
 from ..schema import fq_table
 from .schema import (
     ATTACHMENT_TABLES,
@@ -525,6 +526,10 @@ async def _iter_history_row_pages(conn_or_backend: Any, table: str, bank_id: str
         yield [{k: v for k, v in row.items() if k != "id"} for row in rows]
 
 
+class BankNotFoundError(LookupError):
+    """The bank to export has no row: a typo'd id or the wrong instance, not an empty bank."""
+
+
 async def stream_export_bank(
     conn_or_backend: Any,
     bank_id: str,
@@ -559,6 +564,11 @@ async def stream_export_bank(
     instead, which on a large bank stayed open until a pooler cut it (#6666) and,
     at READ COMMITTED, never gave a single snapshot anyway.
     """
+    # A missing bank would otherwise export as a well-formed, empty archive that an
+    # operator only finds out is useless at restore time (#6776).
+    async with as_connection(conn_or_backend) as conn:
+        if not await bank_exists_on_conn(conn, bank_id):
+            raise BankNotFoundError(f"Bank '{bank_id}' not found")
     scope = scope or TransferScope()
     memories = _resolve_memories(memories)
     streamer = ZipStreamer()
