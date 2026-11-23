@@ -19,7 +19,7 @@ from hindsight_api.engine.aiohttp_session import UpstreamHTTPError
 from hindsight_api.engine.cross_encoder import create_cross_encoder_from_env
 from hindsight_api.engine.decision_model import _OPTION_KEY_OVERHEAD, DecisionModel
 from hindsight_api.engine.remote_retry import RetryPolicy
-from hindsight_api.engine.search.decision_reranker import DecisionModelReranker, ListwiseDecisionReranker
+from hindsight_api.engine.search.decision_reranker import ListwiseDecisionReranker
 from hindsight_api.engine.token_encoding import count_tokens
 from tests.test_decision_engine import _engine, _FakeSession
 
@@ -246,27 +246,6 @@ class TestFactory:
         assert encoder._client.question_tokens == 26_000 and encoder._client.tokenizer is None
         assert encoder.retry_policy is not None and encoder.retry_policy.max_retries == 7
         assert encoder._client.retry_policy.max_retries == 0
-
-    def test_per_candidate_ranking_is_opt_in(self, caplog):
-        """HINDSIGHT_API_RERANKER_TYPESAFE_PER_CANDIDATE swaps the listwise Choice for recall's
-        one-question-per-candidate reranker, on the same engine; the deprecation still warns."""
-        config = _make_config(
-            reranker_provider="typesafe",
-            reranker_typesafe_api_key="k",
-            reranker_typesafe_per_candidate=True,
-            reranker_typesafe_prune_candidates=True,
-        )
-        with patch("hindsight_api.config.get_config", return_value=config):
-            encoder = create_cross_encoder_from_env()
-
-        assert isinstance(encoder, DecisionModelReranker)
-        assert encoder.prunes_candidates is True
-        assert encoder._client.model == "jev-latest" and encoder._client.tokenizer == "jev"
-        assert encoder._client.max_request_tokens == 26_000
-        assert "deprecated" in caplog.text
-
-    def test_listwise_is_the_default(self):
-        assert HindsightConfig.from_env().reranker_typesafe_per_candidate is False
 
     @pytest.mark.asyncio
     async def test_the_listwise_reranker_ranks_each_query_in_its_own_pool_on_the_engine(self):

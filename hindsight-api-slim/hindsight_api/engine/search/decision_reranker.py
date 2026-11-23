@@ -183,9 +183,7 @@ class ListwiseDecisionReranker(CrossEncoderModel):
     on the decision engine: each query's pool ranked by one listwise Choice
     (:meth:`DecisionModel.rank`), and with ``prune`` cut where relevance ends.
 
-    Its default, kept from when it had a client of its own. With
-    ``HINDSIGHT_API_RERANKER_TYPESAFE_PER_CANDIDATE`` on, the provider is a
-    :class:`DecisionModelReranker` instead. The scores are positions, not confidences, and a
+    The scores are positions, not confidences, and a
     candidate past the cut scores exactly 0.0, which is how :attr:`prunes_candidates` tells
     recall to leave it out.
     """
