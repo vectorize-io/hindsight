@@ -96,8 +96,8 @@ _RESULT_METADATA_CONTAINS_RE = re.compile(r"((?:\w+\.)?result_metadata)\s*@>\s*:
 
 # Oracle caps an IN list at 1000 expressions (ORA-01795); IN lists up to that
 # size are padded to one of these, so a query has at most 11 distinct SQL texts.
-_ORACLE_IN_LIMIT = 1000
-_ORACLE_IN_BUCKETS = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, _ORACLE_IN_LIMIT)
+ORACLE_IN_LIST_LIMIT = 1000
+_ORACLE_IN_BUCKETS = (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, ORACLE_IN_LIST_LIMIT)
 
 # ---------------------------------------------------------------------------
 # Argument conversion helpers
@@ -351,7 +351,9 @@ def _rewrite_upsert_to_merge(query: str) -> str | None:
 
 # The rewrite is a pure function of the query text and the same few hundred query
 # shapes repeat, so caching it skips re-running ~60 regexes on every statement.
-@functools.lru_cache(maxsize=512)
+# Table names carry the tenant schema, so each tenant adds its own copy of every
+# shape: the cap leaves room for a few dozen tenants before entries start evicting.
+@functools.lru_cache(maxsize=8192)
 def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
     """Rewrite PostgreSQL-style SQL to Oracle-compatible SQL.
 
@@ -1009,7 +1011,7 @@ class OracleConnection(DatabaseConnection):
             if len(val) == 0:
                 return "NULL"
             prefix = f"any{next(slots['any'])}"
-            if len(val) <= _ORACLE_IN_LIMIT:
+            if len(val) <= ORACLE_IN_LIST_LIMIT:
                 # Repeating an item leaves IN / NOT IN semantics unchanged.
                 bucket = next(b for b in _ORACLE_IN_BUCKETS if b >= len(val))
                 val = list(val) + [val[-1]] * (bucket - len(val))

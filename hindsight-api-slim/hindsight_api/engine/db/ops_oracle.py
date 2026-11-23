@@ -22,11 +22,9 @@ from .ops import (
     key_serialization_sql,
     memory_unit_columns,
 )
-from .oracle import OracleConnection
+from .oracle import ORACLE_IN_LIST_LIMIT, OracleConnection
 from .result import DictResultRow as ResultRow
 from .result import ResultRow as DatabaseResultRow
-
-ORACLE_IN_LIST_LIMIT = 1000
 
 # ORA-02291 on a memory_links -> memory_units FK: the link's endpoint was deleted.
 _VANISHED_UNIT_FK = re.compile(r"ORA-02291\b.*\.FK_ML_(?:FROM|TO)\)", re.IGNORECASE)
@@ -676,10 +674,10 @@ class OracleOps(DataAccessOps):
         # One query per 1000 ids, not one per id: the rewriter expands ANY($1) into an
         # IN list, which Oracle caps at 1000 items (ORA-01795).
         rows: list[ResultRow] = []
-        for start in range(0, len(unit_ids), 1000):
+        for start in range(0, len(unit_ids), ORACLE_IN_LIST_LIMIT):
             batch = await conn.fetch(
                 f"SELECT id, event_date, fact_type FROM {mu_table} WHERE id = ANY($1)",
-                unit_ids[start : start + 1000],
+                unit_ids[start : start + ORACLE_IN_LIST_LIMIT],
             )
             rows.extend(cast(list[ResultRow], batch))
         return rows

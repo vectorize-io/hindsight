@@ -551,7 +551,7 @@ class DataAccessOps(ABC):
         """Fetch event_date/fact_type for a list of unit IDs.
 
         PG uses ANY($1) array binding.
-        Non-PG queries each unit individually.
+        Oracle sends the same ANY($1), in batches of at most 1000 ids.
         """
         ...
 
