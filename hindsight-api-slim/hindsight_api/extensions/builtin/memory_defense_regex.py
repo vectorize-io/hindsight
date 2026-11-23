@@ -43,7 +43,7 @@ class MemoryDefenseRegexExtension(MemoryDefenseExtension):
         if rule is None or rule.action is DefenseAction.ALLOW:
             return DefenseDecision(action=DefenseAction.ALLOW)
 
-        result = apply_redaction(content)
+        result = apply_redaction(content, rule.exclude)
         if not result.matched_types:
             return DefenseDecision(action=DefenseAction.ALLOW)
 

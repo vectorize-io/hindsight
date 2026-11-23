@@ -35,6 +35,8 @@ function coerceAction(raw: unknown): Action {
 interface PolicyRule {
   on: Detector;
   action: Action;
+  // Pattern labels the rule skips; set via the API, kept intact on save.
+  exclude?: string[];
 }
 
 interface MemoryDefensePolicy {
@@ -60,6 +62,7 @@ function readPolicy(config: Record<string, any>): MemoryDefensePolicy {
           .map((r: any) => ({
             on: r.on as Detector,
             action: coerceAction(r.action ?? "redact"),
+            ...(Array.isArray(r.exclude) ? { exclude: r.exclude } : {}),
           }))
       : [],
   };
@@ -83,6 +86,7 @@ function writePolicy(p: MemoryDefensePolicy): Record<string, any> {
     rules: p.rules.map((r) => ({
       on: r.on,
       action: r.action,
+      ...(r.exclude ? { exclude: r.exclude } : {}),
     })),
   };
 }

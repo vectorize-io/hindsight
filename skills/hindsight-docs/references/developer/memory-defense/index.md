@@ -38,6 +38,16 @@ A minimal policy:
 
 Once that policy is on a bank, every retain to that bank is screened with the 45 redaction patterns documented below.
 
+### Skipping individual patterns
+
+Some patterns can catch data you want to keep. For example, `credit_card` also matches long numeric IDs that happen to pass the card checksum. Add an `exclude` list of [pattern labels](#patterns-covered) to the rule, and those patterns are skipped while all the others still run:
+
+```json
+{ "on": "sensitive_data", "action": "redact", "exclude": ["credit_card", "ssn_us"] }
+```
+
+An unknown label is rejected with `422`.
+
 :::note Existing memories are not retroactively scanned
 Enabling Memory Defense on a bank only affects future retain calls. Memories already in the bank are not re-scanned or modified when you add or change a policy. If you need to scrub a bank that already contains unredacted content, you have to re-ingest the affected memories or remove them manually.
 :::

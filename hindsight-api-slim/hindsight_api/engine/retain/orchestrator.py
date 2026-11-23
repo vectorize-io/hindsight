@@ -216,9 +216,10 @@ def redact_document_body(body: str, config: Any) -> str:
     policy = parse_policy(config.memory_defense)
     if not policy.enabled:
         return body
-    if not any(r.on == "sensitive_data" for r in policy.rules):
+    rule = next((r for r in policy.rules if r.on == "sensitive_data"), None)
+    if rule is None:
         return body
-    return apply_redaction(body).content
+    return apply_redaction(body, rule.exclude).content
 
 
 def merge_json_array_parts(texts: list[str]) -> str | None:
