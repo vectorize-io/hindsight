@@ -2,8 +2,8 @@
 title: "How to Keep an Always-On Agent's Memory Up to Date"
 description: "Store a scheduled agent's memory in Hindsight. New facts update old observations instead of piling up beside them. Python code for each run."
 authors: [chrislatimer]
-date: 2026-11-21
-slug: "2026/11/21/always-on-agent-memory-observations"
+date: 2026-11-27
+slug: "2026/11/27/always-on-agent-memory-observations"
 tags: [hindsight, memory, agent-memory, always-on-agents, observations, mental-models, recall, retain]
 hide_table_of_contents: false
 image: /img/blog/always-on-agent-memory-observations/featured.png
