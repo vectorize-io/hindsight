@@ -13,17 +13,13 @@ All endpoints live under `/v1/default/knowledge-banks`. Each example shows the c
 ### Python
 
 ```python
-await kb.create_knowledge_bank(CreateKnowledgeBankRequest(bank_id="product-manuals"))
+client.create_knowledge_bank("product-manuals")
 ```
 
 ### Node.js
 
 ```javascript
-await sdk.createKnowledgeBank({
-    client: apiClient,
-    body: { bank_id: 'product-manuals' },
-    throwOnError: true,
-});
+await client.createKnowledgeBank('product-manuals');
 ```
 
 ### CLI
@@ -77,16 +73,16 @@ Upload one or more files (PDFs, Office documents, images, audio, video, text, Ma
 ### Python
 
 ```python
-result = await kb.ingest_knowledge_files(
-    bank_id="product-manuals",
+result = client.ingest_knowledge_files(
+    "product-manuals",
     files=[
-        ("x200-manual.pdf", SAMPLE_PDF.read_bytes()),
+        SAMPLE_PDF,  # a path, or a (filename, bytes) pair
         ("x200-quickstart.md", b"# X200 quick start\n\nHold the power button for two seconds.\n"),
     ],
-    request=json.dumps({"files": [
+    files_options=[
         {"document_id": "x200-manual", "tags": ["x200"]},
         {"document_id": "x200-quickstart", "tags": ["x200", "quickstart"]},
-    ]}),
+    ],
 )
 print(result.document_ids, result.operation_ids)
 ```
@@ -94,21 +90,19 @@ print(result.document_ids, result.operation_ids)
 ### Node.js
 
 ```javascript
-const { data: ingested } = await sdk.ingestKnowledgeFiles({
-    client: apiClient,
-    path: { bank_id: 'product-manuals' },
-    body: {
-        files: [
-            new File([readFileSync(SAMPLE_PDF)], 'x200-manual.pdf'),
-            new File(['# X200 quick start\n\nHold the power button for two seconds.\n'], 'x200-quickstart.md'),
-        ],
-        request: JSON.stringify({ files: [
+const ingested = await client.ingestKnowledgeFiles(
+    'product-manuals',
+    [
+        new File([readFileSync(SAMPLE_PDF)], 'x200-manual.pdf'),
+        new File(['# X200 quick start\n\nHold the power button for two seconds.\n'], 'x200-quickstart.md'),
+    ],
+    {
+        filesOptions: [
             { document_id: 'x200-manual', tags: ['x200'] },
             { document_id: 'x200-quickstart', tags: ['x200', 'quickstart'] },
-        ] }),
+        ],
     },
-    throwOnError: true,
-});
+);
 console.log(ingested.document_ids, ingested.operation_ids);
 ```
 
@@ -181,31 +175,26 @@ Send text as JSON, up to 100 items per call. By default the call returns once ev
 ### Python
 
 ```python
-await kb.ingest_knowledge_texts(
+client.ingest_knowledge_texts(
     "product-manuals",
-    KnowledgeIngestRequest(items=[
-        KnowledgeIngestTextItem(
-            document_id="returns-policy",
-            text="# Returns\n\nYou can return an X200 within 30 days...",
-            tags=["policy"],
-        )
-    ]),
+    [
+        {
+            "document_id": "returns-policy",
+            "text": "# Returns\n\nYou can return an X200 within 30 days...",
+            "tags": ["policy"],
+        }
+    ],
 )
 ```
 
 ### Node.js
 
 ```javascript
-await sdk.ingestKnowledgeTexts({
-    client: apiClient,
-    path: { bank_id: 'product-manuals' },
-    body: { items: [{
-        document_id: 'returns-policy',
-        text: '# Returns\n\nYou can return an X200 within 30 days...',
-        tags: ['policy'],
-    }] },
-    throwOnError: true,
-});
+await client.ingestKnowledgeTexts('product-manuals', [{
+    document_id: 'returns-policy',
+    text: '# Returns\n\nYou can return an X200 within 30 days...',
+    tags: ['policy'],
+}]);
 ```
 
 ### CLI
@@ -267,9 +256,8 @@ The response has the same shape as a file ingest. `operation_ids` is empty when 
 ### Python
 
 ```python
-found = await kb.search_knowledge_bank(
-    "product-manuals",
-    KnowledgeSearchRequest(query="How long do I have to return an X200?", max_tokens=2048),
+found = client.search_knowledge_bank(
+    "product-manuals", query="How long do I have to return an X200?", max_tokens=2048
 )
 for hit in found.results:
     print(hit.document_id, hit.text)
@@ -278,11 +266,9 @@ for hit in found.results:
 ### Node.js
 
 ```javascript
-const { data: found } = await sdk.searchKnowledgeBank({
-    client: apiClient,
-    path: { bank_id: 'product-manuals' },
-    body: { query: 'How long do I have to return an X200?', max_tokens: 2048 },
-    throwOnError: true,
+const found = await client.searchKnowledgeBank('product-manuals', {
+    query: 'How long do I have to return an X200?',
+    maxTokens: 2048,
 });
 for (const hit of found.results) console.log(hit.document_id, hit.text);
 ```
@@ -426,7 +412,7 @@ With `"trace": true`, the response also has a `trace`:
 ### Python
 
 ```python
-tags = await kb.list_knowledge_bank_tags("product-manuals", q="x2*")
+tags = client.list_knowledge_bank_tags("product-manuals", q="x2*")
 for item in tags.items:
     print(item.tag, item.count)
 ```
@@ -434,12 +420,7 @@ for item in tags.items:
 ### Node.js
 
 ```javascript
-const { data: tags } = await sdk.listKnowledgeBankTags({
-    client: apiClient,
-    path: { bank_id: 'product-manuals' },
-    query: { q: 'x2*' },
-    throwOnError: true,
-});
+const tags = await client.listKnowledgeBankTags('product-manuals', { q: 'x2*' });
 for (const item of tags.items) console.log(item.tag, item.count);
 ```
 
@@ -499,7 +480,27 @@ A document looks like this:
 
 `source_document_id` is set when an [ingestion strategy](../knowledge-banks.md#ingestion-strategies) split this document out of another.
 
-With the CLI:
+List and read documents:
+
+### Python
+
+```python
+for d in client.list_knowledge_documents("product-manuals", status="ready").documents:
+    print(d.document_id, d.media_type, d.passage_count)
+doc = client.get_knowledge_document("product-manuals", "x200-quickstart")
+print(doc.status, [p.text for p in doc.passages])
+```
+
+### Node.js
+
+```javascript
+const { documents } = await client.listKnowledgeDocuments('product-manuals', { status: 'ready' });
+for (const d of documents) console.log(d.document_id, d.media_type, d.passage_count);
+const detail = await client.getKnowledgeDocument('product-manuals', 'x200-quickstart');
+console.log(detail.status, detail.passages.map((p) => p.text));
+```
+
+### CLI
 
 ```bash
 hindsight kb list-documents product-manuals --status ready
@@ -507,6 +508,22 @@ hindsight kb get-document product-manuals x200-manual
 hindsight kb download product-manuals x200-manual --out manual-copy.pdf
 hindsight kb passage-media product-manuals x200-manual 0 --out page-1.png
 ```
+
+Delete one:
+
+### Python
+
+```python
+client.delete_knowledge_document("product-manuals", "returns-policy")
+```
+
+### Node.js
+
+```javascript
+await client.deleteKnowledgeDocument('product-manuals', 'returns-policy');
+```
+
+### CLI
 
 ```bash
 hindsight kb delete-document product-manuals returns-policy
@@ -542,20 +559,17 @@ A bank can change how its files are split, and nothing else: the embedder, keys,
 ### Python
 
 ```python
-await kb.update_knowledge_bank_config(
-    "product-manuals",
-    KnowledgeBankConfigUpdate(updates={"text_passage_tokens": 256, "disabled_media_types": ["video"]}),
+client.update_knowledge_bank_config(
+    "product-manuals", {"text_passage_tokens": 256, "disabled_media_types": ["video"]}
 )
 ```
 
 ### Node.js
 
 ```javascript
-await sdk.updateKnowledgeBankConfig({
-    client: apiClient,
-    path: { bank_id: 'product-manuals' },
-    body: { updates: { text_passage_tokens: 256, disabled_media_types: ['video'] } },
-    throwOnError: true,
+await client.updateKnowledgeBankConfig('product-manuals', {
+    text_passage_tokens: 256,
+    disabled_media_types: ['video'],
 });
 ```
 
@@ -609,7 +623,33 @@ curl -X PATCH "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/config"
 
 `PATCH` and `DELETE` need `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` on.
 
-With the CLI, to see the settings or undo changes:
+To see the settings or undo changes:
+
+### Python
+
+```python
+# Every setting as the bank uses it, then only what the bank changes
+config = client.get_knowledge_bank_config("product-manuals")
+print(config.config, config.overrides)
+
+# Drop one override, or all of them
+client.update_knowledge_bank_config("product-manuals", {"disabled_media_types": None})
+client.reset_knowledge_bank_config("product-manuals")
+```
+
+### Node.js
+
+```javascript
+// Every setting as the bank uses it, then only what the bank changes
+const settings = await client.getKnowledgeBankConfig('product-manuals');
+console.log(settings.config, settings.overrides);
+
+// Drop one override, or all of them
+await client.updateKnowledgeBankConfig('product-manuals', { disabled_media_types: null });
+await client.resetKnowledgeBankConfig('product-manuals');
+```
+
+### CLI
 
 ```bash
 # Every setting as the bank uses it, then only what the bank changes
@@ -636,17 +676,13 @@ It feeds the control plane's chart and has no CLI command; `hindsight kb get` sh
 ### Python
 
 ```python
-await kb.delete_knowledge_bank("product-manuals")
+client.delete_knowledge_bank("product-manuals")
 ```
 
 ### Node.js
 
 ```javascript
-await sdk.deleteKnowledgeBank({
-    client: apiClient,
-    path: { bank_id: 'product-manuals' },
-    throwOnError: true,
-});
+await client.deleteKnowledgeBank('product-manuals');
 ```
 
 ### CLI

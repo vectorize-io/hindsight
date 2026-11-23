@@ -325,11 +325,33 @@ A document looks like this:
 
 `source_document_id` is set when an [ingestion strategy](../knowledge-banks#ingestion-strategies) split this document out of another.
 
-With the CLI:
+List and read documents:
 
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="documents" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="documents" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="documents" language="bash" />
+</TabItem>
+</Tabs>
 
+Delete one:
+
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="delete-document" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="delete-document" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="delete-document" language="bash" />
+</TabItem>
+</Tabs>
 
 ---
 
@@ -394,9 +416,19 @@ A bank can change how its files are split, and nothing else: the embedder, keys,
 
 `PATCH` and `DELETE` need `HINDSIGHT_API_ENABLE_BANK_CONFIG_API` on.
 
-With the CLI, to see the settings or undo changes:
+To see the settings or undo changes:
 
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="settings" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="settings" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="settings" language="bash" />
+</TabItem>
+</Tabs>
 
 ---
 
