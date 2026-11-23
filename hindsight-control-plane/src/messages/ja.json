@@ -485,7 +485,7 @@
     "auditEnabledDescription": "このバンクの retain、recall、reflect の各操作を記録します。このバンクに限りサーバーの既定値を上書きします。",
     "auditServerDefault": "サーバー既定値（{state}）",
     "defaultTimezoneLabel": "デフォルトのタイムゾーン",
-    "defaultTimezoneDescription": "UTCオフセットのないretainのタイムスタンプや本文中の時刻に使うタイムゾーン。Europe/RomeなどのIANA名。",
+    "defaultTimezoneDescription": "UTCオフセットのないretainのタイムスタンプや本文中の時刻に使うタイムゾーン。LLMが記憶の時刻を読むタイムゾーンでもあります。Europe/RomeなどのIANA名。",
     "docStorageEnabledLabel": "ドキュメント本文を保存",
     "docStorageEnabledDescription": "生の元テキスト（ドキュメント原本とチャンク）を保持します。無効にすると、派生したファクトのみが保持されます。このバンクのみサーバーのデフォルトを上書きします。",
     "docStorageServerDefault": "サーバーのデフォルト（{state}）",
@@ -665,6 +665,7 @@
     "promptBlock": {
       "instructions": "指示",
       "field": {
+        "default_timezone": "タイムゾーン",
         "entities_allow_free_form": "自由形式のエンティティ",
         "entity_labels": "エンティティラベル",
         "llm_output_language": "言語ルール",

@@ -4112,7 +4112,7 @@ class HindsightConfig:
     enable_file_upload_api: bool
     file_delete_after_retain: bool
     store_document_text: bool  # When False, store NULL original_text / empty chunk_text
-    default_timezone: str  # IANA zone for retain times that carry no UTC offset
+    default_timezone: str  # IANA zone for retain times with no UTC offset, and for times shown to the LLM
     enable_document_export_api: bool
     enable_document_import_api: bool
     enable_kb: bool

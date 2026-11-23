@@ -33,7 +33,7 @@ from ..llm_wrapper import (
 from ..operation_metadata import RetainExtractionErrors
 from ..remote_retry import status_code_of
 from ..response_models import BATCH_TERMINAL_FAILURE_STATUSES, BatchRequest, BatchResult, LLMCallResult, TokenUsage
-from ..stored_dates import is_placeholder_date
+from ..stored_dates import bank_timezone, is_placeholder_date
 from ..structured_output import provider_json_schema, strict_json_schema
 from . import attachment_content
 
@@ -3808,8 +3808,6 @@ def _content_timezone(content: RetainContent, config: Any) -> tzinfo:
 
     The content's own Event Date offset when it has one, else the bank's default zone.
     """
-    from .orchestrator import bank_timezone
-
     event_date = content.event_date
     if isinstance(event_date, datetime) and event_date.tzinfo is not None:
         return event_date.tzinfo

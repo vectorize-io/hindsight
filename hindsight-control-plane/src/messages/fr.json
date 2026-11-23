@@ -485,7 +485,7 @@
     "auditEnabledDescription": "Enregistrer les opérations retain, recall et reflect de cette banque. Remplace la valeur par défaut du serveur pour cette banque uniquement.",
     "auditServerDefault": "Valeur par défaut du serveur ({state})",
     "defaultTimezoneLabel": "Fuseau horaire par défaut",
-    "defaultTimezoneDescription": "Fuseau utilisé pour un horodatage de retain, ou une heure du contenu, sans décalage UTC. Nom IANA comme Europe/Rome.",
+    "defaultTimezoneDescription": "Fuseau utilisé pour un horodatage de retain, ou une heure du contenu, sans décalage UTC, et le fuseau dans lequel le LLM lit les heures des souvenirs. Nom IANA comme Europe/Rome.",
     "docStorageEnabledLabel": "Stocker le texte des documents",
     "docStorageEnabledDescription": "Conserver le texte source brut (documents originaux et fragments). Désactivez pour ne conserver que les faits dérivés. Remplace la valeur par défaut du serveur pour cette banque uniquement.",
     "docStorageServerDefault": "Valeur par défaut du serveur ({state})",
@@ -665,6 +665,7 @@
     "promptBlock": {
       "instructions": "Instructions",
       "field": {
+        "default_timezone": "Fuseau horaire",
         "entities_allow_free_form": "Entités libres",
         "entity_labels": "Étiquettes d'entité",
         "llm_output_language": "Règle de langue",

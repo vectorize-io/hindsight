@@ -8,7 +8,9 @@ dates (temporal recall, consolidation's date merging). The per-fact ordering off
 late-9999 value past datetime.max. Every place a date enters a memory treats them as unknown.
 """
 
-from datetime import MAXYEAR, MINYEAR, UTC, datetime
+from datetime import MAXYEAR, MINYEAR, UTC, datetime, tzinfo
+from typing import Any
+from zoneinfo import ZoneInfo
 
 
 def is_placeholder_date(value: datetime) -> bool:
@@ -25,3 +27,11 @@ def finite_utc(value: datetime | None) -> datetime | None:
     if value is None or is_placeholder_date(value):
         return None
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def bank_timezone(config: Any) -> tzinfo:
+    """The bank's ``default_timezone``: the zone a retain time with no UTC offset is read in, and
+    the zone every prompt shows the model times in (#6441). The original offset of a stored time is
+    not kept, so this is the only "local time" there is."""
+    name = getattr(config, "default_timezone", None)
+    return ZoneInfo(name) if name else UTC

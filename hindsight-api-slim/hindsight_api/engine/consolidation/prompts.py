@@ -61,11 +61,24 @@ def build_mission_section(observations_mission: str | None) -> str:
     return f"## MISSION\n\n{escape_for_prompt(observations_mission or _DEFAULT_MISSION)}"
 
 
+def build_timezone_section(timezone_name: str | None) -> str:
+    """The TIMEZONE section: which zone the input's times are in, so the text keeps local time.
+
+    Bank-specific, so it lives in the user message and not in the cached prefix. Without it the
+    model copied a UTC wall clock into the text as local time (#6441).
+    """
+    return (
+        f"## TIMEZONE\n\nEvery time below is local time in {timezone_name or 'UTC'}, offset included. "
+        "When the text states a date or a time of day, write that local one as shown."
+    )
+
+
 def build_consolidation_input(
     facts_text: str,
     observations_text: str,
     observations_mission: str | None = None,
     observation_capacity_note: str | None = None,
+    timezone_name: str | None = None,
 ) -> str:
     """Per-batch user message: MISSION + INPUT data + any capacity constraint.
 
@@ -79,7 +92,8 @@ def build_consolidation_input(
         capacity_section = f"## CAPACITY CONSTRAINT\n\n{escape_for_prompt(observation_capacity_note)}\n\n"
     # _SPLIT_INPUT_SECTION omits the stable observation-format explanation (now in
     # the cached system prefix) — only the variable facts/observations remain.
-    template = mission_section + capacity_section + _SPLIT_INPUT_SECTION
+    time_section = f"{build_timezone_section(timezone_name)}\n\n"
+    template = mission_section + capacity_section + time_section + _SPLIT_INPUT_SECTION
     return template.format(facts_text=facts_text, observations_text=observations_text)
 
 

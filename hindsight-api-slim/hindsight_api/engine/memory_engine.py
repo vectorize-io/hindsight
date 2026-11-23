@@ -836,7 +836,7 @@ from .search.tags import (
 from .search.types import ScoredResult
 from .source_facts import select_source_facts_within_budget
 from .source_scope import visible_document_ids
-from .stored_dates import is_placeholder_date
+from .stored_dates import bank_timezone, is_placeholder_date
 from .task_backend import TaskBackend
 from .time_filter import DOCUMENT_TIME_FIELDS, validate_time_window
 
@@ -16753,6 +16753,7 @@ class MemoryEngine(MemoryEngineInterface):
                             evidence_is_sufficient_fn=decision_model.evidence_is_sufficient if decision_model else None,
                             prune_evidence_fn=self._prune_reflect_evidence if decision_model else None,
                             reflect_id=reflect_id,
+                            tz=bank_timezone(resolved_reflect_config),
                         )
             except (asyncio.CancelledError, OperationCancelledError):
                 # Logged here, under this reflect's id, because the HTTP layer's
@@ -17131,7 +17132,8 @@ class MemoryEngine(MemoryEngineInterface):
             for u in units
         ]
         # CPU-bound (~0.1s per few thousand observations): off the event loop, like the entity graph.
-        return await asyncio.to_thread(build_observation_tree, observations, bank_id)
+        tz = bank_timezone(await self._config_resolver.resolve_full_config(bank_id, request_context))
+        return await asyncio.to_thread(build_observation_tree, observations, bank_id, tz)
 
     async def get_entity_graph(
         self,

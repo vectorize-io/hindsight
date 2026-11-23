@@ -22,13 +22,14 @@ import re
 import unicodedata
 from collections import Counter
 from collections.abc import Iterator
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, tzinfo
 from typing import Literal
 
 import numpy as np
 
 from .. import __version__
+from .stored_dates import finite_utc
 
 # A group at or under this size becomes one leaf.
 LEAF_MAX = 120
@@ -381,15 +382,32 @@ def _name_children(
         _name_children(child, obs_cols, vocab, taken | set(child.top_entities[:2]))
 
 
+def _in_zone(o: TreeObservation, tz: tzinfo) -> TreeObservation:
+    """``o`` with every date in ``tz``; a naive one is read as UTC, a placeholder as unknown."""
+
+    def conv(d: datetime | None) -> datetime | None:
+        d = finite_utc(d)
+        return d.astimezone(tz) if d else None
+
+    return replace(
+        o,
+        occurred_start=conv(o.occurred_start),
+        occurred_end=conv(o.occurred_end),
+        mentioned_at=conv(o.mentioned_at),
+        updated_at=conv(o.updated_at),
+    )
+
+
 def _leaves(node: _Node) -> list[_Node]:
     return [node] if not node.children else [leaf for c in node.children for leaf in _leaves(c)]
 
 
 def _stamp(d: datetime | None) -> str:
-    """Date and time in UTC, the way observation notes write them. (A day alone was off by
-    one: a fact "on the 18th" in UTC+2 is stored as 22:00 on the 17th, so the line said the
-    17th while the note in the same text said 2026-09-18 07:46.)"""
-    return d.astimezone(UTC).strftime("%Y-%m-%d %H:%M") if d else ""
+    """Date and time in the bank's zone (``build_observation_tree`` converts every date up front),
+    the way observation notes write them (#6441). (A day alone was off by one: a fact "on the
+    18th" in UTC+2 is stored as 22:00 on the 17th, so the line said the 17th while the note in
+    the same text said 2026-09-18 07:46.)"""
+    return d.strftime("%Y-%m-%d %H:%M") if d else ""
 
 
 def _shown(o: TreeObservation) -> datetime | None:
@@ -457,10 +475,15 @@ def _frontmatter(node: _Node, observations: list[TreeObservation], title: str) -
     return [*lines, "---", ""]
 
 
-def _render_topic(node: _Node, observations: list[TreeObservation], related: list[_Node]) -> TreeFile:
+def _render_topic(node: _Node, observations: list[TreeObservation], related: list[_Node], zone: str) -> TreeFile:
     title = _title(node)
     ranked = _ranked(node, observations)
-    lines = [*_frontmatter(node, observations, title), f"# {title}", "", f"{len(ranked)} observations. Times are UTC."]
+    lines = [
+        *_frontmatter(node, observations, title),
+        f"# {title}",
+        "",
+        f"{len(ranked)} observations. Times are {zone}.",
+    ]
     if node.top_entities:
         lines += ["", "**About:** " + ", ".join(node.top_entities)]
     if related:
@@ -484,6 +507,7 @@ def _render(
     observations: list[TreeObservation],
     related: dict[str, list[_Node]],
     title: str,
+    zone: str,
 ) -> TreeFolder:
     ranked = _ranked(node, observations)
     folder = TreeFolder(path=node.path, name=node.slug, title=title, observation_count=len(ranked))
@@ -513,9 +537,9 @@ def _render(
     )
     for c in children:
         if c.children:
-            folder.folders.append(_render(c, observations, related, _title(c)))
+            folder.folders.append(_render(c, observations, related, _title(c), zone))
         else:
-            folder.files.append(_render_topic(c, observations, related.get(c.path, [])))
+            folder.files.append(_render_topic(c, observations, related.get(c.path, []), zone))
     return folder
 
 
@@ -526,7 +550,7 @@ def _calendar_buckets(ids: list[int], observations: list[TreeObservation]) -> di
     by_month: dict[str, list[int]] = {}
     for i in ids:
         d = _shown(observations[i])
-        by_month.setdefault(d.astimezone(UTC).strftime("%Y-%m") if d else "undated", []).append(i)
+        by_month.setdefault(d.strftime("%Y-%m") if d else "undated", []).append(i)
     buckets: dict[str, list[int]] = {}
     for month, group in by_month.items():
         if len(group) <= LEAF_MAX or month == "undated":
@@ -534,7 +558,7 @@ def _calendar_buckets(ids: list[int], observations: list[TreeObservation]) -> di
             continue
         for i in group:
             d = _shown(observations[i])
-            buckets.setdefault(d.astimezone(UTC).strftime("%G-w%V") if d else "undated", []).append(i)
+            buckets.setdefault(d.strftime("%G-w%V") if d else "undated", []).append(i)
     return buckets
 
 
@@ -567,8 +591,13 @@ def _split_misc(node: _Node, observations: list[TreeObservation], obs_cols: list
     node.children = children
 
 
-def build_observation_tree(observations: list[TreeObservation], bank_title: str = "Memories") -> TreeFolder:
+def build_observation_tree(
+    observations: list[TreeObservation], bank_title: str = "Memories", tz: tzinfo = UTC
+) -> TreeFolder:
     """Lay ``observations`` out as a tree. Deterministic: the same input gives the same tree.
+
+    Dates are shown, and calendar files named, in ``tz``, the bank's zone: an observation's
+    text writes local time, so its line and its month file do too (#6441).
 
     Rebuilt on every call (a stored tree would need one per tag scope), so stability comes from
     the build itself: no randomness, groups seeded from entity counts, paths named after the
@@ -576,7 +605,7 @@ def build_observation_tree(observations: list[TreeObservation], bank_title: str 
     """
     # One canonical order, so the tree depends on which observations there are, not on the
     # order the store returned them in.
-    observations = sorted(observations, key=lambda o: o.id)
+    observations = sorted((_in_zone(o, tz) for o in observations), key=lambda o: o.id)
     bank = _build_features(observations)
     feats, obs_cols = bank.feats, bank.obs_cols
     with_features = np.array([i for i, cs in enumerate(obs_cols) if cs], dtype=np.int64)
@@ -609,7 +638,7 @@ def build_observation_tree(observations: list[TreeObservation], bank_title: str 
                 :RELATED_TOP
             ]
             related[leaf.path] = [leaves[j] for j in order]
-    return _render(root, observations, related, bank_title)
+    return _render(root, observations, related, bank_title, str(tz))
 
 
 def iter_files(folder: TreeFolder) -> Iterator[TreeFile]:

@@ -485,7 +485,7 @@
     "auditEnabledDescription": "Retain-, Recall- und Reflect-Operationen für diesen Speicher aufzeichnen. Überschreibt die Server-Voreinstellung nur für diesen Speicher.",
     "auditServerDefault": "Server-Voreinstellung ({state})",
     "defaultTimezoneLabel": "Standard-Zeitzone",
-    "defaultTimezoneDescription": "Zone für einen Retain-Zeitstempel oder eine Uhrzeit im Inhalt ohne UTC-Offset. IANA-Name wie Europe/Rome.",
+    "defaultTimezoneDescription": "Zone für einen Retain-Zeitstempel oder eine Uhrzeit im Inhalt ohne UTC-Offset, und die Zone, in der das LLM Zeiten von Erinnerungen liest. IANA-Name wie Europe/Rome.",
     "docStorageEnabledLabel": "Dokumenttext speichern",
     "docStorageEnabledDescription": "Rohquelltext beibehalten (Originaldokumente und Chunks). Deaktivieren, um nur abgeleitete Fakten zu behalten. Überschreibt den Serverstandard nur für diese Bank.",
     "docStorageServerDefault": "Serverstandard ({state})",
@@ -665,6 +665,7 @@
     "promptBlock": {
       "instructions": "Anweisungen",
       "field": {
+        "default_timezone": "Zeitzone",
         "entities_allow_free_form": "Freiform-Entitäten",
         "entity_labels": "Entitäts-Labels",
         "llm_output_language": "Sprachregel",

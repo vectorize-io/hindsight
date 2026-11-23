@@ -15,7 +15,7 @@ import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol
 
 from ...cancellation import OperationCancelledError
@@ -586,6 +586,7 @@ async def _run_reflect_agent_inner(
     prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]] | None = None,
     *,
     reflect_id: str,
+    tz: tzinfo = timezone.utc,
 ) -> ReflectAgentResult:
     """
     Execute the reflect agent loop.
@@ -699,6 +700,7 @@ async def _run_reflect_agent_inner(
         answer_as_document=answer_as_document,
         llm_output_language=llm_output_language,
         answer_ready=closing_step_answers,
+        tz=tz,
     )
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
@@ -706,7 +708,7 @@ async def _run_reflect_agent_inner(
     ]
     # What the model reads of each tool result, and the alias table that maps the
     # short ids it writes back to real ones — see presentation.py.
-    presenter = ToolResultPresenter()
+    presenter = ToolResultPresenter(tz)
     # A UUID the caller wrote (in the question, a directive, the mission) is one
     # the answer may repeat.
     for message in messages:
@@ -1039,7 +1041,7 @@ async def _run_reflect_agent_inner(
         hundreds of citations the synthesis model never saw (#3122).
         """
         nonlocal total_input_tokens, total_output_tokens, total_cached_tokens, total_thoughts_tokens
-        final_system = build_final_system_prompt(bank_profile.get("mission"), llm_output_language, directives)
+        final_system = build_final_system_prompt(bank_profile.get("mission"), llm_output_language, directives, tz)
         chunks = split_context_history(context_history, max_context_tokens)
         # Every call below uses the transport-level cap, never the caller's
         # max_tokens: that is a visible-length target carried as a prompt
@@ -1193,7 +1195,7 @@ async def _run_reflect_agent_inner(
         # prefer ("decisions, never the current implementation"), and pruning on the short query
         # kept the later commit that undid a decision as readily as the decision (sde-bench
         # dedupe-history), so the answer reported the decision as superseded.
-        pruned = await _prune_round(query, tool_results, prune_evidence_fn, reflect_id)
+        pruned = await _prune_round(query, tool_results, prune_evidence_fn, reflect_id, tz)
         _record_llm({"scope": "decision_prune", "duration_ms": int((time.perf_counter() - prune_start) * 1000)})
         return pruned
 
@@ -2011,8 +2013,10 @@ def _hide_lower_layers(tool_calls: list["LLMToolCall"], tool_results: list[Any])
     ]
 
 
-def _short_date(value: Any) -> str | None:
-    """A date as the decision model reads it: the day, plus ``HH:MM`` UTC unless the time is a day's edge.
+def _short_date(value: Any, tz: tzinfo = timezone.utc) -> str | None:
+    """A date as the decision model reads it: the day, plus ``HH:MM`` unless the time is a day's edge.
+
+    In the bank's zone, like everything else reflect shows (#6441).
 
     A full ISO timestamp costs ~19 tokens; when the rank's finals cut every candidate to a few
     dozen, a dated fact kept little but its dates and lost to undated ones (#6659).
@@ -2024,19 +2028,19 @@ def _short_date(value: Any) -> str | None:
     except ValueError:
         return str(value)
     if moment.tzinfo is not None:
-        moment = moment.astimezone(timezone.utc)
+        moment = moment.astimezone(tz)
     day = moment.date().isoformat()
     edge = (moment.hour, moment.minute) in ((0, 0), (23, 59))
     return day if edge else f"{day} {moment:%H:%M}"
 
 
-def _evidence_line(item: dict[str, Any]) -> str:
+def _evidence_line(item: dict[str, Any], tz: tzinfo = timezone.utc) -> str:
     """One fact, observation or chunk as the decision model reads it: its dates, then its text.
 
     Both kinds of date: when it happened and when it was said. "Yesterday" in a chunk is
     read against the second, and a question about an event against the first.
     """
-    start, end, said = (_short_date(item.get(key)) for key in ("occurred_start", "occurred_end", "mentioned_at"))
+    start, end, said = (_short_date(item.get(key), tz) for key in ("occurred_start", "occurred_end", "mentioned_at"))
     dates: list[str] = []
     if start:
         dates.append(f"occurred {start}" + (f" to {end}" if end and end != start else ""))
@@ -2051,6 +2055,7 @@ async def _prune_round(
     tool_results: list[Any],
     prune_evidence_fn: Callable[[str, list[str]], Awaitable[list[bool]]],
     reflect_id: str,
+    tz: tzinfo = timezone.utc,
 ) -> list[Any]:
     """Drop the observations, facts and chunks the decision model judges irrelevant.
 
@@ -2072,11 +2077,11 @@ async def _prune_round(
             for item in data.get(key) or []:
                 if isinstance(item, dict) and "id" in item:
                     slots.append((i, key, str(item["id"])))
-                    texts.append(_evidence_line(item))
+                    texts.append(_evidence_line(item, tz))
         for chunk_id, chunk in (data.get("chunks") or {}).items():
             slots.append((i, "chunks", str(chunk_id)))
             texts.append(
-                _evidence_line({**chunk, "text": chunk.get("chunk_text", "")})
+                _evidence_line({**chunk, "text": chunk.get("chunk_text", "")}, tz)
                 if isinstance(chunk, dict)
                 else str(chunk)
             )

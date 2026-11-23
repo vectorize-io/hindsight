@@ -485,7 +485,7 @@
     "auditEnabledDescription": "이 뱅크의 retain, recall, reflect 작업을 기록합니다. 이 뱅크에만 서버 기본값을 재정의합니다.",
     "auditServerDefault": "서버 기본값({state})",
     "defaultTimezoneLabel": "기본 시간대",
-    "defaultTimezoneDescription": "UTC 오프셋이 없는 retain 타임스탬프나 본문 속 시각에 쓰는 시간대. Europe/Rome 같은 IANA 이름.",
+    "defaultTimezoneDescription": "UTC 오프셋이 없는 retain 타임스탬프나 본문 속 시각에 쓰는 시간대이며, LLM이 기억의 시각을 읽는 시간대이기도 합니다. Europe/Rome 같은 IANA 이름.",
     "docStorageEnabledLabel": "문서 텍스트 저장",
     "docStorageEnabledDescription": "원본 텍스트(문서 원본 및 청크)를 영구 저장합니다. 비활성화하면 파생된 사실만 유지됩니다. 이 뱅크에 대해서만 서버 기본값을 덮어씁니다.",
     "docStorageServerDefault": "서버 기본값 ({state})",
@@ -665,6 +665,7 @@
     "promptBlock": {
       "instructions": "지침",
       "field": {
+        "default_timezone": "시간대",
         "entities_allow_free_form": "자유 형식 엔티티",
         "entity_labels": "엔티티 레이블",
         "llm_output_language": "언어 규칙",

@@ -463,6 +463,7 @@ def _render_consolidation(config: "HindsightConfig") -> PromptPreview:
         build_consolidation_input,
         build_consolidation_system_prompt,
         build_mission_section,
+        build_timezone_section,
     )
 
     system_prompt = build_consolidation_system_prompt(llm_output_language=config.llm_output_language)
@@ -470,6 +471,7 @@ def _render_consolidation(config: "HindsightConfig") -> PromptPreview:
         facts_text=PLACEHOLDER_CONSOLIDATION_FACTS,
         observations_text=PLACEHOLDER_CONSOLIDATION_OBSERVATIONS,
         observations_mission=config.observations_mission,
+        timezone_name=config.default_timezone,
     )
 
     # Unlike retain's, this mission always occupies its slot — unset just means the
@@ -481,6 +483,11 @@ def _render_consolidation(config: "HindsightConfig") -> PromptPreview:
             "observations_mission",
             build_mission_section(config.observations_mission),
             value=config.observations_mission,
+        ),
+        _setting(
+            "default_timezone",
+            build_timezone_section(config.default_timezone),
+            value=config.default_timezone,
         ),
     ]
     return PromptPreview(
@@ -507,6 +514,7 @@ def _render_reflect(
         build_directives_section,
         build_system_prompt_for_tools,
     )
+    from .stored_dates import bank_timezone
 
     # reflect_mission out-ranks the legacy banks.mission column (see
     # _overlay_bank_config_disposition_mission), and the profile is what the prompt
@@ -535,6 +543,7 @@ def _render_reflect(
         budget=None,
         llm_output_language=config.llm_output_language,
         answer_ready=not decision_orchestrated,
+        tz=bank_timezone(config),
     )
     mission = (profile.get("mission") or "").strip()
     user_prompt = build_agent_user_prompt(PLACEHOLDER_REFLECT_QUERY, config.llm_output_language, mission)
