@@ -100,10 +100,17 @@ def test_triage_runs_whenever_a_decision_model_is_set_up_unless_the_bank_opts_ou
     )
     bank = SimpleNamespace(consolidation_use_decision_model=True)
     # The shared engine: the same client every time the setup resolves the same.
-    assert triage.triage_model(bank) is decision_model.decision_engine("consolidation") is not None
-    assert triage.triage_model(SimpleNamespace(consolidation_use_decision_model=False)) is None
+    assert (
+        triage.triage_model(bank, decision_model.decision_engine)
+        is decision_model.decision_engine("consolidation")
+        is not None
+    )
+    assert (
+        triage.triage_model(SimpleNamespace(consolidation_use_decision_model=False), decision_model.decision_engine)
+        is None
+    )
     setups.clear()
-    assert triage.triage_model(bank) is None
+    assert triage.triage_model(bank, decision_model.decision_engine) is None
 
 
 @pytest.mark.asyncio

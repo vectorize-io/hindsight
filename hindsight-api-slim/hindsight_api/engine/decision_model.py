@@ -84,7 +84,7 @@ class DecisionAsset(BaseModel):
 #: What System One takes as an image asset (docs.typesafe.ai/images): PNG or baseline JPEG, each side
 #: 280-1568 px, never resized for you. One image it refuses fails the whole request, so a caller leaves
 #: out what it would refuse (``jev_accepts``).
-JEV_IMAGE_FORMATS = {"image/png": "png", "image/jpeg": "jpg"}
+JEV_IMAGE_FORMATS: dict[str, Literal["png", "jpg"]] = {"image/png": "png", "image/jpeg": "jpg"}
 JEV_IMAGE_SIDE = (280, 1568)
 JEV_IMAGE_MAX_BYTES = 16 * 1024 * 1024
 #: Required on every System One request that carries an image: images are a preview there.
@@ -111,7 +111,7 @@ def as_assets(pictures: Mapping[str, EvidenceImage]) -> dict[str, DecisionAsset]
     """Pictures by reference (as :meth:`DecisionModel.shown` returns them) as System One assets."""
     return {
         ref: DecisionAsset(
-            format="png" if JEV_IMAGE_FORMATS[picture.media_type] == "png" else "jpg",
+            format=JEV_IMAGE_FORMATS[picture.media_type],
             data_base64=base64.b64encode(picture.data).decode(),
         )
         for ref, picture in pictures.items()
@@ -885,6 +885,11 @@ class DecisionModel:
                 return await response.json(content_type=None)
 
 
+#: Which decision model an operation asks, or None for none: :func:`decision_engine`, or one injected
+#: through ``MemoryEngine(decision_engine_for=)``.
+DecisionEngineFor = Callable[[DecisionModelOperation], "DecisionModel | None"]
+
+
 @lru_cache(maxsize=8)
 def _engine(operation: DecisionModelOperation, setup: DecisionModelConfig) -> DecisionModel:
     # One client per operation and setup for the process. Per operation, not shared between
@@ -896,7 +901,7 @@ def _engine(operation: DecisionModelOperation, setup: DecisionModelConfig) -> De
 def decision_engine(operation: DecisionModelOperation) -> DecisionModel | None:
     """The decision model ``operation`` asks, or None when it has none set up.
 
-    The one place a decision model is built. Recall's reranker, consolidation triage, reflect
+    The one place an operation's decision model is built. Recall's reranker, consolidation triage, reflect
     and page refresh each take a callable of this shape as a dependency
     (``MemoryEngine(decision_engine_for=)``); this function is that callable when nothing is
     injected. Cached per operation and resolved setup (``HINDSIGHT_API_DECISION_MODEL_*`` with

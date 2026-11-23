@@ -54,7 +54,6 @@ from ..config import (
     LLM_STRATEGY_METADATA,
     SYSTEM_ONE_DECISION_MODEL_PROVIDERS,
     ConfigLike,
-    DecisionModelOperation,
     HindsightConfig,
     LLMMemberConfig,
     LLMStrategyConfig,
@@ -691,7 +690,7 @@ from .bank_life import (
 )
 from .bank_templates import apply_default_bank_template_resources, load_default_bank_template_manifest
 from .cross_encoder import RANK_SCORE_PROVIDERS, CrossEncoderModel, recall_log_id
-from .decision_model import DecisionModel, decision_engine
+from .decision_model import DecisionEngineFor, DecisionModel, decision_engine
 from .embeddings import (
     EMBEDDING_MODEL_SETTING,
     Embeddings,
@@ -3001,7 +3000,7 @@ class MemoryEngine(MemoryEngineInterface):
         consolidation_llm_base_url: str | None = None,
         embeddings: Embeddings | None = None,
         cross_encoder: CrossEncoderModel | None = None,
-        decision_engine_for: Callable[[DecisionModelOperation], DecisionModel | None] | None = None,
+        decision_engine_for: DecisionEngineFor | None = None,
         query_analyzer: QueryAnalyzer | None = None,
         pool_min_size: int | None = None,
         pool_max_size: int | None = None,
@@ -3690,7 +3689,7 @@ class MemoryEngine(MemoryEngineInterface):
         return self._audit_logger
 
     @property
-    def decision_engine_for(self) -> Callable[[DecisionModelOperation], DecisionModel | None]:
+    def decision_engine_for(self) -> DecisionEngineFor:
         """The decision engine each operation was given.
 
         Read-only. This is the callable passed to MemoryEngine, or the module

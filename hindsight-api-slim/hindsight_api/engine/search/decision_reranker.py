@@ -88,12 +88,9 @@ class DecisionModelReranker(CrossEncoderModel):
     # Its decision-model requests are traced one by one; a rerank row would count them twice.
     traces_calls = False
 
-    def __init__(self, client: DecisionModel, *, prune: bool = False):
+    def __init__(self, client: DecisionModel):
         # The shared engine (decision_model.decision_engine("recall")), injected.
         self._client = client
-        # Prune every recall, whatever DecisionRerankOptions.prune says: the deprecated typesafe
-        # reranker's HINDSIGHT_API_RERANKER_TYPESAFE_PRUNE_CANDIDATES, when it ranks per candidate.
-        self.prunes_candidates = prune
 
     @property
     def provider_name(self) -> str:
@@ -116,7 +113,7 @@ class DecisionModelReranker(CrossEncoderModel):
         state = rerank.state(query, rerank_shared_context.get())
         nouls = await self._judge(query, subset)
         # Stable on the caller's input order, so equal answers keep their RRF order.
-        ranked = rerank.pruned(nouls) if options.prune or self.prunes_candidates else rerank.scores(nouls)
+        ranked = rerank.pruned(nouls) if options.prune else rerank.scores(nouls)
         if options.dedup:
             # The second request: its pairs depend on the ranking answers above.
             kinds = [options.fact_types[index] for index in indices] if options.fact_types else None

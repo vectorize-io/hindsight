@@ -6,15 +6,13 @@ import asyncio
 import calendar
 import logging
 import math
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
 
-from ...config import DecisionModelOperation
 from ..cross_encoder import RerankTimeoutError, _served_provider
-from ..decision_model import DecisionModel, decision_engine
+from ..decision_model import DecisionEngineFor, decision_engine
 from .decision_reranker import PROVIDER_NAME as DECISION_MODEL_RERANKER
 from .decision_reranker import DecisionModelReranker, DecisionRerankOptions, rerank_options, rerank_shared_context
 from .types import MergedCandidate, ScoredResult
@@ -324,7 +322,7 @@ class CrossEncoderReranker:
         self,
         cross_encoder=None,
         fallback: "CrossEncoderReranker | None" = None,
-        decision_engine_for: Callable[[DecisionModelOperation], DecisionModel | None] | None = None,
+        decision_engine_for: DecisionEngineFor | None = None,
     ):
         """
         Initialize cross-encoder reranker.
