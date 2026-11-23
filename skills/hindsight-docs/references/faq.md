@@ -270,7 +270,7 @@ A **knowledge bank** keeps the text. It is for content that is already right and
 | Kinds of content | text, plus images through retain | PDF, image, audio, video, text, Office files |
 | Operations | retain, recall, reflect | ingest, search |
 
-The two work together: link a knowledge bank to a memory bank and reflect reads both. Knowledge banks and memory banks share one set of bank ids, so a knowledge bank cannot have the id of an existing memory bank. See Knowledge Banks.
+The two work together: link a knowledge bank to a memory bank and reflect reads both. Knowledge banks and memory banks share one set of bank ids, so a knowledge bank cannot have the id of an existing memory bank.
 
 ---
 
