@@ -485,7 +485,7 @@
     "auditEnabledDescription": "記錄呢個記憶庫嘅 retain、recall 同 reflect 操作。淨係就呢個記憶庫覆寫伺服器預設值。",
     "auditServerDefault": "伺服器預設值（{state}）",
     "defaultTimezoneLabel": "預設時區",
-    "defaultTimezoneDescription": "冇 UTC 偏移嘅 retain 時間戳，或者內容入面嘅時間，會用呢個時區解讀。IANA 名稱，例如 Europe/Rome。",
+    "defaultTimezoneDescription": "冇 UTC 偏移嘅 retain 時間戳，或者內容入面嘅時間，會用呢個時區解讀；LLM 讀記憶嘅時間都係用呢個時區。IANA 名稱，例如 Europe/Rome。",
     "docStorageEnabledLabel": "儲存文件原文",
     "docStorageEnabledDescription": "保留原始文字（文件原文同分塊）。停用就只會保留衍生事實。只會覆蓋當前記憶庫嘅伺服器預設值。",
     "docStorageServerDefault": "伺服器預設值（{state}）",
@@ -665,6 +665,7 @@
     "promptBlock": {
       "instructions": "說明",
       "field": {
+        "default_timezone": "時區",
         "entities_allow_free_form": "自由形式實體",
         "entity_labels": "實體標籤",
         "llm_output_language": "語言規則",

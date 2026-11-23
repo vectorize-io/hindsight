@@ -485,7 +485,7 @@
     "auditEnabledDescription": "Registar as operações de retain, recall e reflect deste banco. Substitui a predefinição do servidor apenas para este banco.",
     "auditServerDefault": "Predefinição do servidor ({state})",
     "defaultTimezoneLabel": "Fuso horário padrão",
-    "defaultTimezoneDescription": "Fuso usado para um carimbo de data/hora de retain, ou um horário no conteúdo, sem deslocamento UTC. Nome IANA como Europe/Rome.",
+    "defaultTimezoneDescription": "Fuso usado para um carimbo de data/hora de retain, ou um horário no conteúdo, sem deslocamento UTC, e o fuso em que o LLM lê os horários das memórias. Nome IANA como Europe/Rome.",
     "docStorageEnabledLabel": "Armazenar texto do documento",
     "docStorageEnabledDescription": "Persistir o texto original bruto (documentos originais e blocos). Desative para manter apenas os fatos derivados. Substitui o padrão do servidor apenas para este banco.",
     "docStorageServerDefault": "Padrão do servidor ({state})",
@@ -665,6 +665,7 @@
     "promptBlock": {
       "instructions": "Instruções",
       "field": {
+        "default_timezone": "Fuso horário",
         "entities_allow_free_form": "Entidades de forma livre",
         "entity_labels": "Rótulos de entidade",
         "llm_output_language": "Regra de idioma",

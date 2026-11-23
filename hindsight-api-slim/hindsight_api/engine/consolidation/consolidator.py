@@ -27,7 +27,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 from enum import StrEnum
 from fnmatch import fnmatchcase
 from itertools import combinations
@@ -68,7 +68,7 @@ from ..memories import StoredMemory, get_memories
 from ..response_models import Budget
 from ..retain import embedding_utils
 from ..schema import fq_table
-from ..stored_dates import finite_utc
+from ..stored_dates import bank_timezone, finite_utc
 from .prompts import (
     build_consolidation_input,
     build_consolidation_system_prompt,
@@ -1617,7 +1617,7 @@ def _as_dt(v: "datetime | str | None") -> "datetime | None":
     return finite_utc(datetime.fromisoformat(v) if isinstance(v, str) else v)
 
 
-def _prompt_time(v: "datetime | str | None") -> str | None:
+def _prompt_time(v: "datetime | str | None", tz: tzinfo = timezone.utc) -> str | None:
     """Every time the consolidation prompt shows, in ONE format (``2026-10-21T09:48Z``).
 
     The model decides recency by comparing a fact's ``mentioned_at`` with an observation's, and the
@@ -1626,9 +1626,15 @@ def _prompt_time(v: "datetime | str | None") -> str | None:
     than 10:48 on half the calls and let the older rule overwrite its amendment (#5938); one format
     took that call from 5/10 to 10/10. Minute precision: seconds and the sub-second offsets retain
     adds to order one document's facts carry nothing the model needs.
+
+    Shown in the bank's zone with its offset (``2026-11-08T14:35+08:00``): the model copies the
+    wall clock into the observation text, and a UTC wall clock read as local time (#6441). Every
+    time in one prompt uses the same zone, so the single-format rule above still holds.
     """
     dt = _as_dt(v)
-    return dt.strftime("%Y-%m-%dT%H:%MZ") if dt else None
+    if dt is None:
+        return None
+    return dt.astimezone(tz).isoformat(timespec="minutes").replace("+00:00", "Z")
 
 
 def _latest_time(*values: "datetime | str | None") -> "datetime | None":
@@ -3811,6 +3817,7 @@ def _build_observations_for_llm(
     observations: "list[MemoryFact]",
     source_facts: "dict[str, MemoryFact]",
     newest_input_fact: "datetime | None" = None,
+    tz: tzinfo = timezone.utc,
 ) -> list[dict[str, Any]]:
     """Serialize MemoryFact observations into dicts for the consolidation LLM prompt.
 
@@ -3829,7 +3836,7 @@ def _build_observations_for_llm(
             "proof_count": len(unique_ids) or 1,
         }
         for key in ("occurred_start", "occurred_end", "mentioned_at"):
-            if shown := _prompt_time(getattr(obs, key)):
+            if shown := _prompt_time(getattr(obs, key), tz):
                 obs_data[key] = shown
         obs_time = _latest_time(obs.occurred_start, obs.occurred_end, obs.mentioned_at)
         if newest_input_fact and obs_time and obs_time > newest_input_fact:
@@ -3844,7 +3851,7 @@ def _build_observations_for_llm(
             # text already says what the fact means (#5996). The new facts carry none either.
             sf_data: dict[str, Any] = {"text": sf.text}
             for key in ("occurred_start", "occurred_end", "mentioned_at"):
-                if shown := _prompt_time(getattr(sf, key)):
+                if shown := _prompt_time(getattr(sf, key), tz):
                     sf_data[key] = shown
             source_memories.append(sf_data)
         if source_memories:
@@ -3963,6 +3970,7 @@ async def _consolidate_batch_with_llm(
     """
     if config is None:
         raise ValueError("config is required for _consolidate_batch_with_llm")
+    tz = bank_timezone(config)
     obs_time = {str(o.id): _latest_time(o.occurred_start, o.occurred_end, o.mentioned_at) for o in union_observations}
     fact_time = {
         str(m["id"]): _latest_time(m.get("occurred_start"), m.get("occurred_end"), m.get("mentioned_at"))
@@ -3984,7 +3992,7 @@ async def _consolidate_batch_with_llm(
         newest_input_fact = _latest_time(
             *(m.get(key) for m in memories for key in ("occurred_start", "occurred_end", "mentioned_at"))
         )
-        obs_list = _build_observations_for_llm(union_observations, union_source_facts, newest_input_fact)
+        obs_list = _build_observations_for_llm(union_observations, union_source_facts, newest_input_fact, tz)
         for o in obs_list:
             o["id"] = _short(str(o["id"]))
         # One observation per line, no indentation: the pool is nearly all of a batch's
@@ -3998,7 +4006,7 @@ async def _consolidate_batch_with_llm(
         temporal_parts = [
             f"{key}={shown}"
             for key in ("occurred_start", "occurred_end", "mentioned_at")
-            if (shown := _prompt_time(m.get(key)))
+            if (shown := _prompt_time(m.get(key), tz))
         ]
         if temporal_parts:
             text += f" ({', '.join(temporal_parts)})"
@@ -4048,6 +4056,7 @@ async def _consolidate_batch_with_llm(
         observations_text=observations_text,
         observations_mission=config.observations_mission,
         observation_capacity_note=observation_capacity_note,
+        timezone_name=getattr(config, "default_timezone", None),
     )
 
     # Opt into context caching of the stable system prefix. response_schema is

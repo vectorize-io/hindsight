@@ -15,7 +15,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING, Any, cast
-from zoneinfo import ZoneInfo
 
 from ...extensions.memory_defense import (
     DefenseAction,
@@ -468,12 +467,6 @@ def _count_delta_content_tokens(delta_contents: list["RetainContent"]) -> int:
     return total
 
 
-def bank_timezone(config: Any) -> tzinfo:
-    """The zone a retain time with no UTC offset is read in: the bank's ``default_timezone``."""
-    name = getattr(config, "default_timezone", None)
-    return ZoneInfo(name) if name else UTC
-
-
 def parse_datetime_flexible(value: Any, default_tz: tzinfo = UTC) -> datetime:
     """
     Parse a datetime value that could be either a datetime object or an ISO string.
@@ -510,7 +503,7 @@ import asyncpg
 
 from ... import config as config_module
 from ..response_models import TokenUsage
-from ..stored_dates import is_placeholder_date
+from ..stored_dates import bank_timezone, is_placeholder_date
 from . import (
     chunk_storage,
     embedding_processing,

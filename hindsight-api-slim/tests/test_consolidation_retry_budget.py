@@ -42,6 +42,7 @@ def no_real_sleep():
 def mock_config():
     config = MagicMock()
     config.observations_mission = None
+    config.default_timezone = None
     config.consolidation_max_attempts = 3
     config.consolidation_llm_max_retries = None
     config.consolidation_max_completion_tokens = None

@@ -103,6 +103,7 @@ const FIELD_BAR: Record<string, string> = {
   retain_custom_instructions: "bg-emerald-400",
   retain_extract_causal_links: "bg-rose-400",
   retain_extraction_mode: "bg-blue-400",
+  default_timezone: "bg-teal-400",
 };
 
 /**

@@ -262,7 +262,7 @@ class BankTemplateConfig(BaseModel):
     default_timezone: str | None = Field(
         default=None,
         description="IANA zone (e.g. 'Europe/Rome') a retain timestamp, or a time the LLM extracts, "
-        "is read in when it carries no UTC offset.",
+        "is read in when it carries no UTC offset, and the zone the LLM reads memory times in.",
     )
     enable_auto_consolidation: bool | None = Field(
         default=None, description="Automatically consolidate observations after retain"

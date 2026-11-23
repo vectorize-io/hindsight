@@ -25,8 +25,8 @@ def _observations(*ids: str) -> dict:
 def test_dates_keep_their_minute():
     assert compact_timestamp("2026-03-07T12:34:56.789+00:00") == "2026-03-07 12:34"
     assert compact_timestamp("2026-03-07T12:34:56Z") == "2026-03-07 12:34"
-    # Not a UTC timestamp: left exactly as it was rather than silently re-zoned.
-    assert compact_timestamp("2026-03-07T12:34:56+02:00") == "2026-03-07T12:34:56+02:00"
+    # Another offset is converted too: the prompt names one zone for every time (#6441).
+    assert compact_timestamp("2026-03-07T12:34:56+02:00") == "2026-03-07 10:34"
     assert compact_timestamp(None) is None
 
 

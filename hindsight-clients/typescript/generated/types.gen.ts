@@ -907,7 +907,7 @@ export type BankTemplateConfig = {
   /**
    * Default Timezone
    *
-   * IANA zone (e.g. 'Europe/Rome') a retain timestamp, or a time the LLM extracts, is read in when it carries no UTC offset.
+   * IANA zone (e.g. 'Europe/Rome') a retain timestamp, or a time the LLM extracts, is read in when it carries no UTC offset, and the zone the LLM reads memory times in.
    */
   default_timezone?: string | null;
   /**

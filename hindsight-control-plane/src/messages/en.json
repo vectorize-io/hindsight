@@ -485,7 +485,7 @@
     "auditEnabledDescription": "Record retain, recall and reflect operations for this bank. Overrides the server default for this bank only.",
     "auditServerDefault": "Server Default ({state})",
     "defaultTimezoneLabel": "Default Timezone",
-    "defaultTimezoneDescription": "Zone used for a retain timestamp, or a clock time found in the content, that has no UTC offset. IANA name such as Europe/Rome.",
+    "defaultTimezoneDescription": "Zone used for a retain timestamp, or a clock time found in the content, that has no UTC offset, and the zone the LLM reads memory times in. IANA name such as Europe/Rome.",
     "docStorageEnabledLabel": "Store Document Text",
     "docStorageEnabledDescription": "Persist the raw source text (document originals and chunks). Disable to keep only derived facts. Overrides the server default for this bank only.",
     "docStorageServerDefault": "Server Default ({state})",
@@ -665,6 +665,7 @@
     "promptBlock": {
       "instructions": "Instructions",
       "field": {
+        "default_timezone": "Timezone",
         "entities_allow_free_form": "Free-form entities",
         "entity_labels": "Entity labels",
         "llm_output_language": "Language rule",

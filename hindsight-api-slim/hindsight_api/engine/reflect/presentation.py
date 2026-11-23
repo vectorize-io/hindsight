@@ -21,9 +21,10 @@ So, per reflect:
   garbled (by the model or by the length rewrite), so it is replaced before it
   can pose as a citation (#5166). A UUID the model did read, a request id
   quoted in a memory say, passes untouched.
-* timestamps keep their minute (``2026-03-07 12:00``), dropping seconds,
-  microseconds and the UTC offset (they are all UTC). Dates are evidence:
-  supersession is decided by them, so they are shortened, never dropped.
+* timestamps keep their minute (``2026-03-07 12:00``), in the bank's zone,
+  dropping seconds, microseconds and the offset: the system prompt names the zone
+  once, beside "now" (#6441). Dates are evidence: supersession is decided by
+  them, so they are shortened, never dropped.
 * ``occurred_end`` is dropped when it equals ``occurred_start``; a list's
   constant ``fact_type`` (every observation is an observation) is dropped.
 * chunk ``chunk_index`` is dropped, and ``truncated`` kept only when true.
@@ -36,7 +37,10 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime, tzinfo
 from typing import Any
+
+from ..stored_dates import finite_utc
 
 _ALIAS_RE = re.compile(r"^[fopc]\d+$")
 #: An alias cited in prose: a token of its own, not part of an identifier such as
@@ -50,7 +54,7 @@ _ALIAS_IN_TEXT_RE = re.compile(r"(?<![\w./:@-])[fopc]\d+(?![\w/@-]|[.:]\w)")
 _UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE)
 #: What an id the model was never shown is replaced with in the answer.
 _UNVERIFIED_ID = "[unverified id]"
-_TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]00:?00)?$")
+_TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$")
 _DATE_FIELDS = ("mentioned_at", "occurred_start", "occurred_end", "updated_at", "created_at")
 #: Result lists and the alias prefix of their items.
 _LISTS = {"memories": "f", "observations": "o", "mental_models": "p"}
@@ -58,18 +62,23 @@ _LISTS = {"memories": "f", "observations": "o", "mental_models": "p"}
 _CONSTANT_TYPE = {"observations": "observation"}
 
 
-def compact_timestamp(value: Any) -> Any:
-    """``2026-03-07T12:00:00.123+00:00`` -> ``2026-03-07 12:00``; other values unchanged."""
-    if not isinstance(value, str):
+def compact_timestamp(value: Any, tz: tzinfo = UTC) -> Any:
+    """``2026-03-07T12:00:00.123+00:00`` -> ``2026-03-07 12:00`` in ``tz``; other values unchanged.
+
+    A value with no offset is read as UTC, as stored times are everywhere else.
+    """
+    if not isinstance(value, str) or not _TIMESTAMP_RE.match(value):
         return value
-    m = _TIMESTAMP_RE.match(value)
-    return f"{m.group(1)} {m.group(2)}" if m else value
+    moment = finite_utc(datetime.fromisoformat(value))
+    return moment.astimezone(tz).strftime("%Y-%m-%d %H:%M") if moment else value
 
 
 class ToolResultPresenter:
     """Per-reflect state: the alias table and which items the model has already read."""
 
-    def __init__(self) -> None:
+    def __init__(self, tz: tzinfo = UTC) -> None:
+        #: The bank's zone, the one every timestamp is shown in.
+        self._tz = tz
         self._alias_by_id: dict[str, str] = {}
         self._id_by_alias: dict[str, str] = {}
         self._counters: dict[str, int] = {}
@@ -195,18 +204,21 @@ class ToolResultPresenter:
             elif field == "source_fact_ids" and isinstance(value, list):
                 out[field] = [self.alias(str(v), "f") for v in value]
             elif field in _DATE_FIELDS:
-                out[field] = compact_timestamp(value)
+                out[field] = compact_timestamp(value, self._tz)
             else:
                 out[field] = value
         if "occurred_end" in out and out.get("occurred_end") == out.get("occurred_start"):
             del out["occurred_end"]
         return out
 
-    @staticmethod
-    def _present_chunk(chunk: Any) -> Any:
+    def _present_chunk(self, chunk: Any) -> Any:
         if not isinstance(chunk, dict):
             return chunk
-        out = {k: v for k, v in chunk.items() if k not in ("chunk_index", "truncated")}
+        out = {
+            k: compact_timestamp(v, self._tz) if k in _DATE_FIELDS else v
+            for k, v in chunk.items()
+            if k not in ("chunk_index", "truncated")
+        }
         if chunk.get("truncated"):
             out["truncated"] = True
         return out
