@@ -19,6 +19,7 @@ import pytest
 
 import hindsight_api.engine.memories as memories_mod
 from hindsight_api.engine.memories.base import BankWritePage, BankWriteTime, MemoriesExtension
+from hindsight_api.engine.retain import bank_utils
 from hindsight_api.knowledge.service import get_knowledge_service
 from hindsight_api.models import RequestContext
 
@@ -467,3 +468,27 @@ async def test_a_knowledge_bank_the_store_orders_stays_out_of_the_memory_list(me
         await kb_service.delete_bank(knowledge, request_context)
         for name in (mem_a, mem_b):
             await memory.delete_bank(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_list_leaves_out_a_knowledge_bank(memory):
+    """A caller scoped to a set of banks that names a knowledge bank lists only the memory banks.
+
+    The scoped path reads the allowed banks' rows by id (`list_banks_among` -> `_bank_rows`) rather
+    than through the store-ordered merge, so the filter in `_store_write_stream` does not cover it;
+    the row read itself has to keep to `kind = 'memory'`.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    mem, knowledge = "kscope_mem", "kscope_know"
+
+    kb_service = get_knowledge_service(memory)
+    try:
+        await _make_banks(memory, request_context, [mem])
+        await kb_service.create_bank(knowledge, request_context)
+
+        backend = await memory._get_backend()
+        banks = await bank_utils.list_banks_among(backend, [mem, knowledge])
+        assert [b["bank_id"] for b in banks] == [mem], f"a knowledge bank leaked into a scoped list: {banks}"
+    finally:
+        await kb_service.delete_bank(knowledge, request_context)
+        await memory.delete_bank(mem, request_context=request_context)

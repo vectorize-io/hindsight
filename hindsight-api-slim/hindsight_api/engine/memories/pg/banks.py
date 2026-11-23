@@ -68,7 +68,9 @@ async def list_bank_rows(*, conn, fq_table: Callable[[str], str], where_clause: 
 
 
 async def bank_page_rows(*, conn, fq_table: Callable[[str], str], bank_ids: list[str], sql_owned: list[str]) -> list:
-    """The named banks' rows with their watermarks; `memory_units` is joined only for ``sql_owned``.
+    """The named MEMORY banks' rows with their watermarks; `memory_units` is joined only for ``sql_owned``.
+
+    A knowledge bank named here is left out: these rows fill a memory-bank list.
 
     Not named at all when ``sql_owned`` is empty, for planning cost — see ``bank_utils._bank_rows``.
     """
@@ -104,7 +106,7 @@ async def bank_page_rows(*, conn, fq_table: Callable[[str], str], bank_ids: list
                 WHERE bank_id = ANY($1::text[])
                 GROUP BY bank_id
             ) d ON d.bank_id = b.bank_id{fact_join}
-            WHERE b.bank_id = ANY($1::text[])
+            WHERE b.bank_id = ANY($1::text[]) AND b.kind = 'memory'
             """,
         *params,
     )
