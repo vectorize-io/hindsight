@@ -15,6 +15,8 @@ set -e
 HINDSIGHT_CLI="${HINDSIGHT_CLI:-hindsight}"
 export HINDSIGHT_API_URL="${HINDSIGHT_API_URL:-http://localhost:8888}"
 TEST_BANK="cli-smoke-test-$(date +%s)"
+TEST_KB="$TEST_BANK-kb"
+KB_DIR="$(mktemp -d)"
 
 echo "=== Hindsight CLI Smoke Test ==="
 echo "CLI: $HINDSIGHT_CLI"
@@ -68,6 +70,8 @@ cleanup() {
     echo ""
     echo "Cleaning up test bank..."
     "$HINDSIGHT_CLI" bank delete "$TEST_BANK" -y 2>/dev/null || true
+    "$HINDSIGHT_CLI" kb delete "$TEST_KB" -y 2>/dev/null || true
+    rm -rf "$KB_DIR"
 }
 trap cleanup EXIT
 
@@ -152,6 +156,35 @@ else
     cat /tmp/cli-test-output.txt | sed 's/^/    /'
     FAILED=1
 fi
+
+# Test: Knowledge bank lifecycle (create / ingest / search / documents / config / link / delete)
+SAMPLE_PDF="$(dirname "$0")/../hindsight-docs/examples/api/sample.pdf"
+mkdir -p "$KB_DIR/manuals"
+cp "$SAMPLE_PDF" "$KB_DIR/manuals/sample.pdf"
+printf '# Warranty\n\nThe X200 warranty lasts two years.\n' > "$KB_DIR/manuals/warranty.md"
+run_test "kb create" "$HINDSIGHT_CLI" kb create "$TEST_KB" || FAILED=1
+run_test_output "kb list" "$TEST_KB" "$HINDSIGHT_CLI" kb list -q "$TEST_KB" -o json || FAILED=1
+run_test_output "kb ingest folder --wait" '"ready"' "$HINDSIGHT_CLI" kb ingest "$TEST_KB" "$KB_DIR/manuals" --tags x200 --wait -o json || FAILED=1
+run_test_output "kb operation list" '"operations"' "$HINDSIGHT_CLI" kb operation list "$TEST_KB" -o json || FAILED=1
+KB_OP_ID=$("$HINDSIGHT_CLI" kb operation list "$TEST_KB" -o json | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+run_test_output "kb operation get" 'completed' "$HINDSIGHT_CLI" kb operation get "$TEST_KB" "$KB_OP_ID" -o json || FAILED=1
+run_test "kb ingest-text" "$HINDSIGHT_CLI" kb ingest-text "$TEST_KB" "Return an X200 within 30 days." --document-id returns --tags policy || FAILED=1
+run_test_output "kb search" '"returns"' "$HINDSIGHT_CLI" kb search "$TEST_KB" "return an X200 within 30 days" -o json || FAILED=1
+run_test_output "kb search --tags" 'warranty' "$HINDSIGHT_CLI" kb search "$TEST_KB" "warranty" --tags x200 --tags-match all_strict --trace -o json || FAILED=1
+run_test_output "kb get" '"document_count": 3' "$HINDSIGHT_CLI" kb get "$TEST_KB" -o json || FAILED=1
+run_test_output "kb list-documents" '"returns"' "$HINDSIGHT_CLI" kb list-documents "$TEST_KB" --tags policy -o json || FAILED=1
+run_test_output "kb get-document" '"passages"' "$HINDSIGHT_CLI" kb get-document "$TEST_KB" returns -o json || FAILED=1
+run_test_output "kb list-tags" '"x200"' "$HINDSIGHT_CLI" kb list-tags "$TEST_KB" -o json || FAILED=1
+PDF_ID=$("$HINDSIGHT_CLI" kb list-documents "$TEST_KB" -q sample.pdf -o json | sed -n 's/.*"document_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+run_test "kb download" "$HINDSIGHT_CLI" kb download "$TEST_KB" "$PDF_ID" --out "$KB_DIR/download.pdf" || FAILED=1
+run_test "kb download is the original" cmp "$SAMPLE_PDF" "$KB_DIR/download.pdf" || FAILED=1
+run_test "kb passage-media" "$HINDSIGHT_CLI" kb passage-media "$TEST_KB" "$PDF_ID" 0 --out "$KB_DIR/page.png" || FAILED=1
+run_test_output "kb set-config" '"text_passage_tokens": 256' "$HINDSIGHT_CLI" kb set-config "$TEST_KB" --set text_passage_tokens=256 -o json || FAILED=1
+run_test_output "kb config --overrides-only" '256' "$HINDSIGHT_CLI" kb config "$TEST_KB" --overrides-only -o json || FAILED=1
+run_test "kb reset-config" "$HINDSIGHT_CLI" kb reset-config "$TEST_KB" -y || FAILED=1
+run_test_output "bank set-config --knowledge-banks" "$TEST_KB" "$HINDSIGHT_CLI" bank set-config "$TEST_BANK" --knowledge-banks "$TEST_KB" -o json || FAILED=1
+run_test "kb delete-document" "$HINDSIGHT_CLI" kb delete-document "$TEST_KB" returns || FAILED=1
+run_test "kb delete" "$HINDSIGHT_CLI" kb delete "$TEST_KB" -y || FAILED=1
 
 # Test 16: Delete bank
 run_test "delete bank" "$HINDSIGHT_CLI" bank delete "$TEST_BANK" -y || FAILED=1

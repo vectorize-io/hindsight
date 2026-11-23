@@ -4,11 +4,43 @@
 
 Create knowledge banks, ingest files and text into them, and search their passages. For what a knowledge bank is and how ingest and search work, see [Knowledge Banks](../knowledge-banks.md).
 
-All endpoints live under `/v1/default/knowledge-banks`. The examples use `curl` against a local server: no SDK or CLI command covers knowledge banks yet.
+All endpoints live under `/v1/default/knowledge-banks`. Each example shows the call with the Python, Node.js and Go clients, the [CLI](../../sdks/cli.md#knowledge-banks) (`hindsight kb`), and `curl`.
 
 ---
 
 ## Create a Knowledge Bank
+
+### Python
+
+```python
+await kb.create_knowledge_bank(CreateKnowledgeBankRequest(bank_id="product-manuals"))
+```
+
+### Node.js
+
+```javascript
+await sdk.createKnowledgeBank({
+    client: apiClient,
+    body: { bank_id: 'product-manuals' },
+    throwOnError: true,
+});
+```
+
+### CLI
+
+```bash
+hindsight kb create product-manuals
+```
+
+### Go
+
+```go
+_, _, err = client.KnowledgeBanksAPI.CreateKnowledgeBank(ctx).
+	CreateKnowledgeBankRequest(*hindsight.NewCreateKnowledgeBankRequest("product-manuals")).
+	Execute()
+```
+
+### HTTP
 
 ```bash
 curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks" \
@@ -42,6 +74,73 @@ List banks with `GET /v1/default/knowledge-banks`, with `limit` (default 100), `
 
 Upload one or more files (PDFs, Office documents, images, audio, video, text, Markdown, JSON, CSV, HTML) as `multipart/form-data`. Each file becomes one document. The call returns `202` right away and the files are processed in the background.
 
+### Python
+
+```python
+result = await kb.ingest_knowledge_files(
+    bank_id="product-manuals",
+    files=[
+        ("x200-manual.pdf", SAMPLE_PDF.read_bytes()),
+        ("x200-quickstart.md", b"# X200 quick start\n\nHold the power button for two seconds.\n"),
+    ],
+    request=json.dumps({"files": [
+        {"document_id": "x200-manual", "tags": ["x200"]},
+        {"document_id": "x200-quickstart", "tags": ["x200", "quickstart"]},
+    ]}),
+)
+print(result.document_ids, result.operation_ids)
+```
+
+### Node.js
+
+```javascript
+const { data: ingested } = await sdk.ingestKnowledgeFiles({
+    client: apiClient,
+    path: { bank_id: 'product-manuals' },
+    body: {
+        files: [
+            new File([readFileSync(SAMPLE_PDF)], 'x200-manual.pdf'),
+            new File(['# X200 quick start\n\nHold the power button for two seconds.\n'], 'x200-quickstart.md'),
+        ],
+        request: JSON.stringify({ files: [
+            { document_id: 'x200-manual', tags: ['x200'] },
+            { document_id: 'x200-quickstart', tags: ['x200', 'quickstart'] },
+        ] }),
+    },
+    throwOnError: true,
+});
+console.log(ingested.document_ids, ingested.operation_ids);
+```
+
+### CLI
+
+```bash
+# Each file becomes one document; --wait returns once they are searchable.
+# Without --document-id, a file's id is its path (here: x200-manual.pdf),
+# and a folder uploads every file in it.
+hindsight kb ingest product-manuals x200-manual.pdf \
+  --document-id x200-manual --tags x200 --wait
+hindsight kb ingest product-manuals x200-quickstart.md \
+  --document-id x200-quickstart --tags x200,quickstart --wait
+```
+
+### Go
+
+```go
+manual, _ := os.Open("x200-manual.pdf")
+quickstart, _ := os.Open("x200-quickstart.md")
+options, _ := json.Marshal(map[string]any{"files": []map[string]any{
+	{"document_id": "x200-manual", "tags": []string{"x200"}},
+	{"document_id": "x200-quickstart", "tags": []string{"x200", "quickstart"}},
+}})
+ingested, _, err := client.KnowledgeBanksAPI.IngestKnowledgeFiles(ctx, "product-manuals").
+	Files([]*os.File{manual, quickstart}).
+	Request(string(options)).
+	Execute()
+```
+
+### HTTP
+
 ```bash
 curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/files/ingest" \
   -F "files=@x200-manual.pdf" \
@@ -71,13 +170,70 @@ The optional `request` field is JSON with one entry per file, in the same order:
 - `operation_ids` has the same id for every queued document: one background operation handles the whole upload.
 - `unchanged_document_ids` lists documents identical to what is already stored. Nothing is queued for them.
 
-**Knowing when it's done.** Poll the operation like any other, with `GET /v1/default/banks/{bank_id}/operations/{operation_id}`, or read each document's `status`. A document goes `pending` → `processing` → `ready`, or `failed` with an `error`.
+**Knowing when it's done.** `hindsight kb ingest --wait` waits for you. Otherwise poll the [operation](#operations) with `GET /{bank_id}/operations/{operation_id}`, or read each document's `status`. A document goes `pending` → `processing` → `ready`, or `failed` with an `error`.
 
 ---
 
 ## Ingest Text
 
 Send text as JSON, up to 100 items per call. By default the call returns once every document can be searched. If some items can't be ingested (an empty text, say), the others are still saved and the call fails with `400`, naming the ones that failed.
+
+### Python
+
+```python
+await kb.ingest_knowledge_texts(
+    "product-manuals",
+    KnowledgeIngestRequest(items=[
+        KnowledgeIngestTextItem(
+            document_id="returns-policy",
+            text="# Returns\n\nYou can return an X200 within 30 days...",
+            tags=["policy"],
+        )
+    ]),
+)
+```
+
+### Node.js
+
+```javascript
+await sdk.ingestKnowledgeTexts({
+    client: apiClient,
+    path: { bank_id: 'product-manuals' },
+    body: { items: [{
+        document_id: 'returns-policy',
+        text: '# Returns\n\nYou can return an X200 within 30 days...',
+        tags: ['policy'],
+    }] },
+    throwOnError: true,
+});
+```
+
+### CLI
+
+```bash
+hindsight kb ingest-text product-manuals \
+  "# Returns
+
+You can return an X200 within 30 days..." \
+  --document-id returns-policy --tags policy
+```
+
+### Go
+
+```go
+returnsID := "returns-policy"
+_, _, err = client.KnowledgeBanksAPI.IngestKnowledgeTexts(ctx, "product-manuals").
+	KnowledgeIngestRequest(hindsight.KnowledgeIngestRequest{
+		Items: []hindsight.KnowledgeIngestTextItem{{
+			DocumentId: *hindsight.NewNullableString(&returnsID),
+			Text:       "# Returns\n\nYou can return an X200 within 30 days...",
+			Tags:       []string{"policy"},
+		}},
+	}).
+	Execute()
+```
+
+### HTTP
 
 ```bash
 curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/ingest" \
@@ -107,6 +263,50 @@ The response has the same shape as a file ingest. `operation_ids` is empty when 
 ---
 
 ## Search
+
+### Python
+
+```python
+found = await kb.search_knowledge_bank(
+    "product-manuals",
+    KnowledgeSearchRequest(query="How long do I have to return an X200?", max_tokens=2048),
+)
+for hit in found.results:
+    print(hit.document_id, hit.text)
+```
+
+### Node.js
+
+```javascript
+const { data: found } = await sdk.searchKnowledgeBank({
+    client: apiClient,
+    path: { bank_id: 'product-manuals' },
+    body: { query: 'How long do I have to return an X200?', max_tokens: 2048 },
+    throwOnError: true,
+});
+for (const hit of found.results) console.log(hit.document_id, hit.text);
+```
+
+### CLI
+
+```bash
+hindsight kb search product-manuals "How long do I have to return an X200?" --max-tokens 2048
+```
+
+### Go
+
+```go
+query := "How long do I have to return an X200?"
+maxTokens := int32(2048)
+found, _, err := client.KnowledgeBanksAPI.SearchKnowledgeBank(ctx, "product-manuals").
+	KnowledgeSearchRequest(hindsight.KnowledgeSearchRequest{
+		Query:     *hindsight.NewNullableString(&query),
+		MaxTokens: &maxTokens,
+	}).
+	Execute()
+```
+
+### HTTP
 
 ```bash
 curl -X POST "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/search" \
@@ -188,6 +388,42 @@ With `"trace": true`, the response also has a `trace`:
 
 ## Tags
 
+### Python
+
+```python
+tags = await kb.list_knowledge_bank_tags("product-manuals", q="x2*")
+for item in tags.items:
+    print(item.tag, item.count)
+```
+
+### Node.js
+
+```javascript
+const { data: tags } = await sdk.listKnowledgeBankTags({
+    client: apiClient,
+    path: { bank_id: 'product-manuals' },
+    query: { q: 'x2*' },
+    throwOnError: true,
+});
+for (const item of tags.items) console.log(item.tag, item.count);
+```
+
+### CLI
+
+```bash
+hindsight kb list-tags product-manuals -q 'x2*'
+```
+
+### Go
+
+```go
+tags, _, err := client.KnowledgeBanksAPI.ListKnowledgeBankTags(ctx, "product-manuals").
+	Q("x2*").
+	Execute()
+```
+
+### HTTP
+
 ```bash
 curl "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals/tags?q=x2*"
 ```
@@ -228,6 +464,40 @@ A document looks like this:
 
 `source_document_id` is set when an [ingestion strategy](../knowledge-banks.md#ingestion-strategies) split this document out of another.
 
+With the CLI:
+
+```bash
+hindsight kb list-documents product-manuals --status ready
+hindsight kb get-document product-manuals x200-manual
+hindsight kb download product-manuals x200-manual --out manual-copy.pdf
+hindsight kb passage-media product-manuals x200-manual 0 --out page-1.png
+```
+
+```bash
+hindsight kb delete-document product-manuals returns-policy
+```
+
+---
+
+## Operations
+
+Ingests run as background operations, under the knowledge bank's own path. They answer with the same shapes as a [memory bank's operations](./operations.md).
+
+| Call | What it does |
+|---|---|
+| `GET /{bank_id}/operations` | List operations. Filters: `status`, `type`. Paging: `limit`, `offset`. |
+| `GET /{bank_id}/operations/{operation_id}` | One operation's status. |
+| `DELETE /{bank_id}/operations/{operation_id}` | Cancel a pending or running operation. |
+| `POST /{bank_id}/operations/{operation_id}/retry` | Retry a failed operation. |
+| `DELETE /{bank_id}/operations/{operation_id}/delete` | Delete a finished operation. |
+
+With the CLI (`cancel`, `retry` and `delete` take the same arguments as `get`):
+
+```bash
+hindsight kb operation list product-manuals
+hindsight kb operation get product-manuals "$OPERATION_ID"
+```
+
 ---
 
 ## Settings
@@ -251,6 +521,36 @@ A bank can change how its files are split. See [Per-Bank Settings](../knowledge-
 ---
 
 ## Delete a Knowledge Bank
+
+### Python
+
+```python
+await kb.delete_knowledge_bank("product-manuals")
+```
+
+### Node.js
+
+```javascript
+await sdk.deleteKnowledgeBank({
+    client: apiClient,
+    path: { bank_id: 'product-manuals' },
+    throwOnError: true,
+});
+```
+
+### CLI
+
+```bash
+hindsight kb delete product-manuals -y
+```
+
+### Go
+
+```go
+_, _, err = client.KnowledgeBanksAPI.DeleteKnowledgeBank(ctx, "product-manuals").Execute()
+```
+
+### HTTP
 
 ```bash
 curl -X DELETE "$HINDSIGHT_URL/v1/default/knowledge-banks/product-manuals"

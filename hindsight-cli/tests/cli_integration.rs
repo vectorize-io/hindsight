@@ -1095,3 +1095,62 @@ fn test_version_json() {
         assert!(result.get("features").is_some(), "Expected features field");
     }
 }
+
+#[test]
+fn test_knowledge_bank_ingest_search_and_delete() {
+    skip_if_no_server!();
+
+    let kb = test_bank_id("kb");
+    let ok = |args: &[&str]| -> String {
+        let output = run_hindsight(args);
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        assert!(
+            output.status.success(),
+            "{:?} failed: {} / {}",
+            args,
+            stdout,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        stdout
+    };
+
+    ok(&["kb", "create", &kb]);
+    // The text ingest returns once the document is searchable.
+    ok(&[
+        "kb",
+        "ingest-text",
+        &kb,
+        "Return an X200 within 30 days.",
+        "--document-id",
+        "returns",
+        "--tags",
+        "policy",
+    ]);
+    let hits = ok(&[
+        "kb",
+        "search",
+        &kb,
+        "how long to return an X200",
+        "-o",
+        "json",
+    ]);
+    assert!(
+        hits.contains("\"returns\""),
+        "search missed the document: {hits}"
+    );
+    let tags = ok(&["kb", "list-tags", &kb, "-o", "json"]);
+    assert!(tags.contains("\"policy\""), "tag missing: {tags}");
+    let config = ok(&[
+        "kb",
+        "set-config",
+        &kb,
+        "--set",
+        "text_passage_tokens=256",
+        "-o",
+        "json",
+    ]);
+    assert!(config.contains("256"), "override missing: {config}");
+    ok(&["kb", "delete-document", &kb, "returns"]);
+    ok(&["kb", "delete", &kb, "-y"]);
+    assert!(!run_hindsight(&["kb", "get", &kb]).status.success());
+}

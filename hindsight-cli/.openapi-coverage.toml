@@ -21,30 +21,9 @@
 # Operation-level skips
 # ---------------------------------------------------------------------------
 [skip]
-# Knowledge banks: no CLI commands yet (the docs say so); the HTTP API, the generated SDKs and the
-# control plane cover them.
-cancel_knowledge_bank_operation = "Knowledge banks have no CLI commands yet"
-create_knowledge_bank = "Knowledge banks have no CLI commands yet"
-delete_knowledge_bank = "Knowledge banks have no CLI commands yet"
-delete_knowledge_bank_operation = "Knowledge banks have no CLI commands yet"
-delete_knowledge_document = "Knowledge banks have no CLI commands yet"
-get_knowledge_bank = "Knowledge banks have no CLI commands yet"
-get_knowledge_bank_config = "Knowledge banks have no CLI commands yet"
-get_knowledge_bank_operation = "Knowledge banks have no CLI commands yet"
-get_knowledge_bank_timeseries = "Knowledge banks have no CLI commands yet"
-get_knowledge_document = "Knowledge banks have no CLI commands yet"
-get_knowledge_document_file = "Knowledge banks have no CLI commands yet"
-get_knowledge_passage_media = "Knowledge banks have no CLI commands yet"
-ingest_knowledge_files = "Knowledge banks have no CLI commands yet"
-ingest_knowledge_texts = "Knowledge banks have no CLI commands yet"
-list_knowledge_bank_tags = "Knowledge banks have no CLI commands yet"
-list_knowledge_bank_operations = "Knowledge banks have no CLI commands yet"
-list_knowledge_banks = "Knowledge banks have no CLI commands yet"
-list_knowledge_documents = "Knowledge banks have no CLI commands yet"
-reset_knowledge_bank_config = "Knowledge banks have no CLI commands yet"
-retry_knowledge_bank_operation = "Knowledge banks have no CLI commands yet"
-search_knowledge_bank = "Knowledge banks have no CLI commands yet"
-update_knowledge_bank_config = "Knowledge banks have no CLI commands yet"
+# UI-only endpoint powering the control-plane knowledge bank stats chart, like
+# get_memories_timeseries below; `kb get` shows the counts.
+get_knowledge_bank_timeseries = "UI-only endpoint for the control plane knowledge bank stats chart"
 
 # UI-only endpoint powering the control-plane stats chart.
 # Zero-filled bucket arrays don't map to a useful CLI command.
@@ -212,6 +191,17 @@ apply_all_directives = "Directive tag-scope override; exposed via the API, SDKs,
 reflect_search_observations_max_tokens = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
 reflect_search_observations_include_entities = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
 reflect_search_mental_models_max_tokens = "Per-call override of the bank's reflect_default_options; operators set it once per bank (config API / control plane) rather than per CLI invocation."
+
+[fields.update_knowledge_bank_config]
+updates = "Built from repeated --set KEY=VALUE / --unset KEY on `kb set-config`."
+
+[fields.ingest_knowledge_texts]
+items = "Built from the single positional text argument (or stdin) on `kb ingest-text`."
+
+[fields.search_knowledge_bank]
+query_image = "Exposed as --image PATH; the CLI reads and base64-encodes the file."
+query_video = "Exposed as --video PATH; the CLI reads and base64-encodes the file."
+enable_reranking = "Exposed as --no-rerank (sends false); unset keeps the server's default."
 
 [fields.retain_memories]
 items = "Constructed from the single positional content argument on `memory retain`."

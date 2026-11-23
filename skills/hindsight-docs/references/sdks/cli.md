@@ -373,6 +373,53 @@ hindsight pages delete my-cli-bank "$NODE_ID" -y
 `hindsight fs mount --bank <bank_id>` mirrors the same pages onto disk as
 real markdown files, kept current by a background refresh loop — handy when you'd
 rather use `grep`, `rg`, or your editor than the commands above.
+## Knowledge Banks
+
+Store files and texts as they are and search their passages by meaning, with no memory extraction. See [Knowledge Banks](../developer/knowledge-banks.md) for how ingest and search work, and the [API page](../developer/api/knowledge-banks.md) for every field.
+
+```bash
+# Create a knowledge bank, then upload files or whole folders into it.
+# A file's document id is its path (manuals/x200.pdf -> manuals_x200.pdf),
+# so uploading it again replaces it; --wait returns once it is searchable.
+hindsight kb create my-docs
+hindsight kb ingest my-docs manuals --tags x200 --wait
+
+# Ingest a text (returns once it is searchable); `-` reads it from stdin
+hindsight kb ingest-text my-docs "Return an X200 within 30 days." --document-id returns
+echo "Refunds take five days." | hindsight kb ingest-text my-docs - --document-id refunds
+
+# Search by meaning, with filters
+hindsight kb search my-docs "how long is the warranty?"
+hindsight kb search my-docs "warranty" --tags x200 --media-types text --max-tokens 1024
+
+# Browse documents and tags
+hindsight kb get my-docs
+hindsight kb list-documents my-docs --status ready
+hindsight kb get-document my-docs manuals_warranty.md
+hindsight kb list-tags my-docs
+
+# Download an original file, or one passage's page image or clip
+hindsight kb download my-docs manuals_x200.pdf --out x200-copy.pdf
+hindsight kb passage-media my-docs manuals_x200.pdf 0 --out page-1.png
+
+# Background ingests, like a memory bank's operations
+hindsight kb operation list my-docs
+
+# How files are split: show, override, reset
+hindsight kb config my-docs
+hindsight kb set-config my-docs --set text_passage_tokens=256 --unset pdf_bands
+hindsight kb reset-config my-docs -y
+
+# Let a memory bank's recall and reflect search it
+hindsight bank set-config my-cli-bank --knowledge-banks my-docs
+
+# Delete a document, or the whole bank
+hindsight kb delete-document my-docs refunds
+hindsight kb delete my-docs -y
+```
+
+`kb search` also takes `--image PATH` and `--video PATH` (alone or with a text query) when the server has a multimodal knowledge embedder, plus `--budget`, `--tags-match`, `--tag-groups`, `--document-ids`, `--no-rerank` and `--trace`. Downloads write to `--out PATH`, or to stdout with `--out -`.
+
 ## Audit Logs
 
 Inspect the audit trail for a bank:

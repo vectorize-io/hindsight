@@ -178,6 +178,14 @@ real markdown files, kept current by a background refresh loop — handy when yo
 rather use `grep`, `rg`, or your editor than the commands above.
 :::
 
+## Knowledge Banks
+
+Store files and texts as they are and search their passages by meaning, with no memory extraction. See [Knowledge Banks](../developer/knowledge-banks) for how ingest and search work, and the [API page](../developer/api/knowledge-banks) for every field.
+
+<CodeSnippet code={cliSh} section="cli-knowledge-banks" language="bash" />
+
+`kb search` also takes `--image PATH` and `--video PATH` (alone or with a text query) when the server has a multimodal knowledge embedder, plus `--budget`, `--tags-match`, `--tag-groups`, `--document-ids`, `--no-rerank` and `--trace`. Downloads write to `--out PATH`, or to stdout with `--out -`.
+
 ## Audit Logs
 
 Inspect the audit trail for a bank:

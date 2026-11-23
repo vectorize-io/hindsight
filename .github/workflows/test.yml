@@ -1404,6 +1404,9 @@ jobs:
       HINDSIGHT_API_VLM_MODEL: google/gemini-2.5-flash-lite
       HINDSIGHT_API_LLM_VERTEXAI_SERVICE_ACCOUNT_KEY: /tmp/gcp-credentials.json
       HINDSIGHT_API_URL: http://localhost:8888
+      # The smoke test ingests into a knowledge bank: embed with the memory banks' embedder
+      # (texts, and PDFs by their text layer) instead of downloading the multimodal model.
+      HINDSIGHT_API_KB_EMBEDDINGS_PROVIDER: text
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:

@@ -566,7 +566,7 @@ pub fn retain(
 /// Document id for a file: its path relative to the current dir (as given when
 /// outside it), with every character that is not a letter, digit, `.`, `-` or
 /// `_` replaced by `_`. `notes/a/README.md` -> `notes_a_README.md`.
-fn document_id_for_path(path: &Path) -> String {
+pub(crate) fn document_id_for_path(path: &Path) -> String {
     let full = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let cwd = std::env::current_dir()
         .and_then(fs::canonicalize)

@@ -6,7 +6,13 @@ import Figure from '@site/src/components/Figure';
 import ingestFigure from '@site/figures/knowledge-bank-ingest.json';
 import searchFigure from '@site/figures/knowledge-bank-search.json';
 import CodeSnippet from '@site/src/components/CodeSnippet';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 import kbSh from '!!raw-loader!@site/examples/api/knowledge-banks.sh';
+import kbPy from '!!raw-loader!@site/examples/api/knowledge-banks.py';
+import kbMjs from '!!raw-loader!@site/examples/api/knowledge-banks.mjs';
+import kbGo from '!!raw-loader!@site/examples/api/knowledge-banks.go';
+import kbHttpSh from '!!raw-loader!@site/examples/api/knowledge-banks-http.sh';
 import overviewFigure from '@site/figures/knowledge-bank-vs-memory-bank.json';
 
 # Knowledge Banks
@@ -119,7 +125,23 @@ You can narrow a search by `tags`, with the same rules as memory recall (`tags_m
 
 A memory bank can read one or more knowledge banks. Add their ids to the memory bank's config:
 
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="link-memory-bank" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="link-memory-bank" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="link-memory-bank" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={kbGo} section="link-memory-bank" language="go" />
+</TabItem>
+<TabItem value="http" label="HTTP">
+<CodeSnippet code={kbHttpSh} section="link-memory-bank" language="bash" />
+</TabItem>
+</Tabs>
 
 From then on, when [reflect](./reflect) searches its memories, it also searches every linked knowledge bank at the same time, with the same search as above. Each bank's best hits are taken in turn, within the same `max_tokens`. The passages reach the agent next to the memories, marked as documents. **When a document and a memory disagree, the document wins**: the agent is told to answer from the document and say the memory is out of date.
 
@@ -177,7 +199,23 @@ export HINDSIGHT_API_KB_EMBEDDINGS_API_KEY=...
 
 A knowledge bank can change how its files are split, and nothing else: the embedder, keys, search weights and server limits stay the server's.
 
+<Tabs>
+<TabItem value="python" label="Python">
+<CodeSnippet code={kbPy} section="bank-config" language="python" />
+</TabItem>
+<TabItem value="node" label="Node.js">
+<CodeSnippet code={kbMjs} section="bank-config" language="javascript" />
+</TabItem>
+<TabItem value="cli" label="CLI">
 <CodeSnippet code={kbSh} section="bank-config" language="bash" />
+</TabItem>
+<TabItem value="go" label="Go">
+<CodeSnippet code={kbGo} section="bank-config" language="go" />
+</TabItem>
+<TabItem value="http" label="HTTP">
+<CodeSnippet code={kbHttpSh} section="bank-config" language="bash" />
+</TabItem>
+</Tabs>
 
 | Setting | What it changes | Range |
 |---|---|---|
