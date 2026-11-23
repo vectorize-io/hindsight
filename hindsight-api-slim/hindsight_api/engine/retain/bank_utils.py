@@ -839,7 +839,10 @@ async def list_banks_among(pool, bank_ids: list[str], *, search_query: str | Non
     return banks
 
 
-#: Banks per store page. The merge consumes one page for a page-1 request however large the tenant.
+#: Banks per store page. The merge consumes one page for a page-1 request however large the tenant,
+#: unless the store's newest-written banks are mostly knowledge banks: those are dropped from the
+#: stream (see `_store_write_stream`), so a page the store fills with them makes the merge pull the
+#: next one. In practice a tenant's banks are overwhelmingly memory banks, so page 1 stays one page.
 _STORE_PAGE = 100
 
 
@@ -865,7 +868,7 @@ async def _merge_ordered_bank_ids(pool, store, want: int, first: "BankWritePage"
 
     out: list[str] = []
     seen: set[str] = set()
-    async with aclosing(_store_write_stream(store, first)) as store_pages:
+    async with aclosing(_store_write_stream(pool, store, first)) as store_pages:
         s_head = await anext(store_pages, None)
         c_idx = 0
         while len(out) < want:
@@ -892,7 +895,7 @@ async def _merge_ordered_bank_ids(pool, store, want: int, first: "BankWritePage"
 # `AsyncGenerator`, not `AsyncIterator`: the caller wraps this in `aclosing`, which needs the
 # `aclose()` an iterator does not promise -- and closing it early is the whole point of the
 # generator (see the docstring), so the weaker type contradicted the use.
-async def _store_write_stream(store, first: "BankWritePage") -> "AsyncGenerator[BankWriteTime, None]":
+async def _store_write_stream(pool, store, first: "BankWritePage") -> "AsyncGenerator[BankWriteTime, None]":
     """The store's banks as one continuous newest-written-first stream, page by page.
 
     A generator rather than a list so the merge pulls only the pages it needs: a page-1 request
@@ -900,12 +903,23 @@ async def _store_write_stream(store, first: "BankWritePage") -> "AsyncGenerator[
 
     The first page is handed in because the caller already fetched it to decide whether this store
     orders at all; re-fetching it here would pay for that decision twice.
+
+    Each page is narrowed to the tenant's MEMORY banks before it is yielded. A store that owns its
+    memories orders every bank it holds, and knowledge banks share the `banks` table and this id
+    space, so its ordering can name one. The creation-ordered half of the merge is already
+    `kind = 'memory'`, so this stream is the only place a non-memory bank could reach the memory
+    list. Dropping them here rather than at hydration keeps them from consuming page slots — which
+    would shorten the page — and keeps the page in step with the `kind = 'memory'` total.
     """
     from ..memories.base import BankWriteTime
 
     page = first
     while True:
+        ids = [bank.bank_id for bank in page.banks]
+        memory_ids = await _memory_kind_ids(pool, ids) if ids else set()
         for bank in page.banks:
+            if bank.bank_id not in memory_ids:
+                continue
             # `_as_utc` is None-tolerant for callers that may not have a timestamp; the store
             # always records one for a bank it returns here, and `BankWriteTime` declares it
             # non-optional.
@@ -913,6 +927,21 @@ async def _store_write_stream(store, first: "BankWritePage") -> "AsyncGenerator[
         if not page.next_page_token:
             return
         page = await store.list_banks_by_write(limit=_STORE_PAGE, page_token=page.next_page_token)
+
+
+async def _memory_kind_ids(pool, bank_ids: list[str]) -> set[str]:
+    """Of `bank_ids`, the ones that are memory banks.
+
+    A store ordering can name a bank of any kind — knowledge banks share the `banks` table and this
+    id space — and only memory banks belong in the memory list. One batched read per store page.
+    """
+    banks_table = fq_table("banks")
+    async with acquire_with_retry(pool) as conn:
+        rows = await conn.fetch(
+            f"SELECT bank_id FROM {banks_table} WHERE bank_id = ANY($1::text[]) AND kind = 'memory'",
+            bank_ids,
+        )
+    return {row["bank_id"] for row in rows}
 
 
 async def _banks_by_created(pool, want: int) -> "list[BankWriteTime]":
