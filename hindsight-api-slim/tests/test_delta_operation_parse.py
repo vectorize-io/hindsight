@@ -585,6 +585,8 @@ async def test_request_delta_operations_resamples_the_correction_turn_too():
     op_list = await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test")
     assert len(op_list.operations) == 1
     assert len(llm.calls) == 3
+    # The resample re-sends the correction turn as it was, not a third, different ask.
+    assert llm.calls[1] == llm.calls[2]
 
 
 async def test_request_delta_operations_raises_when_the_resample_runs_away_too():
