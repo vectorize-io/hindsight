@@ -224,7 +224,9 @@ ENV PATH="/app/api/.venv/bin:${PATH}"
 # loaded: building the 740M model just to cache it would cost ~3 GB of build RAM for nothing.
 ARG PRELOAD_ML_MODELS
 ARG INCLUDE_LOCAL_MODELS
-ENV HF_HUB_DOWNLOAD_TIMEOUT=600
+# The 600s HF download timeout is set inside the python call, not as an ENV: an ENV
+# stays in the image and lets a blocked huggingface.co check at startup outlast the
+# 300s watchdog (#6494).
 RUN if [ "$PRELOAD_ML_MODELS" = "true" ] && [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
     MAX_RETRIES=3; \
     RETRY_DELAY=10; \
@@ -413,7 +415,9 @@ ENV PATH="/app/api/.venv/bin:${PATH}"
 # loaded: building the 740M model just to cache it would cost ~3 GB of build RAM for nothing.
 ARG PRELOAD_ML_MODELS
 ARG INCLUDE_LOCAL_MODELS
-ENV HF_HUB_DOWNLOAD_TIMEOUT=600
+# The 600s HF download timeout is set inside the python call, not as an ENV: an ENV
+# stays in the image and lets a blocked huggingface.co check at startup outlast the
+# 300s watchdog (#6494).
 RUN if [ "$PRELOAD_ML_MODELS" = "true" ] && [ "$INCLUDE_LOCAL_MODELS" = "true" ]; then \
     MAX_RETRIES=3; \
     RETRY_DELAY=10; \
