@@ -415,3 +415,69 @@ async def test_zip_streamer_never_hands_on_more_than_one_chunk_at_a_time():
         assert max(len(c) for c in out) <= CHUNK_SIZE + 64  # deflate framing on a stored block
         archive = b"".join(out) + zs.finish()
         assert zipfile.ZipFile(io.BytesIO(archive)).read("blob.bin") == blob
+
+
+async def _zeros(total: int) -> AsyncIterator[bytes]:
+    piece = bytes(16 * 1024 * 1024)
+    while total > 0:
+        yield piece[: min(total, len(piece))]
+        total -= len(piece)
+
+
+@pytest.mark.asyncio
+async def test_zip64_entry_passes_4_gb_and_reads_back():
+    """A zip64 entry can exceed 4 GB (#6745): history/llm_requests.json does on busy banks.
+
+    Zeros compress to a few MB, so only the uncompressed size crosses the 4 GB line;
+    that is the size the 32-bit data descriptor could not hold.
+    """
+    size = 0xFFFFFFFF + 1024 * 1024
+    zs = ZipStreamer(compression_level=1)
+    buf = io.BytesIO()
+    async for chunk in zs.write_file_bytes("small.json", b"[]"):
+        buf.write(chunk)
+    async for chunk in zs.write_file_chunks("history/llm_requests.json", _zeros(size), zip64=True):
+        buf.write(chunk)
+    async for chunk in zs.write_file_bytes("manifest.json", b"{}"):
+        buf.write(chunk)
+    buf.write(zs.finish())
+
+    with zipfile.ZipFile(io.BytesIO(buf.getvalue())) as zf:
+        assert zf.getinfo("history/llm_requests.json").file_size == size
+        assert zf.read("small.json") == b"[]"
+        assert zf.read("manifest.json") == b"{}"
+        read = 0
+        with zf.open("history/llm_requests.json") as member:  # raises BadZipFile on a CRC mismatch
+            while piece := member.read(16 * 1024 * 1024):
+                read += len(piece)
+        assert read == size
+
+
+@pytest.mark.asyncio
+async def test_zip64_flag_off_still_refuses_past_4_gb():
+    """A plain entry's 32-bit header can't be amended once sent, so it must still refuse."""
+    zs = ZipStreamer(compression_level=1)
+    with pytest.raises(OverflowError, match="zip64=True"):
+        async for _ in zs.write_file_chunks("big.bin", _zeros(0xFFFFFFFF + 1)):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_small_zip64_entry_is_readable_and_plain_entries_are_unchanged():
+    """Opting in costs nothing for small entries; entries that don't opt in keep their bytes."""
+    zs = ZipStreamer()
+    buf = io.BytesIO()
+    async for chunk in zs.write_file_bytes("plain.json", b"[1]"):
+        buf.write(chunk)
+    async for chunk in zs.write_file_chunks("rows.json", _pieces(b"[1, 2, 3]"), zip64=True):
+        buf.write(chunk)
+    buf.write(zs.finish())
+    data = buf.getvalue()
+
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        assert zf.testzip() is None
+        assert zf.read("rows.json") == b"[1, 2, 3]"
+        assert zf.getinfo("plain.json").extract_version == 20
+        assert zf.getinfo("rows.json").extract_version == 45
+    # The plain entry's local header has no extra field.
+    assert data[28:30] == b"\x00\x00"

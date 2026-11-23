@@ -603,7 +603,8 @@ async def stream_export_bank(
                 row_counts[entry] = row_counts.get(entry, 0) + len(rows)
             yield b"]"
 
-        async for chunk in streamer.write_file_chunks(entry, encoded()):
+        # Row tables grow without bound (history/llm_requests passes 4 GB on busy banks, #6745).
+        async for chunk in streamer.write_file_chunks(entry, encoded(), zip64=True):
             yield chunk
 
     if scope.data:
@@ -755,13 +756,6 @@ async def _stream_attachments(
             f"their bytes cannot be carried."
         )
     for index, row in enumerate(rows):
-        # Checked before any byte is written: the ZIP entry's 32-bit sizes can't be
-        # patched afterwards, so an entry over 4 GB would corrupt the archive.
-        if row["byte_size"] is not None and row["byte_size"] >= 0xFFFFFFFF:
-            raise OverflowError(
-                f"Attachment '{row['short_id']}' ({row['filename'] or row['storage_key']}) "
-                f"exceeds the 4 GB single-entry limit ({row['byte_size']} bytes)."
-            )
         blob = file_storage.retrieve_stream(row["storage_key"])
         # Pull the first piece before the entry is opened: a missing blob surfaces
         # here as FileNotFoundError, and once the entry header is written there is
@@ -789,7 +783,9 @@ async def _stream_attachments(
         # DEFLATE at level 0: attachments are images/PDFs that are already
         # compressed, but a deflate stream (unlike STORED) is self-terminating,
         # which sequential ZIP readers need when sizes only follow the data.
-        async for chunk in streamer.write_file_chunks(entry, rest(), compression_level=0):
+        # Zip64 is announced in the entry header, so decide it from the recorded size.
+        big = row["byte_size"] is None or row["byte_size"] >= 0xFFFFFFFF
+        async for chunk in streamer.write_file_chunks(entry, rest(), compression_level=0, zip64=big):
             yield chunk
         exported.append(
             TransferAttachment(
