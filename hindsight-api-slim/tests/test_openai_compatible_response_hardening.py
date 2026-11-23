@@ -631,3 +631,14 @@ async def test_mistral_content_blocks_are_read_as_their_text(blocks, response_fo
         )
 
     assert result.content == expected
+
+
+@pytest.mark.asyncio
+async def test_mistral_reply_with_only_thinking_is_an_empty_reply():
+    """No text block means no answer: the empty-content error, not a crash or a blank answer."""
+    llm = _llm()
+    llm._client.chat.completions.create = AsyncMock(return_value=_response(content=[_MISTRAL_THINKING]))
+
+    with patch("hindsight_api.engine.providers.openai_compatible_llm.get_metrics_collector"):
+        with pytest.raises(ProviderResponseError, match="empty message content"):
+            await llm.call(messages=[{"role": "user", "content": "Say ok."}], max_retries=0)
