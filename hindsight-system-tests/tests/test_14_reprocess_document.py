@@ -17,6 +17,8 @@ no-op reprocess leaves the old facts and fails here.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from hindsight_system_tests.payloads import consolidation, extracted, fact
@@ -130,3 +132,31 @@ async def test_reprocessing_keeps_an_undated_document_undated(client, llm, bank_
     await settled(bank_id)
 
     assert await mentioned_at() == {ORIGINAL_FACT: None}, "the reprocess dated an undated document"
+
+
+async def test_reprocessing_keeps_the_date_a_fact_was_first_retained(client, llm, bank_id, settled):
+    """A retain with no timestamp is dated "now". The reprocess deletes every fact and
+    extracts it again, and used to date the new facts with the moment of the
+    reprocess — so a fact first stated months ago looked as recent as the correction
+    that replaced it (#6783). The same text keeps the date it was first retained on."""
+    llm.on_step("extract_facts").returns(
+        extracted(fact("Alice moved to Berlin", who="Alice", entities=["Alice", "Berlin"]))
+    )
+    llm.on_step("consolidate").returns(consolidation())
+
+    await client.aretain(bank_id=bank_id, content=CONTENT, document_id=DOCUMENT_ID)
+    await settled(bank_id)
+
+    async def mentioned_at() -> dict[str, str | None]:
+        memories = await client.memory.list_memories(bank_id, limit=100)
+        return {item.text: item.mentioned_at for item in memories.items if item.state == "valid"}
+
+    first = await mentioned_at()
+    assert list(first) == [ORIGINAL_FACT] and first[ORIGINAL_FACT] is not None
+
+    # Long enough that a date taken from the reprocess would read differently.
+    await asyncio.sleep(1.5)
+    await client.documents.reprocess_document(bank_id, DOCUMENT_ID)
+    await settled(bank_id)
+
+    assert await mentioned_at() == first, "the reprocess dated the fact with the moment of the reprocess"
