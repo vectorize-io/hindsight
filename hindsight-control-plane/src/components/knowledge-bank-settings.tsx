@@ -2,8 +2,8 @@
 
 // A knowledge bank's settings, laid out like the memory bank's Bank Configuration and
 // built from its pieces: the title with an Actions menu, then the same underline tabs.
-// General is the bank's stats, its ingest operations (the memory banks' operations list:
-// knowledge ingests are async operations of the same bank id) and its identity;
+// General is the bank's stats, its ingest operations (the memory banks' operations list, fed
+// from the knowledge-bank API's own operations endpoints) and its identity;
 // Configuration is this bank's own ingest settings.
 
 import * as React from "react";
@@ -143,7 +143,7 @@ export function KnowledgeBankSettings({
           <p className="text-sm text-muted-foreground mb-4">{t("generalIntro")}</p>
           <div className="space-y-6">
             <KnowledgeBankStats bank={bank} />
-            <BankOperationsView bankId={bank.bank_id} hideTypeFilter />
+            <BankOperationsView bankId={bank.bank_id} knowledgeBank hideTypeFilter />
             <ConfigSection
               title={t("aboutTitle")}
               description={t("aboutDescription")}

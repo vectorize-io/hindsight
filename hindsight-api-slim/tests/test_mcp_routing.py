@@ -24,6 +24,7 @@ def mock_memory():
     # Alias resolution runs on every tool call; the identity mock keeps these
     # tests about routing rather than about aliases.
     memory.resolve_bank_alias = AsyncMock(side_effect=lambda bank_id, **_: bank_id)
+    memory.refuse_knowledge_bank = AsyncMock(return_value=None)
     return memory
 
 

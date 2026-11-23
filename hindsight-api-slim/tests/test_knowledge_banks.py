@@ -2096,6 +2096,32 @@ async def test_the_memory_api_refuses_to_delete_a_knowledge_bank(api_client, kb)
     assert (await api_client.get(f"{KB}/{kb}")).status_code == 200
 
 
+async def test_no_memory_bank_route_serves_a_knowledge_bank(api_client, kb, memory, request_context):
+    """Every /v1/default/banks/{bank_id} route is for memory banks only: a knowledge bank id gets a
+    400 pointing at /v1/default/knowledge-banks, whatever the route (one guard covers them all)."""
+    op = uuid.uuid4()
+    for call in (
+        api_client.get(f"/v1/default/banks/{kb}/operations"),
+        api_client.get(f"/v1/default/banks/{kb}/operations/{op}"),
+        api_client.delete(f"/v1/default/banks/{kb}/operations/{op}"),
+        api_client.post(f"/v1/default/banks/{kb}/operations/{op}/retry"),
+        api_client.delete(f"/v1/default/banks/{kb}/operations/{op}/delete"),
+        api_client.get(f"/v1/default/banks/{kb}/stats"),
+        api_client.get(f"/v1/default/banks/{kb}/documents"),
+        api_client.post(f"/v1/default/banks/{kb}/memories/recall", json={"query": "red"}),
+        api_client.put(f"/v1/default/banks/{kb}", json={}),
+    ):
+        r = await call
+        assert r.status_code == 400 and f"/v1/default/knowledge-banks/{kb}" in r.json()["detail"], r.text
+    # A memory bank on the same routes is untouched.
+    mem_bank = f"mem-{uuid.uuid4().hex[:8]}"
+    await memory._ensure_bank_exists(mem_bank, request_context)
+    try:
+        assert (await api_client.get(f"/v1/default/banks/{mem_bank}/operations")).status_code == 200
+    finally:
+        await api_client.delete(f"/v1/default/banks/{mem_bank}")
+
+
 async def test_a_knowledge_bank_cannot_take_a_memory_banks_alias(api_client, fake_embedder):
     memory_bank, alias = f"mem-{uuid.uuid4().hex[:8]}", f"alias-{uuid.uuid4().hex[:8]}"
     assert (await api_client.put(f"/v1/default/banks/{memory_bank}", json={})).is_success
@@ -3198,3 +3224,15 @@ async def test_pdf_calls_queued_when_the_pool_is_killed_are_retried_not_cancelle
     queued = [asyncio.create_task(call(0.2)) for _ in range(4)]
     assert await asyncio.gather(*hogs) == ["too slow", "too slow"]
     assert await asyncio.gather(*queued) == ["done"] * 4
+
+
+def test_every_memory_bank_route_carries_the_knowledge_bank_guard(memory):
+    """The refusal above lives in the route class, so a route built any other way (an included
+    router, say) would serve a knowledge bank again without anyone noticing."""
+    from hindsight_api.api.http import create_app
+    from hindsight_api.api.unknown_params import MEMORY_BANK_PATH, UnknownParamsRoute
+
+    routes = [r for r in create_app(memory, initialize_memory=False).routes if hasattr(r, "path_format")]
+    bank_routes = [r for r in routes if r.path_format.startswith(MEMORY_BANK_PATH)]
+    assert len(bank_routes) > 100
+    assert [r.path_format for r in bank_routes if not isinstance(r, UnknownParamsRoute)] == []

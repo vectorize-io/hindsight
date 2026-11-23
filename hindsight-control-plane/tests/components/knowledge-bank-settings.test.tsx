@@ -27,6 +27,8 @@ vi.mock("@/lib/bank-context", () => ({ useBank: () => ({ currentBank: null }) })
 vi.mock("@/components/document-chunk-modal", () => ({ DocumentChunkModal: () => null }));
 
 const api = vi.hoisted(() => ({
+  listKnowledgeBankOperations: vi.fn(),
+  // A knowledge bank's jobs never come from the memory-bank API, which refuses one.
   listOperations: vi.fn(),
   getKnowledgeBankConfig: vi.fn(),
   updateKnowledgeBankConfig: vi.fn(),
@@ -90,7 +92,7 @@ const section = (title: string) => screen.getByText(title).closest("section") as
 describe("KnowledgeBankSettings tabs", () => {
   it("opens on General: stats and this bank's operations, no config read", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
-    api.listOperations.mockResolvedValue({
+    api.listKnowledgeBankOperations.mockResolvedValue({
       operations: [
         {
           id: "op-1",
@@ -111,8 +113,9 @@ describe("KnowledgeBankSettings tabs", () => {
     expect(tabs.map((t) => t.textContent)).toEqual(["tabGeneral", "tabConfiguration"]);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(screen.getByText("passages")).toBeTruthy();
-    await waitFor(() => expect(api.listOperations).toHaveBeenCalled());
-    expect(api.listOperations.mock.calls[0][0]).toBe("docs");
+    await waitFor(() => expect(api.listKnowledgeBankOperations).toHaveBeenCalled());
+    expect(api.listKnowledgeBankOperations.mock.calls[0][0]).toBe("docs");
+    expect(api.listOperations).not.toHaveBeenCalled();
     expect(await screen.findByText("operationType.knowledgeIngest")).toBeTruthy();
     // One kind of operation: no type filter to pick from.
     expect(screen.queryByText("allTypes")).toBeNull();
@@ -131,7 +134,7 @@ describe("KnowledgeBankSettings tabs", () => {
 
     await screen.findByText("sections.text.title");
     expect(api.getKnowledgeBankConfig).toHaveBeenCalledWith("docs");
-    expect(api.listOperations).not.toHaveBeenCalled();
+    expect(api.listKnowledgeBankOperations).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
     for (const id of ["text", "pdf", "images", "media", "types"]) {
       expect(screen.getByText(`sections.${id}.title`)).toBeTruthy();

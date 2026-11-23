@@ -72,9 +72,7 @@ async def test_a_sync_ingest_returns_once_every_document_is_searchable(kb, knowl
     assert (bank["document_count"], bank["ready_count"], bank["failed_count"]) == (3, 3, 0)
 
 
-async def test_an_async_ingest_is_one_operation_the_worker_finishes_even_split_into_children(
-    client, kb, knowledge_bank
-):
+async def test_an_async_ingest_is_one_operation_the_worker_finishes_even_split_into_children(kb, knowledge_bank):
     # Over a child's byte budget (1 MiB by default): the notes fill one child and the manual, bigger than
     # the budget on its own, is a second, so the worker runs the upload as two children. The one operation
     # the caller holds completes only once both have. (A request carries at most 100 items, under the
@@ -92,12 +90,12 @@ async def test_an_async_ingest_is_one_operation_the_worker_finishes_even_split_i
     assert page["total"] == 31
     assert (await _hits(kb, knowledge_bank, query="note 7", first=1)) == ["note-7"]
     # The children are only visible as the bank's operations: the parent plus two of them.
-    ops = (await client.operations.list_operations(knowledge_bank, limit=100)).operations
-    ingests = [op for op in ops if op.task_type == "knowledge_ingest"]
-    assert len(ingests) == 3 and parent_id in {op.id for op in ingests}, ingests
+    ops = (await kb.operations(knowledge_bank, limit=100)).body["operations"]
+    ingests = [op for op in ops if op["task_type"] == "knowledge_ingest"]
+    assert len(ingests) == 3 and parent_id in {op["id"] for op in ingests}, ingests
     deadline = asyncio.get_running_loop().time() + 30
-    while (status := await client.operations.get_operation_status(knowledge_bank, parent_id)).status != "completed":
-        assert status.status in ("pending", "processing") and asyncio.get_running_loop().time() < deadline, status
+    while (status := (await kb.operation(knowledge_bank, parent_id)).body)["status"] != "completed":
+        assert status["status"] in ("pending", "processing") and asyncio.get_running_loop().time() < deadline, status
         await asyncio.sleep(0.2)
 
 

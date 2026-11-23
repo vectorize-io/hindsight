@@ -76,6 +76,8 @@ from ..extensions.operation_validator import (
     FileConvertResult,
     ImportArchiveDocument,
     ImportContext,
+    KnowledgeBankReadContext,
+    KnowledgeBankReadOperation,
     MemoryCurationAction,
     MemoryUpdateContext,
     MemoryUpdateResult,
@@ -22110,6 +22112,35 @@ class MemoryEngine(MemoryEngineInterface):
 
         return await bank_aliases.resolve(await self._get_backend(), bank_id)
 
+    async def refuse_knowledge_bank(self, bank_id: str, *, request_context: "RequestContext") -> None:
+        """400 when ``bank_id`` names a knowledge bank.
+
+        Knowledge banks share the memory banks' id space but have their own API
+        (``/v1/default/knowledge-banks``) and their own validator hooks. The HTTP route class runs
+        this for every ``/v1/default/banks/{bank_id}`` route and the MCP tools for every bank they
+        are handed, so no memory-bank endpoint ever serves a knowledge bank -- or runs the memory
+        hooks in place of the knowledge-bank ones.
+
+        The knowledge bank's own read hook runs first: a caller it rejects gets its verdict, not a 400
+        that would tell them the bank exists and is a knowledge bank.
+        """
+        await self._authenticate_tenant(request_context)
+        if await bank_utils.bank_kind_cached(await self._get_backend(), bank_id) != "knowledge":
+            return
+        if self._operation_validator is not None:
+            await self._validate_operation(
+                self._operation_validator.validate_knowledge_bank_read(
+                    KnowledgeBankReadContext(
+                        bank_id=bank_id,
+                        operation=KnowledgeBankReadOperation.GET_KNOWLEDGE_BANK,
+                        request_context=request_context,
+                    )
+                )
+            )
+        raise OperationValidationError(
+            f"'{bank_id}' is a knowledge bank; use /v1/default/knowledge-banks/{bank_id}", status_code=400
+        )
+
     async def list_bank_aliases(
         self,
         bank_id: str,
@@ -22640,6 +22671,7 @@ class MemoryEngine(MemoryEngineInterface):
         offset: int = 0,
         exclude_parents: bool = False,
         request_context: "RequestContext",
+        _knowledge_bank: bool = False,
     ) -> dict[str, Any]:
         """List async operations for a bank with optional filtering and pagination.
 
@@ -22656,13 +22688,16 @@ class MemoryEngine(MemoryEngineInterface):
             Dict with total count and list of operations, sorted by most recent first
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
+        # ``_knowledge_bank``: called by the knowledge-bank service, which has already run the
+        # knowledge-bank hook; the memory hooks and tag scopes never apply to a knowledge bank.
+        if self._operation_validator and not _knowledge_bank:
             ctx = BankReadContext(
                 bank_id=bank_id, operation=BankReadOperation.LIST_OPERATIONS, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_read(ctx))
         # Answered for the whole bank, not narrowed to a tag scope: refuse scoped callers.
-        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "list the bank's operations")
+        if not _knowledge_bank:
+            await self._refuse_bank_wide_if_scoped(bank_id, request_context, "list the bank's operations")
         await self._require_bank_exists(bank_id)
         backend = await self._get_backend()
 
@@ -22753,6 +22788,7 @@ class MemoryEngine(MemoryEngineInterface):
         *,
         request_context: "RequestContext",
         include_payload: bool = False,
+        _knowledge_bank: bool = False,
     ) -> dict[str, Any]:
         """Get the status of a specific async operation.
 
@@ -22766,7 +22802,13 @@ class MemoryEngine(MemoryEngineInterface):
         """
         await self._authenticate_tenant(request_context)
 
-        tag_scope = await self._authorize_bank_read(bank_id, BankReadOperation.GET_OPERATION_STATUS, request_context)
+        # ``_knowledge_bank``: called by the knowledge-bank service, which has already run the
+        # knowledge-bank hook; the memory hooks and tag scopes never apply to a knowledge bank.
+        tag_scope = (
+            None
+            if _knowledge_bank
+            else await self._authorize_bank_read(bank_id, BankReadOperation.GET_OPERATION_STATUS, request_context)
+        )
         # An operation row is not tagged, but its payload is the raw request — a retain's
         # payload is the text someone else stored. A scoped caller never gets payloads.
         if tag_scope:
@@ -22915,6 +22957,7 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id: str,
         *,
         request_context: "RequestContext",
+        _knowledge_bank: bool = False,
     ) -> dict[str, Any]:
         """Cancel a pending or in-flight async operation.
 
@@ -22930,13 +22973,16 @@ class MemoryEngine(MemoryEngineInterface):
         flip, or fails, cannot resurrect the row.
         """
         await self._authenticate_tenant(request_context)
-        if self._operation_validator:
+        # ``_knowledge_bank``: called by the knowledge-bank service, which has already run the
+        # knowledge-bank hook; the memory hooks and tag scopes never apply to a knowledge bank.
+        if self._operation_validator and not _knowledge_bank:
             ctx = BankWriteContext(
                 bank_id=bank_id, operation=BankWriteOperation.CANCEL_OPERATION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         # Acts on the whole bank, not narrowed to a tag scope: refuse scoped callers.
-        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "cancel the bank's operations")
+        if not _knowledge_bank:
+            await self._refuse_bank_wide_if_scoped(bank_id, request_context, "cancel the bank's operations")
         backend = await self._get_backend()
 
         op_uuid = uuid.UUID(operation_id)
@@ -22996,17 +23042,21 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id: str,
         *,
         request_context: "RequestContext",
+        _knowledge_bank: bool = False,
     ) -> dict[str, Any]:
         """Re-queue a failed or cancelled async operation, or run a deferred one now."""
         await self._authenticate_tenant(request_context)
 
-        if self._operation_validator:
+        # ``_knowledge_bank``: called by the knowledge-bank service, which has already run the
+        # knowledge-bank hook; the memory hooks and tag scopes never apply to a knowledge bank.
+        if self._operation_validator and not _knowledge_bank:
             ctx = BankWriteContext(
                 bank_id=bank_id, operation=BankWriteOperation.RETRY_OPERATION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         # Acts on the whole bank, not narrowed to a tag scope: refuse scoped callers.
-        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "retry the bank's operations")
+        if not _knowledge_bank:
+            await self._refuse_bank_wide_if_scoped(bank_id, request_context, "retry the bank's operations")
         backend = await self._get_backend()
 
         op_uuid = uuid.UUID(operation_id)
@@ -23150,17 +23200,21 @@ class MemoryEngine(MemoryEngineInterface):
         operation_id: str,
         *,
         request_context: "RequestContext",
+        _knowledge_bank: bool = False,
     ) -> dict[str, Any]:
         """Delete a terminal (failed/cancelled/completed) async operation row."""
         await self._authenticate_tenant(request_context)
 
-        if self._operation_validator:
+        # ``_knowledge_bank``: called by the knowledge-bank service, which has already run the
+        # knowledge-bank hook; the memory hooks and tag scopes never apply to a knowledge bank.
+        if self._operation_validator and not _knowledge_bank:
             ctx = BankWriteContext(
                 bank_id=bank_id, operation=BankWriteOperation.DELETE_OPERATION, request_context=request_context
             )
             await self._validate_operation(self._operation_validator.validate_bank_write(ctx))
         # Acts on the whole bank, not narrowed to a tag scope: refuse scoped callers.
-        await self._refuse_bank_wide_if_scoped(bank_id, request_context, "delete the bank's operations")
+        if not _knowledge_bank:
+            await self._refuse_bank_wide_if_scoped(bank_id, request_context, "delete the bank's operations")
         backend = await self._get_backend()
 
         op_uuid = uuid.UUID(operation_id)

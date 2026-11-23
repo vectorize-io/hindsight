@@ -125,6 +125,12 @@ results = await asyncio.gather(*tasks, return_exceptions=True)
 - **Watch two smells:** (a) a caller-supplied id used in the `WHERE` with no adjacent `bank_id`, while a *neighbouring* statement in the same method does carry `bank_id` (asymmetry is the tell); (b) a `bank_id` predicate applied only under `if bank_id:` with a `bank_id: str | None = None` default — latent even if all current callers pass one.
 - **Cross-bank by design must rewrite `bank_id` to the destination.** The transfer/import path is the only one that legitimately crosses banks; verify every write pins the *destination* `bank_id` and never inherits a source row's `bank_id`.
 
+### Memory Banks vs Knowledge Banks: one API each
+- **Memory banks and knowledge banks share one id space (`banks` table, `kind` column) but never share an endpoint.** Every route under `/v1/default/banks/{bank_id}` is for memory banks only; a knowledge bank is reached only through `/v1/default/knowledge-banks/{bank_id}`. Every MCP tool is memory-bank only too.
+- **One guard enforces it — don't re-implement it per endpoint.** The HTTP route class (`api/unknown_params.py`, `_refuse_knowledge_bank`) runs `MemoryEngine.refuse_knowledge_bank` for every `/v1/default/banks/{bank_id}` route, and `mcp_tools._resolve_bank` runs it for every MCP tool. It answers 400 pointing at the knowledge-bank API, after the knowledge bank's own `GET_KNOWLEDGE_BANK` read hook, so a caller that hook rejects learns nothing.
+- **A knowledge bank answers only to the knowledge-bank validator hooks** (`validate_knowledge_bank_read` / `_write`, with their own `KnowledgeBank*Operation` names), never `validate_bank_read` / `_write` or tag scopes. When the knowledge-bank service reuses engine code that runs memory hooks (jobs, bank delete), it calls `KnowledgeService._authorize` / `_open_bank` first and passes `_knowledge_bank=True` so the memory hooks are skipped.
+- **A knowledge bank needing something a memory route offers gets its own route under `/knowledge-banks/{bank_id}`** (as its operations, config and stats did), with a `KnowledgeBank*Operation` name, calling the shared engine code with `_knowledge_bank=True`. Never "let the memory route accept a knowledge bank".
+
 ### Database Locking
 - **Never use PostgreSQL advisory locks** (`pg_advisory_lock`, `pg_try_advisory_lock`, `pg_advisory_xact_lock`, `pg_advisory_unlock`, …) in migrations, engine code, or anything else. Hindsight runs against connection poolers and managed/PG-compatible services where advisory locks are unreliable or unsupported: session-level locks silently leak or vanish when a pooler hands the session to another client, and callers can block forever on a lock the server never grants. Reject any new occurrence, including ones that look "safe" because they are transaction-scoped.
 - The pre-existing usage in `hindsight_api/migrations.py` is grandfathered, not a precedent — it is tracked for removal. Don't copy it.
@@ -355,6 +361,10 @@ For each statement against a multi-bank table (`memory_units`, `documents`, `ent
 3. transitively, through a globally-unique id set that was itself selected from a bank-scoped query in the same call.
 
 **Flag as a must fix** any statement filtering a multi-bank table by a caller-supplied, non-globally-unique key (`document_id`, `mental_models.id`, an entity name, …) with **no** `bank_id` predicate — construct the concrete two-bank scenario (two banks share the id; the statement reads/counts/updates/deletes the wrong bank's rows or over-reports) to confirm it's real before flagging. Prime tells: a `bank_id`-carrying sibling statement right next to a `bank_id`-less one; a `WHERE bank_id` guarded by `if bank_id:` with a `None` default; an import/transfer write that inherits a source `bank_id` instead of pinning the destination.
+
+### 7c-bis. Check memory-bank and knowledge-bank surfaces stay apart
+
+See **Memory Banks vs Knowledge Banks** above. **Must fix**: a route that serves a knowledge bank under `/v1/default/banks/{bank_id}` (a route registered outside the `UnknownParamsRoute` route class, or a path change that slips past `MEMORY_BANK_PATH`); a knowledge-bank code path that runs `validate_bank_read`/`validate_bank_write`/tag scopes instead of the knowledge-bank hooks; a new knowledge-bank route without its own `KnowledgeBank*Operation` name, or missing from `test_every_knowledge_bank_operation_goes_through_its_own_hook`; a new MCP tool that takes a bank id without going through `_resolve_bank`. A comment or docstring that claims a guard the code does not enforce is a must fix too.
 
 ### 7d. Check list endpoints paginate
 

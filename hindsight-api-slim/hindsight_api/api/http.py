@@ -4892,6 +4892,15 @@ def _register_routes(app: FastAPI):
 
     app.state.resolve_bank_alias = _resolve_bank_alias
 
+    async def _refuse_knowledge_bank(request: Request, bank_id: str) -> None:
+        """The route class's knowledge-bank refusal for memory-bank routes (see ``unknown_params``)."""
+        await app.state.memory.refuse_knowledge_bank(
+            bank_id,
+            request_context=get_request_context(request, request.headers.get("authorization")),
+        )
+
+    app.state.refuse_knowledge_bank = _refuse_knowledge_bank
+
     from hindsight_api.knowledge.routes import build_router as _build_knowledge_router
 
     app.include_router(_build_knowledge_router(get_request_context))

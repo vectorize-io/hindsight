@@ -193,6 +193,7 @@ def mock_memory():
     # bank is resolved at the transport edge instead, so most tools never call this).
     # A bank reached by its own id resolves to itself.
     memory.resolve_bank_alias = AsyncMock(side_effect=lambda bank_id, **_: bank_id)
+    memory.refuse_knowledge_bank = AsyncMock(return_value=None)
 
     # Mental model methods — simulate engine detail filtering
     async def _list_mental_models(**kwargs):
@@ -2518,6 +2519,7 @@ def mock_memory_with_resolver():
     """Create a mock MemoryEngine with config resolver for bank filtering tests."""
     memory = MagicMock()
     memory.resolve_bank_alias = AsyncMock(side_effect=lambda bank_id, **_: bank_id)
+    memory.refuse_knowledge_bank = AsyncMock(return_value=None)
     memory.retain_batch_async = AsyncMock()
     memory.recall_async = AsyncMock(
         return_value=MagicMock(
@@ -2670,6 +2672,7 @@ def _reflect_mcp_with_trace(include_bank_id_param: bool):
         "directives_applied": [{"id": "d1", "name": "Tone", "content": "z" * 1000}],
     }
     memory = MagicMock()
+    memory.refuse_knowledge_bank = AsyncMock(return_value=None)
     memory.reflect_async = AsyncMock(
         return_value=MagicMock(
             model_dump_json=lambda indent=None: json.dumps(reflect_payload),
@@ -2955,3 +2958,21 @@ class TestRenamedPageTools:
         mock_memory._config_resolver.get_bank_config = AsyncMock(return_value={"mcp_enabled_tools": ["recall"]})
         mcp = _make_mcp_server(mock_memory, {"get_page", "recall"}, include_bank_id=True)
         assert await mcp.get_tool("get_knowledge_page") is None
+
+
+async def test_every_tool_bank_refuses_a_knowledge_bank():
+    """MCP tools are for memory banks only, like /v1/default/banks/{bank_id}: the session bank and a
+    bank passed as an argument both go through the knowledge-bank refusal."""
+    from hindsight_api.extensions.operation_validator import OperationValidationError
+    from hindsight_api.mcp_tools import _resolve_bank
+
+    async def refuse(bank_id: str) -> None:
+        if bank_id == "kb":
+            raise OperationValidationError("'kb' is a knowledge bank", status_code=400)
+
+    config = MCPToolsConfig(bank_id_resolver=lambda: "kb", knowledge_bank_refuser=refuse)
+    with pytest.raises(OperationValidationError):
+        await _resolve_bank(config, None)
+    with pytest.raises(OperationValidationError):
+        await _resolve_bank(config, "kb")
+    assert await _resolve_bank(config, "memory-bank") == "memory-bank"
