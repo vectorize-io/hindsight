@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import BaseModel
 
+from hindsight_api.engine.llm_interface import ProviderContentPolicyError
 from hindsight_api.engine.providers.codex_llm import CodexLLM, CodexStreamError
 from hindsight_api.engine.remote_retry import is_transient_remote_error
 from tests.codex_stream_stub import CodexReply, stub_codex_stream
@@ -63,8 +64,6 @@ async def test_structured_call_raises_backend_error_and_retries():
 
 async def test_a_content_filter_block_is_a_refusal_sent_once():
     """#6503: a stream the content filter stopped is permanent, so it is not retried."""
-    from hindsight_api.engine.llm_interface import ProviderContentPolicyError
-
     blocked = (
         "event: response.incomplete\n"
         'data: {"response":{"status":"incomplete","incomplete_details":{"reason":"content_filter"}}}\n\n'

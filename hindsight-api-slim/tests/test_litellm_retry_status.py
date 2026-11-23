@@ -9,6 +9,7 @@ attempt. The status code decides now: 408/409/429/5xx retry, other 4xx fail fast
 import litellm
 import pytest
 
+from hindsight_api.engine.llm_interface import ProviderContentPolicyError
 from hindsight_api.engine.providers.litellm_llm import LiteLLMLLM
 
 
@@ -56,8 +57,6 @@ async def test_retry_follows_status_code(monkeypatch, make_error, expected_attem
 
 async def test_a_content_filter_block_is_a_refusal_sent_once(monkeypatch):
     """#6503: an empty content_filter answer is permanent, so it is not retried."""
-    from hindsight_api.engine.llm_interface import ProviderContentPolicyError
-
     provider = LiteLLMLLM(provider="litellm", api_key="unused", base_url="http://localhost:0/v1", model="m")
     calls = 0
 

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import BaseModel
 
+from hindsight_api.engine.llm_interface import ProviderContentPolicyError
 from hindsight_api.engine.llm_trace import (
     current_response_usage,
     reset_response_usage,
@@ -647,8 +648,6 @@ async def test_mistral_reply_with_only_thinking_is_an_empty_reply():
 @pytest.mark.asyncio
 async def test_content_filter_is_a_content_policy_refusal_and_not_retried():
     """#6503: an empty content_filter answer is a refusal, sent once."""
-    from hindsight_api.engine.llm_interface import ProviderContentPolicyError
-
     llm = _llm()
     create = AsyncMock(return_value=_response(content=None, finish_reason="content_filter"))
     llm._client.chat.completions.create = create

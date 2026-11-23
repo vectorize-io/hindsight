@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel
 
+from hindsight_api.engine.llm_interface import ProviderContentPolicyError
 from hindsight_api.config import PROVIDER_DEFAULT_MODELS
 from hindsight_api.engine.llm_interface import LLMToolChoice
 from hindsight_api.engine.llm_wrapper import create_llm_provider, requires_api_key
@@ -483,8 +484,6 @@ def test_transient_service_outage_is_not_mistaken_for_a_config_error():
 @pytest.mark.asyncio
 async def test_a_content_filter_block_is_a_refusal_sent_once(monkeypatch):
     """#6503: an empty reply the content filter stopped is permanent, not retried."""
-    from hindsight_api.engine.llm_interface import ProviderContentPolicyError
-
     provider, client = _provider(monkeypatch, [_usage_event(finish_reason="content_filter")])
 
     with pytest.raises(ProviderContentPolicyError):

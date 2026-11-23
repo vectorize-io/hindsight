@@ -26,6 +26,7 @@ import pytest
 from aiohttp import web
 from cryptography.hazmat.primitives.asymmetric import rsa
 
+from hindsight_api.engine.llm_interface import ProviderContentPolicyError
 from hindsight_api.config import PROVIDER_DEFAULT_MODELS, clear_config_cache
 from hindsight_api.engine.llm_interface import ProviderRateLimitResetError
 from hindsight_api.engine.llm_wrapper import create_llm_provider, requires_api_key
@@ -1149,8 +1150,6 @@ def test_lost_session_names_the_refresh_error_that_cleared_it(tmp_path):
 
 async def test_a_content_filter_block_is_a_refusal_sent_once(make_llm):
     """#6503: a stream that ends incomplete on the content filter is permanent, not retried."""
-    from hindsight_api.engine.llm_interface import ProviderContentPolicyError
-
     blocked = _sse(
         {
             "type": "response.incomplete",

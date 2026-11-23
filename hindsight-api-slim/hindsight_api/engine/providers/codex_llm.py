@@ -226,16 +226,34 @@ def _raise_on_sse_failure(event_type: str | None, data: Any) -> None:
     raise CodexStreamError(f"Codex backend failed the response ({event_type}): {code}: {message or data}")
 
 
+class _IncompleteDetails(BaseModel):
+    reason: str | None = None
+
+
+class _IncompleteResponse(BaseModel):
+    incomplete_details: _IncompleteDetails | None = None
+
+
+class _IncompleteEvent(BaseModel):
+    """The ``response.incomplete`` event a stream that stopped early ends with."""
+
+    response: _IncompleteResponse | None = None
+
+
 def _raise_on_content_filter(event_type: str | None, data: Any) -> None:
     """Raise :class:`ProviderContentPolicyError` for a reply the content filter stopped.
 
     A block is permanent, like the other providers' refusals, so the worker fails the
     operation once instead of replaying it through the retry schedule (#6503).
     """
-    if event_type != "response.incomplete" or not isinstance(data, dict):
+    if event_type != "response.incomplete":
         return
-    details = (data.get("response") or {}).get("incomplete_details") or {}
-    if details.get("reason") == "content_filter":
+    try:
+        event = _IncompleteEvent.model_validate(data)
+    except ValidationError:
+        return
+    details = event.response.incomplete_details if event.response else None
+    if details is not None and details.reason == "content_filter":
         raise ProviderContentPolicyError("Codex blocked the request (reason=content_filter); not retrying")
 
 
