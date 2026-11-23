@@ -71,8 +71,6 @@ def create_app(
 
     # Add MCP middleware and chain its lifespan if enabled
     if mcp_servers is not None:
-        multi_bank_server, single_bank_server, multi_bank_starlette_app, single_bank_starlette_app = mcp_servers
-
         # Store the original lifespan
         original_lifespan = app.router.lifespan_context
 
@@ -80,12 +78,14 @@ def create_app(
         async def chained_lifespan(app_instance: FastAPI):
             """Chain both MCP lifespans with the main app lifespan."""
             # Start both MCP lifespans (multi-bank and single-bank)
-            async with multi_bank_starlette_app.router.lifespan_context(multi_bank_starlette_app):
-                async with single_bank_starlette_app.router.lifespan_context(single_bank_starlette_app):
-                    logger.info("MCP lifespans started (multi-bank and single-bank)")
-                    # Then start the original app lifespan
-                    async with original_lifespan(app_instance):
-                        yield
+            multi, single, kb = mcp_servers.multi_bank_app, mcp_servers.single_bank_app, mcp_servers.knowledge_bank_app
+            async with multi.router.lifespan_context(multi):
+                async with single.router.lifespan_context(single):
+                    async with kb.router.lifespan_context(kb):
+                        logger.info("MCP lifespans started (multi-bank, single-bank and knowledge-bank)")
+                        # Then start the original app lifespan
+                        async with original_lifespan(app_instance):
+                            yield
                 logger.info("MCP lifespans stopped")
 
         # Replace the app's lifespan with the chained version
@@ -98,10 +98,12 @@ def create_app(
             MCPMiddleware,
             memory=memory,
             prefix=mcp_mount_path,
-            multi_bank_app=multi_bank_starlette_app,
-            single_bank_app=single_bank_starlette_app,
-            multi_bank_server=multi_bank_server,
-            single_bank_server=single_bank_server,
+            multi_bank_app=mcp_servers.multi_bank_app,
+            single_bank_app=mcp_servers.single_bank_app,
+            multi_bank_server=mcp_servers.multi_bank_server,
+            single_bank_server=mcp_servers.single_bank_server,
+            knowledge_bank_app=mcp_servers.knowledge_bank_app,
+            knowledge_bank_server=mcp_servers.knowledge_bank_server,
         )
 
         logger.info(f"MCP server enabled at {mcp_mount_path}/")

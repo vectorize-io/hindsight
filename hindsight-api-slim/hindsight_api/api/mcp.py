@@ -4,8 +4,10 @@ import json
 import logging
 import os
 from contextvars import ContextVar
+from dataclasses import dataclass
 
 from fastmcp import FastMCP
+from starlette.applications import Starlette
 
 from hindsight_api import MemoryEngine
 from hindsight_api import __version__ as HINDSIGHT_VERSION
@@ -18,7 +20,13 @@ from hindsight_api.config import (
 )
 from hindsight_api.extensions import MCPExtension, load_extension
 from hindsight_api.extensions.tenant import AuthenticationError
-from hindsight_api.mcp_tools import _ALL_TOOLS, MCPToolsConfig, canonical_tool_names, register_mcp_tools
+from hindsight_api.mcp_tools import (
+    _ALL_TOOLS,
+    _KNOWLEDGE_TOOLS,
+    MCPToolsConfig,
+    canonical_tool_names,
+    register_mcp_tools,
+)
 from hindsight_api.models import RequestContext
 from hindsight_api.schema_context import _current_schema
 
@@ -111,7 +119,7 @@ def _build_mcp_tool_descriptions(extra_instructions: str | None) -> tuple[str | 
     return DEFAULT_MCP_RETAIN_DESCRIPTION + suffix, DEFAULT_MCP_RECALL_DESCRIPTION + suffix
 
 
-def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
+def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True, knowledge_bank: bool = False) -> FastMCP:
     """
     Create and configure the Hindsight MCP server.
 
@@ -119,6 +127,8 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
         memory: MemoryEngine instance (required)
         multi_bank: If True, expose all tools with bank_id parameters (default).
                    If False, only expose bank-scoped tools without bank_id parameters.
+        knowledge_bank: With multi_bank False, serve one knowledge bank (/mcp/kb/{bank_id}/)
+                   instead of one memory bank: only the knowledge-bank tools.
 
     Returns:
         Configured FastMCP server instance
@@ -169,6 +179,8 @@ def create_mcp_server(memory: MemoryEngine, multi_bank: bool = True) -> FastMCP:
         }
     )
     base_tools: frozenset[str] | None = None if multi_bank else _SINGLE_BANK_TOOLS
+    if knowledge_bank and not multi_bank:
+        base_tools = _KNOWLEDGE_TOOLS - {"list_knowledge_banks", "create_knowledge_bank"}
 
     # Apply global mcp_enabled_tools filter (env-level allowlist)
     if global_config.mcp_enabled_tools is not None:
@@ -379,6 +391,8 @@ class MCPMiddleware:
         single_bank_app=None,
         multi_bank_server=None,
         single_bank_server=None,
+        knowledge_bank_app=None,
+        knowledge_bank_server=None,
     ):
         self.app = app
         self.prefix = prefix
@@ -391,6 +405,8 @@ class MCPMiddleware:
             self.single_bank_app = single_bank_app
             self.multi_bank_server = multi_bank_server
             self.single_bank_server = single_bank_server
+            self.knowledge_bank_app = knowledge_bank_app
+            self.knowledge_bank_server = knowledge_bank_server
         else:
             # Create servers internally (for direct construction / tests)
             global_config = _get_raw_config()
@@ -399,6 +415,8 @@ class MCPMiddleware:
             self.multi_bank_app = self.multi_bank_server.http_app(path="/", stateless_http=stateless)
             self.single_bank_server = create_mcp_server(memory, multi_bank=False)
             self.single_bank_app = self.single_bank_server.http_app(path="/", stateless_http=stateless)
+            self.knowledge_bank_server = create_mcp_server(memory, multi_bank=False, knowledge_bank=True)
+            self.knowledge_bank_app = self.knowledge_bank_server.http_app(path="/", stateless_http=stateless)
 
     def _get_header(self, scope: dict, name: str) -> str | None:
         """Extract a header value from ASGI scope."""
@@ -497,6 +515,17 @@ class MCPMiddleware:
         bank_id_from_path = False
         new_path = path
 
+        # /kb/{bank_id}/... is one knowledge bank. Its own prefix, not a lookup of the bank's
+        # kind, so a client sees the same tools on an address whatever the bank holds. A
+        # memory bank named "kb" keeps /mcp/kb/ itself: only a further segment means a
+        # knowledge bank. (The servers speak streamable HTTP only, so there is no SSE
+        # /mcp/kb/messages path for that bank to lose.)
+        knowledge_path = False
+        kb_parts = path.split("/", 3)  # "", "kb", bank_id, rest
+        if len(kb_parts) >= 3 and kb_parts[1] == "kb" and kb_parts[2] and self.knowledge_bank_app is not None:
+            knowledge_path = True
+            path = "/" + "/".join(kb_parts[2:])
+
         # First, try to extract from path: /{bank_id}/...
         if path.startswith("/") and len(path) > 1:
             parts = path[1:].split("/", 1)
@@ -517,7 +546,10 @@ class MCPMiddleware:
         # Select the appropriate MCP app based on how bank_id was provided:
         # - Path-based bank_id → single-bank app (no bank_id param, scoped tools)
         # - Header/env bank_id → multi-bank app (bank_id param, all tools)
-        target_app = self.single_bank_app if bank_id_from_path else self.multi_bank_app
+        if knowledge_path:
+            target_app = self.knowledge_bank_app
+        else:
+            target_app = self.single_bank_app if bank_id_from_path else self.multi_bank_app
 
         # An alias is resolved here, where the id ENTERS the process, exactly as the
         # HTTP route class does for a routed path (see api/unknown_params.py). Doing
@@ -572,6 +604,7 @@ class MCPMiddleware:
             # Only rewrite SSE (text/event-stream) responses to avoid corrupting tool results
             # that might contain the literal string "data: /messages".
             is_sse_response = False
+            endpoint_prefix = "/kb" if knowledge_path else ""
 
             async def send_wrapper(message):
                 nonlocal is_sse_response
@@ -584,7 +617,7 @@ class MCPMiddleware:
                     body = message.get("body", b"")
                     if body and b"/messages" in body:
                         # Rewrite /messages to /{bank_id}/messages in SSE endpoint event
-                        body = body.replace(b"data: /messages", f"data: /{bank_id}/messages".encode())
+                        body = body.replace(b"data: /messages", f"data: {endpoint_prefix}/{bank_id}/messages".encode())
                         message = {**message, "body": body}
                 await send(message)
 
@@ -639,23 +672,37 @@ class MCPMiddleware:
         )
 
 
-def create_mcp_servers(memory: MemoryEngine):
-    """Create multi-bank and single-bank MCP servers and their Starlette apps.
+@dataclass
+class MCPServers:
+    """The three MCP servers and their Starlette apps; the apps' lifespans are chained into the main app's."""
+
+    multi_bank_server: FastMCP
+    multi_bank_app: Starlette
+    single_bank_server: FastMCP
+    single_bank_app: Starlette
+    knowledge_bank_server: FastMCP
+    knowledge_bank_app: Starlette
+
+
+def create_mcp_servers(memory: MemoryEngine) -> MCPServers:
+    """Create the multi-bank, single-bank and knowledge-bank MCP servers and their Starlette apps.
 
     Returns the servers and apps separately so lifespans can be chained before
     the middleware wraps the main app.
-
-    Returns:
-        Tuple of (multi_bank_server, single_bank_server, multi_bank_app, single_bank_app)
     """
     global_config = _get_raw_config()
     stateless = global_config.mcp_stateless
 
     multi_bank_server = create_mcp_server(memory, multi_bank=True)
-    multi_bank_app = multi_bank_server.http_app(path="/", stateless_http=stateless)
-
     single_bank_server = create_mcp_server(memory, multi_bank=False)
-    single_bank_app = single_bank_server.http_app(path="/", stateless_http=stateless)
+    knowledge_bank_server = create_mcp_server(memory, multi_bank=False, knowledge_bank=True)
 
     logger.info(f"MCP servers created (stateless_http={stateless})")
-    return multi_bank_server, single_bank_server, multi_bank_app, single_bank_app
+    return MCPServers(
+        multi_bank_server=multi_bank_server,
+        multi_bank_app=multi_bank_server.http_app(path="/", stateless_http=stateless),
+        single_bank_server=single_bank_server,
+        single_bank_app=single_bank_server.http_app(path="/", stateless_http=stateless),
+        knowledge_bank_server=knowledge_bank_server,
+        knowledge_bank_app=knowledge_bank_server.http_app(path="/", stateless_http=stateless),
+    )
