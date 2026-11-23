@@ -11045,7 +11045,9 @@ class MemoryEngine(MemoryEngineInterface):
 
                     stage2 = apply_post_rerank_boost(scored_results, strategy_boosts, passthrough=is_passthrough)
                 scored_results.sort(key=lambda x: x.weight, reverse=True)
-                log_buffer.append("  [4.6] Combined scoring: ce * recency_boost(0.2) * temporal_boost(0.2)")
+                log_buffer.append(
+                    f"  [4.6] Combined scoring: ce * recency_boost({scoring_config.recency_alpha}) * temporal_boost(0.2)"
+                )
                 if strategy_boosts:
                     log_buffer.append(f"  [4.7] Strategy boosts applied: {strategy_boosts} {stage2}")
 

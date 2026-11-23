@@ -1131,7 +1131,7 @@ export function SearchDebugView() {
                               </div>
                               <div className="text-sm text-muted-foreground mt-0.5">
                                 <span className="font-mono text-xs">
-                                  reranker_score × recency_boost(±10%) × temporal_boost(±10%) ×
+                                  reranker_score × recency_boost × temporal_boost(±10%) ×
                                   proof_boost(±5%)
                                 </span>
                               </div>
@@ -1170,8 +1170,14 @@ export function SearchDebugView() {
                                 // the displayed total (e.g. 0.999 × recency-boost 1.100 ≈ 1.099).
                                 const boost = (signal: number, alpha: number) =>
                                   1 + alpha * (signal - 0.5);
+                                // recency_boost is sent by servers that make the recency
+                                // weight configurable; older ones always used 0.2.
                                 const recBoost =
-                                  sc.recency !== undefined ? boost(sc.recency, 0.2) : undefined;
+                                  sc.recency_boost !== undefined
+                                    ? sc.recency_boost
+                                    : sc.recency !== undefined
+                                      ? boost(sc.recency, 0.2)
+                                      : undefined;
                                 const tmpBoost =
                                   sc.temporal !== undefined ? boost(sc.temporal, 0.2) : undefined;
                                 const proofBoost =

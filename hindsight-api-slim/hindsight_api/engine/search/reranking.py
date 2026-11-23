@@ -304,6 +304,7 @@ def apply_combined_scoring(
         sr.rrf_normalized = 0.0
 
         recency_boost = 1.0 + recency_alpha * (sr.recency - 0.5)
+        sr.recency_boost = recency_boost
         temporal_boost = 1.0 + temporal_alpha * (sr.temporal - 0.5)
         proof_count_boost = 1.0 + proof_count_alpha * (proof_norm - 0.5)
         sr.combined_score = sr.cross_encoder_score_normalized * recency_boost * temporal_boost * proof_count_boost
