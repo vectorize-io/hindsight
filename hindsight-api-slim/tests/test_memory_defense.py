@@ -1171,3 +1171,43 @@ def test_redact_document_body_rejects_global_config():
 
     with pytest.raises(ConfigFieldAccessError, match="memory_defense"):
         redact_document_body("deploy key: ghp_" + "Q" * 36, StaticConfigProxy(_get_raw_config()))
+
+
+# --- Per-rule exclude (issue #6455) ------------------------------------------
+
+_LUHN_ID = "ad_account_id=1202123456789019"
+
+
+def test_parse_policy_reads_exclude() -> None:
+    policy = parse_policy(
+        {"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact", "exclude": ["credit_card"]}]}
+    )
+    assert policy.rules[0].exclude == frozenset({"credit_card"})
+
+
+@pytest.mark.parametrize("exclude", [["no_such_pattern"], "credit_card", [1]])
+def test_parse_policy_rejects_bad_exclude(exclude: object) -> None:
+    with pytest.raises(ValueError, match="exclude"):
+        parse_policy({"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact", "exclude": exclude}]})
+
+
+async def test_screen_exclude_skips_only_named_patterns(regex_defense) -> None:
+    policy = parse_policy(
+        {"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact", "exclude": ["credit_card"]}]}
+    )
+    token = "ghp_" + "A" * 36
+    decision = await regex_defense.screen(
+        policy=policy, bank_id="b1", document_id="d1", content=f"{_LUHN_ID} {token}", tags=[]
+    )
+    assert decision.matched_types == ["github_token"]
+    assert decision.redacted_content == f"{_LUHN_ID} [REDACTED:github_token]"
+
+    # No exclude: the same ID is still redacted (defaults unchanged).
+    assert apply_redaction(_LUHN_ID).content == "ad_account_id=[REDACTED:credit_card]"
+
+
+def test_redact_document_body_honours_exclude() -> None:
+    from hindsight_api.engine.retain.orchestrator import redact_document_body
+
+    policy = {"enabled": True, "rules": [{"on": "sensitive_data", "action": "redact", "exclude": ["credit_card"]}]}
+    assert redact_document_body(_LUHN_ID, _defense_config(policy)) == _LUHN_ID

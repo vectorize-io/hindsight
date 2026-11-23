@@ -43,6 +43,9 @@ _VALID_ACTIONS = {a.value for a in DefenseAction}
 class PolicyRule:
     on: str
     action: DefenseAction
+    # Pattern labels this rule skips (e.g. ``credit_card`` for banks that store
+    # Luhn-valid numeric IDs). Empty = every pattern runs.
+    exclude: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -122,7 +125,17 @@ def parse_policy(raw: dict | None) -> DefensePolicy:
         action_raw = item.get("action")
         if action_raw not in _VALID_ACTIONS:
             raise ValueError(f"invalid action {action_raw!r}; must be one of {sorted(_VALID_ACTIONS)}")
-        rules.append(PolicyRule(on=on_raw, action=DefenseAction(action_raw)))
+        exclude_raw = item.get("exclude") or []
+        if not isinstance(exclude_raw, list) or not all(isinstance(x, str) for x in exclude_raw):
+            raise ValueError(f"invalid exclude {exclude_raw!r}; must be a list of pattern labels")
+        # Labels are checked only for the detector this module owns; another
+        # detector's labels belong to the extension that dispatches it (see
+        # the ``on`` note above). A typo here would leave a pattern silently on.
+        if on_raw == "sensitive_data":
+            unknown = sorted(set(exclude_raw) - REDACTION_LABELS)
+            if unknown:
+                raise ValueError(f"unknown exclude pattern(s) {unknown}; must be one of {sorted(REDACTION_LABELS)}")
+        rules.append(PolicyRule(on=on_raw, action=DefenseAction(action_raw), exclude=frozenset(exclude_raw)))
 
     return DefensePolicy(
         enabled=bool(raw.get("enabled", False)),
@@ -236,6 +249,8 @@ _REDACTION_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
+REDACTION_LABELS: frozenset[str] = frozenset(label for label, _ in _REDACTION_PATTERNS)
+
 _COMPILED_REDACTIONS: list[tuple[str, re.Pattern]] = [
     (label, re.compile(pattern)) for label, pattern in _REDACTION_PATTERNS
 ]
@@ -259,7 +274,7 @@ def _is_luhn_card(value: str) -> bool:
     return checksum % 10 == 0
 
 
-def apply_redaction(content: str) -> RedactionResult:
+def apply_redaction(content: str, exclude: frozenset[str] = frozenset()) -> RedactionResult:
     """Scrub known secret/PII patterns from content with [REDACTED:type] markers.
 
     Returns the (possibly unchanged) content alongside:
@@ -274,10 +289,14 @@ def apply_redaction(content: str) -> RedactionResult:
     Most detectors capture fingerprints before substitution. Credit-card
     candidates are validated before substitution so rejected values
     produce neither a replacement nor an audit hit.
+
+    ``exclude`` names pattern labels to skip (a rule's ``exclude`` list).
     """
     matched: list[str] = []
     hits: list[dict] = []
     for label, pattern in _COMPILED_REDACTIONS:
+        if label in exclude:
+            continue
         if label == "credit_card":
             # A rejected candidate must not consume a later valid start (e.g.
             # "2026 4111 1111 1111 1111"). re.sub resumes at the rejected span's
