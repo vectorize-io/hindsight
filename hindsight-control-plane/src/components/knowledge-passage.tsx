@@ -21,10 +21,8 @@ import {
 import { ToneChip, TagChip } from "@/components/ui/facet-chip";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import { CompactMarkdown } from "@/components/compact-markdown";
 import {
   documentLabel,
-  hasMarkdownPassages,
   isPicturePassage,
   formatWindow,
   isInFlight,
@@ -110,14 +108,11 @@ export function PassageLocation({ passage }: { passage: KnowledgePassage }) {
 export function PassageMedia({
   passage,
   compact = false,
-  markdown = false,
   alt,
 }: {
   passage: KnowledgePassage;
   /** Card-sized: a fixed-height thumbnail and a clamped text snippet. */
   compact?: boolean;
-  /** Text that is markdown (see hasMarkdownPassages): rendered, not shown as raw `##` and `**`. */
-  markdown?: boolean;
   alt: string;
 }) {
   const src = passage.passage_url ? proxiedMediaUrl(passage.passage_url) : null;
@@ -154,14 +149,6 @@ export function PassageMedia({
       />
     );
   }
-  if (markdown && !compact) {
-    // Wrap long code lines: a wide block would otherwise scroll the whole passage list sideways.
-    return (
-      <CompactMarkdown className="min-w-0 break-words [&_pre]:whitespace-pre-wrap">
-        {passage.text ?? ""}
-      </CompactMarkdown>
-    );
-  }
   return (
     <p
       className={cn(
@@ -184,27 +171,14 @@ function TextHit({ result }: { result: KnowledgeSearchResult }) {
   const long = (result.text?.length ?? 0) > LONG_HIT_CHARS;
   return (
     <div className="border-b border-border bg-muted/20 p-2.5 text-xs">
-      {hasMarkdownPassages(result.filename) ? (
-        // Rendered blocks can't take line-clamp, so the collapsed card is cut at about the
-        // same five lines by height.
-        <CompactMarkdown
-          className={cn(
-            "min-w-0 break-words text-xs leading-5 [&_pre]:whitespace-pre-wrap",
-            expanded ? "max-h-72 overflow-y-auto pr-1" : "max-h-[6.25rem] overflow-hidden"
-          )}
-        >
-          {result.text ?? ""}
-        </CompactMarkdown>
-      ) : (
-        <p
-          className={cn(
-            "whitespace-pre-wrap break-words leading-relaxed text-foreground",
-            expanded ? "max-h-72 overflow-y-auto pr-1" : "line-clamp-5"
-          )}
-        >
-          {result.text}
-        </p>
-      )}
+      <p
+        className={cn(
+          "whitespace-pre-wrap break-words leading-relaxed text-foreground",
+          expanded ? "max-h-72 overflow-y-auto pr-1" : "line-clamp-5"
+        )}
+      >
+        {result.text}
+      </p>
       {long && (
         <button
           type="button"

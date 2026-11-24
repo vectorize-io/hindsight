@@ -26,7 +26,6 @@ import { toast } from "sonner";
 import { client } from "@/lib/api";
 import {
   documentLabel,
-  hasMarkdownPassages,
   formatBytes,
   isInFlight,
   isPicturePassage,
@@ -209,7 +208,7 @@ function Passages({
                 </span>
                 <span className="font-mono">#{p.index}</span>
               </div>
-              <PassageMedia passage={p} alt={label} markdown={hasMarkdownPassages(doc.filename)} />
+              <PassageMedia passage={p} alt={label} />
             </li>
           ))}
         </ol>
