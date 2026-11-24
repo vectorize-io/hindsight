@@ -16,6 +16,12 @@ way an update reaches a page (its category in brackets):
   sections between two the page has, each placed after the one before it. A new section has no id
   yet, so the model must point at it by heading: an id guessed from "Disable, Don't Delete" misses
   ("dont" for the server's "don-t", #6583) and drops that section and every one chained after it;
+* ``du-retracted-and-new`` (update) — a memory the page rests on is deleted, and the same
+  refresh brings a new one. The page must drop the deleted claim *and* gain the new one: one
+  refresh runs two edits, the removal first. When the removal landed and the new-facts edit
+  then failed, the refresh used to be stored as a success with the removal alone, moving past
+  the new memory for good (#6447). It runs on the evals' bank, which makes no observations, and
+  there the removal used to wait forever for a consolidation that never comes (#6855);
 * ``du-quiet-wave`` (stability) — nothing in the wave bears on the page, which must survive it;
 * ``du-rerecorded-history`` (stability) — a release history grown over five deltas, 20 releases
   to 61, each wave re-recording in other words every release the page already lists. A prompt
@@ -83,6 +89,9 @@ class DeltaUpdate:
     #: Waves after the update, each retained and refreshed in turn, for a page that
     #: has to grow over several deltas to reach the size where a failure shows.
     later: tuple[tuple[str, ...], ...] = ()
+    #: Wave-1 memories, each its own document, deleted before wave 2 is retained, so the
+    #: update refresh both removes what rested on them and adds the update.
+    retracted: tuple[str, ...] = ()
 
     @property
     def id(self) -> str:
@@ -308,6 +317,20 @@ CASES: tuple[DeltaUpdate, ...] = (
     ),
     DeltaUpdate(
         question=_q(
+            "du-retracted-and-new",
+            "update",
+            "What are the rules for deploying the checkout service?",
+            "States that every checkout deploy needs a second reviewer, and that a checkout deploy must pass "
+            "30 minutes in the canary stage before full rollout.",
+            "checkout deploys are frozen on Fridays",
+        ),
+        base=("Every deploy of the checkout service needs a second reviewer.",),
+        retracted=("Deploys of the checkout service are frozen on Fridays.",),
+        update=("A checkout service deploy must now pass 30 minutes in the canary stage before full rollout.",),
+        base_criteria="Says checkout deploys are frozen on Fridays.",
+    ),
+    DeltaUpdate(
+        question=_q(
             "du-quiet-wave",
             "stability",
             "Which region hosts the primary analytics warehouse?",
@@ -383,7 +406,18 @@ async def build(client: Hindsight, bank_id: str, case: DeltaUpdate, settle: Sett
     await settle(bank_id)
 
     later = [[{"content": t, "timestamp": _UPDATE_TIME} for t in texts] for texts in case.later]
-    for index, wave in enumerate(_waves(case) + later, start=1):
+    waves = _waves(case) + later
+    # Only this case's bank carries its retracted memories: in another case's bank they
+    # would be ordinary noise that is never deleted.
+    retracted_ids = [f"{case.id}-retracted-{i}" for i in range(len(case.retracted))]
+    waves[0] = waves[0] + [
+        {"content": t, "timestamp": _BASE_TIME, "document_id": d} for t, d in zip(case.retracted, retracted_ids)
+    ]
+    for index, wave in enumerate(waves, start=1):
+        if index == 2:
+            for document_id in retracted_ids:
+                await client.documents.delete_document(bank_id, document_id)
+            await settle(bank_id)
         await client.aretain_batch(bank_id=bank_id, items=wave)
         await settle(bank_id)
         await client.arefresh_mental_model(bank_id=bank_id, mental_model_id=outcome.mental_model_id)

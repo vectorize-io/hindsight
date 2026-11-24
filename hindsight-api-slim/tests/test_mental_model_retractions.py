@@ -499,6 +499,43 @@ async def test_sweep_defers_to_consolidation_when_facts_are_pending(
     await memory.delete_bank(bank_id, request_context=request_context)
 
 
+@pytest.mark.asyncio
+async def test_sweep_schedules_on_a_bank_without_observations_despite_pending_facts(
+    memory: MemoryEngine, request_context: RequestContext
+):
+    """#6855: with observations off nothing is ever consolidated, so "pending" never drains.
+
+    Waiting on it would mean never scheduling the refresh that removes the deleted claim.
+    """
+    bank_id = f"test-retract-noobs-sweep-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    await memory.update_bank_config(bank_id, {"enable_observations": False}, request_context=request_context)
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Autocommit is disabled.")
+        await _create_page(
+            memory, conn, bank_id, request_context, based_on={"world": [_fact(str(live), "autocommit disabled")]}
+        )
+        # Deleted in SQL, as the sibling sweep tests do: the delete APIs run the sweep
+        # themselves, and this test calls it directly to assert on its answer.
+        await conn.execute(
+            f"DELETE FROM {fq_store_table('memory_units')} WHERE bank_id = $1 AND id = $2", bank_id, live
+        )
+        pending = await _insert_memory(memory, conn, bank_id, "Autocommit is enabled again.")
+        # Forced in SQL: no public call leaves a fact pending, and that state is the subject.
+        await conn.execute(
+            f"UPDATE {fq_store_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND id = $2",
+            bank_id,
+            pending,
+        )
+
+    submit = AsyncMock(return_value={"operation_id": "op-1"})
+    with patch.object(memory, "submit_async_refresh_mental_model", new=submit):
+        assert await memory._submit_refreshes_for_retracted_grounding(bank_id, request_context=request_context) == 1
+    submit.assert_awaited_once()
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
 # ---------------------------------------------------------------------------
 # The unsay pass: a delta refresh removing what a retracted fact supported
 # ---------------------------------------------------------------------------
@@ -768,6 +805,61 @@ async def test_unsay_is_deferred_while_facts_are_pending_consolidation(
 
 
 @pytest.mark.asyncio
+async def test_unsay_runs_on_a_bank_without_observations_despite_pending_facts(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
+):
+    """#6855: the consolidation wait has nothing to wait for when observations are off.
+
+    Such a bank never consolidates, so every fact stays pending and the deferral above
+    used to hold the deleted claim on the page forever.
+    """
+    bank_id = f"test-retract-noobs-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    await memory.update_bank_config(bank_id, {"enable_observations": False}, request_context=request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Tests run on every push.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={
+                "world": [_fact(gone_id, "Retired.", "world"), _fact(str(live), "Tests run on every push.", "world")]
+            },
+        )
+        pending = await _insert_memory(memory, conn, bank_id, "Autocommit is enabled again.")
+        # Forced in SQL: no public call leaves a fact pending, and that state is the subject.
+        await conn.execute(
+            f"UPDATE {fq_store_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND id = $2",
+            bank_id,
+            pending,
+        )
+
+    patch_reflect(memory, text="No new information.")
+    calls = _patch_op_calls(
+        monkeypatch,
+        memory,
+        retraction_ops=[_remove_first_block_of("conventions")],
+        delta_ops=[],
+    )
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
+    )
+
+    assert refreshed is not None
+    assert [call for call in calls if call["kind"] == "retraction"], "the unsay must run"
+    assert "Autocommit is disabled" not in refreshed["content"]
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    assert gone_id not in based_on_fact_ids(stored["reflect_response"]["based_on"])
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_failed_unsay_keeps_the_citation_so_the_next_refresh_retries(
     memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
 ):
@@ -802,6 +894,124 @@ async def test_failed_unsay_keeps_the_citation_so_the_next_refresh_retries(
     assert refreshed is not None
     stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
     assert gone_id in based_on_fact_ids(stored["reflect_response"]["based_on"])
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("new_facts_failure", ["all_ops_skipped", "call_raises"])
+async def test_failed_new_facts_delta_fails_the_refresh_even_after_an_unsay_edit(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect, new_facts_failure
+):
+    """#6447: the unsay pass edited the page, then the new-facts delta failed.
+
+    Writing the unsay-only document would move the watermark past the new facts, so
+    no later delta would ever show them to the page. The refresh must fail instead,
+    leaving content, citations and watermark as they were, so the next one retries both.
+    """
+    from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+    bank_id = f"test-retract-newfail-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Tests run on every push.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={
+                "world": [_fact(gone_id, "Retired.", "world"), _fact(str(live), "Tests run on every push.", "world")]
+            },
+        )
+        # Written after the watermark, so the next delta window contains it.
+        new = await _insert_memory(memory, conn, bank_id, "Releases are cut on Fridays.")
+        before = await _staleness_row(conn, bank_id, mm_id)
+
+    # A new fact arrived, so the new-facts delta runs after the unsay pass.
+    patch_reflect(memory, text="Releases are cut on Fridays.", facts=[_fact(str(new), "Releases are cut on Fridays.")])
+    calls = _patch_op_calls(
+        monkeypatch,
+        memory,
+        retraction_ops=[_remove_first_block_of("conventions")],
+        delta_ops=[{"op": "append_block", "section_id": "no-such-section", "text": "x"}],
+    )
+    if new_facts_failure == "call_raises":
+        routed = memory._mental_model_refresh_llm_config.call
+
+        async def failing_delta(*, messages, **kwargs):
+            from hindsight_api.engine.reflect.prompts import STRUCTURED_RETRACTION_SYSTEM_PROMPT
+
+            if messages[0]["content"] != STRUCTURED_RETRACTION_SYSTEM_PROMPT:
+                raise ValueError("model returned garbage")
+            return await routed(messages=messages, **kwargs)
+
+        monkeypatch.setattr(memory._mental_model_refresh_llm_config, "call", failing_delta)
+
+    with pytest.raises(MentalModelRefreshError) as failed:
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm_id, request_context=request_context)
+    expected_reason = "delta_ops_all_skipped" if new_facts_failure == "all_ops_skipped" else "delta_ops_failed"
+    assert failed.value.reason == expected_reason
+
+    assert any(call["kind"] == "retraction" for call in calls), "the unsay pass must have run"
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    assert stored["content"] == _PAGE_CONTENT, "the unsay-only document must not be written"
+    assert gone_id in based_on_fact_ids(stored["reflect_response"]["based_on"]), "the retraction must be retried"
+    async with pool.acquire() as conn:
+        after = await _staleness_row(conn, bank_id, mm_id)
+    assert after["last_memory_seen_at"] == before["last_memory_seen_at"], "the watermark must not move"
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_unsay_and_new_facts_both_land_in_one_refresh(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
+):
+    """The new-facts delta edits the document the unsay pass left, and both are written."""
+    bank_id = f"test-retract-both-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Tests run on every push.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={
+                "world": [_fact(gone_id, "Retired.", "world"), _fact(str(live), "Tests run on every push.", "world")]
+            },
+        )
+        before = await _staleness_row(conn, bank_id, mm_id)
+        new = await _insert_memory(memory, conn, bank_id, "Releases are cut on Fridays.")
+
+    patch_reflect(memory, text="Releases are cut on Fridays.", facts=[_fact(str(new), "Releases are cut on Fridays.")])
+    _patch_op_calls(
+        monkeypatch,
+        memory,
+        retraction_ops=[_remove_first_block_of("conventions")],
+        delta_ops=[{"op": "append_block", "section_id": "conventions", "text": "Releases are cut on Fridays."}],
+    )
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
+    )
+
+    assert refreshed is not None
+    assert "Autocommit is disabled" not in refreshed["content"], "the unsay edit must survive the new-facts pass"
+    assert "Releases are cut on Fridays." in refreshed["content"]
+    assert "Tests run on every push" in refreshed["content"]
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    assert gone_id not in based_on_fact_ids(stored["reflect_response"]["based_on"])
+    async with pool.acquire() as conn:
+        after = await _staleness_row(conn, bank_id, mm_id)
+    assert after["last_memory_seen_at"] > before["last_memory_seen_at"]
+
     await memory.delete_bank(bank_id, request_context=request_context)
 
 

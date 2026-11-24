@@ -234,11 +234,41 @@ class AddSection(BaseModel):
     blocks: list[str]
 
 
-class DeltaOperations(BaseModel):
-    """What a delta page refresh's edit call returns."""
+class RemoveBlock(BaseModel):
+    """One operation of a delta refresh's edit: drop one existing block of the page."""
 
-    operations: list[AddSection]
+    op: Literal["remove_block"] = "remove_block"
+    section_id: str
+    block_id: str
+
+
+class DeltaOperations(BaseModel):
+    """What a delta page refresh's edit call (and its retraction pass) returns."""
+
+    operations: list[AddSection | RemoveBlock]
 
 
 def add_section(heading: str, *blocks: str) -> DeltaOperations:
     return DeltaOperations(operations=[AddSection(heading=heading, blocks=list(blocks))])
+
+
+def remove_block_saying(text: str) -> Callable[["ChatRequest"], DeltaOperations]:
+    """An edit dropping the page block that contains ``text``.
+
+    Pair with ``llm.on_step("mental_model_retraction").answers_with(...)``. Block ids are
+    minted by the server when it splits the page, so they are read out of the document the
+    request shows — which is what a real model does too.
+    """
+
+    def build(request: ChatRequest) -> DeltaOperations:
+        shown = re.search(r"```json\n(.*?)\n```", request.user_text, re.DOTALL)
+        if shown is None:
+            raise AssertionError("the edit request shows no page document")
+        document = json.loads(shown.group(1))
+        for section in document["sections"]:
+            for block in section["blocks"]:
+                if text in block["text"]:
+                    return DeltaOperations(operations=[RemoveBlock(section_id=section["id"], block_id=block["id"])])
+        raise AssertionError(f"no block of the page shown says {text!r}")
+
+    return build
