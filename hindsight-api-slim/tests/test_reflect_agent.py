@@ -2919,8 +2919,8 @@ class TestMentalModelShortCircuitRealLLM:
         # dug deeper rather than guessed.
         criteria = (
             "The answer reports that AURORA-412 was closed on 12 March, or that its feature flag was removed "
-            "(a bare 'it was closed' without either detail does not count). It does NOT claim the bank holds nothing, no record, no status or no history for "
-            "AURORA-412. Saying that the release-process page itself records no status is fine, as long as "
+            "(a bare 'it was closed' without either detail does not count). It does NOT claim the bank holds "
+            "nothing, no record, no status or no history for AURORA-412. Saying that the release-process page itself records no status is fine, as long as "
             "the answer goes on to report the closed/fixed status."
         )
         context = (
