@@ -135,9 +135,9 @@ Optional settings in `~/.openclaw/openclaw.json`:
 - `autoRetain` - Auto-retain conversations after each turn (default: `true`)
 - `retainRoles` - Which message roles to retain (default: `["user", "assistant"]`). Options: `user`, `assistant`, `system`, `tool`
 - `recallBudget` - Recall effort: `"low"`, `"mid"`, or `"high"` (default: `"mid"`). Higher budgets use more retrieval strategies for better results.
-- `recallMaxTokens` - Max tokens for recall response (default: `1024`). Controls how much memory context is injected per turn.
+- `recallMaxTokens` - Max tokens for recall response (default: `1024`). Controls how much memory context is injected per turn. Recall fills this budget with the best matches it has, so on a small bank a narrow question can return most of it; lower it, or cut weak matches with `recallMinScores`.
 - `recallTopK` - Max number of memories to inject per turn (default: unlimited).
-- `recallTypes` - Memory types to recall (default: `["observation"]`). Options: `world`, `experience`, `observation`. Defaults to observations — the consolidated, deduplicated view — to avoid surfacing the same answer multiple times when many raw memories say the same thing.
+- `recallTypes` - Memory types to recall (default: `["observation"]`). Options: `world`, `experience`, `observation`. Defaults to observations — the consolidated, deduplicated view — to avoid surfacing the same answer multiple times when many raw memories say the same thing. Facts that are not consolidated yet (a fresh import or backfill, or a bank with `enableObservations: false`) stay invisible until you add `world` and `experience`.
 - `preferObservations` - When `true`, recall drops raw facts already consolidated into an observation while keeping unconsolidated ones (default: `false`). Pair it with a `recallTypes` that includes raw types (e.g. `["observation", "world", "experience"]`) to surface just-retained facts before consolidation catches up — for example after a `/reset` followed by "what did I just say?" — without duplicating already-consolidated content.
 - `recallMinScores` - Optional score floors for auto-recall, keyed by stage (for example `{"reranker": 0.3}`). Missing fields impose no floor; memories with missing or `null` scores pass. Reranker scores are query-local, so use this as a garbage gate rather than a calibrated relevance dial.
 - `recallContextTurns` - Number of prior user turns to include in the recall query (default: `1`).
@@ -432,7 +432,7 @@ uvx hindsight-embed@latest -p openclaw ui
 ## OpenClaw compatibility
 
 The plugin is tested against the current OpenClaw release and against older ones.
-Version 0.12.0 and later work with **OpenClaw 2026.7.x through 2026.10.x**.
+Version 0.12.0 and later work with **OpenClaw 2026.7.x through 2026.11.x**.
 
 **If you are on OpenClaw 2026.8.1 or later, upgrade to plugin 0.12.0.** OpenClaw
 2026.8.1 changed how it labels the conversation metadata it attaches to each
@@ -553,6 +553,10 @@ The session filters apply too: a session matching `ignoreSessionPatterns` gets n
 ```bash
 openclaw config set plugins.entries.hindsight-openclaw.config.memoryMode tools
 ```
+
+**Active Memory** (OpenClaw 2026.11+) runs its deep-recall turn with `hindsight_recall`; the plugin names it for Active Memory, so no `toolsAllow` list is needed. That turn gets no auto-recall and is not saved, since it is an internal search, not part of the conversation.
+
+**`memory_search` and `memory_get` are memory-core's tools, not Hindsight's.** Once Hindsight holds the memory slot, OpenClaw no longer offers them, and allow-listing them gives the model nothing. Allow `hindsight_recall` (and `hindsight_reflect`) instead; they search the same bank auto-recall uses.
 
 ## OpenClaw's memory page, status and search
 
