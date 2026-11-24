@@ -19172,17 +19172,19 @@ class MemoryEngine(MemoryEngineInterface):
         used_total = sum(facts.used.values())
         if gone_citations:
             warnings.append(
-                f"None of the {gone_citations} fact(s) this document cited exist any more, so it was rebuilt "
+                f"None of the {gone_citations} fact(s) this document cited exist any more, so it is rebuilt "
                 "from what the bank holds now"
-                + (", which is nothing in its scope: the document was emptied." if not has_sources else ".")
+                + (", which is nothing in its scope: the document is emptied." if not has_sources else ".")
             )
-        elif not has_sources:
-            warnings.append(
-                "Nothing in this document's scope was readable, so the reflect loop was skipped and the "
-                "document left as it is. Check the resolved scope — tags, tag_groups and fact_types all "
-                "narrow it — and, in delta mode, the time window: only memories changed after the last "
-                "refresh are in range."
-            )
+        if not has_sources:
+            # A rebuild with nothing to read already said so above, and empties the page.
+            if not gone_citations:
+                warnings.append(
+                    "Nothing in this document's scope was readable, so the reflect loop was skipped and the "
+                    "document left as it is. Check the resolved scope — tags, tag_groups and fact_types all "
+                    "narrow it — and, in delta mode, the time window: only memories changed after the last "
+                    "refresh are in range."
+                )
         elif retrieved_total == 0:
             warnings.append(
                 "Retrieval returned no facts at all. Check the resolved scope and the time window — "
@@ -19831,6 +19833,7 @@ class MemoryEngine(MemoryEngineInterface):
             # of the extra call and the fail-loud behaviour.
             response_schema = (mental_model.get("trigger") or {}).get("response_schema")
             prev_structured_output = (mental_model.get("reflect_response") or {}).get("structured_output")
+            prev_based_on = (mental_model.get("reflect_response") or {}).get("based_on")
 
             async def _structured_output_for(content_text: str) -> StructuredOutputResult:
                 if not response_schema or not content_text.strip():
@@ -19889,6 +19892,12 @@ class MemoryEngine(MemoryEngineInterface):
                 # The content stays, so its structured view must stay too (#6499).
                 if prev_structured_output is not None:
                     reflect_response_payload["structured_output"] = prev_structured_output
+                # ...and so must the facts it cites. A rebuild's based_on is only what
+                # its own (failed) reflect read; storing that would drop the dead ids
+                # that made this a rebuild, and no later refresh would notice the
+                # page's source is gone (#6764).
+                if prev_based_on is not None:
+                    reflect_response_payload["based_on"] = prev_based_on
                 await self.update_mental_model(
                     bank_id,
                     mental_model_id,

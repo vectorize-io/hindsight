@@ -162,7 +162,7 @@ def prune_based_on(based_on: dict[str, Any] | None, drop_ids: set[str]) -> dict[
 #: or an empty ``[]`` the text already had.
 _GAP = "\x00"
 #: A ``[...]`` or ``(...)`` group holding nothing but removed ids and separators.
-_EMPTIED_GROUP_RE = re.compile(rf"([ \t]*)[\[(](?:[ \t,]|{_GAP})*{_GAP}(?:[ \t,]|{_GAP})*[\])](?=([\[(])?)")
+_EMPTIED_GROUP_RE = re.compile(rf"([ \t]*)[\[(](?:[ \t,;]|{_GAP})*{_GAP}(?:[ \t,;]|{_GAP})*[\])](?=([\[(])?)")
 
 
 def _drop_ids_from_text(text: str, drop_ids: set[str]) -> str:
@@ -175,9 +175,10 @@ def _drop_ids_from_text(text: str, drop_ids: set[str]) -> str:
         return text
     # One separator goes with a removed id — the one before it, or after it when it
     # opens a group: ``[B, A, C]`` -> ``[B, C]``, ``[A, B]`` -> ``[B]``.
-    text = re.sub(rf"[ \t]*,[ \t]*{_GAP}", _GAP, text)
+    text = re.sub(rf"[ \t]*[,;][ \t]*{_GAP}", _GAP, text)
     text = re.sub(rf"{_GAP}+", _GAP, text)
-    text = re.sub(rf"(?<=[\[(]){_GAP}[ \t]*,[ \t]*", _GAP, text)
+    text = re.sub(rf"(?:(?<=[\[(])|^){_GAP}[ \t]*[,;][ \t]*", _GAP, text, flags=re.MULTILINE)
+    text = re.sub(rf"`{_GAP}`", _GAP, text)
     # A group left holding nothing goes too, from the inside out (``[[A]]``). The space
     # before it stays only when another group follows: ``x. [A][B]`` -> ``x. [B]``.
     while True:
@@ -188,6 +189,10 @@ def _drop_ids_from_text(text: str, drop_ids: set[str]) -> str:
         if tidied == text:
             break
         text = tidied
+    # A list item that held nothing but the id goes; one that starts with it keeps its text.
+    text = re.sub(rf"\n[ \t]*[-*+][ \t]*{_GAP}[ \t]*(?=\n|$)", "", text)
+    text = re.sub(rf"^[ \t]*[-*+][ \t]*{_GAP}[ \t]*(?:\n|$)", "", text)
+    text = re.sub(rf"^([ \t]*(?:[-*+][ \t]+)?){_GAP}[ \t]*", r"\1", text, flags=re.MULTILINE)
     return re.sub(rf"[ \t]*{_GAP}", "", text)
 
 

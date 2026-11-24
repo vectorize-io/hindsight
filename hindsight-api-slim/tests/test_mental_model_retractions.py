@@ -118,6 +118,13 @@ _C = "33333333-3333-4333-8333-333333333333"
         (f"Opens at 09:00 [[{_A}]].", "Opens at 09:00."),
         (f"See [{_A}](/memories/{_A}).", "See."),
         (f"See [the notes](/memories/{_A}).", "See the notes."),
+        (f"{_A}, {_B} and more.", f"{_B} and more."),
+        (f"[{_A}] Opens at 09:00.", "Opens at 09:00."),
+        (f"Opens at 09:00 [{_A}; {_B}].", f"Opens at 09:00 [{_B}]."),
+        (f"Opens at 09:00 (`{_A}`).", "Opens at 09:00."),
+        (f"- {_A}\n- Closes at 17:00", "- Closes at 17:00"),
+        (f"- Closes at 17:00\n- {_A}", "- Closes at 17:00"),
+        (f"- [{_A}] Opens at 09:00", "- Opens at 09:00"),
         # Case does not hide an id, and a group of only dropped ids leaves no ``[]``.
         (f"Opens at 09:00 [{_A.upper()}, {_A}, {_B}].", f"Opens at 09:00 [{_B}]."),
         # A UUID that is not being dropped, and brackets that never held one, stay.
@@ -932,6 +939,17 @@ async def test_a_failed_rebuild_with_sources_in_scope_keeps_the_page(
 
     stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
     assert stored["content"] == _PAGE_CONTENT
+    # The dead citation stays too: it is what makes the next refresh rebuild again.
+    assert gone_id in based_on_fact_ids(stored["reflect_response"]["based_on"])
+
+    # And it does: once reflect works, the page is rebuilt from what is in scope.
+    patch_reflect(memory, text="## Conventions\n\nTests run on every push.\n")
+    refreshed = await memory.refresh_mental_model(
+        bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
+    )
+    assert refreshed is not None
+    assert "Autocommit is disabled" not in refreshed["content"]
+    assert "Tests run on every push." in refreshed["content"]
 
     await memory.delete_bank(bank_id, request_context=request_context)
 
