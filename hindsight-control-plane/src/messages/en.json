@@ -2373,6 +2373,7 @@
     "fallbackDocUnreadable": "The stored document could not be read",
     "fallbackOpsFailed": "The delta operations call failed",
     "fallbackOpsAllSkipped": "Every delta operation was rejected",
+    "fallbackGroundingGone": "Every fact the page cited is gone",
     "outcomeWritten": "New content written",
     "outcomePreserved": "No new facts, content kept",
     "outcomeFailed": "Empty result, refresh fails",

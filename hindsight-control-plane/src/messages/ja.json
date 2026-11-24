@@ -2373,6 +2373,7 @@
     "fallbackDocUnreadable": "保存された文書を読み取れませんでした",
     "fallbackOpsFailed": "デルタ操作の呼び出しに失敗しました",
     "fallbackOpsAllSkipped": "すべてのデルタ操作が拒否されました",
+    "fallbackGroundingGone": "ページが引用していた事実はすべて削除されました",
     "outcomeWritten": "新しいコンテンツを書き込み",
     "outcomePreserved": "新しい事実なし、コンテンツを維持",
     "outcomeFailed": "結果が空のため更新は失敗します",

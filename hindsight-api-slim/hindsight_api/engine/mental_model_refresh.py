@@ -32,6 +32,7 @@ ModeFallbackReason = Literal[
     "structured_doc_unreadable",
     "delta_ops_failed",
     "delta_ops_all_skipped",
+    "grounding_gone",
 ]
 
 # What a refresh did with the document, as the shared executor reports it — so

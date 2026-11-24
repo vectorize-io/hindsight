@@ -5272,6 +5272,7 @@ export type MentalModelDryRunRefreshResult = {
     | "structured_doc_unreadable"
     | "delta_ops_failed"
     | "delta_ops_all_skipped"
+    | "grounding_gone"
     | null;
   /**
    * Outcome
@@ -5509,6 +5510,7 @@ export type MentalModelRefreshTrace = {
     | "structured_doc_unreadable"
     | "delta_ops_failed"
     | "delta_ops_all_skipped"
+    | "grounding_gone"
     | null;
   /**
    * Outcome

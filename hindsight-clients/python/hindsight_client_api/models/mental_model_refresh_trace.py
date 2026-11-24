@@ -58,8 +58,8 @@ class MentalModelRefreshTrace(BaseModel):
         if value is None:
             return value
 
-        if value not in set(['no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped']):
-            raise ValueError("must be one of enum values ('no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped')")
+        if value not in set(['no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped', 'grounding_gone']):
+            raise ValueError("must be one of enum values ('no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped', 'grounding_gone')")
         return value
 
     @field_validator('outcome')

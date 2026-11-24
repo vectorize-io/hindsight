@@ -2373,6 +2373,7 @@
     "fallbackDocUnreadable": "Le document enregistré était illisible",
     "fallbackOpsFailed": "L'appel des opérations delta a échoué",
     "fallbackOpsAllSkipped": "Toutes les opérations delta ont été rejetées",
+    "fallbackGroundingGone": "Aucun des faits cités par la page n'existe plus",
     "outcomeWritten": "Nouveau contenu écrit",
     "outcomePreserved": "Aucun fait nouveau, contenu conservé",
     "outcomeFailed": "Résultat vide, l'actualisation échoue",

@@ -13715,6 +13715,7 @@ components:
           - structured_doc_unreadable
           - delta_ops_failed
           - delta_ops_all_skipped
+          - grounding_gone
           nullable: true
           type: string
         outcome:
@@ -14028,6 +14029,7 @@ components:
           - structured_doc_unreadable
           - delta_ops_failed
           - delta_ops_all_skipped
+          - grounding_gone
           nullable: true
           type: string
         outcome:

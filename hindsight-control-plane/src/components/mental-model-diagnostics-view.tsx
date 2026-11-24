@@ -141,6 +141,7 @@ export function TraceSummary({ trace }: { trace: MentalModelRefreshTrace }) {
     structured_doc_unreadable: t("fallbackDocUnreadable"),
     delta_ops_failed: t("fallbackOpsFailed"),
     delta_ops_all_skipped: t("fallbackOpsAllSkipped"),
+    grounding_gone: t("fallbackGroundingGone"),
   };
   return (
     <span className="text-xs text-muted-foreground">

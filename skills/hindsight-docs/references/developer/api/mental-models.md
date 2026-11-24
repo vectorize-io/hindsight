@@ -834,7 +834,7 @@ The response answers the questions the stored document can't:
 | Field | What it tells you |
 |-------|-------------------|
 | `requested_mode` / `effective_mode` | Whether the refresh ran in the mode you configured |
-| `mode_fallback_reason` | Why the delta edits weren't applied: `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, or `delta_ops_all_skipped` (every operation was rejected) |
+| `mode_fallback_reason` | Why the delta edits weren't applied: `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped` (every operation was rejected), or `grounding_gone` (every fact the page cited is gone, so it was rebuilt from scratch) |
 | `scope` | The tags, match mode, and fact types that actually filtered memories — not the ones stored on the model |
 | `window` | The `created_after`/`created_before` bounds read, and the watermark that would be persisted |
 | `facts.retrieved` vs `facts.used` | How much retrieval returned versus how much the reflect agent judged relevant |
@@ -924,7 +924,7 @@ somewhere else.
 | Field | Contents |
 |-------|----------|
 | `effective_mode` | Whether the run ended up `full` or `delta` |
-| `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped` |
+| `mode_fallback_reason` | Why delta was requested but not applied — `no_baseline_content`, `source_query_changed`, `structured_doc_unreadable`, `delta_ops_failed`, `delta_ops_all_skipped`, `grounding_gone` |
 | `outcome` | `content_written`, `content_preserved_no_new_facts`, `refresh_failed_empty_candidate`, or `refresh_failed_delta_not_applied` (the edits didn't apply, so the document was kept and the refresh failed). The operation record adds three the executor cannot produce, because they happen outside a run: `refresh_failed_structured_output`, `refresh_failed_candidate_rejected` (an [operation validator](../extensions.md) rejected the new document) and `refresh_failed_error` (a retrieval tool raised, the agent produced no answer, or something unforeseen escaped the refresh) |
 | `tool_calls[]` | Per call: `tool`, the agent's `reason`, the full `input`, `result_count`, `duration_ms`, and the `iteration` it belongs to |
 | `llm_calls[]` | Per call: `scope` (`agent_1`, `agent_2`, …, `final`) and `duration_ms` |

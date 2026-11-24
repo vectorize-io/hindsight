@@ -29,8 +29,11 @@ acts (never while consolidation is pending) and by the prompt, not here.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from .structured_doc import Block, StructuredDocument
 
 # The ``based_on`` keys whose ids address rows in ``memory_units``.
 #
@@ -65,21 +68,19 @@ class RetractedGrounding:
 
     @property
     def unresolvable(self) -> bool:
-        """True when *none* of the cited grounding resolves — a broken link, not a retraction.
+        """True when *none* of the cited grounding resolves: the page's whole source is gone.
 
-        A retraction removes some of a document's evidence. Losing all of it at once
-        is the signature of provenance that never pointed at this bank in the first
-        place: a whole-bank import carries ``mental_models`` rows verbatim while the
-        memories are re-created under fresh ids, so every id a restored page cites is
-        absent on arrival. Treating that as a retraction would ask the unsay pass to
-        delete everything the page says — irreversibly, on a page that is perfectly
-        correct.
+        That is a deleted source, or one re-ingested under fresh ids. Either way an
+        unsay pass would be asked to remove everything the page says, so the refresh
+        rebuilds the page from live facts instead (``mode_fallback_reason=
+        "grounding_gone"``). Bank transfer does not land here: import rewrites
+        ``based_on`` to the new ids (#3833).
 
-        So this case prunes the dangling citations and leaves the prose alone. The
-        cost is a false negative for a page whose entire (small) grounding really was
-        retracted; it keeps a stale sentence until later refreshes re-ground it. That
-        is the right way round: the failure mode here is unrecoverable and the other
-        one is not.
+        The rebuild is a full refresh, so it keeps nothing the page holds beyond what
+        the bank can still ground — including text a user wrote by hand before turning
+        on delta mode. That is the intended trade: a page none of whose evidence exists
+        is stating things nothing supports, and the old behaviour (keep the prose)
+        kept a deleted document's claims, and their citations, forever (#6764).
         """
         return self.cited_count > 0 and len(self.facts) == self.cited_count
 
@@ -154,3 +155,80 @@ def prune_based_on(based_on: dict[str, Any] | None, drop_ids: set[str]) -> dict[
         ]
         pruned[fact_type] = kept
     return pruned
+
+
+#: Stands in for a removed id while the punctuation around it is tidied, so only
+#: brackets and commas that held a dropped id are ever touched — never a ``foo()``
+#: or an empty ``[]`` the text already had.
+_GAP = "\x00"
+#: A ``[...]`` or ``(...)`` group holding nothing but removed ids and separators.
+_EMPTIED_GROUP_RE = re.compile(rf"([ \t]*)[\[(](?:[ \t,;]|{_GAP})*{_GAP}(?:[ \t,;]|{_GAP})*[\])](?=([\[(])?)")
+
+
+def _drop_ids_from_text(text: str, drop_ids: set[str]) -> str:
+    alternatives = "|".join(re.escape(i) for i in sorted(drop_ids))
+    an_id = rf"(?<![\w-])(?:{alternatives})(?![\w-])"
+    # A link pointing at a dropped id keeps only its text: ``[A](/m/A)`` -> ``A``.
+    text = re.sub(rf"\[([^\[\]\n]*)\]\([^()\n]*{an_id}[^()\n]*\)", r"\1", text, flags=re.IGNORECASE)
+    text = re.sub(an_id, _GAP, text, flags=re.IGNORECASE)
+    if _GAP not in text:
+        return text
+    # One separator goes with a removed id — the one before it, or after it when it
+    # opens a group: ``[B, A, C]`` -> ``[B, C]``, ``[A, B]`` -> ``[B]``.
+    text = re.sub(rf"[ \t]*[,;][ \t]*{_GAP}", _GAP, text)
+    text = re.sub(rf"{_GAP}+", _GAP, text)
+    text = re.sub(rf"(?:(?<=[\[(])|^){_GAP}[ \t]*[,;][ \t]*", _GAP, text, flags=re.MULTILINE)
+    text = re.sub(rf"`{_GAP}`", _GAP, text)
+    # A group left holding nothing goes too, from the inside out (``[[A]]``). The space
+    # before it stays only when another group follows: ``x. [A][B]`` -> ``x. [B]``.
+    while True:
+        tidied = _EMPTIED_GROUP_RE.sub(
+            lambda m: _GAP + m.group(1) if m.group(2) else m.group(1) + _GAP,
+            text,
+        )
+        if tidied == text:
+            break
+        text = tidied
+    # A line (or list item, or quote) that held nothing but the id goes; one that
+    # starts with it keeps its text.
+    # Numbers count as a list marker only in a numbered list — the block opens with an
+    # item, or another line is one: "2024." on a wrapped line of prose is part of it.
+    numbered = (
+        re.match(r"[ \t]*\d+[.)][ \t]", text) is not None
+        or re.search(rf"^[ \t]*\d+[.)][ \t]+(?!{_GAP}[ \t]*$)\S", text, flags=re.MULTILINE) is not None
+    )
+    marker = r"(?:[-*+>]|\d+[.)])?" if numbered else r"(?:[-*+>])?"
+    text = re.sub(rf"\n[ \t]*{marker}[ \t]*{_GAP}[ \t]*(?=\n|$)", "", text)
+    text = re.sub(rf"^[ \t]*{marker}[ \t]*{_GAP}[ \t]*(?:\n|$)", "", text)
+    text = re.sub(rf"^([ \t]*(?:{marker}[ \t]+)?){_GAP}[ \t]*", r"\1", text, flags=re.MULTILINE)
+    return re.sub(rf"[ \t]*{_GAP}", "", text)
+
+
+def drop_inline_citations(doc: StructuredDocument, drop_ids: set[str]) -> StructuredDocument:
+    """A copy of ``doc`` with ``drop_ids`` removed from its text.
+
+    The text twin of :func:`prune_based_on`. The model cites handles that are resolved
+    to bare UUIDs, so an id may sit anywhere: ``[id]``, ``(id)``, ``[a, id]``, a link,
+    or bare in a sentence. Only an exact dropped id is removed, with the separators and
+    the brackets that held it; any other UUID, bracket or parenthesis is left alone.
+    """
+    lowered = {i.lower() for i in drop_ids}
+    if not lowered:
+        return doc
+    return doc.model_copy(
+        update={
+            "sections": [
+                section.model_copy(
+                    update={
+                        # A block that was nothing but the id goes with it.
+                        "blocks": [
+                            Block(id=block.id, text=text)
+                            for block in section.blocks
+                            if (text := _drop_ids_from_text(block.text, lowered)).strip()
+                        ]
+                    }
+                )
+                for section in doc.sections
+            ]
+        }
+    )

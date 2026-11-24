@@ -117,3 +117,49 @@ async def test_the_scheduled_refresh_completes_cleanly(client, llm, bank_id, pag
 
     read = await client.pages.get_page(bank_id, page.page_id)
     assert read.body.strip(), "the page was left empty by the refresh"
+
+
+async def test_deleting_the_only_source_document_empties_the_model(client, llm, bank_id, page, settled):
+    """A model written from one document stops repeating it once that document is gone.
+
+    Every fact the model cites disappears at once. That used to be read as a restored
+    bank — whose ids are now rewritten on import (#3833) — so the model kept its text,
+    and its citations, forever (#6764). It is rebuilt from what the bank still holds
+    instead, which here is nothing.
+    """
+    # Cite what it was written from, as a real model does: the fixture's page cites
+    # nothing, so nothing could notice its source going away.
+    cited = (await client.memory.list_memories(bank_id, limit=100)).items
+    llm.reset()
+    llm.on_step("reflect", tool="done").returns_tool_call(
+        "done",
+        answer=ORIGINAL_ANSWER,
+        memory_ids=[m.id for m in cited if m.fact_type != "observation"],
+        observation_ids=[m.id for m in cited if m.fact_type == "observation"],
+    )
+    # The search has to find them: an id the agent never read is not a citation.
+    reflect_loop(llm, answer=ORIGINAL_ANSWER, query="Alice Berlin")
+    created = await client.mental_models.create_mental_model(
+        bank_id,
+        {
+            "name": "Alice housing",
+            "source_query": "Where does Alice live?",
+            "trigger": {"mode": "delta", "refresh_after_consolidation": True, "exclude_mental_models": True},
+        },
+    )
+    await settled(bank_id)
+    model = await client.mental_models.get_mental_model(bank_id, created.mental_model_id, detail="full")
+    assert ORIGINAL_ANSWER in model.content
+    assert any(model.reflect_response["based_on"].values()), "the model must cite its source for this story"
+
+    documents = await client.documents.list_documents(bank_id)
+    assert len(documents.items) == 1
+    await client.documents.delete_document(bank_id, documents.items[0].id)
+    await settled(bank_id)
+
+    failed = await client.operations.list_operations(bank_id, status="failed", limit=100)
+    assert failed.operations == [], "the refresh triggered by the delete failed"
+
+    model = await client.mental_models.get_mental_model(bank_id, created.mental_model_id, detail="full")
+    assert model.content.strip() == "", "the model still states what the deleted document said"
+    assert not any(model.reflect_response["based_on"].values()), "the model still cites the deleted facts"

@@ -2373,6 +2373,7 @@
     "fallbackDocUnreadable": "Não foi possível ler o documento armazenado",
     "fallbackOpsFailed": "A chamada de operações delta falhou",
     "fallbackOpsAllSkipped": "Todas as operações delta foram rejeitadas",
+    "fallbackGroundingGone": "Nenhum dos fatos citados pela página existe mais",
     "outcomeWritten": "Novo conteúdo gravado",
     "outcomePreserved": "Sem fatos novos, conteúdo mantido",
     "outcomeFailed": "Resultado vazio, a atualização falha",
