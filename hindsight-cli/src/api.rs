@@ -1591,10 +1591,14 @@ impl ApiClient {
         limit: Option<i64>,
         _verbose: bool,
     ) -> Result<types::WebhookDeliveryListResponse> {
+        // The API takes a limit of at least 1; zero or negative falls back to its default.
+        let limit_nz = limit
+            .and_then(|l| u64::try_from(l).ok())
+            .and_then(std::num::NonZeroU64::new);
         self.runtime.block_on(async {
             let response = self
                 .client
-                .list_webhook_deliveries(bank_id, webhook_id, cursor, limit, None)
+                .list_webhook_deliveries(bank_id, webhook_id, cursor, limit_nz, None)
                 .humanized()
                 .await?;
             Ok(response.into_inner())
@@ -2120,7 +2124,7 @@ impl ApiClient {
         &self,
         bank_id: &str,
         q: Option<&str>,
-        limit: i64,
+        limit: u64,
         offset: u64,
     ) -> Result<types::KnowledgeTagsResponse> {
         self.runtime.block_on(async {

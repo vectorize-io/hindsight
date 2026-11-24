@@ -10,6 +10,7 @@ import uuid
 import pytest
 
 from hindsight_api.pagination import MAX_GRAPH_LIMIT, MAX_PAGE_LIMIT
+from tests.test_knowledge_banks import fake_embedder  # noqa: F401  (fixture)
 
 HUGE = 100_000
 KB = "/v1/default/knowledge-banks"
@@ -24,7 +25,9 @@ async def bank(api_client):
 
 
 @pytest.fixture
-async def knowledge_bank(api_client):
+async def knowledge_bank(api_client, fake_embedder):  # noqa: F811
+    # The fake embedder keeps the bank on the same vector size as the other knowledge-bank tests
+    # sharing this database; the real one would clash with their passages.
     bank_id = f"trim-kb-{uuid.uuid4().hex[:8]}"
     r = await api_client.post(KB, json={"bank_id": bank_id})
     assert r.status_code == 200, r.text

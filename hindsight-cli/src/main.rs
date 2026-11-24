@@ -1554,7 +1554,7 @@ enum KnowledgeBankCommands {
 
         /// Maximum number of tags to return
         #[arg(long, default_value = "100")]
-        limit: i64,
+        limit: u64,
 
         /// Offset for pagination
         #[arg(long, default_value = "0")]
