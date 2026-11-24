@@ -59,6 +59,6 @@ def eval_target(api_url: str | None = None, *, log_path: Path | None = None) -> 
         log_path = Path(tempfile.mkdtemp(prefix="hindsight-eval-server-")) / "server.log"
     server = start_eval_server(log_path=log_path)
     try:
-        yield Target(url=server.url, is_remote=False, pid=server._process.pid)
+        yield Target(url=server.url, is_remote=False, pid=server.pid)
     finally:
         server.stop()

@@ -32,6 +32,7 @@ jobs:
       hindsight-all: ${{ steps.filter.outputs.hindsight-all }}
       integration-tests: ${{ steps.filter.outputs.integration-tests }}
       system-tests: ${{ steps.filter.outputs.system-tests }}
+      system-evals: ${{ steps.filter.outputs.system-evals }}
       outside-system-tests: ${{ steps.filter.outputs.outside-system-tests }}
       integrations-openclaw: ${{ steps.filter.outputs.integrations-openclaw }}
       integrations-ai-sdk: ${{ steps.filter.outputs.integrations-ai-sdk }}
@@ -165,6 +166,11 @@ jobs:
             - 'hindsight-integration-tests/**'
           system-tests:
             - 'hindsight-system-tests/**'
+          # The runner's own unit tests. provider_auth.py is listed because the
+          # runner loads it by path to learn which providers need a key.
+          system-evals:
+            - 'hindsight-system-evals/**'
+            - 'hindsight-api-slim/hindsight_api/provider_auth.py'
           # True when the PR touches anything *other* than the system-test
           # package. The two unconditional-by-design jobs (build-docs and
           # verify-generated-files) hang off this rather than off a positive
@@ -3728,6 +3734,43 @@ jobs:
 
     - name: Run system tests
       working-directory: ./hindsight-system-tests
+      run: uv run pytest tests -v
+
+  test-system-evals-unit:
+    needs: [detect-changes]
+    # Only the runner's unit tests (tests/), not the evals (evals/): those need a
+    # real model and run in perf-test.yml with its secrets. Nothing ran these
+    # before, so a stale fake broke one on main and nobody saw it (#6850).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      needs.detect-changes.outputs.system-evals == 'true' ||
+      needs.detect-changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: test-system-evals (unit)
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha || '' }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        prune-cache: false
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version-file: ".python-version"
+
+    - name: Install dependencies
+      working-directory: ./hindsight-system-evals
+      run: uv sync --frozen
+
+    - name: Run unit tests
+      working-directory: ./hindsight-system-evals
       run: uv run pytest tests -v
 
   test-ag2-integration:
