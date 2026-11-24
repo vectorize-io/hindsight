@@ -19896,8 +19896,8 @@ class MemoryEngine(MemoryEngineInterface):
                 # its own (failed) reflect read; storing that would drop the dead ids
                 # that made this a rebuild, and no later refresh would notice the
                 # page's source is gone (#6764).
-                if prev_based_on is not None:
-                    reflect_response_payload["based_on"] = prev_based_on
+                # A page that never stored one cites nothing yet, not what this run read.
+                reflect_response_payload["based_on"] = prev_based_on if prev_based_on is not None else {}
                 await self.update_mental_model(
                     bank_id,
                     mental_model_id,

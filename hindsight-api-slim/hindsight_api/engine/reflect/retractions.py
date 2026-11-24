@@ -189,10 +189,12 @@ def _drop_ids_from_text(text: str, drop_ids: set[str]) -> str:
         if tidied == text:
             break
         text = tidied
-    # A list item that held nothing but the id goes; one that starts with it keeps its text.
-    text = re.sub(rf"\n[ \t]*[-*+][ \t]*{_GAP}[ \t]*(?=\n|$)", "", text)
-    text = re.sub(rf"^[ \t]*[-*+][ \t]*{_GAP}[ \t]*(?:\n|$)", "", text)
-    text = re.sub(rf"^([ \t]*(?:[-*+][ \t]+)?){_GAP}[ \t]*", r"\1", text, flags=re.MULTILINE)
+    # A line (or list item, or quote) that held nothing but the id goes; one that
+    # starts with it keeps its text.
+    marker = r"(?:[-*+>]|\d+[.)])?"
+    text = re.sub(rf"\n[ \t]*{marker}[ \t]*{_GAP}[ \t]*(?=\n|$)", "", text)
+    text = re.sub(rf"^[ \t]*{marker}[ \t]*{_GAP}[ \t]*(?:\n|$)", "", text)
+    text = re.sub(rf"^([ \t]*(?:{marker}[ \t]+)?){_GAP}[ \t]*", r"\1", text, flags=re.MULTILINE)
     return re.sub(rf"[ \t]*{_GAP}", "", text)
 
 
@@ -212,9 +214,11 @@ def drop_inline_citations(doc: StructuredDocument, drop_ids: set[str]) -> Struct
             "sections": [
                 section.model_copy(
                     update={
+                        # A block that was nothing but the id goes with it.
                         "blocks": [
-                            Block(id=block.id, text=_drop_ids_from_text(block.text, lowered))
+                            Block(id=block.id, text=text)
                             for block in section.blocks
+                            if (text := _drop_ids_from_text(block.text, lowered)).strip()
                         ]
                     }
                 )

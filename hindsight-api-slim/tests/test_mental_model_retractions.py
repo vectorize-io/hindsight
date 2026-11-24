@@ -125,6 +125,9 @@ _C = "33333333-3333-4333-8333-333333333333"
         (f"- {_A}\n- Closes at 17:00", "- Closes at 17:00"),
         (f"- Closes at 17:00\n- {_A}", "- Closes at 17:00"),
         (f"- [{_A}] Opens at 09:00", "- Opens at 09:00"),
+        (f"1. {_A}\n2. Closes at 17:00", "2. Closes at 17:00"),
+        (f"> Opens at 09:00\n> {_A}", "> Opens at 09:00"),
+        (f"Note:\n{_A}\nEnd", "Note:\nEnd"),
         # Case does not hide an id, and a group of only dropped ids leaves no ``[]``.
         (f"Opens at 09:00 [{_A.upper()}, {_A}, {_B}].", f"Opens at 09:00 [{_B}]."),
         # A UUID that is not being dropped, and brackets that never held one, stay.
@@ -137,6 +140,12 @@ def test_drop_inline_citations_removes_only_the_dropped_ids(text: str, expected:
     cleaned = drop_inline_citations(doc, {_A})
     assert cleaned.sections[0].blocks[0].text == expected
     assert cleaned.sections[0].blocks[0].id == doc.sections[0].blocks[0].id
+
+
+def test_drop_inline_citations_drops_a_block_that_was_only_the_id():
+    doc = split_markdown(f"## Hours\n\nOpens at 09:00.\n\n- {_A}\n")
+    cleaned = drop_inline_citations(doc, {_A})
+    assert [block.text for block in cleaned.sections[0].blocks] == ["Opens at 09:00."]
 
 
 def test_drop_inline_citations_without_ids_is_a_no_op():
