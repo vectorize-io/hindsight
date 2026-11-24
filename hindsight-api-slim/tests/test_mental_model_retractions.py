@@ -129,6 +129,8 @@ _C = "33333333-3333-4333-8333-333333333333"
         (f"> Opens at 09:00\n> {_A}", "> Opens at 09:00"),
         (f"Note:\n{_A}\nEnd", "Note:\nEnd"),
         (f"Opened in\n2024. {_A}", "Opened in\n2024."),
+        (f"Steps:\n1. Open the door\n2. {_A}", "Steps:\n1. Open the door"),
+        (f"1. Open the door\n2. {_A}\n3. Close it", "1. Open the door\n3. Close it"),
         # Case does not hide an id, and a group of only dropped ids leaves no ``[]``.
         (f"Opens at 09:00 [{_A.upper()}, {_A}, {_B}].", f"Opens at 09:00 [{_B}]."),
         # A UUID that is not being dropped, and brackets that never held one, stay.

@@ -191,9 +191,12 @@ def _drop_ids_from_text(text: str, drop_ids: set[str]) -> str:
         text = tidied
     # A line (or list item, or quote) that held nothing but the id goes; one that
     # starts with it keeps its text.
-    # Numbers count as a list marker only in a numbered list: "2024." on a wrapped
-    # line of prose is part of the sentence.
-    numbered = re.match(r"[ \t]*\d+[.)][ \t]", text) is not None
+    # Numbers count as a list marker only in a numbered list — the block opens with an
+    # item, or another line is one: "2024." on a wrapped line of prose is part of it.
+    numbered = (
+        re.match(r"[ \t]*\d+[.)][ \t]", text) is not None
+        or re.search(rf"^[ \t]*\d+[.)][ \t]+(?!{_GAP}[ \t]*$)\S", text, flags=re.MULTILINE) is not None
+    )
     marker = r"(?:[-*+>]|\d+[.)])?" if numbered else r"(?:[-*+>])?"
     text = re.sub(rf"\n[ \t]*{marker}[ \t]*{_GAP}[ \t]*(?=\n|$)", "", text)
     text = re.sub(rf"^[ \t]*{marker}[ \t]*{_GAP}[ \t]*(?:\n|$)", "", text)
