@@ -349,3 +349,72 @@ describe("SyncEngine cleanup when the server document is already gone (#5067)", 
     expect(Object.keys(index)).toEqual(["Notes/old.md"]);
   });
 });
+
+describe("exclude tags (#6759)", () => {
+  const privateNote = (mtime: number) => ({
+    content: "---\ntags:\n  - Private\n---\nconfidential",
+    mtime,
+    ctime: 0,
+  });
+
+  it("never retains a note carrying an excluded tag (case and # ignored)", async () => {
+    const files = { "a.md": privateNote(1), "b.md": { content: "ok", mtime: 1, ctime: 0 } };
+    const { engine, client } = makeEngine(files, {}, { excludeTags: ["#private"] });
+    expect(await engine.reconcile()).toMatchObject({ added: 1, deleted: 0 });
+    expect(client.retain).toHaveBeenCalledOnce();
+    expect(client.retain.mock.calls[0][1]).toBe("b.md");
+  });
+
+  it("does not exclude on an alias that matches the tag", async () => {
+    const files = { "a.md": { content: "---\naliases: [private]\n---\nbody", mtime: 1, ctime: 0 } };
+    const { engine, client } = makeEngine(files, {}, { excludeTags: ["private"] });
+    await engine.reconcile();
+    expect(client.retain).toHaveBeenCalledOnce();
+  });
+
+  it("removes an already-synced note once it is tagged, even if unchanged", async () => {
+    const files = { "a.md": privateNote(5) };
+    // Indexed at the same mtime: the tag setting is new, the note is not.
+    const index: SyncIndex = { "a.md": { hash: "sha256:x", mtime: 5, syncedAt: "T" } };
+    const { engine, client } = makeEngine(files, index, { excludeTags: ["private"] });
+    expect(await engine.reconcile()).toMatchObject({ deleted: 1 });
+    expect(client.deleteDocument).toHaveBeenCalledWith("bank", "a.md");
+    expect(index).toEqual({});
+  });
+
+  it("ingests the note again once the tag is removed", async () => {
+    const files = { "a.md": privateNote(1) };
+    const { engine, client, vault } = makeEngine(files, {}, { excludeTags: ["private"] });
+    expect(await engine.ingestFile(vault.getMarkdownFiles()[0])).toBe("skipped");
+    files["a.md"] = { content: "now public", mtime: 2, ctime: 0 };
+    expect(await engine.ingestFile(vault.getMarkdownFiles()[0])).toBe("created");
+    expect(client.retain).toHaveBeenCalledOnce();
+  });
+});
+
+describe("retain strategy (#6661)", () => {
+  const strategyOf = (client: ReturnType<typeof fakeClient>, docId: string) =>
+    (client.retain.mock.calls.find((c) => c[1] === docId)?.[3] as { strategy?: string }).strategy;
+
+  it("note frontmatter wins, then the vault default, else the bank default", async () => {
+    const files = {
+      "report.md": {
+        content: "---\nhindsight_retain_strategy: report-notes\n---\nfindings",
+        mtime: 1,
+        ctime: 0,
+      },
+      "blank.md": { content: "---\nhindsight_retain_strategy: \n---\nentry", mtime: 1, ctime: 0 },
+      "journal.md": { content: "today", mtime: 1, ctime: 0 },
+    };
+    const withDefault = makeEngine(files, {}, { retainStrategy: "journal" });
+    await withDefault.engine.reconcile();
+    expect(strategyOf(withDefault.client, "report.md")).toBe("report-notes");
+    expect(strategyOf(withDefault.client, "blank.md")).toBe("journal");
+    expect(strategyOf(withDefault.client, "journal.md")).toBe("journal");
+
+    const noDefault = makeEngine(files);
+    await noDefault.engine.reconcile();
+    expect(strategyOf(noDefault.client, "report.md")).toBe("report-notes");
+    expect(strategyOf(noDefault.client, "journal.md")).toBeUndefined();
+  });
+});

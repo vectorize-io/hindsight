@@ -104,6 +104,23 @@ describe("parseCliArgs", () => {
     expect(() => parseCliArgs([...base, "--timestamp-from", "mtime"])).toThrow(/timestamp-from/);
   });
 
+  it("collects repeatable --exclude-tag and a --retain-strategy default", () => {
+    const opts = parseCliArgs([
+      ...base,
+      "--exclude-tag",
+      "private",
+      "--exclude-tag",
+      "#Health",
+      "--retain-strategy",
+      " report-notes ",
+    ]);
+    expect(buildConfig(opts)).toMatchObject({
+      excludeTags: ["private", "#Health"],
+      retainStrategy: "report-notes",
+    });
+    expect(parseCliArgs(base).retainStrategy).toBeUndefined();
+  });
+
   it("requires --vault, --bank and an api url", () => {
     expect(() => parseCliArgs(["--bank", "b", "--api-url", "h"])).toThrow(UsageError);
     expect(() => parseCliArgs(["--vault", "/v", "--api-url", "h"])).toThrow(UsageError);
@@ -127,6 +144,7 @@ describe("buildConfig", () => {
       excludeFolders: [],
       vaultName: "v",
       prefixDocId: true,
+      excludeTags: [],
     });
   });
 

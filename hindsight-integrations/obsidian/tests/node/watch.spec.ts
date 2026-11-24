@@ -44,6 +44,7 @@ function options(): CliOptions {
     apiUrl: "http://unused",
     include: [],
     exclude: [],
+    excludeTags: [],
     vaultName: "V",
     prefixDocId: false,
     indexPath: join(root, ".idx.json"),

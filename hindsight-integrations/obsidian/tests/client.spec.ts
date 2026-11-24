@@ -44,6 +44,14 @@ describe("HindsightClient", () => {
     });
   });
 
+  it("retain sends a named strategy only when one is set", async () => {
+    const client = new HindsightClient("https://api.example.com", undefined, mock);
+    await client.retain("b", "n.md", "body", { strategy: "report-notes" });
+    expect(JSON.parse(lastCall().body ?? "{}").items[0].strategy).toBe("report-notes");
+    await client.retain("b", "n.md", "body");
+    expect(JSON.parse(lastCall().body ?? "{}").items[0]).not.toHaveProperty("strategy");
+  });
+
   it("deleteDocument encodes segments but preserves path slashes", async () => {
     const client = new HindsightClient("https://api.example.com", undefined, mock);
     await client.deleteDocument("b", "Folder/My Note.md");

@@ -293,6 +293,8 @@ export default class HindsightPlugin extends Plugin {
       prefixDocId: this.settings.prefixDocId,
       observationScopes: this.settings.observationScopes,
       timestampFrom: this.settings.timestampFrom,
+      excludeTags: this.settings.excludeTags,
+      retainStrategy: this.settings.retainStrategy,
     };
   }
 

@@ -42,6 +42,8 @@ export interface CliOptions {
   apiToken?: string;
   include: string[];
   exclude: string[];
+  excludeTags: string[];
+  retainStrategy?: string;
   vaultName: string;
   prefixDocId: boolean;
   observationScopes?: ObservationScopes;
@@ -64,6 +66,12 @@ Options:
   --api-token <token>   API token (or env HINDSIGHT_API_TOKEN)
   --include <folder>    Only sync this folder (repeatable; default: whole vault)
   --exclude <folder>    Skip this folder (repeatable)
+  --exclude-tag <tag>   Keep notes with this frontmatter tag out of the bank,
+                        and remove them if already synced (repeatable)
+  --retain-strategy <name>
+                        Named retain strategy on the bank for every note; a
+                        note's frontmatter hindsight_retain_strategy overrides it
+                        (default: the bank's default strategy)
   --vault-name <name>   Vault name for tags/ids (default: the vault dir name)
   --prefix-doc-id       Prefix document ids with the vault name (multi-vault banks)
   --observation-scopes <mode>
@@ -109,6 +117,8 @@ export function parseCliArgs(argv: string[]): CliOptions {
       "api-token": { type: "string" },
       include: { type: "string", multiple: true },
       exclude: { type: "string", multiple: true },
+      "exclude-tag": { type: "string", multiple: true },
+      "retain-strategy": { type: "string" },
       "vault-name": { type: "string" },
       "prefix-doc-id": { type: "boolean", default: false },
       "observation-scopes": { type: "string" },
@@ -151,6 +161,8 @@ export function parseCliArgs(argv: string[]): CliOptions {
     apiToken: values["api-token"] || process.env.HINDSIGHT_API_TOKEN || undefined,
     include: values.include ?? [],
     exclude: values.exclude ?? [],
+    excludeTags: values["exclude-tag"] ?? [],
+    retainStrategy: values["retain-strategy"]?.trim() || undefined,
     vaultName,
     prefixDocId: values["prefix-doc-id"] ?? false,
     observationScopes,
@@ -170,6 +182,8 @@ export function buildConfig(opts: CliOptions): SyncConfig {
     prefixDocId: opts.prefixDocId,
     observationScopes: opts.observationScopes,
     timestampFrom: opts.timestampFrom,
+    excludeTags: opts.excludeTags,
+    retainStrategy: opts.retainStrategy,
   };
 }
 

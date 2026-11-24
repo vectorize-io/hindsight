@@ -10,7 +10,7 @@
 
 import { createHash } from "node:crypto";
 import type { HindsightClient } from "./client";
-import { normalizeNote } from "./frontmatter";
+import { normalizeNote, normalizeTag } from "./frontmatter";
 import type { ObservationScopes, TimestampSource } from "./types";
 
 export interface SyncFile {
@@ -43,6 +43,10 @@ export interface SyncConfig {
   observationScopes?: ObservationScopes;
   /** Omitted = `created` (frontmatter created/date, else file birth time). */
   timestampFrom?: TimestampSource;
+  /** Notes whose frontmatter `tags` hold any of these are kept out of the bank. */
+  excludeTags?: string[];
+  /** Default retain strategy; a note's `hindsight_retain_strategy` overrides it. */
+  retainStrategy?: string;
 }
 
 export interface ReconcileSummary {
@@ -52,7 +56,8 @@ export interface ReconcileSummary {
   unchanged: number;
 }
 
-export type IngestOutcome = "created" | "updated" | "skipped";
+/** `removed` = the note now carries an excluded tag, so its document was deleted. */
+export type IngestOutcome = "created" | "updated" | "skipped" | "removed";
 
 function underFolder(path: string, folder: string): boolean {
   const f = folder.replace(/^\/+|\/+$/g, "");
@@ -130,7 +135,10 @@ export class SyncEngine {
 
   /**
    * Ingest a single note, upserting it into the bank. Returns whether the note
-   * was newly created, updated, or skipped (unchanged / excluded / empty).
+   * was newly created, updated, skipped (unchanged / excluded / empty), or
+   * removed (it now carries an excluded tag, so its synced document is deleted).
+   * The tag check runs on the parsed frontmatter, before the hash shortcut, so
+   * a tag added to the exclude list also catches notes whose text is unchanged.
    */
   async ingestFile(
     file: SyncFile,
@@ -140,10 +148,25 @@ export class SyncEngine {
     if (!this.shouldInclude(file.path)) return "skipped";
 
     const prev = this.index[file.path];
-    // Cheap pre-filter: same mtime as last sync → nothing to do (no read).
-    if (!opts.force && prev && prev.mtime === file.stat.mtime) return "skipped";
+    const excludeTags = new Set((this.config.excludeTags ?? []).map(normalizeTag).filter(Boolean));
+    // Cheap pre-filter: same mtime as last sync → nothing to do (no read). Skipped
+    // when tags are excluded, so a newly excluded tag also prunes unchanged notes.
+    // ponytail: reads every synced note per reconcile then; store tags in the index if that is slow.
+    if (!opts.force && excludeTags.size === 0 && prev && prev.mtime === file.stat.mtime) {
+      return "skipped";
+    }
 
     const raw = await this.vault.read(file);
+    const folder = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
+    const note = normalizeNote(raw, folder);
+    if (note.noteTags.some((t) => excludeTags.has(t))) {
+      if (!prev) return "skipped";
+      await this.client.deleteDocument(this.config.bankId, this.docId(file.path));
+      delete this.index[file.path];
+      if (doPersist) await this.persist(this.index);
+      return "removed";
+    }
+
     const hash = this.hash(raw);
     if (!opts.force && prev && prev.hash === hash) {
       // mtime moved but content is identical — refresh the mtime, don't re-ingest.
@@ -152,8 +175,6 @@ export class SyncEngine {
       return "skipped";
     }
 
-    const folder = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "";
-    const note = normalizeNote(raw, folder);
     if (!note.body) return "skipped"; // nothing to ground on
 
     // Auto-scope tags: implicit scoping derived from normal Obsidian usage, so the
@@ -179,6 +200,7 @@ export class SyncEngine {
           ? (note.updated ?? isoFromMillis(file.stat.mtime))
           : (note.timestamp ?? isoFromMillis(file.stat.ctime)),
       updateMode: "replace",
+      strategy: note.retainStrategy || this.config.retainStrategy || undefined,
     });
 
     const outcome: IngestOutcome = prev ? "updated" : "created";
@@ -207,8 +229,10 @@ export class SyncEngine {
 
   /**
    * Full reconcile: ingest every (drifted) included note, then prune documents
-   * we previously synced whose note is now gone or excluded. Self-heals after
-   * the plugin was disabled during edits.
+   * we previously synced whose note is now gone or in an excluded folder.
+   * Notes with an excluded tag are pruned by `ingestFile` itself (it needs the
+   * frontmatter, so it cannot be decided from the path list here). Self-heals
+   * after the plugin was disabled during edits.
    */
   async reconcile(): Promise<ReconcileSummary> {
     const summary: ReconcileSummary = { added: 0, updated: 0, deleted: 0, unchanged: 0 };
@@ -219,6 +243,7 @@ export class SyncEngine {
       const outcome = await this.ingestFile(file, { persist: false });
       if (outcome === "created") summary.added++;
       else if (outcome === "updated") summary.updated++;
+      else if (outcome === "removed") summary.deleted++;
       else summary.unchanged++;
     });
 
