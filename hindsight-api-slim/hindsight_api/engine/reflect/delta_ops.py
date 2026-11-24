@@ -49,6 +49,7 @@ from typing import Annotated, Any, Literal, Union, cast
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
+from hindsight_api.config import get_config
 from hindsight_api.engine.llm_wrapper import ConfiguredLLMProvider, OutputTooLongError, parse_llm_json, reask_messages
 from hindsight_api.engine.response_models import LLMCallResult
 
@@ -561,6 +562,16 @@ async def request_delta_operations(
     block ids. Only the refresh's edit pass passes it — for the retraction pass,
     touching nothing is a legitimate answer.
     """
+    # The schema travels on every delta-shaped call, set here rather than by each
+    # caller: the retraction pass once omitted it and ran unconstrained, so a model
+    # with native grammar decoding (Ollama) produced off-schema ops there (#6569).
+    # ``skip_validation`` keeps the raw JSON for the op-by-op parser below.
+    call_kwargs = {
+        "response_format": DeltaOperationList,
+        "strict_schema": get_config().llm_strict_schema_reflect,
+        "skip_validation": True,
+        **call_kwargs,
+    }
     messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
     first = await _call_resampling_a_runaway(llm, messages, scope, **call_kwargs)
     try:

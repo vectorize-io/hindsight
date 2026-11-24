@@ -19226,7 +19226,6 @@ class MemoryEngine(MemoryEngineInterface):
         # drift is structurally impossible. Falls back to the full candidate
         # markdown if either the structuring or the LLM op call fails.
         from .reflect.delta_ops import (
-            DeltaOperationList,
             apply_operations,
             request_delta_operations,
         )
@@ -19417,9 +19416,11 @@ class MemoryEngine(MemoryEngineInterface):
                 delta_llm = await _op_llm()
                 try:
                     # Structured-output call, following the retain extraction path:
-                    # the schema is sent, ``strict_schema`` is resolved from reflect's
-                    # own flag, and ``skip_validation`` keeps the raw JSON so the
-                    # op-by-op parser sees it. A reply that misses the schema is
+                    # ``request_delta_operations`` sends the schema, resolves
+                    # ``strict_schema`` from reflect's own flag, and sets
+                    # ``skip_validation`` so the op-by-op parser sees the raw JSON —
+                    # for this call and the retraction pass alike (the retraction pass
+                    # once ran without a schema, #6569). A reply that misses the schema is
                     # refused whole and asked for again with the errors attached —
                     # ``request_delta_operations`` owns that, for this call and the
                     # retraction pass alike. It also samples once more a reply that
@@ -19450,9 +19451,6 @@ class MemoryEngine(MemoryEngineInterface):
                         user_prompt=user_prompt,
                         scope="mental_model_delta_ops",
                         document=current_doc,
-                        response_format=DeltaOperationList,
-                        strict_schema=get_config().llm_strict_schema_reflect,
-                        skip_validation=True,  # Get raw JSON; the parser validates op-by-op
                         max_completion_tokens=get_config().reflect_max_completion_tokens,
                         temperature=get_config().llm_temperature_mental_model_refresh,
                     )
