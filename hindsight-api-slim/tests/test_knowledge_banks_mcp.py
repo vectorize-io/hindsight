@@ -16,7 +16,7 @@ from mcp.client.streamable_http import streamable_http_client
 from hindsight_api.extensions import KnowledgeBankReadOperation
 from hindsight_api.mcp_tools import _KNOWLEDGE_TOOLS
 from hindsight_api.models import RequestContext
-from tests.test_knowledge_banks import fake_embedder  # noqa: F401  (fixture)
+from tests.test_knowledge_banks import fake_embedder, judge  # noqa: F401  (fixtures)
 
 
 def _payload(result) -> dict:
@@ -95,6 +95,42 @@ async def test_knowledge_bank_over_mcp(memory, fake_embedder):  # noqa: F811
             async with await session(f"http://test/mcp/kb/{kb}/") as (r, w, _), ClientSession(r, w) as s:
                 await s.initialize()
                 assert (await s.call_tool("delete_knowledge_bank", {})).structuredContent == {"deleted": True}
+
+
+@pytest.mark.asyncio
+async def test_an_mcp_search_can_ask_for_the_rerank(memory, fake_embedder, judge):  # noqa: F811
+    """A server whose searches skip the reranker unless asked (kb_enable_reranking off) must let an
+    MCP caller ask, as the HTTP search's enable_reranking does; and false skips it on a server that
+    reranks by default."""
+    from hindsight_api.api import create_app
+
+    kb = f"kb-mcp-rr-{uuid.uuid4().hex[:8]}"
+    judge.settings["kb_enable_reranking"] = False
+    app = create_app(memory, mcp_api_enabled=True, initialize_memory=False)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http:
+            async with streamable_http_client("http://test/mcp/", http_client=http) as (r, w, _):
+                async with ClientSession(r, w) as s:
+                    await s.initialize()
+                    await s.call_tool("create_knowledge_bank", {"bank_id": kb})
+                    for doc in ("faq", "faq2"):
+                        await s.call_tool(
+                            "ingest_knowledge_text", {"bank_id": kb, "document_id": doc, "text": f"a blue note {doc}"}
+                        )
+
+            async with streamable_http_client(f"http://test/mcp/kb/{kb}/", http_client=http) as (r, w, _):
+                async with ClientSession(r, w) as s:
+                    await s.initialize()
+                    await s.call_tool("search_knowledge_bank", {"query": "blue"})
+                    assert judge.queries == []  # the server's default: not reranked
+                    found = await s.call_tool("search_knowledge_bank", {"query": "blue", "enable_reranking": True})
+                    assert not found.isError, found
+                    assert judge.queries == ["blue"]  # asked for: reranked
+
+                    judge.settings["kb_enable_reranking"] = True
+                    await s.call_tool("search_knowledge_bank", {"query": "blue", "enable_reranking": False})
+                    assert judge.queries == ["blue"]  # asked not to: skipped
+                    await s.call_tool("delete_knowledge_bank", {})
 
 
 @pytest.mark.asyncio

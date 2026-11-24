@@ -788,7 +788,7 @@ These work on a [knowledge bank](./knowledge-banks), and answer with the same JS
 | `create_knowledge_bank` | Creates a knowledge bank, or returns it if it exists (`bank_id`). Multi-bank mode only |
 | `get_knowledge_bank` | Document and passage counts, by status and media type |
 | `delete_knowledge_bank` | Deletes the bank and every document in it |
-| `search_knowledge_bank` | Finds passages by meaning (`query`, `max_tokens`, `budget`, `tags`, `tags_match`, `tag_groups`, `document_ids`, `media_types`) |
+| `search_knowledge_bank` | Finds passages by meaning (`query`, `max_tokens`, `budget`, `tags`, `tags_match`, `tag_groups`, `document_ids`, `media_types`, `enable_reranking`) |
 | `ingest_knowledge_text` | Adds a text or markdown document and returns once it is searchable (`text`, `document_id`, `filename`, `tags`, `strategy`) |
 | `list_knowledge_documents` | Lists documents (`q`, `status`, `media_type`, `tags`, `limit`, `offset`) |
 | `get_knowledge_document` | A document with all its passages (`document_id`) |
