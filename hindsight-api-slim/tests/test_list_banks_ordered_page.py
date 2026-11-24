@@ -19,6 +19,8 @@ import pytest
 
 import hindsight_api.engine.memories as memories_mod
 from hindsight_api.engine.memories.base import BankWritePage, BankWriteTime, MemoriesExtension
+from hindsight_api.engine.retain import bank_utils
+from hindsight_api.knowledge.service import get_knowledge_service
 from hindsight_api.models import RequestContext
 
 #: The store's write times, anchored ahead of the run rather than at a fixed date.
@@ -424,3 +426,69 @@ async def test_a_search_still_ranks_and_filters(memory, monkeypatch):
     finally:
         for name in names:
             await memory.delete_bank(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_knowledge_bank_the_store_orders_stays_out_of_the_memory_list(memory, monkeypatch):
+    """A knowledge bank the store names in its write order must not leak into the memory list.
+
+    Knowledge banks share the `banks` table and this id space, and a store that owns its memories
+    orders every bank it holds — so its write ordering can hand one back. The memory list is
+    `kind = 'memory'`; the creation-ordered half of the merge already filters on it, so the store
+    stream is the one place a knowledge bank could slip through. It must be dropped from the ORDER,
+    not just the hydrated rows.
+
+    The page is `limit = 2` over three banks, so the merge produces exactly `want = 2` ids before it
+    cuts the page. Ordered newest-written as [mem_a, knowledge, mem_b], a filter applied only at
+    hydration would let the knowledge bank take the second of those two slots and then drop it,
+    returning a one-bank page with `mem_b` lost — so the `mem_b in got` assertion is what separates
+    dropping it from the ORDER (correct) from dropping it at hydration (a short page). A `limit` wide
+    enough to hold every bank would pass either way and would not test the distinction.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    mem_a, mem_b = "kmem_a", "kmem_b"
+    knowledge = "kknow_x"
+
+    # Newest-written first, with the knowledge bank between the two memory banks.
+    store = _OrderingStore([mem_a, knowledge, mem_b])
+    monkeypatch.setattr(memories_mod, "get_memories", lambda: store)
+
+    kb_service = get_knowledge_service(memory)
+    try:
+        await _make_banks(memory, request_context, [mem_a, mem_b])
+        await kb_service.create_bank(knowledge, request_context)
+
+        page = await memory.list_banks(limit=2, offset=0, request_context=request_context)
+        got = [b["bank_id"] for b in page["banks"]]
+        assert knowledge not in got, f"a knowledge bank leaked into the memory list: {got}"
+        # Both memory banks present: the knowledge bank was dropped from the order, not from the page,
+        # so it did not consume a slot and shorten the page to one bank.
+        assert mem_a in got and mem_b in got, f"a memory bank was dropped, not just the knowledge one: {got}"
+    finally:
+        await kb_service.delete_bank(knowledge, request_context)
+        for name in (mem_a, mem_b):
+            await memory.delete_bank(name, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_list_leaves_out_a_knowledge_bank(memory):
+    """A caller scoped to a set of banks that names a knowledge bank lists only the memory banks.
+
+    The scoped path reads the allowed banks' rows by id (`list_banks_among` -> `_bank_rows`) rather
+    than through the store-ordered merge, so the filter in `_store_write_stream` does not cover it;
+    the row read itself has to keep to `kind = 'memory'`.
+    """
+    request_context = RequestContext(api_key=None, api_key_id=None, tenant_id=None, internal=False)
+    mem, knowledge = "kscope_mem", "kscope_know"
+
+    kb_service = get_knowledge_service(memory)
+    try:
+        await _make_banks(memory, request_context, [mem])
+        await kb_service.create_bank(knowledge, request_context)
+
+        backend = await memory._get_backend()
+        banks = await bank_utils.list_banks_among(backend, [mem, knowledge])
+        assert [b["bank_id"] for b in banks] == [mem], f"a knowledge bank leaked into a scoped list: {banks}"
+    finally:
+        await kb_service.delete_bank(knowledge, request_context)
+        await memory.delete_bank(mem, request_context=request_context)
