@@ -2650,7 +2650,7 @@
       "tagsHelp": "Separadas por vírgula. A busca pode filtrar por elas.",
       "filenameLabel": "Nome do arquivo",
       "filenamePlaceholder": "Padrão: id-do-documento.md",
-      "uploadHint": "PDF, imagens, áudio, vídeo, texto e Markdown, Word, PowerPoint, Excel, HTML e EPUB; até 100 MB por arquivo por padrão. Páginas PDF e imagens são processadas como imagens, áudio e vídeo em janelas curtas. Se o servidor não aceitar um arquivo, o motivo aparece aqui.",
+      "uploadHint": "PDF, imagens, áudio, vídeo, texto e Markdown, Word, PowerPoint, Excel, HTML e EPUB. Páginas PDF e imagens são processadas como imagens, áudio e vídeo em janelas curtas. Se o servidor não aceitar um arquivo, o motivo aparece aqui.",
       "allTagsLabel": "Tags para todos os arquivos",
       "applyToAll": "Aplicar a todos",
       "editFile": "Editar tags e ID deste arquivo",

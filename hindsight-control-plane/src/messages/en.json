@@ -2650,7 +2650,7 @@
       "tagsHelp": "Comma-separated. Search can filter on them.",
       "filenameLabel": "File name",
       "filenamePlaceholder": "Defaults to the document id + .md",
-      "uploadHint": "PDF, images, audio, video, text and Markdown, Word, PowerPoint, Excel, HTML and EPUB; up to 100 MB per file by default. PDF pages and images are embedded as pictures, audio and video in short windows. A file the server can't take shows its reason here.",
+      "uploadHint": "PDF, images, audio, video, text and Markdown, Word, PowerPoint, Excel, HTML and EPUB. PDF pages and images are embedded as pictures, audio and video in short windows. A file the server can't take shows its reason here.",
       "allTagsLabel": "Tags for all files",
       "applyToAll": "Apply to all",
       "editFile": "Edit tags and id for this file",

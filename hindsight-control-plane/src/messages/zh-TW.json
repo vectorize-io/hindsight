@@ -2650,7 +2650,7 @@
       "tagsHelp": "以逗號分隔。搜尋可依標籤篩選。",
       "filenameLabel": "檔案名稱",
       "filenamePlaceholder": "預設:文件 ID.md",
-      "uploadHint": "支援 PDF、圖片、音訊、影片、文字和 Markdown、Word、PowerPoint、Excel、HTML 和 EPUB;預設每個檔案最大 100 MB。PDF 頁面和圖片以影像嵌入,音訊和影片以短片段嵌入。伺服器無法接收的檔案會在這裡顯示原因。",
+      "uploadHint": "支援 PDF、圖片、音訊、影片、文字和 Markdown、Word、PowerPoint、Excel、HTML 和 EPUB。PDF 頁面和圖片以影像嵌入,音訊和影片以短片段嵌入。伺服器無法接收的檔案會在這裡顯示原因。",
       "allTagsLabel": "所有檔案的標籤",
       "applyToAll": "全部套用",
       "editFile": "編輯此檔案的標籤和 ID",
