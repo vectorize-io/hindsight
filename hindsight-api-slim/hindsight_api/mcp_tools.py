@@ -5004,6 +5004,7 @@ def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: 
         tag_groups: list[dict] | None,
         document_ids: list[str] | None,
         media_types: list[_KnowledgeMediaType] | None,
+        enable_reranking: bool | None,
     ) -> Any:
         filters = SearchFilters(
             tags=tags,
@@ -5016,7 +5017,12 @@ def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: 
             _knowledge_service(memory).search(
                 target_bank,
                 SearchRequest(
-                    query=query, query_image=None, filters=filters, max_tokens=max_tokens, budget=budget.value
+                    query=query,
+                    query_image=None,
+                    filters=filters,
+                    max_tokens=max_tokens,
+                    budget=budget.value,
+                    enable_reranking=enable_reranking,
                 ),
                 _get_request_context(config),
                 None,
@@ -5036,6 +5042,7 @@ def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: 
             tag_groups: list[dict] | None = None,
             document_ids: list[str] | None = None,
             media_types: list[_KnowledgeMediaType] | None = None,
+            enable_reranking: bool | None = None,
             bank_id: str | None = None,
         ) -> str:
             """
@@ -5052,6 +5059,8 @@ def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: 
                     or {"and": [...]}, {"or": [...]}, {"not": {...}}.
                 document_ids: Only these documents.
                 media_types: Only passages of these media types: document, image, audio, video, text.
+                enable_reranking: true reranks the best hits when the server has a knowledge reranker; false
+                    keeps the search's own order. Unset follows the server's default.
                 bank_id: Optional knowledge bank (defaults to the session bank).
             """
             return await _run_tool(
@@ -5061,7 +5070,16 @@ def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: 
                 action="searching knowledge bank",
                 knowledge=True,
                 run=lambda target_bank: _run(
-                    target_bank, query, max_tokens, budget, tags, tags_match, tag_groups, document_ids, media_types
+                    target_bank,
+                    query,
+                    max_tokens,
+                    budget,
+                    tags,
+                    tags_match,
+                    tag_groups,
+                    document_ids,
+                    media_types,
+                    enable_reranking,
                 ),
                 error_extra={"results": []},
                 value_error="rejection",
@@ -5079,6 +5097,7 @@ def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: 
             tag_groups: list[dict] | None = None,
             document_ids: list[str] | None = None,
             media_types: list[_KnowledgeMediaType] | None = None,
+            enable_reranking: bool | None = None,
         ) -> dict:
             """
             Search this knowledge bank's documents by meaning. Returns the best passages first, each
@@ -5094,6 +5113,8 @@ def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: 
                     or {"and": [...]}, {"or": [...]}, {"not": {...}}.
                 document_ids: Only these documents.
                 media_types: Only passages of these media types: document, image, audio, video, text.
+                enable_reranking: true reranks the best hits when the server has a knowledge reranker; false
+                    keeps the search's own order. Unset follows the server's default.
             """
             return await _run_tool(
                 config,
@@ -5102,7 +5123,16 @@ def _register_search_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: 
                 action="searching knowledge bank",
                 knowledge=True,
                 run=lambda target_bank: _run(
-                    target_bank, query, max_tokens, budget, tags, tags_match, tag_groups, document_ids, media_types
+                    target_bank,
+                    query,
+                    max_tokens,
+                    budget,
+                    tags,
+                    tags_match,
+                    tag_groups,
+                    document_ids,
+                    media_types,
+                    enable_reranking,
                 ),
                 error_extra={"results": []},
                 value_error="rejection",
