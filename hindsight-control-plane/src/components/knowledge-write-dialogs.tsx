@@ -516,7 +516,12 @@ export function KnowledgeAddDocumentDialog({
             </Button>
           ) : (
             <Button onClick={uploadAll} disabled={busy || pending.length === 0}>
-              {busy ? tAdd("uploading") : tAdd("uploadFiles", { count: pending.length })}
+              {busy
+                ? tAdd("uploading")
+                : // "Upload 0 Files" read oddly before any file is picked.
+                  pending.length === 0
+                  ? tAdd("tabUploadFiles")
+                  : tAdd("uploadFiles", { count: pending.length })}
             </Button>
           )}
         </DialogFooter>

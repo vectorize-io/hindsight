@@ -135,6 +135,15 @@ export function documentLabel(doc: Pick<KnowledgeDocument, "filename" | "documen
 }
 
 /**
+ * Whether a document's text passages are markdown: a .md file's own text, or what the server
+ * converted an Office, HTML or EPUB file into. Other text (.txt, .csv, code) stays as written,
+ * since markdown would join its single line breaks.
+ */
+export function hasMarkdownPassages(filename: string | null | undefined): boolean {
+  return /\.(md|markdown|docx|pptx|xlsx|xls|html?|epub)$/i.test(filename ?? "");
+}
+
+/**
  * A document's first passage media (a PDF's first page, the image itself, the first
  * audio/video window), for thumbnails. Same path the API hands out as `passage_url`.
  */

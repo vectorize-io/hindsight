@@ -10,6 +10,7 @@ import {
   formatBytes,
   formatMs,
   formatWindow,
+  hasMarkdownPassages,
   knowledgeApi,
   packUploads,
   parseTags,
@@ -162,3 +163,17 @@ describe("isPicturePassage", () => {
   });
 });
 
+
+describe("hasMarkdownPassages", () => {
+  it("is true for markdown and the files the server converts to markdown", () => {
+    for (const name of ["a.md", "b.MARKDOWN", "c.docx", "d.pptx", "e.xlsx", "f.html", "g.epub"]) {
+      expect(hasMarkdownPassages(name)).toBe(true);
+    }
+  });
+
+  it("is false for plain text, other files and no name", () => {
+    for (const name of ["a.txt", "b.csv", "c.py", "d.pdf", null, undefined]) {
+      expect(hasMarkdownPassages(name)).toBe(false);
+    }
+  });
+});
