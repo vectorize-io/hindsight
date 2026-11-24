@@ -32,6 +32,7 @@ def test_env_url_is_the_same_switch(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class _FakeServer:
     url = "http://127.0.0.1:1"
+    pid = 4242
 
     def __init__(self) -> None:
         self.stopped = False
@@ -51,4 +52,5 @@ def test_empty_url_falls_through_to_a_local_server(monkeypatch: pytest.MonkeyPat
     with eval_target() as target:
         assert target.url == server.url
         assert not target.is_remote
+        assert target.pid == server.pid
     assert server.stopped, "a server we started has to be stopped, green or red"

@@ -76,6 +76,11 @@ class EvalServer:
     #: may still want to open it once the server is gone.
     drop_pg0_on_stop: bool = False
 
+    @property
+    def pid(self) -> int:
+        """The server's process id, for measuring what it uses (memory, CPU)."""
+        return self._process.pid
+
     def logs(self) -> str:
         return self.log_path.read_text(encoding="utf-8", errors="replace")
 
