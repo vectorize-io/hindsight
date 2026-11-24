@@ -20,7 +20,8 @@ way an update reaches a page (its category in brackets):
   refresh brings a new one. The page must drop the deleted claim *and* gain the new one: one
   refresh runs two edits, the removal first. When the removal landed and the new-facts edit
   then failed, the refresh used to be stored as a success with the removal alone, moving past
-  the new memory for good (#6447);
+  the new memory for good (#6447). It runs on the evals' bank, which makes no observations, and
+  there the removal used to wait forever for a consolidation that never comes (#6855);
 * ``du-quiet-wave`` (stability) — nothing in the wave bears on the page, which must survive it;
 * ``du-rerecorded-history`` (stability) — a release history grown over five deltas, 20 releases
   to 61, each wave re-recording in other words every release the page already lists. A prompt

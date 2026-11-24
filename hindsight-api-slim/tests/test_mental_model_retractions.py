@@ -516,10 +516,13 @@ async def test_sweep_schedules_on_a_bank_without_observations_despite_pending_fa
         await _create_page(
             memory, conn, bank_id, request_context, based_on={"world": [_fact(str(live), "autocommit disabled")]}
         )
+        # Deleted in SQL, as the sibling sweep tests do: the delete APIs run the sweep
+        # themselves, and this test calls it directly to assert on its answer.
         await conn.execute(
             f"DELETE FROM {fq_store_table('memory_units')} WHERE bank_id = $1 AND id = $2", bank_id, live
         )
         pending = await _insert_memory(memory, conn, bank_id, "Autocommit is enabled again.")
+        # Forced in SQL: no public call leaves a fact pending, and that state is the subject.
         await conn.execute(
             f"UPDATE {fq_store_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND id = $2",
             bank_id,
@@ -828,6 +831,7 @@ async def test_unsay_runs_on_a_bank_without_observations_despite_pending_facts(
             },
         )
         pending = await _insert_memory(memory, conn, bank_id, "Autocommit is enabled again.")
+        # Forced in SQL: no public call leaves a fact pending, and that state is the subject.
         await conn.execute(
             f"UPDATE {fq_store_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND id = $2",
             bank_id,
