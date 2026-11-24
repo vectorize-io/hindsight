@@ -255,17 +255,19 @@ class _ScriptedLLM:
     ``replies`` is typed ``Any`` because a provider does not always hand back
     text: when the call set a ``response_format`` the OpenAI-compatible providers
     parse the body and return the object — a dict under ``skip_validation``, the
-    validated model otherwise. The delta call site passes ``skip_validation=True``
-    (see ``memory_engine``), so a dict is what a real reply looks like here, and
+    validated model otherwise. ``request_delta_operations`` sets ``skip_validation=True``
+    on every call, so a dict is what a real reply looks like here, and
     every double in this file that returned text is what hid #4965.
     """
 
     def __init__(self, *replies: Any) -> None:
         self._replies = list(replies)
         self.calls: list[list[dict]] = []
+        self.kwargs: list[dict] = []
 
     async def call(self, *, messages, scope, **kwargs):
         self.calls.append(messages)
+        self.kwargs.append(kwargs)
         reply = self._replies[len(self.calls) - 1]
         if isinstance(reply, Exception):
             raise reply
@@ -303,6 +305,21 @@ async def test_request_delta_operations_returns_a_clean_reply_in_one_call():
     op_list = await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test")
     assert len(op_list.operations) == 1
     assert len(llm.calls) == 1
+
+
+async def test_request_delta_operations_sends_the_schema_on_every_ask():
+    """A caller that names no schema still gets one — the retraction pass did not (#6569).
+
+    Without it a provider with native grammar decoding (Ollama) runs unconstrained and
+    returns off-schema ops; the retry must carry it too.
+    """
+    llm = _ScriptedLLM(_STRAY, _GOOD)
+    await request_delta_operations(llm, system_prompt="sys", user_prompt="usr", scope="test")
+    assert len(llm.kwargs) == 2
+    for kwargs in llm.kwargs:
+        assert kwargs["response_format"] is DeltaOperationList
+        assert kwargs["skip_validation"] is True
+        assert "strict_schema" in kwargs
 
 
 async def test_request_delta_operations_asks_again_with_the_errors():
