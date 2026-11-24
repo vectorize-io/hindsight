@@ -27,6 +27,12 @@ interface PreparedNode {
    * lockstep. Precomputed here so the animation loop stays trig-only.
    */
   phase: number;
+  /**
+   * False when the node's text is its cluster's own label (a knowledge document's hub
+   * node): the cluster label already names it, so an inline label would print it twice.
+   * It still gets the hover card.
+   */
+  inlineLabel: boolean;
 }
 
 /** Ambient-motion preference, shared by every constellation (not per bank). */
@@ -603,6 +609,7 @@ export function Constellation({
         heatColor: (centroid || vennActive) && !nodeHeatFn ? color : heat,
         linkCount: lc,
         phase: ((Math.abs(seed) % 1000) / 1000) * Math.PI * 2,
+        inlineLabel: !(ck != null && clusterLabelFn?.(ck) === text),
       };
     });
 
@@ -1080,6 +1087,8 @@ export function Constellation({
         // Hovered node always gets a label (skip deconfliction)
         drawLabel(ctx, n, i, sx, sy, r, true, true, isDark, zoom);
         labelsShown++;
+      } else if (!n.inlineLabel) {
+        // Named by its cluster label already.
       } else if (zoom > 1.5) {
         const cardW = Math.min(200, 80 + zoom * 25);
         const cardH = 50;

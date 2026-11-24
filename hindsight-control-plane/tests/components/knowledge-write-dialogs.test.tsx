@@ -105,4 +105,19 @@ describe("KnowledgeAddDocumentDialog upload", () => {
     expect(upload).toHaveBeenCalledTimes(1);
     expect((upload.mock.calls[0][1] as File[]).map((f) => f.name)).toEqual(["a.pdf", "b.png", "c.txt"]);
   });
+
+  it("labels the button without a count until a file is picked", () => {
+    render(
+      <KnowledgeAddDocumentDialog
+        bankId="docs"
+        open
+        initialTab="upload"
+        initialFiles={[]}
+        onOpenChange={() => {}}
+        onWritten={() => {}}
+      />
+    );
+    expect((screen.getByRole("button", { name: "tabUploadFiles" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByText("uploadFiles")).toBeNull();
+  });
 });

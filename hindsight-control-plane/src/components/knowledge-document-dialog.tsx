@@ -35,7 +35,8 @@ import {
 } from "@/lib/knowledge-banks";
 import { cn } from "@/lib/utils";
 import { InfoCard, MetadataRow } from "@/components/documents-view";
-import { CompactMarkdown } from "@/components/compact-markdown";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   KindIcon,
   PassageLocation,
@@ -260,8 +261,10 @@ function OriginalPreview({ doc }: { doc: KnowledgeDocumentDetail }) {
   if (isText) {
     if (text === null) return <Spinner size="md" />;
     return /\.(md|markdown)$/i.test(doc.filename ?? "") ? (
+      // Full markdown under prose, not CompactMarkdown: that one shrinks every heading to a
+      // small uppercase caption, which suits a chat answer but not a whole document.
       <div className="prose prose-sm dark:prose-invert max-w-none rounded-lg border border-border bg-muted/20 p-6">
-        <CompactMarkdown>{text}</CompactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
       </div>
     ) : (
       <pre className="whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/20 p-4 font-mono text-xs">
@@ -362,7 +365,10 @@ export function KnowledgeDocumentDialog({
           <DialogHeader className="pr-10">
             <DialogTitle className="flex items-center gap-2">
               {doc && <KindIcon kind={doc.media_type} />}
-              <span className="truncate font-mono text-sm">{documentId}</span>
+              {/* The file name once loaded; the id stays on the General tab. */}
+              <span className={cn("truncate text-sm", !doc && "font-mono")}>
+                {doc ? documentLabel(doc) : documentId}
+              </span>
               {doc && <StatusMark status={doc.status} error={doc.error} />}
             </DialogTitle>
           </DialogHeader>
@@ -447,6 +453,12 @@ export function KnowledgeDocumentDialog({
                         icon={<FileText className="w-3.5 h-3.5" />}
                       >
                         {doc.filename && <MetadataRow label={t("filename")} value={doc.filename} />}
+                        <MetadataRow
+                          label={t("documentId")}
+                          value={
+                            <span className="font-mono text-xs break-all">{doc.document_id}</span>
+                          }
+                        />
                         <MetadataRow label={t("contentType")} value={doc.content_type} />
                         <MetadataRow label={t("size")} value={formatBytes(doc.size_bytes)} />
                         <MetadataRow
