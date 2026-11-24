@@ -47,6 +47,16 @@ async def test_a_directive_round_trips_through_the_api(client, bank_with_facts):
     assert [d.content for d in listing.items] == [DIRECTIVE]
 
 
+async def test_a_first_directive_creates_the_bank(client, bank_id):
+    """A directive is a bank-scoped write like retain, so a bank nobody created yet is made on
+    first use — not a 500 carrying the raw foreign-key error (#6853)."""
+    created = await client.acreate_directive(bank_id=bank_id, name="french", content=DIRECTIVE)
+
+    assert created.bank_id == bank_id
+    listing = await client.alist_directives(bank_id=bank_id)
+    assert [d.id for d in listing.items] == [created.id]
+
+
 async def test_the_directive_text_reaches_the_reflect_prompt(client, llm, bank_with_facts):
     """The assertion that makes the feature real.
 

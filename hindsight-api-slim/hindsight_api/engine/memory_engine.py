@@ -22537,21 +22537,33 @@ class MemoryEngine(MemoryEngineInterface):
         self._refuse_unwritable(tags, await self._write_tag_scope(bank_id, request_context), "a directive")
         backend = await self._get_backend()
 
-        async with acquire_with_retry(backend) as conn:
-            row = await conn.fetchrow(
-                f"""
-                INSERT INTO {fq_table("directives")}
-                (bank_id, name, content, priority, is_active, tags)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING id, bank_id, name, content, priority, is_active, tags, created_at, updated_at
-                """,
-                bank_id,
-                name,
-                content,
-                priority,
-                is_active,
-                tags or [],
-            )
+        # A first write to a new bank creates it, like retain and pinned mental models do (#6853).
+        # Same transaction as the insert, retried whole: see create_mental_model for why (#5830).
+        created = False
+
+        async def _write() -> Any:
+            nonlocal created
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    created = await self._ensure_bank_exists(bank_id, request_context, conn=conn)
+                    return await conn.fetchrow(
+                        f"""
+                        INSERT INTO {fq_table("directives")}
+                        (bank_id, name, content, priority, is_active, tags)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        RETURNING id, bank_id, name, content, priority, is_active, tags, created_at, updated_at
+                        """,
+                        bank_id,
+                        name,
+                        content,
+                        priority,
+                        is_active,
+                        tags or [],
+                    )
+
+        row = await retry_with_backoff(_write)
+        if created:
+            await self._apply_default_bank_template(bank_id, request_context)
 
         logger.info(f"[DIRECTIVES] Created directive '{name}' for bank {bank_id}")
         return self._row_to_directive(row)
