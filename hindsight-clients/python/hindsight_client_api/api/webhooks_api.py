@@ -16,7 +16,7 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictInt, StrictStr
+from pydantic import Field, StrictStr
 from typing import Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.create_webhook_request import CreateWebhookRequest
@@ -648,7 +648,7 @@ class WebhooksApi:
         self,
         bank_id: StrictStr,
         webhook_id: StrictStr,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200.")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200.")] = None,
         cursor: Annotated[Optional[StrictStr], Field(description="Pagination cursor (created_at of last item)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -732,7 +732,7 @@ class WebhooksApi:
         self,
         bank_id: StrictStr,
         webhook_id: StrictStr,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200.")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200.")] = None,
         cursor: Annotated[Optional[StrictStr], Field(description="Pagination cursor (created_at of last item)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -816,7 +816,7 @@ class WebhooksApi:
         self,
         bank_id: StrictStr,
         webhook_id: StrictStr,
-        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200.")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200.")] = None,
         cursor: Annotated[Optional[StrictStr], Field(description="Pagination cursor (created_at of last item)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[

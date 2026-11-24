@@ -6945,6 +6945,7 @@ paths:
           default: 50
           description: Maximum number of deliveries to return. Values above 200 are
             trimmed to 200.
+          minimum: 1
           title: Limit
           type: integer
         style: form

@@ -9964,6 +9964,7 @@
             "required": false,
             "schema": {
               "type": "integer",
+              "minimum": 1,
               "description": "Maximum number of deliveries to return. Values above 200 are trimmed to 200.",
               "default": 50,
               "title": "Limit"

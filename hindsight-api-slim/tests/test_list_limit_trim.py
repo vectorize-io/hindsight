@@ -79,3 +79,32 @@ async def test_a_limit_under_the_cap_is_kept(api_client, bank):
     r = await api_client.get(f"/v1/default/banks/{bank}/memories/list", params={"limit": 7})
     assert r.status_code == 200, r.text
     assert r.json()["limit"] == 7
+
+
+def test_every_endpoint_that_takes_a_limit_trims_it(memory):
+    """Family guard: a new list endpoint written as a plain ``Query(ge=0)`` would be
+    uncapped again. Every ``limit`` query param must carry a ``trim_to`` validator."""
+    from fastapi.routing import APIRoute
+    from pydantic.functional_validators import AfterValidator
+
+    from hindsight_api.api import create_app
+
+    app = create_app(memory, initialize_memory=False)
+    routes = [
+        (route.path, param)
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        for param in route.dependant.query_params
+        if param.name == "limit"
+    ]
+    assert routes, "no route takes a limit; the guard is looking in the wrong place"
+    untrimmed = [
+        path for path, param in routes if not any(isinstance(m, AfterValidator) for m in param.field_info.metadata)
+    ]
+    assert untrimmed == []
+
+
+async def test_webhook_deliveries_refuse_a_negative_limit(api_client, bank):
+    # It was the one list endpoint with no lower bound: -1 reached the SQL LIMIT.
+    r = await api_client.get(f"/v1/default/banks/{bank}/webhooks/any/deliveries", params={"limit": -1})
+    assert r.status_code == 422, r.text

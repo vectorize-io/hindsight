@@ -51,7 +51,7 @@ _TAG_GROUP_LIST_ADAPTER = TypeAdapter(list[TagGroup])
 # the cap is trimmed to it on both.
 _Offset = Annotated[int, Field(ge=0)]
 _Limit = Annotated[int, Field(ge=0), TRIM_TO_PAGE]
-_Limit1000 = Annotated[int, Field(ge=1), TRIM_TO_PAGE]
+_PositiveLimit = Annotated[int, Field(ge=1), TRIM_TO_PAGE]
 _OperationsLimit = Annotated[int, Field(ge=1), trim_to(100)]
 
 # All tools available in the system (explicit list — no wildcards).
@@ -1939,7 +1939,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool(annotations=_tool_annotations("list_mental_models"), output_schema=None)
         async def list_mental_models(
             tags: list[str] | None = None,
-            limit: _Limit1000 = 100,
+            limit: _PositiveLimit = 100,
             offset: _Offset = 0,
             bank_id: str | None = None,
         ) -> str:
@@ -1973,7 +1973,7 @@ def _register_list_mental_models(mcp: FastMCP, memory: MemoryEngine, config: MCP
         @mcp.tool(annotations=_tool_annotations("list_mental_models"))
         async def list_mental_models(
             tags: list[str] | None = None,
-            limit: _Limit1000 = 100,
+            limit: _PositiveLimit = 100,
             offset: _Offset = 0,
         ) -> dict:
             """
@@ -3420,7 +3420,7 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
         async def list_directives(
             tags: list[str] | None = None,
             active_only: bool = True,
-            limit: _Limit1000 = 100,
+            limit: _PositiveLimit = 100,
             offset: _Offset = 0,
             bank_id: str | None = None,
         ) -> str:
@@ -3452,7 +3452,7 @@ def _register_list_directives(mcp: FastMCP, memory: MemoryEngine, config: MCPToo
         async def list_directives(
             tags: list[str] | None = None,
             active_only: bool = True,
-            limit: _Limit1000 = 100,
+            limit: _PositiveLimit = 100,
             offset: _Offset = 0,
         ) -> dict:
             """

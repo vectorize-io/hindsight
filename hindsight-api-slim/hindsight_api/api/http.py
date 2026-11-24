@@ -9710,7 +9710,7 @@ def _register_routes(app: FastAPI):
         webhook_id: str,
         limit: Annotated[
             int,
-            Query(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200."),
+            Query(ge=1, description="Maximum number of deliveries to return. Values above 200 are trimmed to 200."),
             trim_to(200),
         ] = 50,
         cursor: str | None = Query(default=None, description="Pagination cursor (created_at of last item)"),
