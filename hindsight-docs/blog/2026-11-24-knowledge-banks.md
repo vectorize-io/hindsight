@@ -154,7 +154,7 @@ Two customers ask the exact same question, and only Amara has an exception. Both
 
 **Search: meaning, the rare words, then a token budget.** A search runs two searches side by side: one by meaning, and one by the query's rare words ("X200", a policy number, a name), in any language. Every candidate is scored from all its vectors, keyword matches are mixed in, a reranker can reorder the top ones, and the best hits come back with the text around them until your `max_tokens` is full. Your agent gets the paragraph, not a cut sentence, and every result points to its page or its second in the original file.
 
-The full picture is in the [Knowledge Banks docs](/next/developer/knowledge-banks).
+The full picture is in the [Knowledge Banks docs](/developer/knowledge-banks).
 
 ## State-of-the-art search: first on contracts and personal media, second on enterprise PDFs
 
@@ -215,7 +215,7 @@ Both models a knowledge bank needs are now on [Hindsight Inference](https://infe
 - **`embeddinggemma-2`:** Google's multimodal EmbeddingGemma, text, images, audio and video in one 768-dimension space. 1,000 images cost about $0.014. On Inference a video is read from its frames; the in-process model also hears its soundtrack.
 - **`hs-decide-1-flash-mm`:** our decision reranker, for text and images. Reranking 1,000 PDF pages costs about $0.11.
 
-Point a self-hosted server at them and you get a knowledge bank without running a model yourself. See [Configuration](/next/developer/configuration#knowledge-banks) for the settings.
+Point a self-hosted server at them and you get a knowledge bank without running a model yourself. See [Configuration](/developer/configuration#knowledge-banks) for the settings.
 
 ## At scale: Memlake on Hindsight Enterprise
 
@@ -235,9 +235,9 @@ hindsight kb search manuals "the pump keeps losing pressure"
 hindsight bank set-config support-agent --knowledge-banks manuals
 ```
 
-EmbeddingGemma 2 runs inside the Hindsight API process by default. To call it on [Hindsight Inference](https://inference.hindsight.vectorize.io) with `hs-decide-1-flash-mm` as the reranker, or to use Gemini, Vertex, Voyage, Cohere or any OpenAI-compatible server, see [Configuration](/next/developer/configuration#knowledge-banks).
+EmbeddingGemma 2 runs inside the Hindsight API process by default. To call it on [Hindsight Inference](https://inference.hindsight.vectorize.io) with `hs-decide-1-flash-mm` as the reranker, or to use Gemini, Vertex, Voyage, Cohere or any OpenAI-compatible server, see [Configuration](/developer/configuration#knowledge-banks).
 
 - **Hindsight Cloud:** knowledge banks are on for every account. Open **Knowledge Banks** in the console, drop in your files and search.
-- **Every endpoint:** [Knowledge Banks API](/next/developer/api/knowledge-banks), with examples for Python, Node.js, Go, the CLI and HTTP.
+- **Every endpoint:** [Knowledge Banks API](/developer/api/knowledge-banks), with examples for Python, Node.js, Go, the CLI and HTTP.
 - **Every result:** [benchmarks.hindsight.vectorize.io](https://benchmarks.hindsight.vectorize.io/benchmarks), and [Agent Memory Benchmark](https://agentmemorybenchmark.ai) to run them yourself.
 - Star us on [GitHub](https://github.com/vectorize-io/hindsight).
