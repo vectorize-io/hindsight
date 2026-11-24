@@ -347,9 +347,13 @@ async def current_document_tags(
 ) -> DocumentTags:
     """The tags the `documents` row carries; ``found=False`` when there is no row.
 
-    ``for_update`` row-locks the document until the caller's transaction ends.
+    ``for_update`` row-locks the document until the caller's transaction ends. ``FOR NO KEY
+    UPDATE``, not ``FOR UPDATE``: the id stays put, and ``FOR UPDATE`` would also block the
+    ``FOR KEY SHARE`` a foreign-key check takes on this row. An invalidate of one of the
+    document's memories holds that memory and inserts its archive row (FK to this document),
+    while the tag update holding this lock writes that memory next: a deadlock (#6670).
     """
-    _lock = " FOR UPDATE" if for_update else ""
+    _lock = " FOR NO KEY UPDATE" if for_update else ""
     _doc_row = await conn.fetchrow(
         f"SELECT tags FROM {fq_table('documents')} WHERE id = $1 AND bank_id = $2{_lock}",
         document_id,

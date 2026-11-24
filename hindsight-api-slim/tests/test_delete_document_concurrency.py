@@ -650,3 +650,50 @@ async def test_tag_update_drops_the_deleted_observations_history(
     assert [u["fact_type"] for u in units["items"]] == ["world", "world"]
     # Raw SQL: the engine's history read needs the observation itself, which is gone by now.
     assert await race.setup.fetchval("SELECT count(*) FROM observation_history WHERE observation_id=$1", obs_id) == 0
+
+
+async def test_tag_update_and_invalidate_of_its_own_memory_both_complete(
+    delete_race: DeleteRace, request_context: RequestContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Catches #6670: the tag update held its document row FOR UPDATE, which blocks the FOR KEY
+    # SHARE the invalidate's archive insert takes on that row for its foreign key, while the
+    # invalidate held the memory the tag update writes next. Postgres killed one of them.
+    race = delete_race
+    first, second = race.engines
+    bank = race.banks[0]
+    unit_id = await race.setup.fetchval("SELECT id FROM memory_units WHERE bank_id=$1 AND document_id='a'", bank)
+    # The fixture's bare engine has no resolver; the curation path only clears it on the way out.
+    second.entity_resolver = SimpleNamespace(discard_pending_stats=lambda: None)
+    paused, release = asyncio.Event(), asyncio.Event()
+    fetchrow = PostgresConnection.fetchrow
+
+    async def pause_after_document_lock(conn, query, *args, **kwargs):
+        result = await fetchrow(conn, query, *args, **kwargs)
+        if query.startswith("SELECT tags FROM") and "UPDATE" in query and args == ("a", bank):
+            paused.set()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(PostgresConnection, "fetchrow", pause_after_document_lock)
+    tasks = [asyncio.create_task(first.update_document("a", bank, tags=["team-a"], request_context=request_context))]
+    try:
+        await asyncio.wait_for(paused.wait(), STEP_TIMEOUT)
+        tasks.append(
+            asyncio.create_task(
+                second.update_memory_unit(
+                    bank, str(unit_id), state="invalidated", reason="wrong", request_context=request_context
+                )
+            )
+        )
+        # The invalidate must finish while the tag update still holds its document row.
+        await asyncio.wait_for(asyncio.shield(tasks[1]), STEP_TIMEOUT)
+    finally:
+        release.set()
+        results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 20)
+    assert results[0] is True and not isinstance(results[1], BaseException), [repr(r) for r in results]
+    document = await first.get_document("a", bank, request_context=request_context)
+    assert document is not None and document["tags"] == ["team-a"]
+    archived = await first.list_memory_units(bank, state="invalidated", request_context=request_context)
+    assert [u["id"] for u in archived["items"]] == [str(unit_id)]
+    live = await first.list_memory_units(bank, document_id="a", request_context=request_context)
+    assert live["items"] == []
