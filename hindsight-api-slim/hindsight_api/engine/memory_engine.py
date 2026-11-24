@@ -19267,6 +19267,11 @@ class MemoryEngine(MemoryEngineInterface):
         final_content = reflect_result.text
         final_structured: StructuredDocument | None = None
         delta_applied = False
+        # The unsay pass has its own flag, apart from ``delta_applied``: when new facts
+        # follow, the unsay edits only stand if the new-facts delta lands too. Sharing
+        # one flag let a failed new-facts delta write the unsay-only document and move
+        # the watermark past the facts it never added (#6447).
+        unsay_applied = False
         delta_operations: MentalModelDeltaOperations | None = None
         # Both op calls share one LLM handle, built on first use so a refresh that
         # neither retracts nor has new facts still pays no config resolution.
@@ -19343,9 +19348,7 @@ class MemoryEngine(MemoryEngineInterface):
                         cleaned_doc = drop_inline_citations(unsay_outcome.document, retracted.ids)
                         if unsay_outcome.applied or cleaned_doc != unsay_outcome.document:
                             current_doc = cleaned_doc
-                            final_structured = cleaned_doc
-                            final_content = render_document(cleaned_doc)
-                            delta_applied = True
+                            unsay_applied = True
                         logger.info(
                             f"[MENTAL_MODELS] Retraction pass for {mental_model_id}: "
                             f"{len(retracted.facts)} retracted fact(s), applied "
@@ -19376,11 +19379,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # already removed still stands: the document changed, so this is a
                 # write, not a preserved no-op.
                 if not supporting_facts:
-                    reflect_response_payload["delta_applied"] = delta_applied
+                    reflect_response_payload["delta_applied"] = unsay_applied
                     if retraction_operations is not None:
                         reflect_response_payload["delta_operations_applied"] = retraction_operations.applied
                         reflect_response_payload["delta_operations_skipped"] = retraction_operations.skipped
-                    if not delta_applied:
+                    if not unsay_applied:
                         reflect_response_payload["delta_skipped_reason"] = "no_new_facts"
                     if retraction_handled:
                         reflect_response_payload["based_on"] = prune_based_on(
@@ -19389,10 +19392,10 @@ class MemoryEngine(MemoryEngineInterface):
                     return _finish(
                         effective_mode="delta",
                         mode_fallback_reason=None,
-                        final_content=final_content if delta_applied else current_content,
-                        final_structured=final_structured,
+                        final_content=render_document(current_doc) if unsay_applied else current_content,
+                        final_structured=current_doc if unsay_applied else None,
                         delta_operations=retraction_operations,
-                        outcome="content_written" if delta_applied else "content_preserved_no_new_facts",
+                        outcome="content_written" if unsay_applied else "content_preserved_no_new_facts",
                     )
 
                 # Op JSON is denser than the rendered markdown — each op
@@ -19535,8 +19538,10 @@ class MemoryEngine(MemoryEngineInterface):
             # citing a memory that no longer exists. Only for a pass that actually ran:
             # a deferred or failed one must keep its ids, because they are the sole
             # remaining evidence that the prose is unsupported — pruning them would
-            # leave the stale claim in place with nothing left to notice it.
-            if retraction_handled:
+            # leave the stale claim in place with nothing left to notice it. The same
+            # holds when the new-facts delta failed: the refresh is refused, the unsay
+            # edits are not written, so the next refresh must see the retraction again.
+            if retraction_handled and delta_applied:
                 reflect_response_payload["based_on"] = prune_based_on(
                     reflect_response_payload["based_on"], retracted.ids
                 )

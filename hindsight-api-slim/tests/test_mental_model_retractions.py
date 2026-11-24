@@ -806,6 +806,124 @@ async def test_failed_unsay_keeps_the_citation_so_the_next_refresh_retries(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("new_facts_failure", ["all_ops_skipped", "call_raises"])
+async def test_failed_new_facts_delta_fails_the_refresh_even_after_an_unsay_edit(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect, new_facts_failure
+):
+    """#6447: the unsay pass edited the page, then the new-facts delta failed.
+
+    Writing the unsay-only document would move the watermark past the new facts, so
+    no later delta would ever show them to the page. The refresh must fail instead,
+    leaving content, citations and watermark as they were, so the next one retries both.
+    """
+    from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+    bank_id = f"test-retract-newfail-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Tests run on every push.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={
+                "world": [_fact(gone_id, "Retired.", "world"), _fact(str(live), "Tests run on every push.", "world")]
+            },
+        )
+        # Written after the watermark, so the next delta window contains it.
+        new = await _insert_memory(memory, conn, bank_id, "Releases are cut on Fridays.")
+        before = await _staleness_row(conn, bank_id, mm_id)
+
+    # A new fact arrived, so the new-facts delta runs after the unsay pass.
+    patch_reflect(memory, text="Releases are cut on Fridays.", facts=[_fact(str(new), "Releases are cut on Fridays.")])
+    calls = _patch_op_calls(
+        monkeypatch,
+        memory,
+        retraction_ops=[_remove_first_block_of("conventions")],
+        delta_ops=[{"op": "append_block", "section_id": "no-such-section", "text": "x"}],
+    )
+    if new_facts_failure == "call_raises":
+        routed = memory._mental_model_refresh_llm_config.call
+
+        async def failing_delta(*, messages, **kwargs):
+            from hindsight_api.engine.reflect.prompts import STRUCTURED_RETRACTION_SYSTEM_PROMPT
+
+            if messages[0]["content"] != STRUCTURED_RETRACTION_SYSTEM_PROMPT:
+                raise ValueError("model returned garbage")
+            return await routed(messages=messages, **kwargs)
+
+        monkeypatch.setattr(memory._mental_model_refresh_llm_config, "call", failing_delta)
+
+    with pytest.raises(MentalModelRefreshError) as failed:
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm_id, request_context=request_context)
+    expected_reason = "delta_ops_all_skipped" if new_facts_failure == "all_ops_skipped" else "delta_ops_failed"
+    assert failed.value.reason == expected_reason
+
+    assert any(call["kind"] == "retraction" for call in calls), "the unsay pass must have run"
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    assert stored["content"] == _PAGE_CONTENT, "the unsay-only document must not be written"
+    assert gone_id in based_on_fact_ids(stored["reflect_response"]["based_on"]), "the retraction must be retried"
+    async with pool.acquire() as conn:
+        after = await _staleness_row(conn, bank_id, mm_id)
+    assert after["last_memory_seen_at"] == before["last_memory_seen_at"], "the watermark must not move"
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_unsay_and_new_facts_both_land_in_one_refresh(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
+):
+    """The new-facts delta edits the document the unsay pass left, and both are written."""
+    bank_id = f"test-retract-both-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Tests run on every push.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={
+                "world": [_fact(gone_id, "Retired.", "world"), _fact(str(live), "Tests run on every push.", "world")]
+            },
+        )
+        before = await _staleness_row(conn, bank_id, mm_id)
+        new = await _insert_memory(memory, conn, bank_id, "Releases are cut on Fridays.")
+
+    patch_reflect(memory, text="Releases are cut on Fridays.", facts=[_fact(str(new), "Releases are cut on Fridays.")])
+    _patch_op_calls(
+        monkeypatch,
+        memory,
+        retraction_ops=[_remove_first_block_of("conventions")],
+        delta_ops=[{"op": "append_block", "section_id": "conventions", "text": "Releases are cut on Fridays."}],
+    )
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
+    )
+
+    assert refreshed is not None
+    assert "Autocommit is disabled" not in refreshed["content"], "the unsay edit must survive the new-facts pass"
+    assert "Releases are cut on Fridays." in refreshed["content"]
+    assert "Tests run on every push" in refreshed["content"]
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    assert gone_id not in based_on_fact_ids(stored["reflect_response"]["based_on"])
+    async with pool.acquire() as conn:
+        after = await _staleness_row(conn, bank_id, mm_id)
+    assert after["last_memory_seen_at"] > before["last_memory_seen_at"]
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
 async def test_full_mode_needs_no_unsay_pass(
     memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
 ):
