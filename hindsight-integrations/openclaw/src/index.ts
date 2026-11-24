@@ -2433,7 +2433,7 @@ export default function (api: MoltbotPluginAPI) {
           debug(`[Hindsight] API Port: ${apiPort}`);
         }
 
-        // Initialize (runs synchronously in service.start())
+        // Initialize; start() does not wait for it (see below)
         debug("[Hindsight] Starting initialization...");
         initPromise = (async () => {
           try {
