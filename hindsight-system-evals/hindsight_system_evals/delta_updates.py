@@ -400,11 +400,6 @@ async def build(client: Hindsight, bank_id: str, case: DeltaUpdate, settle: Sett
     """Write the page from wave 1, update it from wave 2, and snapshot each."""
     outcome = PageOutcome(question_id=case.question.id, category=case.question.category, bank_id=bank_id)
     await prepare_bank(client, bank_id)
-    if case.retracted:
-        # A refresh removes what rests on a deleted memory only once consolidation has
-        # caught up, so it never runs on a bank whose consolidation is off — which
-        # prepare_bank turns off to save model calls. This case pays for it to be on.
-        await client.aupdate_bank_config(bank_id, enable_observations=True, enable_auto_consolidation=True)
     created = await create_page(client, bank_id, case.question)
     outcome.page_id, outcome.mental_model_id = created.page_id, created.mental_model_id
     await settle(bank_id)

@@ -18901,6 +18901,10 @@ class MemoryEngine(MemoryEngineInterface):
                 from .memories import get_memories
 
                 store = get_memories()
+                # Resolved before taking the read connection: the resolver can need a
+                # connection of its own, and holding one while it waits for another can
+                # exhaust a small pool.
+                bank_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
                 async with self._store_read_conn(bank_id) as conn:
                     live_ids = await store.live_memory_ids(
                         conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=cited_ids
@@ -18915,8 +18919,14 @@ class MemoryEngine(MemoryEngineInterface):
                         # whose replacement does not exist, and because the ids leave
                         # ``based_on`` with it, nothing would ever notice again. Wait for the
                         # bank to be caught up instead; staleness re-offers this every round.
+                        #
+                        # Only a bank that makes observations has anything to wait for. With
+                        # observations off nothing is ever consolidated, so ``pending`` never
+                        # drains and the wait deferred the pass forever: a deleted memory's
+                        # claims stayed on the page for good (#6855). There, the replacement
+                        # facts exist as soon as their retain commits.
                         freshness = await store.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
-                        if freshness.get("pending"):
+                        if bank_config.enable_observations and freshness.get("pending"):
                             retraction_deferred_reason = (
                                 f"{freshness['pending']} fact(s) are still pending consolidation"
                             )
@@ -21980,6 +21990,7 @@ class MemoryEngine(MemoryEngineInterface):
         if self._llm_config.provider == "none":
             return 0
         try:
+            bank_config = await self._config_resolver.resolve_full_config(bank_id, request_context)
             backend = await self._get_backend()
             async with acquire_with_retry(backend) as conn:
                 # Someone else is already going to notice. Consolidation is pending, and
@@ -21989,7 +22000,11 @@ class MemoryEngine(MemoryEngineInterface):
                 # (A bank with auto-consolidation off never reaches that hook; its
                 # cron-refreshed pages are still covered by the scheduled loop, and its
                 # manually refreshed ones were never this function's business.)
-                if await get_memories().has_pending_consolidation(conn=conn, fq_table=fq_table, bank_id=bank_id):
+                # A bank without observations never consolidates, so its facts read as
+                # pending forever and nothing would ever schedule this refresh (#6855).
+                if bank_config.enable_observations and await get_memories().has_pending_consolidation(
+                    conn=conn, fq_table=fq_table, bank_id=bank_id
+                ):
                     return 0
                 rows = await conn.fetch(
                     f"""

@@ -499,6 +499,40 @@ async def test_sweep_defers_to_consolidation_when_facts_are_pending(
     await memory.delete_bank(bank_id, request_context=request_context)
 
 
+@pytest.mark.asyncio
+async def test_sweep_schedules_on_a_bank_without_observations_despite_pending_facts(
+    memory: MemoryEngine, request_context: RequestContext
+):
+    """#6855: with observations off nothing is ever consolidated, so "pending" never drains.
+
+    Waiting on it would mean never scheduling the refresh that removes the deleted claim.
+    """
+    bank_id = f"test-retract-noobs-sweep-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    await memory.update_bank_config(bank_id, {"enable_observations": False}, request_context=request_context)
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Autocommit is disabled.")
+        await _create_page(
+            memory, conn, bank_id, request_context, based_on={"world": [_fact(str(live), "autocommit disabled")]}
+        )
+        await conn.execute(
+            f"DELETE FROM {fq_store_table('memory_units')} WHERE bank_id = $1 AND id = $2", bank_id, live
+        )
+        pending = await _insert_memory(memory, conn, bank_id, "Autocommit is enabled again.")
+        await conn.execute(
+            f"UPDATE {fq_store_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND id = $2",
+            bank_id,
+            pending,
+        )
+
+    submit = AsyncMock(return_value={"operation_id": "op-1"})
+    with patch.object(memory, "submit_async_refresh_mental_model", new=submit):
+        assert await memory._submit_refreshes_for_retracted_grounding(bank_id, request_context=request_context) == 1
+    submit.assert_awaited_once()
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
 # ---------------------------------------------------------------------------
 # The unsay pass: a delta refresh removing what a retracted fact supported
 # ---------------------------------------------------------------------------
@@ -763,6 +797,60 @@ async def test_unsay_is_deferred_while_facts_are_pending_consolidation(
     # prose is unsupported, so pruning it would strand the stale claim.
     stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
     assert gone_id in based_on_fact_ids(stored["reflect_response"]["based_on"])
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_unsay_runs_on_a_bank_without_observations_despite_pending_facts(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
+):
+    """#6855: the consolidation wait has nothing to wait for when observations are off.
+
+    Such a bank never consolidates, so every fact stays pending and the deferral above
+    used to hold the deleted claim on the page forever.
+    """
+    bank_id = f"test-retract-noobs-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    await memory.update_bank_config(bank_id, {"enable_observations": False}, request_context=request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Tests run on every push.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={
+                "world": [_fact(gone_id, "Retired.", "world"), _fact(str(live), "Tests run on every push.", "world")]
+            },
+        )
+        pending = await _insert_memory(memory, conn, bank_id, "Autocommit is enabled again.")
+        await conn.execute(
+            f"UPDATE {fq_store_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND id = $2",
+            bank_id,
+            pending,
+        )
+
+    patch_reflect(memory, text="No new information.")
+    calls = _patch_op_calls(
+        monkeypatch,
+        memory,
+        retraction_ops=[_remove_first_block_of("conventions")],
+        delta_ops=[],
+    )
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
+    )
+
+    assert refreshed is not None
+    assert [call for call in calls if call["kind"] == "retraction"], "the unsay must run"
+    assert "Autocommit is disabled" not in refreshed["content"]
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    assert gone_id not in based_on_fact_ids(stored["reflect_response"]["based_on"])
 
     await memory.delete_bank(bank_id, request_context=request_context)
 
