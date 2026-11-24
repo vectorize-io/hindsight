@@ -1,0 +1,76 @@
+---
+sidebar_position: 1
+---
+
+import CodeSnippet from '@site/src/components/CodeSnippet';
+import pythonSdkPy from '!!raw-loader!@site/examples/api/python-sdk.py';
+
+# Python Client
+
+Official HTTP client for the Hindsight API. Use this when you have a Hindsight server already running — locally, in Docker, or as a managed service — and you want a typed Python client to talk to it.
+
+If you want to **embed and run a Hindsight server in your Python process** (no external server required), see [Embedded Python (hindsight-all)](./hindsight-all.md) instead.
+
+## Installation
+
+```bash
+pip install hindsight-client
+```
+
+## Quick Start
+
+<CodeSnippet code={pythonSdkPy} section="quickstart" language="python" />
+
+## Client Initialization
+
+<CodeSnippet code={pythonSdkPy} section="client-init" language="python" />
+
+For operations the helper methods don't cover, the client also exposes the full generated API as async namespaces (`client.banks`, `client.memory`, `client.documents`, `client.mental_models`, `client.directives`, ...). Their methods must be awaited.
+
+## Core Operations
+
+### Version and Feature Checks
+
+<CodeSnippet code={pythonSdkPy} section="get-version" language="python" />
+
+The async client method is available as `await client.aget_version()`.
+
+### Retain (Store Memory)
+
+<CodeSnippet code={pythonSdkPy} section="retain" language="python" />
+
+### Retain Batch
+
+<CodeSnippet code={pythonSdkPy} section="retain-batch" language="python" />
+
+### Recall (Search)
+
+<CodeSnippet code={pythonSdkPy} section="recall" language="python" />
+
+### Recall with Chunks
+
+<CodeSnippet code={pythonSdkPy} section="recall-chunks" language="python" />
+
+### Reflect (Generate Response)
+
+<CodeSnippet code={pythonSdkPy} section="reflect" language="python" />
+
+## Bank Management
+
+### Create Bank
+
+<CodeSnippet code={pythonSdkPy} section="create-bank" language="python" />
+
+### List Memories
+
+<CodeSnippet code={pythonSdkPy} section="list-memories" language="python" />
+
+## Async Support
+
+All methods have async versions prefixed with `a`:
+
+<CodeSnippet code={pythonSdkPy} section="async" language="python" />
+
+## Context Manager
+
+<CodeSnippet code={pythonSdkPy} section="context-manager" language="python" />
