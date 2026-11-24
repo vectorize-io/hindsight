@@ -185,10 +185,12 @@ beforeAll(async () => {
   // Load the plugin — registers hooks and starts background init.
   pluginFn(handle.api);
 
-  // service.start() awaits initPromise and health-checks the external API.
+  // service.start() returns before init finishes (OpenClaw stops a service whose
+  // start runs past ~5s); hooks wait on it the same way this does.
   await handle.startServices();
+  await (globalThis as any).__hindsightClient.waitForReady();
 
-  // After startServices the client must be ready.
+  // After init the client must be ready.
   if (!getClient())
     throw new Error("[Hooks Integration] Client not initialized after service start");
 
