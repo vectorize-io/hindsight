@@ -203,7 +203,7 @@ type ApiGetEntityGraphRequest struct {
 	authorization *string
 }
 
-// Maximum number of co-occurrence edges to return
+// Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000.
 func (r ApiGetEntityGraphRequest) Limit(limit int32) ApiGetEntityGraphRequest {
 	r.limit = &limit
 	return r
@@ -392,7 +392,7 @@ type ApiListEntitiesRequest struct {
 	authorization *string
 }
 
-// Maximum number of entities to return
+// Maximum number of entities to return. Values above 1000 are trimmed to 1000.
 func (r ApiListEntitiesRequest) Limit(limit int32) ApiListEntitiesRequest {
 	r.limit = &limit
 	return r

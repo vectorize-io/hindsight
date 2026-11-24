@@ -438,7 +438,7 @@ func (r ApiListOperationsRequest) Type_(type_ string) ApiListOperationsRequest {
 	return r
 }
 
-// Maximum number of operations to return
+// Maximum number of operations to return. Values above 100 are trimmed to 100.
 func (r ApiListOperationsRequest) Limit(limit int32) ApiListOperationsRequest {
 	r.limit = &limit
 	return r

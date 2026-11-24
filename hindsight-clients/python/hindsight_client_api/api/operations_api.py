@@ -945,7 +945,7 @@ class OperationsApi:
         bank_id: StrictStr,
         status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, processing, completed, failed, or cancelled")] = None,
         type: Annotated[Optional[StrictStr], Field(description="Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of operations to return. Values above 100 are trimmed to 100.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         exclude_parents: Annotated[Optional[StrictBool], Field(description="Exclude parent batch operations from results")] = None,
         authorization: Optional[StrictStr] = None,
@@ -972,7 +972,7 @@ class OperationsApi:
         :type status: str
         :param type: Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery
         :type type: str
-        :param limit: Maximum number of operations to return
+        :param limit: Maximum number of operations to return. Values above 100 are trimmed to 100.
         :type limit: int
         :param offset: Number of operations to skip
         :type offset: int
@@ -1038,7 +1038,7 @@ class OperationsApi:
         bank_id: StrictStr,
         status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, processing, completed, failed, or cancelled")] = None,
         type: Annotated[Optional[StrictStr], Field(description="Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of operations to return. Values above 100 are trimmed to 100.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         exclude_parents: Annotated[Optional[StrictBool], Field(description="Exclude parent batch operations from results")] = None,
         authorization: Optional[StrictStr] = None,
@@ -1065,7 +1065,7 @@ class OperationsApi:
         :type status: str
         :param type: Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery
         :type type: str
-        :param limit: Maximum number of operations to return
+        :param limit: Maximum number of operations to return. Values above 100 are trimmed to 100.
         :type limit: int
         :param offset: Number of operations to skip
         :type offset: int
@@ -1131,7 +1131,7 @@ class OperationsApi:
         bank_id: StrictStr,
         status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, processing, completed, failed, or cancelled")] = None,
         type: Annotated[Optional[StrictStr], Field(description="Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(le=100, strict=True, ge=1)]], Field(description="Maximum number of operations to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of operations to return. Values above 100 are trimmed to 100.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Number of operations to skip")] = None,
         exclude_parents: Annotated[Optional[StrictBool], Field(description="Exclude parent batch operations from results")] = None,
         authorization: Optional[StrictStr] = None,
@@ -1158,7 +1158,7 @@ class OperationsApi:
         :type status: str
         :param type: Filter by operation type: retain, consolidation, refresh_mental_model, file_convert_retain, webhook_delivery
         :type type: str
-        :param limit: Maximum number of operations to return
+        :param limit: Maximum number of operations to return. Values above 100 are trimmed to 100.
         :type limit: int
         :param offset: Number of operations to skip
         :type offset: int

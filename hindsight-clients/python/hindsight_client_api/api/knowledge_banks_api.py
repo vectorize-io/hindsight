@@ -4178,7 +4178,7 @@ class KnowledgeBanksApi:
         bank_id: StrictStr,
         status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, processing, completed, failed, or cancelled")] = None,
         type: Annotated[Optional[StrictStr], Field(description="Filter by operation type")] = None,
-        limit: Optional[Annotated[int, Field(le=100, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of operations to return. Values above 100 are trimmed to 100.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         exclude_parents: Annotated[Optional[StrictBool], Field(description="Exclude parent batch operations from results")] = None,
         authorization: Optional[StrictStr] = None,
@@ -4204,7 +4204,7 @@ class KnowledgeBanksApi:
         :type status: str
         :param type: Filter by operation type
         :type type: str
-        :param limit:
+        :param limit: Maximum number of operations to return. Values above 100 are trimmed to 100.
         :type limit: int
         :param offset:
         :type offset: int
@@ -4269,7 +4269,7 @@ class KnowledgeBanksApi:
         bank_id: StrictStr,
         status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, processing, completed, failed, or cancelled")] = None,
         type: Annotated[Optional[StrictStr], Field(description="Filter by operation type")] = None,
-        limit: Optional[Annotated[int, Field(le=100, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of operations to return. Values above 100 are trimmed to 100.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         exclude_parents: Annotated[Optional[StrictBool], Field(description="Exclude parent batch operations from results")] = None,
         authorization: Optional[StrictStr] = None,
@@ -4295,7 +4295,7 @@ class KnowledgeBanksApi:
         :type status: str
         :param type: Filter by operation type
         :type type: str
-        :param limit:
+        :param limit: Maximum number of operations to return. Values above 100 are trimmed to 100.
         :type limit: int
         :param offset:
         :type offset: int
@@ -4360,7 +4360,7 @@ class KnowledgeBanksApi:
         bank_id: StrictStr,
         status: Annotated[Optional[StrictStr], Field(description="Filter by status: pending, processing, completed, failed, or cancelled")] = None,
         type: Annotated[Optional[StrictStr], Field(description="Filter by operation type")] = None,
-        limit: Optional[Annotated[int, Field(le=100, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of operations to return. Values above 100 are trimmed to 100.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         exclude_parents: Annotated[Optional[StrictBool], Field(description="Exclude parent batch operations from results")] = None,
         authorization: Optional[StrictStr] = None,
@@ -4386,7 +4386,7 @@ class KnowledgeBanksApi:
         :type status: str
         :param type: Filter by operation type
         :type type: str
-        :param limit:
+        :param limit: Maximum number of operations to return. Values above 100 are trimmed to 100.
         :type limit: int
         :param offset:
         :type offset: int
@@ -4537,7 +4537,7 @@ class KnowledgeBanksApi:
         self,
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.")] = None,
-        limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -4560,7 +4560,7 @@ class KnowledgeBanksApi:
         :type bank_id: str
         :param q: Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.
         :type q: str
-        :param limit:
+        :param limit: Maximum number of tags to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -4620,7 +4620,7 @@ class KnowledgeBanksApi:
         self,
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.")] = None,
-        limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -4643,7 +4643,7 @@ class KnowledgeBanksApi:
         :type bank_id: str
         :param q: Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.
         :type q: str
-        :param limit:
+        :param limit: Maximum number of tags to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -4703,7 +4703,7 @@ class KnowledgeBanksApi:
         self,
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.")] = None,
-        limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -4726,7 +4726,7 @@ class KnowledgeBanksApi:
         :type bank_id: str
         :param q: Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.
         :type q: str
-        :param limit:
+        :param limit: Maximum number of tags to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -4861,7 +4861,7 @@ class KnowledgeBanksApi:
     @validate_call
     async def list_knowledge_banks(
         self,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Annotated[Optional[StrictStr], Field(description="Part of the bank id, case-insensitive")] = None,
         authorization: Optional[StrictStr] = None,
@@ -4881,7 +4881,7 @@ class KnowledgeBanksApi:
         """List knowledge banks
 
 
-        :param limit:
+        :param limit: Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -4940,7 +4940,7 @@ class KnowledgeBanksApi:
     @validate_call
     async def list_knowledge_banks_with_http_info(
         self,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Annotated[Optional[StrictStr], Field(description="Part of the bank id, case-insensitive")] = None,
         authorization: Optional[StrictStr] = None,
@@ -4960,7 +4960,7 @@ class KnowledgeBanksApi:
         """List knowledge banks
 
 
-        :param limit:
+        :param limit: Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -5019,7 +5019,7 @@ class KnowledgeBanksApi:
     @validate_call
     async def list_knowledge_banks_without_preload_content(
         self,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Annotated[Optional[StrictStr], Field(description="Part of the bank id, case-insensitive")] = None,
         authorization: Optional[StrictStr] = None,
@@ -5039,7 +5039,7 @@ class KnowledgeBanksApi:
         """List knowledge banks
 
 
-        :param limit:
+        :param limit: Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -5173,7 +5173,7 @@ class KnowledgeBanksApi:
     async def list_knowledge_documents(
         self,
         bank_id: StrictStr,
-        limit: Optional[Annotated[int, Field(le=500, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of documents to return. Values above 500 are trimmed to 500.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Annotated[Optional[StrictStr], Field(description="Substring of the id or filename.")] = None,
         status: Optional[StrictStr] = None,
@@ -5198,7 +5198,7 @@ class KnowledgeBanksApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit:
+        :param limit: Maximum number of documents to return. Values above 500 are trimmed to 500.
         :type limit: int
         :param offset:
         :type offset: int
@@ -5268,7 +5268,7 @@ class KnowledgeBanksApi:
     async def list_knowledge_documents_with_http_info(
         self,
         bank_id: StrictStr,
-        limit: Optional[Annotated[int, Field(le=500, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of documents to return. Values above 500 are trimmed to 500.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Annotated[Optional[StrictStr], Field(description="Substring of the id or filename.")] = None,
         status: Optional[StrictStr] = None,
@@ -5293,7 +5293,7 @@ class KnowledgeBanksApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit:
+        :param limit: Maximum number of documents to return. Values above 500 are trimmed to 500.
         :type limit: int
         :param offset:
         :type offset: int
@@ -5363,7 +5363,7 @@ class KnowledgeBanksApi:
     async def list_knowledge_documents_without_preload_content(
         self,
         bank_id: StrictStr,
-        limit: Optional[Annotated[int, Field(le=500, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of documents to return. Values above 500 are trimmed to 500.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         q: Annotated[Optional[StrictStr], Field(description="Substring of the id or filename.")] = None,
         status: Optional[StrictStr] = None,
@@ -5388,7 +5388,7 @@ class KnowledgeBanksApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit:
+        :param limit: Maximum number of documents to return. Values above 500 are trimmed to 500.
         :type limit: int
         :param offset:
         :type offset: int

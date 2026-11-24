@@ -8686,6 +8686,8 @@ export type ListKnowledgeBanksData = {
   query?: {
     /**
      * Limit
+     *
+     * Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -9086,6 +9088,8 @@ export type ListKnowledgeDocumentsData = {
   query?: {
     /**
      * Limit
+     *
+     * Maximum number of documents to return. Values above 500 are trimmed to 500.
      */
     limit?: number;
     /**
@@ -9247,6 +9251,8 @@ export type ListKnowledgeBankOperationsData = {
     type?: string | null;
     /**
      * Limit
+     *
+     * Maximum number of operations to return. Values above 100 are trimmed to 100.
      */
     limit?: number;
     /**
@@ -9481,6 +9487,8 @@ export type ListKnowledgeBankTagsData = {
     q?: string | null;
     /**
      * Limit
+     *
+     * Maximum number of tags to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -9725,6 +9733,8 @@ export type GetGraphData = {
     type?: string | null;
     /**
      * Limit
+     *
+     * Maximum number of memories to return. Values above 5000 are trimmed to 5000.
      */
     limit?: number;
     /**
@@ -9850,6 +9860,8 @@ export type ListMemoriesData = {
     end_date?: string | null;
     /**
      * Limit
+     *
+     * Maximum number of memories to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -10162,7 +10174,7 @@ export type ListBanksData = {
     /**
      * Limit
      *
-     * Maximum number of banks to return
+     * Maximum number of banks to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -10347,7 +10359,7 @@ export type ListEntitiesData = {
     /**
      * Limit
      *
-     * Maximum number of entities to return
+     * Maximum number of entities to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -10478,7 +10490,7 @@ export type GetEntityGraphData = {
     /**
      * Limit
      *
-     * Maximum number of co-occurrence edges to return
+     * Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000.
      */
     limit?: number;
     /**
@@ -10667,6 +10679,8 @@ export type ListMentalModelsData = {
     detail?: "metadata" | "content" | "full";
     /**
      * Limit
+     *
+     * Maximum number of mental models to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -11413,7 +11427,7 @@ export type SearchKnowledgeBaseData = {
     /**
      * Limit
      *
-     * Maximum results to return
+     * Maximum results to return. Values above 50 are trimmed to 50.
      */
     limit?: number;
     /**
@@ -11485,7 +11499,7 @@ export type SearchPagesData = {
     /**
      * Limit
      *
-     * Maximum results to return
+     * Maximum results to return. Values above 50 are trimmed to 50.
      */
     limit?: number;
     /**
@@ -11804,6 +11818,8 @@ export type ListDirectivesData = {
     active_only?: boolean;
     /**
      * Limit
+     *
+     * Maximum number of directives to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -12043,6 +12059,8 @@ export type ListDocumentsData = {
     end_date?: string | null;
     /**
      * Limit
+     *
+     * Maximum number of documents to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -12097,7 +12115,7 @@ export type ListDocumentChunksData = {
     /**
      * Limit
      *
-     * Maximum number of chunks to return
+     * Maximum number of chunks to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -12151,7 +12169,7 @@ export type GetDocumentHistoryData = {
     /**
      * Limit
      *
-     * Maximum number of operations to read
+     * Maximum number of operations to read. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -12374,7 +12392,7 @@ export type ListTagsData = {
     /**
      * Limit
      *
-     * Maximum number of tags to return
+     * Maximum number of tags to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -12475,7 +12493,7 @@ export type ListOperationsData = {
     /**
      * Limit
      *
-     * Maximum number of operations to return
+     * Maximum number of operations to return. Values above 100 are trimmed to 100.
      */
     limit?: number;
     /**
@@ -13631,7 +13649,7 @@ export type ListObservationScopesData = {
     /**
      * Limit
      *
-     * Maximum number of scopes to return
+     * Maximum number of scopes to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -13961,7 +13979,7 @@ export type ListWebhooksData = {
     /**
      * Limit
      *
-     * Maximum number of webhooks to return
+     * Maximum number of webhooks to return. Values above 1000 are trimmed to 1000.
      */
     limit?: number;
     /**
@@ -14134,7 +14152,7 @@ export type ListWebhookDeliveriesData = {
     /**
      * Limit
      *
-     * Maximum number of deliveries to return
+     * Maximum number of deliveries to return. Values above 200 are trimmed to 200.
      */
     limit?: number;
     /**
@@ -14325,7 +14343,7 @@ export type ListAuditLogsData = {
     /**
      * Limit
      *
-     * Max items to return
+     * Max items to return. Values above 500 are trimmed to 500.
      */
     limit?: number;
     /**
@@ -14541,7 +14559,7 @@ export type ListLlmRequestsData = {
     /**
      * Limit
      *
-     * Max items to return
+     * Max items to return. Values above 500 are trimmed to 500.
      */
     limit?: number;
     /**

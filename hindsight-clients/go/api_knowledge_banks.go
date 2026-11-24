@@ -1832,6 +1832,7 @@ func (r ApiListKnowledgeBankOperationsRequest) Type_(type_ string) ApiListKnowle
 	return r
 }
 
+// Maximum number of operations to return. Values above 100 are trimmed to 100.
 func (r ApiListKnowledgeBankOperationsRequest) Limit(limit int32) ApiListKnowledgeBankOperationsRequest {
 	r.limit = &limit
 	return r
@@ -2001,6 +2002,7 @@ func (r ApiListKnowledgeBankTagsRequest) Q(q string) ApiListKnowledgeBankTagsReq
 	return r
 }
 
+// Maximum number of tags to return. Values above 1000 are trimmed to 1000.
 func (r ApiListKnowledgeBankTagsRequest) Limit(limit int32) ApiListKnowledgeBankTagsRequest {
 	r.limit = &limit
 	return r
@@ -2148,6 +2150,7 @@ type ApiListKnowledgeBanksRequest struct {
 	authorization *string
 }
 
+// Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000.
 func (r ApiListKnowledgeBanksRequest) Limit(limit int32) ApiListKnowledgeBanksRequest {
 	r.limit = &limit
 	return r
@@ -2302,6 +2305,7 @@ type ApiListKnowledgeDocumentsRequest struct {
 	authorization *string
 }
 
+// Maximum number of documents to return. Values above 500 are trimmed to 500.
 func (r ApiListKnowledgeDocumentsRequest) Limit(limit int32) ApiListKnowledgeDocumentsRequest {
 	r.limit = &limit
 	return r

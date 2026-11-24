@@ -1864,7 +1864,7 @@ class PagesApi:
         self,
         bank_id: StrictStr,
         q: Annotated[str, Field(min_length=1, strict=True, description="Search query")],
-        limit: Annotated[Optional[Annotated[int, Field(le=50, strict=True, ge=1)]], Field(description="Maximum results to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum results to return. Values above 50 are trimmed to 50.")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only return pages carrying these tags (matched per `tags_match`, like recall).")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match a page's tags: any, all, any_strict, all_strict, exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact' do not.")] = None,
         tag_groups: Annotated[Optional[StrictStr], Field(description="JSON-encoded compound tag filter, same shape as recall's `tag_groups`, e.g. `[{\"or\":[{\"tags\":[\"user:kate\"],\"match\":\"all_strict\"},{\"tags\":[\"team\"]}]}]`. Top-level groups are AND-ed, and AND-ed with `tags`.")] = None,
@@ -1890,7 +1890,7 @@ class PagesApi:
         :type bank_id: str
         :param q: Search query (required)
         :type q: str
-        :param limit: Maximum results to return
+        :param limit: Maximum results to return. Values above 50 are trimmed to 50.
         :type limit: int
         :param tags: Only return pages carrying these tags (matched per `tags_match`, like recall).
         :type tags: List[str]
@@ -1957,7 +1957,7 @@ class PagesApi:
         self,
         bank_id: StrictStr,
         q: Annotated[str, Field(min_length=1, strict=True, description="Search query")],
-        limit: Annotated[Optional[Annotated[int, Field(le=50, strict=True, ge=1)]], Field(description="Maximum results to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum results to return. Values above 50 are trimmed to 50.")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only return pages carrying these tags (matched per `tags_match`, like recall).")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match a page's tags: any, all, any_strict, all_strict, exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact' do not.")] = None,
         tag_groups: Annotated[Optional[StrictStr], Field(description="JSON-encoded compound tag filter, same shape as recall's `tag_groups`, e.g. `[{\"or\":[{\"tags\":[\"user:kate\"],\"match\":\"all_strict\"},{\"tags\":[\"team\"]}]}]`. Top-level groups are AND-ed, and AND-ed with `tags`.")] = None,
@@ -1983,7 +1983,7 @@ class PagesApi:
         :type bank_id: str
         :param q: Search query (required)
         :type q: str
-        :param limit: Maximum results to return
+        :param limit: Maximum results to return. Values above 50 are trimmed to 50.
         :type limit: int
         :param tags: Only return pages carrying these tags (matched per `tags_match`, like recall).
         :type tags: List[str]
@@ -2050,7 +2050,7 @@ class PagesApi:
         self,
         bank_id: StrictStr,
         q: Annotated[str, Field(min_length=1, strict=True, description="Search query")],
-        limit: Annotated[Optional[Annotated[int, Field(le=50, strict=True, ge=1)]], Field(description="Maximum results to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum results to return. Values above 50 are trimmed to 50.")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only return pages carrying these tags (matched per `tags_match`, like recall).")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match a page's tags: any, all, any_strict, all_strict, exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact' do not.")] = None,
         tag_groups: Annotated[Optional[StrictStr], Field(description="JSON-encoded compound tag filter, same shape as recall's `tag_groups`, e.g. `[{\"or\":[{\"tags\":[\"user:kate\"],\"match\":\"all_strict\"},{\"tags\":[\"team\"]}]}]`. Top-level groups are AND-ed, and AND-ed with `tags`.")] = None,
@@ -2076,7 +2076,7 @@ class PagesApi:
         :type bank_id: str
         :param q: Search query (required)
         :type q: str
-        :param limit: Maximum results to return
+        :param limit: Maximum results to return. Values above 50 are trimmed to 50.
         :type limit: int
         :param tags: Only return pages carrying these tags (matched per `tags_match`, like recall).
         :type tags: List[str]

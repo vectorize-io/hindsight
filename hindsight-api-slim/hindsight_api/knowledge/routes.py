@@ -9,7 +9,7 @@ import mimetypes
 import uuid
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import quote
 
 import aiohttp
@@ -24,6 +24,7 @@ from ..engine.aiohttp_session import UpstreamHTTPError
 from ..engine.search.tags import TagGroup, TagsMatch
 from ..extensions.operation_validator import OperationValidationError
 from ..models import RequestContext
+from ..pagination import TRIM_TO_PAGE, trim_to
 from .bank_config import KnowledgeBankOverrides, KnowledgeBankSettings
 from .service import (
     IngestItem,
@@ -598,7 +599,13 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
     )
     async def list_banks(
         request: Request,
-        limit: int = Query(default=100, ge=0),
+        limit: Annotated[
+            int,
+            Query(
+                ge=0, description="Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000."
+            ),
+            TRIM_TO_PAGE,
+        ] = 100,
         offset: int = Query(default=0, ge=0),
         q: str | None = Query(default=None, description="Part of the bank id, case-insensitive"),
         rc: RequestContext = Depends(get_request_context),
@@ -813,7 +820,11 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
     async def list_documents(
         bank_id: str,
         request: Request,
-        limit: int = Query(default=50, ge=1, le=500),
+        limit: Annotated[
+            int,
+            Query(ge=1, description="Maximum number of documents to return. Values above 500 are trimmed to 500."),
+            trim_to(500),
+        ] = 50,
         offset: int = Query(default=0, ge=0),
         q: str | None = Query(default=None, description="Substring of the id or filename."),
         status: str | None = Query(default=None),
@@ -894,7 +905,11 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
             default=None, description="Filter by status: pending, processing, completed, failed, or cancelled"
         ),
         type: str | None = Query(default=None, description="Filter by operation type"),
-        limit: int = Query(default=20, ge=1, le=100),
+        limit: Annotated[
+            int,
+            Query(ge=1, description="Maximum number of operations to return. Values above 100 are trimmed to 100."),
+            trim_to(100),
+        ] = 20,
         offset: int = Query(default=0, ge=0),
         exclude_parents: bool = Query(default=False, description="Exclude parent batch operations from results"),
         rc: RequestContext = Depends(get_request_context),
@@ -997,7 +1012,11 @@ def build_router(get_request_context: Callable[..., RequestContext]) -> APIRoute
             default=None,
             description="Wildcard pattern to filter tags (e.g. 'team:*'). Use '*' as wildcard. Case-insensitive.",
         ),
-        limit: int = Query(default=100, ge=0, le=1000),
+        limit: Annotated[
+            int,
+            Query(ge=0, description="Maximum number of tags to return. Values above 1000 are trimmed to 1000."),
+            TRIM_TO_PAGE,
+        ] = 100,
         offset: int = Query(default=0, ge=0),
         rc: RequestContext = Depends(get_request_context),
     ) -> KnowledgeTagsResponse:

@@ -1841,7 +1841,7 @@ class MentalModelsApi:
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
         detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
-        limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of mental models to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         exclude_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold page content (list standalone models only).")] = None,
         exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Deprecated: use exclude_pages.")] = None,
@@ -1871,7 +1871,7 @@ class MentalModelsApi:
         :type tags_match: str
         :param detail: Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
         :type detail: str
-        :param limit:
+        :param limit: Maximum number of mental models to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -1942,7 +1942,7 @@ class MentalModelsApi:
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
         detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
-        limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of mental models to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         exclude_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold page content (list standalone models only).")] = None,
         exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Deprecated: use exclude_pages.")] = None,
@@ -1972,7 +1972,7 @@ class MentalModelsApi:
         :type tags_match: str
         :param detail: Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
         :type detail: str
-        :param limit:
+        :param limit: Maximum number of mental models to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -2043,7 +2043,7 @@ class MentalModelsApi:
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
         detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
-        limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of mental models to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         exclude_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold page content (list standalone models only).")] = None,
         exclude_knowledge_pages: Annotated[Optional[StrictBool], Field(description="Deprecated: use exclude_pages.")] = None,
@@ -2073,7 +2073,7 @@ class MentalModelsApi:
         :type tags_match: str
         :param detail: Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
         :type detail: str
-        :param limit:
+        :param limit: Maximum number of mental models to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int

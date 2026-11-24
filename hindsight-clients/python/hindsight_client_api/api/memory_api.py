@@ -1249,7 +1249,7 @@ class MemoryApi:
         self,
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of memories to return. Values above 5000 are trimmed to 5000.")] = None,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         tags: Optional[List[StrictStr]] = None,
         tags_match: Optional[StrictStr] = None,
@@ -1277,7 +1277,7 @@ class MemoryApi:
         :type bank_id: str
         :param type:
         :type type: str
-        :param limit:
+        :param limit: Maximum number of memories to return. Values above 5000 are trimmed to 5000.
         :type limit: int
         :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
@@ -1350,7 +1350,7 @@ class MemoryApi:
         self,
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of memories to return. Values above 5000 are trimmed to 5000.")] = None,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         tags: Optional[List[StrictStr]] = None,
         tags_match: Optional[StrictStr] = None,
@@ -1378,7 +1378,7 @@ class MemoryApi:
         :type bank_id: str
         :param type:
         :type type: str
-        :param limit:
+        :param limit: Maximum number of memories to return. Values above 5000 are trimmed to 5000.
         :type limit: int
         :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
@@ -1451,7 +1451,7 @@ class MemoryApi:
         self,
         bank_id: StrictStr,
         type: Optional[StrictStr] = None,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of memories to return. Values above 5000 are trimmed to 5000.")] = None,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.")] = None,
         tags: Optional[List[StrictStr]] = None,
         tags_match: Optional[StrictStr] = None,
@@ -1479,7 +1479,7 @@ class MemoryApi:
         :type bank_id: str
         :param type:
         :type type: str
-        :param limit:
+        :param limit: Maximum number of memories to return. Values above 5000 are trimmed to 5000.
         :type limit: int
         :param q: Case-insensitive substring filter on memory text and context. Not indexed: it scans the bank, so it slows as the bank grows. Meant for browsing and inspection, not for high-volume or latency-sensitive workloads — use recall for that.
         :type q: str
@@ -2579,7 +2579,7 @@ class MemoryApi:
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of memories to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -2623,7 +2623,7 @@ class MemoryApi:
         :type start_date: str
         :param end_date: Filter until this ISO datetime (exclusive)
         :type end_date: str
-        :param limit:
+        :param limit: Maximum number of memories to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -2704,7 +2704,7 @@ class MemoryApi:
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of memories to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -2748,7 +2748,7 @@ class MemoryApi:
         :type start_date: str
         :param end_date: Filter until this ISO datetime (exclusive)
         :type end_date: str
-        :param limit:
+        :param limit: Maximum number of memories to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -2829,7 +2829,7 @@ class MemoryApi:
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by. `created_at` / `updated_at` = ingest and last-write time; `mentioned_at` / `occurred_start` / `occurred_end` = event time. Defaults to `created_at` when only `start_date`/`end_date` are given. Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of memories to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -2873,7 +2873,7 @@ class MemoryApi:
         :type start_date: str
         :param end_date: Filter until this ISO datetime (exclusive)
         :type end_date: str
-        :param limit:
+        :param limit: Maximum number of memories to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -3071,7 +3071,7 @@ class MemoryApi:
     async def list_observation_scopes(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of scopes to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of scopes to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -3093,7 +3093,7 @@ class MemoryApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of scopes to return
+        :param limit: Maximum number of scopes to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -3152,7 +3152,7 @@ class MemoryApi:
     async def list_observation_scopes_with_http_info(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of scopes to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of scopes to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -3174,7 +3174,7 @@ class MemoryApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of scopes to return
+        :param limit: Maximum number of scopes to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -3233,7 +3233,7 @@ class MemoryApi:
     async def list_observation_scopes_without_preload_content(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of scopes to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of scopes to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -3255,7 +3255,7 @@ class MemoryApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of scopes to return
+        :param limit: Maximum number of scopes to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -3388,7 +3388,7 @@ class MemoryApi:
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Wildcard pattern to filter tags (e.g., 'user:*' for user:alice, '*-admin' for role-admin). Use '*' as wildcard. Case-insensitive.")] = None,
         source: Annotated[Optional[StrictStr], Field(description="Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -3414,7 +3414,7 @@ class MemoryApi:
         :type q: str
         :param source: Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.
         :type source: str
-        :param limit: Maximum number of tags to return
+        :param limit: Maximum number of tags to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -3477,7 +3477,7 @@ class MemoryApi:
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Wildcard pattern to filter tags (e.g., 'user:*' for user:alice, '*-admin' for role-admin). Use '*' as wildcard. Case-insensitive.")] = None,
         source: Annotated[Optional[StrictStr], Field(description="Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -3503,7 +3503,7 @@ class MemoryApi:
         :type q: str
         :param source: Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.
         :type source: str
-        :param limit: Maximum number of tags to return
+        :param limit: Maximum number of tags to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -3566,7 +3566,7 @@ class MemoryApi:
         bank_id: StrictStr,
         q: Annotated[Optional[StrictStr], Field(description="Wildcard pattern to filter tags (e.g., 'user:*' for user:alice, '*-admin' for role-admin). Use '*' as wildcard. Case-insensitive.")] = None,
         source: Annotated[Optional[StrictStr], Field(description="Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of tags to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -3592,7 +3592,7 @@ class MemoryApi:
         :type q: str
         :param source: Where to read tags from: 'memories' (memory_units, default) or 'mental_models'.
         :type source: str
-        :param limit: Maximum number of tags to return
+        :param limit: Maximum number of tags to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int

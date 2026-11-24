@@ -836,6 +836,7 @@ func (r ApiListMentalModelsRequest) Detail(detail string) ApiListMentalModelsReq
 	return r
 }
 
+// Maximum number of mental models to return. Values above 1000 are trimmed to 1000.
 func (r ApiListMentalModelsRequest) Limit(limit int32) ApiListMentalModelsRequest {
 	r.limit = &limit
 	return r

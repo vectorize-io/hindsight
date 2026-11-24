@@ -660,7 +660,7 @@ class AuditApi:
         transport: Annotated[Optional[StrictStr], Field(description="Filter by transport (http, mcp, system)")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(le=500, strict=True, ge=1)]], Field(description="Max items to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Max items to return. Values above 500 are trimmed to 500.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -690,7 +690,7 @@ class AuditApi:
         :type start_date: str
         :param end_date: Filter until this ISO datetime (exclusive)
         :type end_date: str
-        :param limit: Max items to return
+        :param limit: Max items to return. Values above 500 are trimmed to 500.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -757,7 +757,7 @@ class AuditApi:
         transport: Annotated[Optional[StrictStr], Field(description="Filter by transport (http, mcp, system)")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(le=500, strict=True, ge=1)]], Field(description="Max items to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Max items to return. Values above 500 are trimmed to 500.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -787,7 +787,7 @@ class AuditApi:
         :type start_date: str
         :param end_date: Filter until this ISO datetime (exclusive)
         :type end_date: str
-        :param limit: Max items to return
+        :param limit: Max items to return. Values above 500 are trimmed to 500.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -854,7 +854,7 @@ class AuditApi:
         transport: Annotated[Optional[StrictStr], Field(description="Filter by transport (http, mcp, system)")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(le=500, strict=True, ge=1)]], Field(description="Max items to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Max items to return. Values above 500 are trimmed to 500.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -884,7 +884,7 @@ class AuditApi:
         :type start_date: str
         :param end_date: Filter until this ISO datetime (exclusive)
         :type end_date: str
-        :param limit: Max items to return
+        :param limit: Max items to return. Values above 500 are trimmed to 500.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int

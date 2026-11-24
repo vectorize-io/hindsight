@@ -563,6 +563,7 @@ func (r ApiGetGraphRequest) Type_(type_ string) ApiGetGraphRequest {
 	return r
 }
 
+// Maximum number of memories to return. Values above 5000 are trimmed to 5000.
 func (r ApiGetGraphRequest) Limit(limit int32) ApiGetGraphRequest {
 	r.limit = &limit
 	return r
@@ -1238,6 +1239,7 @@ func (r ApiListMemoriesRequest) EndDate(endDate string) ApiListMemoriesRequest {
 	return r
 }
 
+// Maximum number of memories to return. Values above 1000 are trimmed to 1000.
 func (r ApiListMemoriesRequest) Limit(limit int32) ApiListMemoriesRequest {
 	r.limit = &limit
 	return r
@@ -1428,7 +1430,7 @@ type ApiListObservationScopesRequest struct {
 	authorization *string
 }
 
-// Maximum number of scopes to return
+// Maximum number of scopes to return. Values above 1000 are trimmed to 1000.
 func (r ApiListObservationScopesRequest) Limit(limit int32) ApiListObservationScopesRequest {
 	r.limit = &limit
 	return r
@@ -1590,7 +1592,7 @@ func (r ApiListTagsRequest) Source(source string) ApiListTagsRequest {
 	return r
 }
 
-// Maximum number of tags to return
+// Maximum number of tags to return. Values above 1000 are trimmed to 1000.
 func (r ApiListTagsRequest) Limit(limit int32) ApiListTagsRequest {
 	r.limit = &limit
 	return r

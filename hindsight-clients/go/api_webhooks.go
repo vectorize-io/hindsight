@@ -292,7 +292,7 @@ type ApiListWebhookDeliveriesRequest struct {
 	authorization *string
 }
 
-// Maximum number of deliveries to return
+// Maximum number of deliveries to return. Values above 200 are trimmed to 200.
 func (r ApiListWebhookDeliveriesRequest) Limit(limit int32) ApiListWebhookDeliveriesRequest {
 	r.limit = &limit
 	return r
@@ -440,7 +440,7 @@ type ApiListWebhooksRequest struct {
 	authorization *string
 }
 
-// Maximum number of webhooks to return
+// Maximum number of webhooks to return. Values above 1000 are trimmed to 1000.
 func (r ApiListWebhooksRequest) Limit(limit int32) ApiListWebhooksRequest {
 	r.limit = &limit
 	return r

@@ -15,12 +15,16 @@ paths:
     get:
       operationId: list_knowledge_banks
       parameters:
-      - explode: true
+      - description: Maximum number of knowledge banks to return. Values above 1000
+          are trimmed to 1000.
+        explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
+          description: Maximum number of knowledge banks to return. Values above 1000
+            are trimmed to 1000.
           minimum: 0
           title: Limit
           type: integer
@@ -458,13 +462,16 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - explode: true
+      - description: Maximum number of documents to return. Values above 500 are trimmed
+          to 500.
+        explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 50
-          maximum: 500
+          description: Maximum number of documents to return. Values above 500 are
+            trimmed to 500.
           minimum: 1
           title: Limit
           type: integer
@@ -657,13 +664,16 @@ paths:
           nullable: true
           type: string
         style: form
-      - explode: true
+      - description: Maximum number of operations to return. Values above 100 are
+          trimmed to 100.
+        explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 20
-          maximum: 100
+          description: Maximum number of operations to return. Values above 100 are
+            trimmed to 100.
           minimum: 1
           title: Limit
           type: integer
@@ -921,13 +931,16 @@ paths:
           nullable: true
           type: string
         style: form
-      - explode: true
+      - description: Maximum number of tags to return. Values above 1000 are trimmed
+          to 1000.
+        explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          maximum: 1000
+          description: Maximum number of tags to return. Values above 1000 are trimmed
+            to 1000.
           minimum: 0
           title: Limit
           type: integer
@@ -1194,12 +1207,16 @@ paths:
           nullable: true
           type: string
         style: form
-      - explode: true
+      - description: Maximum number of memories to return. Values above 5000 are trimmed
+          to 5000.
+        explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 1000
+          description: Maximum number of memories to return. Values above 5000 are
+            trimmed to 5000.
           minimum: 0
           title: Limit
           type: integer
@@ -1414,12 +1431,16 @@ paths:
           nullable: true
           type: string
         style: form
-      - explode: true
+      - description: Maximum number of memories to return. Values above 1000 are trimmed
+          to 1000.
+        explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
+          description: Maximum number of memories to return. Values above 1000 are
+            trimmed to 1000.
           minimum: 0
           title: Limit
           type: integer
@@ -1818,14 +1839,16 @@ paths:
           nullable: true
           type: string
         style: form
-      - description: Maximum number of banks to return
+      - description: Maximum number of banks to return. Values above 1000 are trimmed
+          to 1000.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          description: Maximum number of banks to return
+          description: Maximum number of banks to return. Values above 1000 are trimmed
+            to 1000.
           minimum: 0
           title: Limit
           type: integer
@@ -2040,14 +2063,16 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Maximum number of entities to return
+      - description: Maximum number of entities to return. Values above 1000 are trimmed
+          to 1000.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          description: Maximum number of entities to return
+          description: Maximum number of entities to return. Values above 1000 are
+            trimmed to 1000.
           minimum: 0
           title: Limit
           type: integer
@@ -2233,14 +2258,16 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Maximum number of co-occurrence edges to return
+      - description: Maximum number of co-occurrence edges to return. Values above
+          5000 are trimmed to 5000.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 1000
-          description: Maximum number of co-occurrence edges to return
+          description: Maximum number of co-occurrence edges to return. Values above
+            5000 are trimmed to 5000.
           minimum: 0
           title: Limit
           type: integer
@@ -2516,13 +2543,16 @@ paths:
           title: Detail
           type: string
         style: form
-      - explode: true
+      - description: Maximum number of mental models to return. Values above 1000
+          are trimmed to 1000.
+        explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          maximum: 1000
+          description: Maximum number of mental models to return. Values above 1000
+            are trimmed to 1000.
           minimum: 1
           title: Limit
           type: integer
@@ -3439,15 +3469,14 @@ paths:
           title: Q
           type: string
         style: form
-      - description: Maximum results to return
+      - description: Maximum results to return. Values above 50 are trimmed to 50.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 10
-          description: Maximum results to return
-          maximum: 50
+          description: Maximum results to return. Values above 50 are trimmed to 50.
           minimum: 1
           title: Limit
           type: integer
@@ -3548,15 +3577,14 @@ paths:
           title: Q
           type: string
         style: form
-      - description: Maximum results to return
+      - description: Maximum results to return. Values above 50 are trimmed to 50.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 10
-          description: Maximum results to return
-          maximum: 50
+          description: Maximum results to return. Values above 50 are trimmed to 50.
           minimum: 1
           title: Limit
           type: integer
@@ -3976,13 +4004,16 @@ paths:
           title: Active Only
           type: boolean
         style: form
-      - explode: true
+      - description: Maximum number of directives to return. Values above 1000 are
+          trimmed to 1000.
+        explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          maximum: 1000
+          description: Maximum number of directives to return. Values above 1000 are
+            trimmed to 1000.
           minimum: 1
           title: Limit
           type: integer
@@ -4297,12 +4328,16 @@ paths:
           nullable: true
           type: string
         style: form
-      - explode: true
+      - description: Maximum number of documents to return. Values above 1000 are
+          trimmed to 1000.
+        explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
+          description: Maximum number of documents to return. Values above 1000 are
+            trimmed to 1000.
           minimum: 0
           title: Limit
           type: integer
@@ -4364,15 +4399,16 @@ paths:
           title: Document Id
           type: string
         style: simple
-      - description: Maximum number of chunks to return
+      - description: Maximum number of chunks to return. Values above 1000 are trimmed
+          to 1000.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          description: Maximum number of chunks to return
-          maximum: 1000
+          description: Maximum number of chunks to return. Values above 1000 are trimmed
+            to 1000.
           minimum: 1
           title: Limit
           type: integer
@@ -4437,15 +4473,16 @@ paths:
           title: Document Id
           type: string
         style: simple
-      - description: Maximum number of operations to read
+      - description: Maximum number of operations to read. Values above 1000 are trimmed
+          to 1000.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          description: Maximum number of operations to read
-          maximum: 1000
+          description: Maximum number of operations to read. Values above 1000 are
+            trimmed to 1000.
           minimum: 1
           title: Limit
           type: integer
@@ -4734,14 +4771,16 @@ paths:
           title: Source
           type: string
         style: form
-      - description: Maximum number of tags to return
+      - description: Maximum number of tags to return. Values above 1000 are trimmed
+          to 1000.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          description: Maximum number of tags to return
+          description: Maximum number of tags to return. Values above 1000 are trimmed
+            to 1000.
           minimum: 0
           title: Limit
           type: integer
@@ -4856,15 +4895,16 @@ paths:
           nullable: true
           type: string
         style: form
-      - description: Maximum number of operations to return
+      - description: Maximum number of operations to return. Values above 100 are
+          trimmed to 100.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 20
-          description: Maximum number of operations to return
-          maximum: 100
+          description: Maximum number of operations to return. Values above 100 are
+            trimmed to 100.
           minimum: 1
           title: Limit
           type: integer
@@ -6311,15 +6351,16 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Maximum number of scopes to return
+      - description: Maximum number of scopes to return. Values above 1000 are trimmed
+          to 1000.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          description: Maximum number of scopes to return
-          maximum: 1000
+          description: Maximum number of scopes to return. Values above 1000 are trimmed
+            to 1000.
           minimum: 0
           title: Limit
           type: integer
@@ -6682,15 +6723,16 @@ paths:
           title: Bank Id
           type: string
         style: simple
-      - description: Maximum number of webhooks to return
+      - description: Maximum number of webhooks to return. Values above 1000 are trimmed
+          to 1000.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 100
-          description: Maximum number of webhooks to return
-          maximum: 1000
+          description: Maximum number of webhooks to return. Values above 1000 are
+            trimmed to 1000.
           minimum: 0
           title: Limit
           type: integer
@@ -6893,15 +6935,17 @@ paths:
           title: Webhook Id
           type: string
         style: simple
-      - description: Maximum number of deliveries to return
+      - description: Maximum number of deliveries to return. Values above 200 are
+          trimmed to 200.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 50
-          description: Maximum number of deliveries to return
-          maximum: 200
+          description: Maximum number of deliveries to return. Values above 200 are
+            trimmed to 200.
+          minimum: 1
           title: Limit
           type: integer
         style: form
@@ -7174,15 +7218,14 @@ paths:
           nullable: true
           type: string
         style: form
-      - description: Max items to return
+      - description: Max items to return. Values above 500 are trimmed to 500.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 50
-          description: Max items to return
-          maximum: 500
+          description: Max items to return. Values above 500 are trimmed to 500.
           minimum: 1
           title: Limit
           type: integer
@@ -7457,15 +7500,14 @@ paths:
           nullable: true
           type: string
         style: form
-      - description: Max items to return
+      - description: Max items to return. Values above 500 are trimmed to 500.
         explode: true
         in: query
         name: limit
         required: false
         schema:
           default: 50
-          description: Max items to return
-          maximum: 500
+          description: Max items to return. Values above 500 are trimmed to 500.
           minimum: 1
           title: Limit
           type: integer
