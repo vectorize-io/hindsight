@@ -614,3 +614,38 @@ def test_builtin_memory_writes_reach_every_write_bank():
     provider._retain_queue.get_nowait()()
 
     assert written == ["primary", "shared"]
+
+
+def _recalled_max_tokens(cfg: dict) -> dict:
+    provider = _provider_with(cfg)
+    provider._apply_recall_settings(cfg)
+    seen = {}
+
+    class _Client:
+        async def arecall(self, bank_id, **kwargs):
+            seen[bank_id] = kwargs["max_tokens"]
+            return SimpleNamespace(results=[])
+
+    provider._run_hindsight_operation = lambda op: asyncio.run(op(_Client()))
+    provider._recall("query")
+    return seen
+
+
+def test_every_bank_gets_the_full_token_budget_by_default():
+    cfg = {"bank_id": "primary", "recall_additional_banks": ["a", "b"], "recall_max_tokens": 900}
+    assert _recalled_max_tokens(cfg) == {"primary": 900, "a": 900, "b": 900}
+
+
+def test_split_mode_divides_the_token_budget_across_the_banks():
+    cfg = {
+        "bank_id": "primary",
+        "recall_additional_banks": ["a", "b"],
+        "recall_max_tokens": 900,
+        "recall_max_tokens_mode": "split",
+    }
+    assert _recalled_max_tokens(cfg) == {"primary": 300, "a": 300, "b": 300}
+
+
+def test_split_mode_with_one_bank_keeps_the_whole_budget():
+    cfg = {"bank_id": "primary", "recall_max_tokens": 900, "recall_max_tokens_mode": "split"}
+    assert _recalled_max_tokens(cfg) == {"primary": 900}
