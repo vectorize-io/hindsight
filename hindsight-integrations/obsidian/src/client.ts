@@ -85,6 +85,7 @@ export class HindsightClient {
     if (options.observationScopes) item.observation_scopes = options.observationScopes;
     if (options.metadata && Object.keys(options.metadata).length) item.metadata = options.metadata;
     if (options.timestamp) item.timestamp = options.timestamp;
+    if (options.strategy) item.strategy = options.strategy;
 
     await this.send("POST", this.bankUrl(bankId, "/memories"), { items: [item], async: true });
   }

@@ -9,6 +9,10 @@ export interface HindsightSettings {
   bankId: string;
   includeFolders: string[];
   excludeFolders: string[];
+  /** Notes whose frontmatter `tags` hold any of these never reach the bank. */
+  excludeTags: string[];
+  /** Default retain strategy name; blank = the bank's default. */
+  retainStrategy: string;
   syncOnEdit: boolean;
   defaultBudget: Budget;
   /** DESIGN.md §0.5: OFF by default — keeps Hindsight from becoming a 2nd source of truth. */
@@ -31,6 +35,8 @@ export const DEFAULT_SETTINGS: HindsightSettings = {
   bankId: "",
   includeFolders: [],
   excludeFolders: [],
+  excludeTags: [],
+  retainStrategy: "",
   syncOnEdit: true,
   defaultBudget: "low",
   rememberConversations: false,
@@ -45,7 +51,7 @@ export const DEFAULT_SETTINGS: HindsightSettings = {
   reasoningExpanded: false,
 };
 
-function parseFolders(value: string): string[] {
+function parseList(value: string): string[] {
   return value
     .split(",")
     .map((s) => s.trim())
@@ -108,7 +114,7 @@ export class HindsightSettingTab extends PluginSettingTab {
       .setDesc("Comma-separated. Blank = whole vault.")
       .addText((t) =>
         t.setValue(this.plugin.settings.includeFolders.join(", ")).onChange(async (v) => {
-          this.plugin.settings.includeFolders = parseFolders(v);
+          this.plugin.settings.includeFolders = parseList(v);
           await this.plugin.saveSettings();
         })
       );
@@ -118,7 +124,31 @@ export class HindsightSettingTab extends PluginSettingTab {
       .setDesc("Comma-separated folders to skip.")
       .addText((t) =>
         t.setValue(this.plugin.settings.excludeFolders.join(", ")).onChange(async (v) => {
-          this.plugin.settings.excludeFolders = parseFolders(v);
+          this.plugin.settings.excludeFolders = parseList(v);
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Exclude tags")
+      .setDesc(
+        "Comma-separated frontmatter tags (e.g. private). Notes with any of them are never synced, and are removed from the bank if already synced."
+      )
+      .addText((t) =>
+        t.setValue(this.plugin.settings.excludeTags.join(", ")).onChange(async (v) => {
+          this.plugin.settings.excludeTags = parseList(v);
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Retain strategy")
+      .setDesc(
+        "Name of a retain strategy on the bank, used for every note. A note can pick its own with frontmatter hindsight_retain_strategy. Blank = the bank's default. Applies to notes synced from now on."
+      )
+      .addText((t) =>
+        t.setValue(this.plugin.settings.retainStrategy).onChange(async (v) => {
+          this.plugin.settings.retainStrategy = v.trim();
           await this.plugin.saveSettings();
         })
       );

@@ -10,6 +10,10 @@ export interface NormalizedNote {
   body: string;
   /** Tags lifted from frontmatter `tags`/`aliases`. */
   tags: string[];
+  /** Frontmatter `tags` only (no aliases), lowercased with any leading `#` dropped. */
+  noteTags: string[];
+  /** Named retain strategy from frontmatter `hindsight_retain_strategy`, if nonblank. */
+  retainStrategy?: string;
   /** ISO 8601 timestamp lifted from `created`/`date`, if present. */
   timestamp?: string;
   /** Last-edit time lifted from `updated`/`modified`, if present (kept in metadata too). */
@@ -43,8 +47,15 @@ function stripQuotes(value: string): string {
   return value.trim().replace(/^["']|["']$/g, "");
 }
 
+/** Compare tags the way Obsidian does: case-insensitive, `#private` = `private`. */
+export function normalizeTag(tag: string): string {
+  return tag.trim().replace(/^#/, "").toLowerCase();
+}
+
 export function normalizeNote(raw: string, folder: string): NormalizedNote {
   const tags: string[] = [];
+  const noteTags: string[] = [];
+  let retainStrategy: string | undefined;
   const metadata: Record<string, string> = {};
   if (folder) metadata.folder = folder;
   let timestamp: string | undefined;
@@ -64,6 +75,7 @@ export function normalizeNote(raw: string, folder: string): NormalizedNote {
         const v = stripQuotes(listItem[1]);
         if (currentKey === "tags" || currentKey === "aliases") {
           if (v) tags.push(v);
+          if (v && currentKey === "tags") noteTags.push(v);
         }
         continue;
       }
@@ -75,7 +87,11 @@ export function normalizeNote(raw: string, folder: string): NormalizedNote {
       currentKey = key;
 
       if (key === "tags" || key === "aliases") {
-        tags.push(...parseList(value));
+        const list = parseList(value);
+        tags.push(...list);
+        if (key === "tags") noteTags.push(...list);
+      } else if (key === "hindsight_retain_strategy") {
+        retainStrategy = stripQuotes(value) || undefined;
       } else if ((key === "created" || key === "date") && !timestamp) {
         const v = stripQuotes(value);
         if (v) timestamp = v;
@@ -89,5 +105,13 @@ export function normalizeNote(raw: string, folder: string): NormalizedNote {
 
   // Dedupe tags while preserving order.
   const uniqueTags = [...new Set(tags)];
-  return { body: body.trim(), tags: uniqueTags, timestamp, updated, metadata };
+  return {
+    body: body.trim(),
+    tags: uniqueTags,
+    noteTags: noteTags.map(normalizeTag),
+    retainStrategy,
+    timestamp,
+    updated,
+    metadata,
+  };
 }

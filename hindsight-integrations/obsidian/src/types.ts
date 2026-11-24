@@ -33,6 +33,8 @@ export interface RetainOptions {
   timestamp?: string;
   context?: string;
   updateMode?: "replace" | "append";
+  /** Named retain strategy on the bank; omitted = the bank's default. */
+  strategy?: string;
 }
 
 /** A fact cited by reflect via `based_on.memories`. */
