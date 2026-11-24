@@ -249,7 +249,7 @@ A bank's missions, dispositions, mental models and directives come from a bank t
 
 #### Multiple banks
 
-The primary bank is chosen in this order: a `.hindsight/config.toml` in a trusted repository, then `bank_id_template`, then `HINDSIGHT_BANK_ID` or `bank_id`. Writes go to the primary, then `bank_id` when `mirror_to_own_bank` is on, then each `additional_banks` entry. Recall searches the same banks and then each `recall_additional_banks` entry, all at once, each with the configured budget and `recall_max_tokens`; results are merged in that order and deduplicated by text. Reflect uses the primary bank only.
+The primary bank is chosen in this order: a `.hindsight/config.toml` in a trusted repository, then `bank_id_template`, then `HINDSIGHT_BANK_ID` or `bank_id`. Writes go to the primary, then `bank_id` when `mirror_to_own_bank` is on, then each `additional_banks` entry. Recall searches the same banks and then each `recall_additional_banks` entry, all at once, each with the configured budget and `recall_max_tokens` (or an even share of it when `recall_max_tokens_mode` is `split`); results are merged in that order and deduplicated by text. Reflect uses the primary bank only.
 
 The three list settings take a JSON list or comma-separated text; use the JSON form for a value that contains a comma.
 
@@ -271,6 +271,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `reflect_budget` | same as `recall_budget` | Reflect thoroughness for the `hindsight_reflect` tool and `recall_prefetch_method: reflect`: `low` / `mid` / `high`. Keep it `low` on a large bank where a `mid` reflect runs past the server's timeout, while recall stays `mid`. |
 | `recall_prefetch_method` | `recall` | Auto-recall method: `recall` (raw facts) or `reflect` (LLM synthesis) |
 | `recall_max_tokens` | `4096` | Maximum tokens for recall results |
+| `recall_max_tokens_mode` | `per_bank` | With several recall banks: `per_bank` gives each bank the full `recall_max_tokens`; `split` divides it evenly across the banks searched, so the total stays under it |
 | `recall_max_input_chars` | `800` | Maximum input query length for auto-recall |
 | `recall_prompt_preamble` | — | Custom preamble for recalled memories in context |
 | `recall_tags` | — | Tags to filter when searching memories: a JSON list (e.g. `["project-x", "team"]`) or comma-separated text (`"project-x, team"`) |

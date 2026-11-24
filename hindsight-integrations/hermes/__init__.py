@@ -895,6 +895,12 @@ class HindsightMemoryProvider(MemoryProvider):
             },
             {"key": "recall_max_tokens", "description": "Maximum tokens for recall results", "default": 4096},
             {
+                "key": "recall_max_tokens_mode",
+                "description": "How recall_max_tokens applies when recall searches several banks: per_bank gives each bank the full budget; split divides it evenly across the banks searched, so the total stays under recall_max_tokens",
+                "default": "per_bank",
+                "choices": ["per_bank", "split"],
+            },
+            {
                 "key": "recall_max_input_chars",
                 "description": "Maximum input query length for auto-recall",
                 "default": 800,
@@ -1615,6 +1621,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._auto_recall = cfg.get("auto_recall", True) and not cron_skip
         self._recall_sync = bool(cfg.get("recall_sync", False))
         self._recall_max_tokens = _parse_int_setting(cfg.get("recall_max_tokens"), 4096)
+        self._recall_split_tokens = cfg.get("recall_max_tokens_mode") == "split"
         self._recall_max_input_chars = _parse_int_setting(cfg.get("recall_max_input_chars"), 800)
         # None -> observation-only (Hindsight's consolidated, deduplicated layer; raw
         # world/experience facts re-ship the evidence they summarize and burn the
@@ -1738,8 +1745,9 @@ class HindsightMemoryProvider(MemoryProvider):
         earlier bank already returned is dropped.
 
         All banks are queried concurrently, each with the configured budget and
-        ``recall_max_tokens``. A primary-bank failure raises, exactly as the
-        single-bank recall does; a failing extra bank is skipped with a warning.
+        ``recall_max_tokens`` (an even share of it when ``recall_max_tokens_mode``
+        is ``split``). A primary-bank failure raises, exactly as the single-bank
+        recall does; a failing extra bank is skipped with a warning.
         Single-bank configs query exactly ``_bank_id``.
         """
         bank_ids = [
@@ -1747,7 +1755,12 @@ class HindsightMemoryProvider(MemoryProvider):
             for i, bank_id in enumerate(self._build_recall_bank_ids())
             if i == 0 or self._extra_bank_available("recall", bank_id)
         ]
-        kwargs: dict = {"query": query, "budget": self._budget, "max_tokens": self._recall_max_tokens}
+        max_tokens = self._recall_max_tokens
+        # Split over the banks actually queried: an extra bank paused after failures takes no
+        # share. Each bank keeps at least one token so a tiny budget still asks every bank (#5426).
+        if self._recall_split_tokens:
+            max_tokens = max(1, max_tokens // len(bank_ids))
+        kwargs: dict = {"query": query, "budget": self._budget, "max_tokens": max_tokens}
         if self._recall_tags:
             kwargs.update(tags=self._recall_tags, tags_match=self._recall_tags_match)
         if self._recall_types:
