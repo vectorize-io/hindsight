@@ -160,7 +160,10 @@ if [ -f "$INTEGRATION_DIR/pyproject.toml" ]; then
     fi
 elif [ -f "$INTEGRATION_DIR/package.json" ]; then
     print_info "Updating version in $INTEGRATION_DIR/package.json"
-    sed -i.bak "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" "$INTEGRATION_DIR/package.json"
+    # Anchored to the two-space top-level key: obsidian also has a `"version"` npm script
+    # (`node version-bump.mjs`), and an unanchored match rewrote it to the version number,
+    # so the `npm version` call below then ran `0.4.1` as a shell command and failed.
+    sed -i.bak "s/^  \"version\": \".*\"/  \"version\": \"$VERSION\"/" "$INTEGRATION_DIR/package.json"
     rm "$INTEGRATION_DIR/package.json.bak"
     # package-lock.json carries the package's own version twice, and the sed above does not touch
     # it — so every npm release since the lock was committed left it pinned at whatever version it
