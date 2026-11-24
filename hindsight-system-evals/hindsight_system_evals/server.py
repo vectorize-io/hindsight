@@ -8,8 +8,10 @@ cannot do that. Stub the model and you score the stub.
 
 The consequences follow from that and are not worked around:
 
-* provider credentials are REQUIRED, so these evals cannot run on fork PRs, and
-  the CI job has to be gated on secrets — unlike ``test-system``;
+* a real provider is REQUIRED, with its credentials when it takes any (a
+  subscription or local provider such as ``cursor`` or ``ollama`` takes none), so
+  these evals cannot run on fork PRs, and the CI job has to be gated on secrets —
+  unlike ``test-system``;
 * results are rates, not equalities, because the same request can produce a
   different answer twice running.
 """
@@ -17,6 +19,7 @@ The consequences follow from that and are not worked around:
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import os
 import subprocess
 import time
@@ -109,6 +112,20 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _requires_api_key(provider: str) -> bool:
+    """The server's own answer (``hindsight_api.provider_auth``), loaded by path.
+
+    That module is a dependency-free leaf, so loading the file alone avoids pulling
+    the whole API package into the eval runner.
+    """
+    path = API_DIR / "hindsight_api" / "provider_auth.py"
+    spec = importlib.util.spec_from_file_location("_hindsight_provider_auth", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return bool(module.requires_api_key(provider))
+
+
 def provider_environment() -> dict[str, str]:
     """The model settings for the server under test, from this process's env.
 
@@ -154,14 +171,17 @@ def provider_environment() -> dict[str, str]:
     else:
         if api_key := pick("LLM_API_KEY"):
             env["HINDSIGHT_API_LLM_API_KEY"] = api_key
-        credentialed = "HINDSIGHT_API_LLM_API_KEY" in env
+        # Subscription and local providers (cursor, claude-code, ollama, ...) run with
+        # no key; ask the server which ones need one rather than keeping a second list.
+        # `mock` is keyless too, but it is a stub, and a stub would score the stub.
+        credentialed = "HINDSIGHT_API_LLM_API_KEY" in env or (provider != "mock" and not _requires_api_key(provider))
 
     if not (provider and model and credentialed):
         raise RuntimeError(
-            "System evals need a real model. Set HINDSIGHT_EVAL_LLM_PROVIDER / _MODEL and either "
-            "_API_KEY or, for vertexai, _VERTEXAI_SERVICE_ACCOUNT_KEY (HINDSIGHT_API_ equivalents "
-            "also work). A stub cannot be used here: it would score the stub. The one exception is "
-            "HINDSIGHT_EVAL_LLM_PROVIDER=none, for a suite that makes no model call at all."
+            "System evals need a real model. Set HINDSIGHT_EVAL_LLM_PROVIDER / _MODEL and, for a "
+            "provider that needs one, _API_KEY or, for vertexai, _VERTEXAI_SERVICE_ACCOUNT_KEY "
+            "(HINDSIGHT_API_ equivalents also work). A stub cannot be used here: it would score the stub. "
+            "The one exception is HINDSIGHT_EVAL_LLM_PROVIDER=none, for a suite that makes no model call at all."
         )
     # Optional knobs that change what the model emits (a provider's thinking
     # switch, the sampling temperature). A bug that only shows at temperature 0

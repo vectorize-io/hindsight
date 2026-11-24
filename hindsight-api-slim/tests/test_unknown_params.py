@@ -217,7 +217,9 @@ class TestBankAliasRewrite:
         with caplog.at_level(logging.DEBUG, logger="hindsight_api.api.unknown_params"):
             assert client.get("/v1/default/banks/no-auth/thing").json()["bank_id"] == "no-auth"
             assert client.get("/v1/default/banks/real-bank/thing").json()["bank_id"] == "real-bank"
-        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        warnings = [
+            r for r in caplog.records if r.name == "hindsight_api.api.unknown_params" and r.levelno >= logging.WARNING
+        ]
         assert [r.getMessage() for r in warnings] == ["Bank alias resolution failed for 'real-bank'; using it as-is"]
         quiet = [r for r in caplog.records if "'no-auth'" in r.getMessage()]
         assert [r.levelno for r in quiet] == [logging.DEBUG] and quiet[0].exc_info is None
