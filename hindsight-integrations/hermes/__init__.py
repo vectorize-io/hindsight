@@ -2162,7 +2162,10 @@ class HindsightMemoryProvider(MemoryProvider):
         self._enqueue_retain(lambda: self._write_to_banks(bank_ids, _write))
 
     def _retain_status(self) -> str:
-        """The retain indicator's text: says so when earlier saves failed, not just "saving…"."""
+        """The retain indicator's text: says so when earlier saves failed, not just "saving…".
+
+        Reports each drop once: calling it marks the drops counted so far as shown. Called on the
+        turn path only; the writer thread only ever increments ``_retains_dropped``."""
         if (dropped := self._retains_dropped - self._retains_dropped_shown) > 0:
             self._retains_dropped_shown += dropped
             return f"{dropped} earlier save(s) to memory failed and were dropped (see the Hermes log)"
