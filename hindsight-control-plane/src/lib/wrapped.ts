@@ -36,6 +36,8 @@ export interface WrappedStats {
   topHarness: Ranked | null;
   persona: Persona | null;
   peakHour: number | null;
+  /** Memories per local hour of the day, midnight first. */
+  hourly: number[];
   /** The observation backed by the most facts. */
   strongestBelief: { text: string; proofs: number } | null;
   /** The earliest memory of the year. */
@@ -187,6 +189,7 @@ export function computeWrapped(year: number, banks: BankYear[]): WrappedStats {
     topHarness: rank(harnesses, 1)[0] ?? null,
     persona: peak === null || days.size < PERSONA_MIN_DAYS ? null : personaForHour(peak),
     peakHour: peak,
+    hourly: hours,
     strongestBelief: strongest,
     firstMemory: first,
   };

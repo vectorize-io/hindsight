@@ -20,6 +20,19 @@ import { resolveHarnessLogo } from "@/lib/harness-logo";
 import { computeWrapped, yearRange, type BankYear, type WrappedStats } from "@/lib/wrapped";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Constellation,
+  Galaxy,
+  HourDial,
+  Orbit,
+  Starfield,
+  drawCardStars,
+  drawCardYear,
+  nearestLinks,
+  seeded,
+  yearStars,
+  type Star,
+} from "@/components/wrapped-sky";
 
 const YEAR = 2026;
 // One stats-summary call per active bank (the server sums its year up), this many at a time.
@@ -42,7 +55,7 @@ const BACKGROUND = `radial-gradient(1200px 700px at 100% 0%, rgba(0,116,217,0.22
 // browser keep their own year.
 // ponytail: the oldest bank is looked for on the selector's loaded page; if it
 // is not there the stamp can move, and the year is read again.
-const cacheKey = (stamp: string) => `hindsight-wrapped-${YEAR}:all:${stamp}`;
+const cacheKey = (stamp: string) => `hindsight-wrapped-${YEAR}:v2:${stamp}`;
 
 function accountStamp(banks: BankInfo[]): string | null {
   let oldest: BankInfo | null = null;
@@ -202,7 +215,48 @@ export function WrappedButton() {
   );
 }
 
-type Slide = { id: string; render: () => React.ReactNode };
+/** A slide; `art` is its constellation, drawn beside the words (above them on a phone). */
+type Slide = { id: string; render: () => React.ReactNode; art?: () => React.ReactNode };
+
+// Where the top names sit in their constellation (a 100×70 sky), and how they are joined.
+const NAME_SPOTS = [
+  [22, 18],
+  [50, 34],
+  [80, 16],
+  [70, 56],
+  [28, 54],
+];
+const NAME_LINKS: [number, number][] = [
+  [0, 1],
+  [1, 2],
+  [1, 3],
+  [1, 4],
+  [3, 4],
+];
+const BANK_SPOTS = [
+  [50, 30],
+  [24, 70],
+  [78, 72],
+];
+
+const short = (s: string, n = 18) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+/** One star per bank (the first ones), scattered over a disc and joined to their nearest neighbour. */
+function bankSky(banks: number): Star[] {
+  const rand = seeded(banks);
+  // ponytail: capped at 60 stars; more banks only crowd the sky.
+  return Array.from({ length: Math.min(banks, 60) }, (_, i) => {
+    const a = rand() * Math.PI * 2;
+    const r = Math.sqrt(rand()) * 44;
+    return {
+      x: 50 + Math.cos(a) * r,
+      y: 50 + Math.sin(a) * r,
+      r: i === 0 ? 2 : 0.5 + rand() ** 2 * 1.4,
+      tone: i === 0 ? "blue" : rand() < 0.3 ? "teal" : "white",
+      halo: i === 0,
+    };
+  });
+}
 
 function Rise({
   delay = 0,
@@ -287,8 +341,8 @@ function WrappedStory({
           ),
         },
       ];
-    const maxBar = Math.max(1, ...stats.bars);
-    const peakMonth = stats.bars.indexOf(maxBar);
+    const peakMonth = stats.bars.indexOf(Math.max(...stats.bars));
+    const year = yearStars(stats.bars);
     const monthLetter = new Intl.DateTimeFormat(locale, { month: "narrow" });
     const busiest = stats.busiestDay
       ? new Intl.DateTimeFormat(locale, { weekday: "long", month: "long", day: "numeric" }).format(
@@ -312,6 +366,10 @@ function WrappedStory({
             </Rise>
           </Frame>
         ),
+        art: () => {
+          const sky = bankSky(stats.banks);
+          return <Constellation stars={sky} links={nearestLinks(sky)} />;
+        },
       },
       {
         id: "memories",
@@ -332,32 +390,30 @@ function WrappedStory({
             </Rise>
           </Frame>
         ),
+        art: () => <Galaxy facts={stats.facts} observations={stats.observations} />,
       },
       {
         id: "rhythm",
         render: () => (
           <Frame kicker={t("rhythmTitle")}>
-            <Rise delay={150} className="mb-10">
-              <div className="flex items-end gap-1.5 h-40">
-                {stats.bars.map((v, i) => (
-                  <div
+            <div className="mb-10">
+              <Constellation
+                stars={year}
+                links={year.slice(1).map((_, i): [number, number] => [i, i + 1])}
+                h={60}
+              />
+              <div className="relative mt-2 h-4 text-xs text-white/40">
+                {year.map((st, i) => (
+                  <span
                     key={i}
-                    className={`flex-1 rounded-[2px] wrapped-rise ${i === peakMonth ? "bg-[#5BB0FF]" : "bg-white/20"}`}
-                    style={{
-                      height: `${Math.max(2, (v / maxBar) * 100)}%`,
-                      animationDelay: `${200 + i * 40}ms`,
-                    }}
-                  />
-                ))}
-              </div>
-              <div className="flex gap-1.5 mt-3 text-xs text-white/40">
-                {stats.bars.map((_, i) => (
-                  <span key={i} className={`flex-1 ${i === peakMonth ? "text-[#5BB0FF]" : ""}`}>
+                    className={`absolute -translate-x-1/2 ${i === peakMonth ? "text-[#5BB0FF]" : ""}`}
+                    style={{ left: `${st.x}%` }}
+                  >
                     {monthLetter.format(new Date(YEAR, i, 1))}
                   </span>
                 ))}
               </div>
-            </Rise>
+            </div>
             <Rise delay={450} className="grid grid-cols-2 gap-8">
               <Stat
                 value={nf.format(stats.activeDays)}
@@ -402,27 +458,48 @@ function WrappedStory({
             </ol>
           </Frame>
         ),
+        art: () => {
+          const max = stats.topBanks[0]?.count || 1;
+          const stars: Star[] = stats.topBanks.map((b, i) => ({
+            x: BANK_SPOTS[i][0],
+            y: BANK_SPOTS[i][1],
+            r: 1.5 + 5 * Math.sqrt(b.count / max),
+            tone: i === 0 ? "blue" : i === 1 ? "teal" : "white",
+            halo: i === 0,
+            label: String(i + 1).padStart(2, "0"),
+          }));
+          const links: [number, number][] =
+            stars.length === 3
+              ? [
+                  [0, 1],
+                  [1, 2],
+                  [2, 0],
+                ]
+              : stars.length === 2
+                ? [[0, 1]]
+                : [];
+          return <Constellation stars={stars} links={links} labelSize={4} />;
+        },
       });
     if (stats.topEntities.length)
       s.push({
         id: "names",
         render: () => (
           <Frame kicker={t("namesTitle")}>
-            <ol className="border-b border-white/10">
-              {stats.topEntities.map((e, i) => (
-                <Rise key={e.name} delay={150 + i * 120}>
-                  <li className="flex items-baseline gap-6 border-t border-white/10 py-4">
-                    <span className="w-6 font-mono text-sm tabular-nums text-white/40">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <span className="flex-1 truncate text-2xl sm:text-3xl font-semibold tracking-tight text-white">
-                      {e.name}
-                    </span>
-                    <span className="text-sm tabular-nums text-white/50">{nf.format(e.count)}</span>
-                  </li>
-                </Rise>
-              ))}
-            </ol>
+            <Constellation
+              h={70}
+              labelSize={4.2}
+              stars={stats.topEntities.map((e, i) => ({
+                x: NAME_SPOTS[i][0],
+                y: NAME_SPOTS[i][1],
+                r: 1.2 + 2.8 * Math.sqrt(e.count / stats.topEntities[0].count),
+                tone: i === 0 ? "blue" : "white",
+                halo: i === 0,
+                label: short(e.name),
+                sub: nf.format(e.count),
+              }))}
+              links={NAME_LINKS.filter(([a, b]) => Math.max(a, b) < stats.topEntities.length)}
+            />
           </Frame>
         ),
       });
@@ -444,20 +521,13 @@ function WrappedStory({
             </Rise>
           </Frame>
         ),
+        art: () => <HourDial hourly={stats.hourly} peak={stats.peakHour} />,
       });
     if (stats.topHarness)
       s.push({
         id: "agent",
         render: () => (
           <Frame kicker={t("agentLead")}>
-            {harness && (
-              <Rise delay={150} className="mb-6">
-                <span className="inline-flex size-16 items-center justify-center rounded-lg bg-white">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={withBasePath(harness.src)} alt="" className="size-10 object-contain" />
-                </span>
-              </Rise>
-            )}
             <Rise delay={300} className={TITLE}>
               {harness?.label ?? stats.topHarness!.name}
             </Rise>
@@ -466,6 +536,7 @@ function WrappedStory({
             </Rise>
           </Frame>
         ),
+        art: () => <Orbit src={harness ? withBasePath(harness.src) : null} />,
       });
     if (stats.strongestBelief && stats.strongestBelief.proofs > 1)
       s.push({
@@ -532,7 +603,10 @@ function WrappedStory({
       style={{ background: BACKGROUND }}
       className="fixed inset-0 z-50 flex flex-col text-white"
     >
-      <div className="flex gap-1 px-4 pt-4">
+      <Starfield
+        count={Math.min(320, 120 + Math.round(40 * Math.log10((stats?.memories ?? 0) + 1)))}
+      />
+      <div className="relative flex gap-1 px-4 pt-4">
         {slides.map((sl, i) => (
           <div key={sl.id} className="h-0.5 flex-1 bg-white/15 overflow-hidden">
             <div
@@ -547,7 +621,7 @@ function WrappedStory({
           </div>
         ))}
       </div>
-      <div className="flex items-center justify-between px-4 py-3">
+      <div className="relative flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2.5">
           <HindsightMark size={22} />
           <span className="font-semibold">Hindsight</span>
@@ -595,7 +669,16 @@ function WrappedStory({
               key={slide.id}
               className="absolute inset-0 overflow-y-auto flex items-center justify-center px-6 sm:px-12 pb-10"
             >
-              {slide.render()}
+              {slide.art ? (
+                <div className="grid w-full max-w-6xl items-center gap-6 md:grid-cols-2 md:gap-16">
+                  <div className="order-2 min-w-0 md:order-1">{slide.render()}</div>
+                  <div className="order-1 mx-auto w-full max-w-[34vh] md:order-2 md:max-w-[520px]">
+                    {slide.art()}
+                  </div>
+                </div>
+              ) : (
+                slide.render()
+              )}
             </div>
           </>
         )}
@@ -777,7 +860,8 @@ async function drawShareCard(
   const spacing = (px: number) => {
     if ("letterSpacing" in ctx) ctx.letterSpacing = `${px}px`;
   };
-  const { stats, tiles, text } = o;
+  const { stats, text } = o;
+  let { tiles } = o;
   const harness = stats.topHarness ? resolveHarnessLogo(stats.topHarness.name) : null;
   const harnessLabel = stats.topHarness ? (harness?.label ?? stats.topHarness.name) : null;
   const [logo, harnessImg] = await Promise.all([
@@ -828,6 +912,7 @@ async function drawShareCard(
   glow.addColorStop(1, "rgba(8,12,23,0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
+  drawCardStars(ctx, W, H);
 
   // Header: mark + wordmark, and "WRAPPED 2026" on the right.
   ctx.textBaseline = "alphabetic";
@@ -894,7 +979,7 @@ async function drawShareCard(
   };
 
   // Lay the body out once to measure it, then centre it between header and footer.
-  ctx.font = f(600, 250);
+  ctx.font = f(600, 220);
   spacing(-10);
   const num = ctx.measureText(text.count);
   spacing(0);
@@ -902,20 +987,32 @@ async function drawShareCard(
   const numBase = 70 + num.actualBoundingBoxAscent;
   const labelBase = numBase + Math.max(0, num.actualBoundingBoxDescent) + 66;
   const heroH = labelBase + 16;
-  const th = 160;
-  const tileRows = Math.ceil(tiles.length / 2);
-  const tilesH = tileRows ? tileRows * th + (tileRows - 1) * gap : 0;
+  const th = 150;
   const panelH = ((text.persona ? 1 : 0) + (harnessLabel ? 1 : 0)) * 112;
-  const bodyH = heroH + (tilesH ? 56 + tilesH : 0) + (panelH ? 32 + panelH : 0);
   const top = 180;
-  let y = top + Math.max(0, (H - 130 - top - bodyH) / 2);
+  const room = H - 130 - top;
+  const layout = (n: number) => {
+    const rows = Math.ceil(n / 2);
+    const tilesH = rows ? rows * th + (rows - 1) * gap : 0;
+    return { tilesH, bodyH: heroH + (tilesH ? 56 + tilesH : 0) + (panelH ? 32 + panelH : 0) };
+  };
+  // The year's constellation sits above the number; tiles give way (four down to two) to fit it.
+  const SKY_MIN = 140;
+  if (tiles.length > 2 && room - layout(tiles.length).bodyH < SKY_MIN) tiles = tiles.slice(0, 2);
+  const { tilesH, bodyH } = layout(tiles.length);
+  const skyH = Math.min(300, room - bodyH - 40);
+  let y = top + Math.max(0, (room - bodyH - (skyH >= SKY_MIN ? skyH + 40 : 0)) / 2);
+  if (skyH >= SKY_MIN) {
+    drawCardYear(ctx, stats.bars, { x: P, y: y + 20, w: W - 2 * P, h: skyH - 20 });
+    y += skyH + 40;
+  }
 
   ctx.fillStyle = BLUE;
   ctx.font = f(500, 28);
   spacing(5);
   ctx.fillText(text.tagline, P, y + 30);
   spacing(-10);
-  ctx.font = f(600, 250);
+  ctx.font = f(600, 220);
   ctx.fillStyle = "#fff";
   ctx.fillText(text.count, P - 10, y + numBase);
   spacing(0);
@@ -941,8 +1038,5 @@ async function drawShareCard(
   ctx.font = f(600, 28);
   spacing(1);
   ctx.fillText("hindsight.vectorize.io", P, H - 56);
-  ctx.textAlign = "right";
-  ctx.fillText("#HindsightWrapped", W - P, H - 56);
-  ctx.textAlign = "left";
   spacing(0);
 }

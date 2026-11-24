@@ -73,6 +73,8 @@ describe("computeWrapped", () => {
     expect(s.bars[2]).toBe(6);
     expect(s.bars[5]).toBe(1);
     expect(s.peakHour).toBe(23);
+    expect(s.hourly[23]).toBe(5);
+    expect(s.hourly[9]).toBe(2);
     expect(s.persona).toBe("nightOwl");
     expect(s.topEntities).toEqual([{ name: "Alice", count: 5 }]);
     expect(s.topHarness).toEqual({ name: "claude-code", count: 5 });
