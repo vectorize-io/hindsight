@@ -104,6 +104,20 @@ class TestDirectives:
         # Cleanup
         await memory.delete_bank(bank_id, request_context=request_context)
 
+    async def test_create_directive_creates_missing_bank(self, memory: MemoryEngine, request_context):
+        """A first directive on a bank nobody created makes the bank, not a raw FK 500 (#6853)."""
+        bank_id = f"test-directive-new-bank-{uuid.uuid4().hex[:8]}"
+
+        directive = await memory.create_directive(
+            bank_id=bank_id, name="d", content="Rule.", request_context=request_context
+        )
+
+        assert directive["bank_id"] == bank_id
+        listed = await memory.list_directives(bank_id=bank_id, request_context=request_context)
+        assert [d["id"] for d in listed.items] == [directive["id"]]
+
+        await memory.delete_bank(bank_id, request_context=request_context)
+
     async def test_directive_crud(self, memory: MemoryEngine, request_context):
         """Test basic CRUD operations for directives."""
         bank_id = f"test-directive-crud-{uuid.uuid4().hex[:8]}"
