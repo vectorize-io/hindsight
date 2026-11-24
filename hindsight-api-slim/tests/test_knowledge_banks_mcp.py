@@ -114,21 +114,29 @@ async def test_an_mcp_search_can_ask_for_the_rerank(memory, fake_embedder, judge
                     await s.initialize()
                     await s.call_tool("create_knowledge_bank", {"bank_id": kb})
                     for doc in ("faq", "faq2"):
-                        await s.call_tool(
+                        ingested = await s.call_tool(
                             "ingest_knowledge_text", {"bank_id": kb, "document_id": doc, "text": f"a blue note {doc}"}
                         )
+                        assert not ingested.isError, ingested
 
             async with streamable_http_client(f"http://test/mcp/kb/{kb}/", http_client=http) as (r, w, _):
                 async with ClientSession(r, w) as s:
                     await s.initialize()
-                    await s.call_tool("search_knowledge_bank", {"query": "blue"})
+
+                    # Each call is checked: a search that errors never reaches the reranker either, so
+                    # "not reranked" would pass on a broken call.
+                    async def search(**flag: bool) -> None:
+                        found = await s.call_tool("search_knowledge_bank", {"query": "blue", **flag})
+                        assert not found.isError, found
+                        assert _payload(found)["results"], found
+
+                    await search()
                     assert judge.queries == []  # the server's default: not reranked
-                    found = await s.call_tool("search_knowledge_bank", {"query": "blue", "enable_reranking": True})
-                    assert not found.isError, found
+                    await search(enable_reranking=True)
                     assert judge.queries == ["blue"]  # asked for: reranked
 
                     judge.settings["kb_enable_reranking"] = True
-                    await s.call_tool("search_knowledge_bank", {"query": "blue", "enable_reranking": False})
+                    await search(enable_reranking=False)
                     assert judge.queries == ["blue"]  # asked not to: skipped
                     await s.call_tool("delete_knowledge_bank", {})
 

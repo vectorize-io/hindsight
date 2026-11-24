@@ -3,8 +3,9 @@
 The reranker (any Cohere-style /rerank endpoint) gets the search's best hits in one request, as many as
 its token budget holds; a PDF page goes as its picture with its text. Its scores reorder them. Each step
 is unit-tested; the story shows that this order is what the client receives, that the page goes with its
-picture, that a server without the setting searches the very same bank in the search's own order, and that
-a server with ``HINDSIGHT_API_KB_ENABLE_RERANKING=false`` reranks only a search that asks for it.
+picture, that a server without the setting searches the very same bank in the search's own order, that
+a server with ``HINDSIGHT_API_KB_ENABLE_RERANKING=false`` reranks only a search that asks for it, and that an
+agent's MCP search can ask for the rerank, or skip it, just as an HTTP search can.
 """
 
 from __future__ import annotations
@@ -12,11 +13,13 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 
+import httpx
 import pytest
 
 from hindsight_system_tests import KnowledgeBanks, UploadFile
 
 from .test_110_knowledge_banks import GUIDES, _text_pdf
+from .test_115_knowledge_bank_over_mcp import _session
 
 pytestmark = pytest.mark.asyncio
 
@@ -93,4 +96,28 @@ async def test_a_server_can_make_the_reranker_opt_in(knowledge_reranker_opt_in_c
     assert stubs.rerank.assets == []
     # true: the configured reranker's order.
     assert await order(enable_reranking=True) == ["billing", "exits", "outage", "keys"]
+    assert len(stubs.rerank.assets) == 1
+
+
+async def test_an_agents_mcp_search_asks_for_the_rerank_like_an_http_search(
+    knowledge_reranker_server, knowledge_reranker_opt_in_server, knowledge_bank, stubs
+):
+    query = "how do I rotate an api key"
+    stubs.rerank.rerank_scores = {"Invoices": 0.9, "Emergency exits": 0.8, "outage": 0.3, "Rotate": 0.05}
+
+    async def order(url: str, path: str, arguments: dict[str, object]) -> list[str]:
+        async with httpx.AsyncClient(base_url=url, timeout=60) as http:
+            found = await (await _session(http, path)).call("search_knowledge_bank", {"query": query, **arguments})
+        return [hit["document_id"] for hit in found["results"]]
+
+    # Opt-in server, the bank's own endpoint: unset keeps the search's order, true reranks.
+    own = f"/mcp/kb/{knowledge_bank}/"
+    assert await order(knowledge_reranker_opt_in_server.url, own, {}) == ["keys", "outage", "billing", "exits"]
+    assert stubs.rerank.assets == []
+    reranked = await order(knowledge_reranker_opt_in_server.url, own, {"enable_reranking": True})
+    assert reranked == ["billing", "exits", "outage", "keys"]
+    assert len(stubs.rerank.assets) == 1
+    # Reranking server, the multi-bank endpoint: false skips the rerank, and no request goes out.
+    skipped = {"bank_id": knowledge_bank, "enable_reranking": False}
+    assert await order(knowledge_reranker_server.url, "/mcp/", skipped) == ["keys", "outage", "billing", "exits"]
     assert len(stubs.rerank.assets) == 1
