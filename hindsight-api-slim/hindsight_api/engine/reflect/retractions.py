@@ -75,6 +75,12 @@ class RetractedGrounding:
         rebuilds the page from live facts instead (``mode_fallback_reason=
         "grounding_gone"``). Bank transfer does not land here: import rewrites
         ``based_on`` to the new ids (#3833).
+
+        The rebuild is a full refresh, so it keeps nothing the page holds beyond what
+        the bank can still ground — including text a user wrote by hand before turning
+        on delta mode. That is the intended trade: a page none of whose evidence exists
+        is stating things nothing supports, and the old behaviour (keep the prose)
+        kept a deleted document's claims, and their citations, forever (#6764).
         """
         return self.cited_count > 0 and len(self.facts) == self.cited_count
 
@@ -151,27 +157,47 @@ def prune_based_on(based_on: dict[str, Any] | None, drop_ids: set[str]) -> dict[
     return pruned
 
 
-#: A bracketed citation group — ``[id]`` or ``[id1, id2]`` — with the spaces before it.
-_CITATION_GROUP_RE = re.compile(r"([ \t]*)\[([^\[\]\n]+)\]")
+#: Stands in for a removed id while the punctuation around it is tidied, so only
+#: brackets and commas that held a dropped id are ever touched — never a ``foo()``
+#: or an empty ``[]`` the text already had.
+_GAP = "\x00"
+#: A ``[...]`` or ``(...)`` group holding nothing but removed ids and separators.
+_EMPTIED_GROUP_RE = re.compile(rf"([ \t]*)[\[(](?:[ \t,]|{_GAP})*{_GAP}(?:[ \t,]|{_GAP})*[\])](?=([\[(])?)")
 
 
 def _drop_ids_from_text(text: str, drop_ids: set[str]) -> str:
-    def _replace(match: re.Match[str]) -> str:
-        parts = [part.strip() for part in match.group(2).split(",")]
-        kept = [part for part in parts if part.lower() not in drop_ids]
-        if len(kept) == len(parts):
-            return match.group(0)
-        return f"{match.group(1)}[{', '.join(kept)}]" if kept else ""
-
-    return _CITATION_GROUP_RE.sub(_replace, text)
+    alternatives = "|".join(re.escape(i) for i in sorted(drop_ids))
+    an_id = rf"(?<![\w-])(?:{alternatives})(?![\w-])"
+    # A link pointing at a dropped id keeps only its text: ``[A](/m/A)`` -> ``A``.
+    text = re.sub(rf"\[([^\[\]\n]*)\]\([^()\n]*{an_id}[^()\n]*\)", r"\1", text, flags=re.IGNORECASE)
+    text = re.sub(an_id, _GAP, text, flags=re.IGNORECASE)
+    if _GAP not in text:
+        return text
+    # One separator goes with a removed id — the one before it, or after it when it
+    # opens a group: ``[B, A, C]`` -> ``[B, C]``, ``[A, B]`` -> ``[B]``.
+    text = re.sub(rf"[ \t]*,[ \t]*{_GAP}", _GAP, text)
+    text = re.sub(rf"{_GAP}+", _GAP, text)
+    text = re.sub(rf"(?<=[\[(]){_GAP}[ \t]*,[ \t]*", _GAP, text)
+    # A group left holding nothing goes too, from the inside out (``[[A]]``). The space
+    # before it stays only when another group follows: ``x. [A][B]`` -> ``x. [B]``.
+    while True:
+        tidied = _EMPTIED_GROUP_RE.sub(
+            lambda m: _GAP + m.group(1) if m.group(2) else m.group(1) + _GAP,
+            text,
+        )
+        if tidied == text:
+            break
+        text = tidied
+    return re.sub(rf"[ \t]*{_GAP}", "", text)
 
 
 def drop_inline_citations(doc: StructuredDocument, drop_ids: set[str]) -> StructuredDocument:
-    """A copy of ``doc`` with ``drop_ids`` removed from its bracketed inline citations.
+    """A copy of ``doc`` with ``drop_ids`` removed from its text.
 
-    The text twin of :func:`prune_based_on`. Only an exact id inside a bracket group
-    is removed; a group left empty goes with the spaces before it. Any other
-    UUID, or bracket, in the text is left alone.
+    The text twin of :func:`prune_based_on`. The model cites handles that are resolved
+    to bare UUIDs, so an id may sit anywhere: ``[id]``, ``(id)``, ``[a, id]``, a link,
+    or bare in a sentence. Only an exact dropped id is removed, with the separators and
+    the brackets that held it; any other UUID, bracket or parenthesis is left alone.
     """
     lowered = {i.lower() for i in drop_ids}
     if not lowered:

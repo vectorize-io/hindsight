@@ -109,12 +109,20 @@ _C = "33333333-3333-4333-8333-333333333333"
     [
         (f"Opens at 09:00. [{_A}]", "Opens at 09:00."),
         (f"Opens at 09:00. [{_A}, {_B}]", f"Opens at 09:00. [{_B}]"),
-        (f"Opens at 09:00. [{_A}][{_B}]", f"Opens at 09:00.[{_B}]"),
+        (f"Opens at 09:00. [{_B}, {_A}, {_C}]", f"Opens at 09:00. [{_B}, {_C}]"),
+        (f"Opens at 09:00. [{_A}][{_B}]", f"Opens at 09:00. [{_B}]"),
         (f"- Opens at 09:00 [{_A}]\n- Closes at 17:00 [{_B}]", f"- Opens at 09:00\n- Closes at 17:00 [{_B}]"),
+        # Resolved handles land as bare UUIDs, so an id is not always bracketed.
+        (f"Opens at 09:00 ({_A}).", "Opens at 09:00."),
+        (f"Opens at 09:00 {_A}.", "Opens at 09:00."),
+        (f"Opens at 09:00 [[{_A}]].", "Opens at 09:00."),
+        (f"See [{_A}](/memories/{_A}).", "See."),
+        (f"See [the notes](/memories/{_A}).", "See the notes."),
         # Case does not hide an id, and a group of only dropped ids leaves no ``[]``.
-        (f"Opens at 09:00 [{_A.upper()}, {_A}].", "Opens at 09:00."),
-        # A UUID that is not being dropped, in brackets or not, is not a citation to touch.
-        (f"Ticket {_C} [{_C}] and [see notes].", f"Ticket {_C} [{_C}] and [see notes]."),
+        (f"Opens at 09:00 [{_A.upper()}, {_A}, {_B}].", f"Opens at 09:00 [{_B}]."),
+        # A UUID that is not being dropped, and brackets that never held one, stay.
+        (f"Ticket {_C} [{_C}] calls foo() and [].", f"Ticket {_C} [{_C}] calls foo() and []."),
+        (f"Build {_A}1 is not the id.", f"Build {_A}1 is not the id."),
     ],
 )
 def test_drop_inline_citations_removes_only_the_dropped_ids(text: str, expected: str):
@@ -873,6 +881,8 @@ async def test_page_whose_whole_source_was_deleted_is_emptied(
     assert preview is not None
     assert preview.effective_mode == "full"
     assert preview.mode_fallback_reason == "grounding_gone"
+    # Said as what happened: the page is emptied, not "left as it is".
+    assert any("emptied" in warning for warning in preview.warnings), preview.warnings
 
     refreshed = await memory.refresh_mental_model(
         bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
@@ -883,6 +893,45 @@ async def test_page_whose_whole_source_was_deleted_is_emptied(
     assert refreshed["content"].strip() == ""
     stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
     assert based_on_fact_ids(stored["reflect_response"]["based_on"]) == []
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rebuild_with_sources_in_scope_keeps_the_page(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
+):
+    """Empty is only the answer when nothing is left to read.
+
+    With other facts in scope the rebuild runs reflect, and an empty candidate there
+    means reflect failed — small models, exhausted retries, a provider error. Writing
+    it would wipe the page; the refresh fails instead and the page stays.
+    """
+    from hindsight_api.engine.memory_engine import MentalModelRefreshError
+
+    bank_id = f"test-retract-gone-failed-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        await _insert_memory(memory, conn, bank_id, "Tests run on every push.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={"world": [_fact(gone_id, "Autocommit is disabled.", "world")]},
+        )
+
+    patch_reflect(memory, text="")
+    _patch_op_calls(monkeypatch, memory, retraction_ops=[], delta_ops=[])
+
+    with pytest.raises(MentalModelRefreshError):
+        await memory.refresh_mental_model(bank_id=bank_id, mental_model_id=mm_id, request_context=request_context)
+
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    assert stored["content"] == _PAGE_CONTENT
 
     await memory.delete_bank(bank_id, request_context=request_context)
 
@@ -915,7 +964,7 @@ async def test_page_whose_source_was_reingested_is_rebuilt_without_stale_ids(
     patch_reflect(
         memory,
         text="## Office hours\n\nThe office opens at 09:00.\n",
-        facts=[{"id": str(new_id), "text": "The office opens at 09:00.", "fact_type": "world"}],
+        facts=[{"id": str(new_id), "text": "The office opens at 09:00.", "type": "observation", "context": None}],
     )
     calls = _patch_op_calls(monkeypatch, memory, retraction_ops=[], delta_ops=[])
 

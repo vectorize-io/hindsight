@@ -345,7 +345,7 @@ def test_non_refresh_operations_report_no_refresh_details():
 def test_delta_failure_reason_narrows_the_fallback_vocabulary():
     """Only reasons a delta can hit *after* being chosen become failure reasons.
 
-    ``no_baseline_content`` / ``source_query_changed`` turn delta off before it
+    ``no_baseline_content`` / ``source_query_changed`` / ``grounding_gone`` turn delta off before it
     runs, so a refresh carrying them is a legitimate full regeneration, not a
     failure — they must degrade to the generic value rather than widen the
     failure enum with values it can never mean. The ``None`` case is defensive:
@@ -358,6 +358,7 @@ def test_delta_failure_reason_narrows_the_fallback_vocabulary():
     assert _delta_failure_reason("delta_ops_all_skipped") == "delta_ops_all_skipped"
     assert _delta_failure_reason("no_baseline_content") == "delta_not_applied"
     assert _delta_failure_reason("source_query_changed") == "delta_not_applied"
+    assert _delta_failure_reason("grounding_gone") == "delta_not_applied"
     assert _delta_failure_reason(None) == "delta_not_applied"
 
 

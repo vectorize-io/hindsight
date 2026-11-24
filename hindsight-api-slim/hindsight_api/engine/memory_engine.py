@@ -18928,9 +18928,11 @@ class MemoryEngine(MemoryEngineInterface):
         # ids, and no stale citation survives in either the text or ``based_on``.
         # Still deferred while consolidation is pending: right after a re-ingest the
         # replacements are not there yet, and a rebuild then would empty the page.
+        gone_citations = 0
         if retracted.unresolvable and retraction_deferred_reason is None:
             use_delta = False
             mode_fallback_reason = "grounding_gone"
+            gone_citations = retracted.cited_count
             retracted = RetractedGrounding()
 
         tag_filtering = _resolve_refresh_tag_filtering(model_tags, trigger_data)
@@ -19168,7 +19170,13 @@ class MemoryEngine(MemoryEngineInterface):
         warnings: list[str] = []
         retrieved_total = sum(facts.retrieved.values())
         used_total = sum(facts.used.values())
-        if not has_sources:
+        if gone_citations:
+            warnings.append(
+                f"None of the {gone_citations} fact(s) this document cited exist any more, so it was rebuilt "
+                "from what the bank holds now"
+                + (", which is nothing in its scope: the document was emptied." if not has_sources else ".")
+            )
+        elif not has_sources:
             warnings.append(
                 "Nothing in this document's scope was readable, so the reflect loop was skipped and the "
                 "document left as it is. Check the resolved scope — tags, tag_groups and fact_types all "
@@ -19563,11 +19571,13 @@ class MemoryEngine(MemoryEngineInterface):
         # Reached by a full refresh, and by a delta refresh whose baseline could not be
         # read (a delta with a baseline has already returned via the no-new-facts leg).
         #
-        # Not for a page whose whole grounding is gone: there, nothing to read is the
-        # answer — its source was deleted — and keeping the document would keep stating
-        # it. Both guards let that page be written empty.
-        grounding_gone = mode_fallback_reason == "grounding_gone"
-        if not has_sources and not delta_applied and not grounding_gone:
+        # Not for a page whose whole grounding is gone and that has nothing left to read:
+        # there, empty is the answer — its source was deleted — and keeping the document
+        # would keep stating it. Both guards let that one page be written empty. With
+        # sources in scope an empty candidate still means the reflect failed, so the
+        # empty-candidate guard below keeps refusing it.
+        write_empty = gone_citations > 0 and not has_sources
+        if not has_sources and not delta_applied and not write_empty:
             return _finish(
                 effective_mode=effective_mode,
                 mode_fallback_reason=mode_fallback_reason,
@@ -19587,7 +19597,7 @@ class MemoryEngine(MemoryEngineInterface):
         # existing content and raises, rather than persisting the empty render.
         # A gated delta has no reflect candidate at all, so its empty text says nothing
         # about the LLM: a failed edit there is reported by the delta guard below.
-        if not final_content.strip() and gate is None and not grounding_gone:
+        if not final_content.strip() and gate is None and not write_empty:
             warnings.append(
                 "The refresh produced empty content, which usually means an upstream LLM failure. "
                 "A real refresh would preserve the existing content and fail."

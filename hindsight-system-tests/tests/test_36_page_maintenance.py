@@ -119,8 +119,6 @@ async def test_the_scheduled_refresh_completes_cleanly(client, llm, bank_id, pag
     assert read.body.strip(), "the page was left empty by the refresh"
 
 
-
-
 async def test_deleting_the_only_source_document_empties_the_model(client, llm, bank_id, page, settled):
     """A model written from one document stops repeating it once that document is gone.
 
@@ -163,5 +161,5 @@ async def test_deleting_the_only_source_document_empties_the_model(client, llm, 
     assert failed.operations == [], "the refresh triggered by the delete failed"
 
     model = await client.mental_models.get_mental_model(bank_id, created.mental_model_id, detail="full")
-    assert ORIGINAL_ANSWER not in model.content, "the model still states what the deleted document said"
+    assert model.content.strip() == "", "the model still states what the deleted document said"
     assert not any(model.reflect_response["based_on"].values()), "the model still cites the deleted facts"
