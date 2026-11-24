@@ -22,21 +22,20 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Constellation,
-  Galaxy,
   HourDial,
+  MemoryMapCanvas,
   Orbit,
-  Starfield,
-  drawCardStars,
-  drawCardYear,
-  nearestLinks,
-  seeded,
   yearStars,
   type Star,
 } from "@/components/wrapped-sky";
+import { buildMemoryMap, paintMemoryMap, type BankGraph } from "@/lib/memory-map";
 
 const YEAR = 2026;
 // One stats-summary call per active bank (the server sums its year up), this many at a time.
 const CONCURRENCY = 6;
+// The memory constellation reads this many recent memories from each of the top banks.
+const MAP_BANKS = 3;
+const MAP_MEMORIES_PER_BANK = 120;
 const SLIDE_MS = 7000;
 
 // Hindsight palette (globals.css): navy page, brand blue → teal.
@@ -55,7 +54,7 @@ const BACKGROUND = `radial-gradient(1200px 700px at 100% 0%, rgba(0,116,217,0.22
 // browser keep their own year.
 // ponytail: the oldest bank is looked for on the selector's loaded page; if it
 // is not there the stamp can move, and the year is read again.
-const cacheKey = (stamp: string) => `hindsight-wrapped-${YEAR}:v2:${stamp}`;
+const cacheKey = (stamp: string) => `hindsight-wrapped-${YEAR}:v3:${stamp}`;
 
 function accountStamp(banks: BankInfo[]): string | null {
   let oldest: BankInfo | null = null;
@@ -139,7 +138,30 @@ async function loadWrapped(): Promise<{ stats: WrappedStats; complete: boolean }
   const answered = years.filter((y): y is BankYear => y !== null);
   // Every bank failing is the server failing, not an empty year: show the error, not "nothing this year".
   if (years.length && !answered.length) throw new Error("No bank could be summed up");
-  return { stats: computeWrapped(YEAR, answered), complete: answered.length === years.length };
+  const stats = computeWrapped(YEAR, answered);
+  // The constellation is a picture, not a count: without it the story still stands.
+  const busiest = [...answered]
+    .map((y) => ({
+      id: y.summary.bank_id,
+      n: y.summary.hours.reduce((a, h) => a + h.world + h.experience + h.observation, 0),
+    }))
+    .sort((a, b) => b.n - a.n)
+    .slice(0, MAP_BANKS);
+  const graphs = await Promise.all(
+    busiest.map((b) =>
+      client
+        .getGraph({ bank_id: b.id, limit: MAP_MEMORIES_PER_BANK })
+        .then((g) => g as BankGraph)
+        .catch(() => null)
+    )
+  );
+  const map = buildMemoryMap(
+    graphs.filter((g): g is BankGraph => g !== null),
+    start,
+    end
+  );
+  stats.map = map.nodes.length ? map : null;
+  return { stats, complete: answered.length === years.length };
 }
 
 /** The Hindsight mark alone, cropped out of the full logo. */
@@ -240,23 +262,6 @@ const BANK_SPOTS = [
 ];
 
 const short = (s: string, n = 18) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-
-/** One star per bank (the first ones), scattered over a disc and joined to their nearest neighbour. */
-function bankSky(banks: number): Star[] {
-  const rand = seeded(banks);
-  // ponytail: capped at 60 stars; more banks only crowd the sky.
-  return Array.from({ length: Math.min(banks, 60) }, (_, i) => {
-    const a = rand() * Math.PI * 2;
-    const r = Math.sqrt(rand()) * 44;
-    return {
-      x: 50 + Math.cos(a) * r,
-      y: 50 + Math.sin(a) * r,
-      r: i === 0 ? 2 : 0.5 + rand() ** 2 * 1.4,
-      tone: i === 0 ? "blue" : rand() < 0.3 ? "teal" : "white",
-      halo: i === 0,
-    };
-  });
-}
 
 function Rise({
   delay = 0,
@@ -366,10 +371,6 @@ function WrappedStory({
             </Rise>
           </Frame>
         ),
-        art: () => {
-          const sky = bankSky(stats.banks);
-          return <Constellation stars={sky} links={nearestLinks(sky)} />;
-        },
       },
       {
         id: "memories",
@@ -390,7 +391,7 @@ function WrappedStory({
             </Rise>
           </Frame>
         ),
-        art: () => <Galaxy facts={stats.facts} observations={stats.observations} />,
+        art: stats.map ? () => <MemoryMapCanvas map={stats.map!} /> : undefined,
       },
       {
         id: "rhythm",
@@ -603,9 +604,6 @@ function WrappedStory({
       style={{ background: BACKGROUND }}
       className="fixed inset-0 z-50 flex flex-col text-white"
     >
-      <Starfield
-        count={Math.min(320, 120 + Math.round(40 * Math.log10((stats?.memories ?? 0) + 1)))}
-      />
       <div className="relative flex gap-1 px-4 pt-4">
         {slides.map((sl, i) => (
           <div key={sl.id} className="h-0.5 flex-1 bg-white/15 overflow-hidden">
@@ -912,7 +910,6 @@ async function drawShareCard(
   glow.addColorStop(1, "rgba(8,12,23,0)");
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
-  drawCardStars(ctx, W, H);
 
   // Header: mark + wordmark, and "WRAPPED 2026" on the right.
   ctx.textBaseline = "alphabetic";
@@ -996,14 +993,16 @@ async function drawShareCard(
     const tilesH = rows ? rows * th + (rows - 1) * gap : 0;
     return { tilesH, bodyH: heroH + (tilesH ? 56 + tilesH : 0) + (panelH ? 32 + panelH : 0) };
   };
-  // The year's constellation sits above the number; tiles give way (four down to two) to fit it.
-  const SKY_MIN = 140;
-  if (tiles.length > 2 && room - layout(tiles.length).bodyH < SKY_MIN) tiles = tiles.slice(0, 2);
+  // The memory constellation sits above the number; tiles give way, two at a time, to fit it.
+  const SKY_MIN = 300;
+  if (stats.map)
+    while (tiles.length && room - layout(tiles.length).bodyH - 40 < SKY_MIN)
+      tiles = tiles.slice(0, Math.max(0, tiles.length - 2));
   const { tilesH, bodyH } = layout(tiles.length);
-  const skyH = Math.min(300, room - bodyH - 40);
+  const skyH = stats.map ? Math.min(480, room - bodyH - 40) : 0;
   let y = top + Math.max(0, (room - bodyH - (skyH >= SKY_MIN ? skyH + 40 : 0)) / 2);
-  if (skyH >= SKY_MIN) {
-    drawCardYear(ctx, stats.bars, { x: P, y: y + 20, w: W - 2 * P, h: skyH - 20 });
+  if (stats.map && skyH >= SKY_MIN) {
+    paintMemoryMap(ctx, stats.map, { x: P, y, w: W - 2 * P, h: skyH });
     y += skyH + 40;
   }
 

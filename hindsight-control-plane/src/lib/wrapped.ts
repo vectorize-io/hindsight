@@ -4,6 +4,7 @@
  * the component.
  */
 import type { StatsSummary } from "./api";
+import type { MemoryMap } from "./memory-map";
 
 /** One bank's year: its display name and its stats summary for the year. */
 export interface BankYear {
@@ -42,6 +43,8 @@ export interface WrappedStats {
   strongestBelief: { text: string; proofs: number } | null;
   /** The earliest memory of the year. */
   firstMemory: { text: string; date: string } | null;
+  /** The top banks' memories of the year as a constellation (dots only), when it could be read. */
+  map?: MemoryMap | null;
 }
 
 /** [start, end) of the year, in the viewer's local time. */

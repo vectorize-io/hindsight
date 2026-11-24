@@ -1,27 +1,15 @@
 "use client";
 
 /**
- * The night sky of Hindsight Wrapped: a twinkling starfield behind the story,
- * and the constellations each slide draws from its own numbers (one star per
- * bank, per month, per hour of the day, per name). Seeded, so a year always
- * draws the same sky.
+ * The constellations of Hindsight Wrapped: the year's real memories lighting up
+ * in the order they were written, and the small star charts other slides draw
+ * from their own numbers (per month, per hour of the day, per name).
  */
 import { useEffect, useId, useRef } from "react";
+import { paintMemoryMap, seeded, type MemoryMap } from "@/lib/memory-map";
 
 const BLUE = "#5BB0FF";
 const TEAL = "#2DD4BF";
-
-/** A small seeded random (mulberry32): the same seed draws the same sky. */
-export function seeded(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 export interface Star {
   x: number;
@@ -50,21 +38,6 @@ export function yearStars(bars: number[], w = 100, h = 60): Star[] {
       halo: i === peak,
     };
   });
-}
-
-/** Links each star to the nearest one before it: a tree, which reads as a constellation. */
-export function nearestLinks(stars: Star[]): [number, number][] {
-  const links: [number, number][] = [];
-  for (let i = 1; i < stars.length; i++) {
-    let best = 0;
-    let bestD = Infinity;
-    for (let j = 0; j < i; j++) {
-      const d = (stars[i].x - stars[j].x) ** 2 + (stars[i].y - stars[j].y) ** 2;
-      if (d < bestD) [best, bestD] = [j, d];
-    }
-    links.push([best, i]);
-  }
-  return links;
 }
 
 /** A constellation: lines draw in, stars pop in and keep twinkling. */
@@ -190,34 +163,6 @@ export function Constellation({
   );
 }
 
-/** Memories as a spiral galaxy: facts blue, observations teal, in their real proportion. */
-export function Galaxy({ facts, observations }: { facts: number; observations: number }) {
-  const total = facts + observations;
-  // ponytail: capped at 520 dots; past that the galaxy only gets denser, not truer.
-  const n = Math.min(520, Math.max(60, Math.round(Math.sqrt(total) * 6)));
-  const teal = total ? Math.round((observations / total) * n) : 0;
-  const rand = seeded(total || 1);
-  const stars: Star[] = Array.from({ length: n }, (_, k) => {
-    const t = Math.sqrt((k + 1) / n);
-    const arm = k % 2 ? Math.PI : 0;
-    const a = t * 9 + arm + (rand() - 0.5) * 0.7;
-    const rr = t * 46 + (rand() - 0.5) * 4;
-    return {
-      x: 50 + Math.cos(a) * rr,
-      y: 50 + Math.sin(a) * rr,
-      r: 0.25 + rand() ** 3 * 0.9,
-      // Observations are spread through the galaxy, not bunched in one arm.
-      tone: (k * 7919) % n < teal ? "teal" : "blue",
-    };
-  });
-  stars.unshift({ x: 50, y: 50, r: 2.2, tone: "white", halo: true });
-  return (
-    <div className="wrapped-spin-slow">
-      <Constellation stars={stars} h={100} delay={100} />
-    </div>
-  );
-}
-
 /** The day as a dial: 24 stars round a circle, sized by the memories written in that hour. */
 export function HourDial({ hourly, peak }: { hourly: number[]; peak: number | null }) {
   const max = Math.max(1, ...hourly);
@@ -293,118 +238,31 @@ export function Orbit({ src }: { src: string | null }) {
   );
 }
 
-/** A slowly drifting, twinkling starfield with the odd shooting star, behind every slide. */
-export function Starfield({ count }: { count: number }) {
+/** The year's memories lighting up in the order they were written, then twinkling. */
+export function MemoryMapCanvas({ map }: { map: MemoryMap }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const rand = seeded(count);
-    const stars = Array.from({ length: count }, () => ({
-      x: rand(),
-      y: rand(),
-      r: 0.3 + rand() ** 3 * 1.5,
-      p: rand() * Math.PI * 2,
-      s: 0.4 + rand() * 1.4,
-    }));
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const UNFOLD_MS = 4500;
     let raf = 0;
+    let t0 = 0;
     const frame = (now: number) => {
+      t0 ||= now;
       const dpr = window.devicePixelRatio || 1;
       const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-      if (canvas.width !== Math.round(w * dpr)) {
-        canvas.width = Math.round(w * dpr);
-        canvas.height = Math.round(h * dpr);
-      }
+      if (canvas.width !== Math.round(w * dpr)) canvas.width = canvas.height = Math.round(w * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-      const t = now / 1000;
-      ctx.fillStyle = "#fff";
-      for (const st of stars) {
-        const y = (((st.y - t * 0.003 * st.s) % 1) + 1) % 1;
-        ctx.globalAlpha = 0.15 + 0.55 * (0.5 + 0.5 * Math.sin(t * st.s + st.p));
-        ctx.beginPath();
-        ctx.arc(st.x * w, y * h, st.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      // A shooting star for the first second of every eight.
-      const k = (t % 8) / 1.1;
-      if (!still && k < 1) {
-        const r2 = seeded(Math.floor(t / 8) + 1);
-        const x0 = r2() * w * 0.7;
-        const y0 = r2() * h * 0.4;
-        const x = x0 + k * w * 0.3;
-        const y = y0 + k * w * 0.12;
-        const g = ctx.createLinearGradient(x, y, x - 160, y - 64);
-        g.addColorStop(0, "rgba(255,255,255,0.9)");
-        g.addColorStop(1, "rgba(91,176,255,0)");
-        ctx.globalAlpha = 1 - k;
-        ctx.strokeStyle = g;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x - 160, y - 64);
-        ctx.stroke();
-      }
-      ctx.globalAlpha = 1;
+      ctx.clearRect(0, 0, w, w);
+      const k = still ? 1 : Math.min(1, (now - t0) / UNFOLD_MS);
+      // Eased, so the year starts slowly and the last months rush in.
+      paintMemoryMap(ctx, map, { x: 0, y: 0, w, h: w }, 1 - (1 - k) ** 2, still ? 0 : now / 1000);
       if (!still) raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [count]);
-  return (
-    <canvas ref={ref} aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" />
-  );
-}
-
-/** Faint stars over the whole share card. */
-export function drawCardStars(ctx: CanvasRenderingContext2D, W: number, H: number) {
-  const rand = seeded(1350);
-  ctx.fillStyle = "#fff";
-  for (let i = 0; i < 220; i++) {
-    ctx.globalAlpha = 0.1 + rand() * 0.45;
-    ctx.beginPath();
-    ctx.arc(rand() * W, rand() * H, 0.6 + rand() ** 3 * 2.4, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-}
-
-/** The year's constellation on the share card, in a box (counts per month only, no names). */
-export function drawCardYear(
-  ctx: CanvasRenderingContext2D,
-  bars: number[],
-  box: { x: number; y: number; w: number; h: number }
-) {
-  const stars = yearStars(bars, box.w, box.h).map((s) => ({
-    ...s,
-    x: s.x + box.x,
-    y: s.y + box.y,
-  }));
-  const unit = box.w / 100;
-  ctx.strokeStyle = "rgba(160,200,255,0.35)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  stars.forEach((s, i) => (i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y)));
-  ctx.stroke();
-  for (const s of stars) {
-    if (s.halo) {
-      const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r * unit * 6);
-      g.addColorStop(0, "rgba(91,176,255,0.6)");
-      g.addColorStop(1, "rgba(91,176,255,0)");
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.r * unit * 6, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.shadowColor = s.tone === "blue" ? BLUE : "rgba(255,255,255,0.8)";
-    ctx.shadowBlur = 18;
-    ctx.fillStyle = TONES[s.tone ?? "white"];
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, s.r * unit, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.shadowBlur = 0;
+  }, [map]);
+  return <canvas ref={ref} aria-hidden className="aspect-square w-full" />;
 }
