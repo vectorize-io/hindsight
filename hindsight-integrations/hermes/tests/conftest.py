@@ -137,6 +137,7 @@ def hermes_env(tmp_path, monkeypatch):
     # The plugin binds `get_hermes_home` at import time, so patch it where it is used.
     monkeypatch.setattr(sys.modules["hindsight_hermes"], "get_hermes_home", lambda: tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows reads "~" from here, not HOME (#6658)
     for var in list(__import__("os").environ):
         if var.startswith("HINDSIGHT_"):
             monkeypatch.delenv(var, raising=False)

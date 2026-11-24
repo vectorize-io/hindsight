@@ -3579,11 +3579,20 @@ export function buildRetainRequest(
         ? pluginConfig.retainContext.trim()
         : DEFAULT_RETAIN_CONTEXT,
     metadata: {
-      retained_at: new Date(now).toISOString(),
-      message_count: String(messageCount),
+      // An append stamps its metadata on every memory the session document already has, so
+      // values that change per call would rewrite all of them each turn (#6241). Appends omit them.
+      ...(useSessionScopedDoc
+        ? {}
+        : {
+            retained_at: new Date(now).toISOString(),
+            message_count: String(messageCount),
+            turn_index: String(turnIndex),
+            ...(options?.windowTurns !== undefined
+              ? { window_turns: String(options.windowTurns) }
+              : {}),
+          }),
       source: pluginConfig.retainSource || "openclaw",
       retention_scope: retentionScope,
-      turn_index: String(turnIndex),
       session_key: resolvedCtx?.sessionKey,
       agent_id: resolvedCtx?.agentId || parsedSession.agentId,
       provider,
@@ -3591,7 +3600,6 @@ export function buildRetainRequest(
       channel_id: channelId,
       thread_id: threadId,
       sender_id: resolvedCtx?.senderId,
-      ...(options?.windowTurns !== undefined ? { window_turns: String(options.windowTurns) } : {}),
     },
     tags: mergedTags.length > 0 ? mergedTags : undefined,
     ...(options?.operationId ? { operationId: options.operationId } : {}),

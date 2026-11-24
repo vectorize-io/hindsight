@@ -543,8 +543,10 @@ describe("agent_end hook", () => {
     expect(options?.metadata?.channel_type).toBe("telegram");
     expect(options?.metadata?.channel_id).toBe("chat-999");
     expect(options?.metadata?.sender_id).toBe("U015");
-    expect(options?.metadata?.retained_at).toBeDefined();
-    expect(options?.metadata?.message_count).toBe("1");
+    // An append re-stamps every earlier memory of the session document, so per-call values stay out (#6241).
+    expect(options?.updateMode).toBe("append");
+    expect(options?.metadata).not.toHaveProperty("retained_at");
+    expect(options?.metadata).not.toHaveProperty("message_count");
   });
 
   it("uses identity cached in message_received for retain metadata when agent_end ctx is sparse", async () => {
@@ -696,7 +698,7 @@ describe("agent_end hook", () => {
       { role: "assistant", content: [{ type: "text", text: "That's a fascinating career!" }] },
     ]);
     expect(content).not.toContain("My name is Carol.");
-    expect(options?.metadata?.message_count).toBe("2");
+    expect(options?.metadata).not.toHaveProperty("message_count"); // an append (#6241)
   });
 });
 

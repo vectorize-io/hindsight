@@ -517,11 +517,9 @@ describe("buildRetainRequest", () => {
       documentId: "openclaw:agent:main:main",
       context: DEFAULT_RETAIN_CONTEXT,
       metadata: {
-        retained_at: expect.any(String),
-        message_count: "2",
+        // Append: no per-call values, or each turn rewrites the session's earlier memories (#6241).
         source: "openclaw",
         retention_scope: "turn",
-        turn_index: "1",
         session_key: "agent:main:main",
         agent_id: "main",
         provider: "discord",

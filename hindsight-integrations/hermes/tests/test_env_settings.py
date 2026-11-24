@@ -1,7 +1,10 @@
 """Settings a profile can give through its environment (``.env``) when it has no
 ``hindsight/config.json``: the retain label, both status-line indicators and synchronous recall."""
 
+import json
+
 import hindsight_hermes as plugin
+import pytest
 from conftest import SECRETS, FakeClient
 
 
@@ -62,3 +65,17 @@ def test_a_config_file_still_takes_precedence(provider):
     assert instance._recall_sync is False
     assert instance._retain_indicator is True
     instance.shutdown()
+
+
+@pytest.mark.parametrize("routed,expected_key", [(True, "profile-key"), (False, "shared-key"), (None, "shared-key")])
+def test_a_routed_profile_never_reads_the_shared_config(hermes_env, monkeypatch, routed, expected_key):
+    """#6754: a routed profile fell back to the process user's ~/.hindsight/config.json. None is a
+    Hermes older than v2026.9.21, which can't tell and keeps the legacy lookup."""
+    shared = hermes_env / ".hindsight" / "config.json"
+    shared.parent.mkdir()
+    shared.write_text(json.dumps({"mode": "cloud", "apiKey": "shared-key"}))
+    SECRETS["HINDSIGHT_API_KEY"] = "profile-key"
+    if routed is not None:
+        monkeypatch.setattr(plugin._secret_scope, "serves_routed_profile", lambda: routed, raising=False)
+
+    assert plugin._load_config()["apiKey"] == expected_key
