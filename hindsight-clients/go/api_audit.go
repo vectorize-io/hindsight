@@ -331,7 +331,7 @@ func (r ApiListAuditLogsRequest) EndDate(endDate string) ApiListAuditLogsRequest
 	return r
 }
 
-// Max items to return
+// Max items to return. Values above 500 are trimmed to 500.
 func (r ApiListAuditLogsRequest) Limit(limit int32) ApiListAuditLogsRequest {
 	r.limit = &limit
 	return r

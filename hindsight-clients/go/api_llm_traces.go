@@ -109,7 +109,7 @@ func (r ApiListLlmRequestsRequest) EndDate(endDate string) ApiListLlmRequestsReq
 	return r
 }
 
-// Max items to return
+// Max items to return. Values above 500 are trimmed to 500.
 func (r ApiListLlmRequestsRequest) Limit(limit int32) ApiListLlmRequestsRequest {
 	r.limit = &limit
 	return r

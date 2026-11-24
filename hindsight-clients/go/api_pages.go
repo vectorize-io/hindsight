@@ -845,7 +845,7 @@ func (r ApiSearchPagesRequest) Q(q string) ApiSearchPagesRequest {
 	return r
 }
 
-// Maximum results to return
+// Maximum results to return. Values above 50 are trimmed to 50.
 func (r ApiSearchPagesRequest) Limit(limit int32) ApiSearchPagesRequest {
 	r.limit = &limit
 	return r

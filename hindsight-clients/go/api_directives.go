@@ -439,6 +439,7 @@ func (r ApiListDirectivesRequest) ActiveOnly(activeOnly bool) ApiListDirectivesR
 	return r
 }
 
+// Maximum number of directives to return. Values above 1000 are trimmed to 1000.
 func (r ApiListDirectivesRequest) Limit(limit int32) ApiListDirectivesRequest {
 	r.limit = &limit
 	return r

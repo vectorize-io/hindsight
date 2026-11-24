@@ -415,7 +415,7 @@ type ApiGetDocumentHistoryRequest struct {
 	authorization *string
 }
 
-// Maximum number of operations to read
+// Maximum number of operations to read. Values above 1000 are trimmed to 1000.
 func (r ApiGetDocumentHistoryRequest) Limit(limit int32) ApiGetDocumentHistoryRequest {
 	r.limit = &limit
 	return r
@@ -569,7 +569,7 @@ type ApiListDocumentChunksRequest struct {
 	authorization *string
 }
 
-// Maximum number of chunks to return
+// Maximum number of chunks to return. Values above 1000 are trimmed to 1000.
 func (r ApiListDocumentChunksRequest) Limit(limit int32) ApiListDocumentChunksRequest {
 	r.limit = &limit
 	return r
@@ -762,6 +762,7 @@ func (r ApiListDocumentsRequest) EndDate(endDate string) ApiListDocumentsRequest
 	return r
 }
 
+// Maximum number of documents to return. Values above 1000 are trimmed to 1000.
 func (r ApiListDocumentsRequest) Limit(limit int32) ApiListDocumentsRequest {
 	r.limit = &limit
 	return r

@@ -1813,7 +1813,8 @@ class TestOperationTools:
 
 @pytest.mark.asyncio
 class TestListToolBounds:
-    """#4859: list tools reject the same limit/offset values their HTTP endpoints reject."""
+    """#4859: list tools reject the same limit/offset values their HTTP endpoints reject,
+    and trim an oversized limit to the same cap."""
 
     @pytest.fixture
     def mock_memory(self, mock_memory):
@@ -1825,10 +1826,7 @@ class TestListToolBounds:
     @pytest.mark.parametrize(
         "tool,args",
         [
-            ("list_operations", {"limit": 101}),
             ("list_operations", {"limit": 0}),
-            ("list_mental_models", {"limit": 1001}),
-            ("list_directives", {"limit": 1001}),
             ("list_memories", {"limit": -1}),
             ("list_documents", {"offset": -1}),
             ("list_tags", {"offset": -1}),
@@ -1846,6 +1844,24 @@ class TestListToolBounds:
         mcp = _make_mcp_server(mock_memory, {"list_operations"}, include_bank_id=True)
         await mcp.call_tool("list_operations", {"limit": 100})
         assert mock_memory.list_operations.call_args.kwargs["limit"] == 100
+
+    @pytest.mark.parametrize(
+        "tool,cap",
+        [
+            ("list_operations", 100),
+            ("list_mental_models", 1000),
+            ("list_directives", 1000),
+            ("list_memories", 1000),
+            ("list_documents", 1000),
+            ("list_tags", 1000),
+            ("list_banks", 1000),
+        ],
+    )
+    async def test_limit_over_the_cap_is_trimmed(self, mock_memory, tool, cap):
+        mcp = _make_mcp_server(mock_memory, {tool}, include_bank_id=True)
+        await mcp.call_tool(tool, {"limit": 100_000})
+        engine_method = "list_memory_units" if tool == "list_memories" else tool
+        assert getattr(mock_memory, engine_method).call_args.kwargs["limit"] == cap
 
 
 @pytest.mark.asyncio

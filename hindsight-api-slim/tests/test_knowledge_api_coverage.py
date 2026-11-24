@@ -251,9 +251,11 @@ async def test_the_document_list_pages_newest_first(api_client, mixed_bank):
 
 async def test_the_document_list_refuses_a_page_out_of_bounds(api_client, kb):
     url = f"{KB}/{kb}/documents"
-    for params in ({"limit": 0}, {"limit": 501}, {"offset": -1}):
+    for params in ({"limit": 0}, {"offset": -1}):
         assert (await api_client.get(url, params=params)).status_code == 422, params
-    assert (await api_client.get(url, params={"limit": 500})).status_code == 200
+    # Over the cap is trimmed to it, not refused.
+    for limit in (500, 501):
+        assert (await api_client.get(url, params={"limit": limit})).status_code == 200, limit
 
 
 async def test_a_document_detail_lists_its_passages_with_media_links(api_client, mixed_bank):

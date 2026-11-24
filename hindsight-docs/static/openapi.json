@@ -85,9 +85,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
+              "description": "Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of knowledge banks to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -723,11 +725,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 500,
               "minimum": 1,
+              "description": "Maximum number of documents to return. Values above 500 are trimmed to 500.",
               "default": 50,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of documents to return. Values above 500 are trimmed to 500."
           },
           {
             "name": "offset",
@@ -1041,11 +1044,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 100,
               "minimum": 1,
+              "description": "Maximum number of operations to return. Values above 100 are trimmed to 100.",
               "default": 20,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of operations to return. Values above 100 are trimmed to 100."
           },
           {
             "name": "offset",
@@ -1430,11 +1434,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
               "minimum": 0,
+              "description": "Maximum number of tags to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of tags to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -1830,9 +1835,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
+              "description": "Maximum number of memories to return. Values above 5000 are trimmed to 5000.",
               "default": 1000,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of memories to return. Values above 5000 are trimmed to 5000."
           },
           {
             "name": "q",
@@ -2184,9 +2191,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
+              "description": "Maximum number of memories to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of memories to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -2759,11 +2768,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "description": "Maximum number of banks to return",
+              "description": "Maximum number of banks to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
             },
-            "description": "Maximum number of banks to return"
+            "description": "Maximum number of banks to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -3061,11 +3070,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "description": "Maximum number of entities to return",
+              "description": "Maximum number of entities to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
             },
-            "description": "Maximum number of entities to return"
+            "description": "Maximum number of entities to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -3327,11 +3336,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "description": "Maximum number of co-occurrence edges to return",
+              "description": "Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000.",
               "default": 1000,
               "title": "Limit"
             },
-            "description": "Maximum number of co-occurrence edges to return"
+            "description": "Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000."
           },
           {
             "name": "min_count",
@@ -3721,11 +3730,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
               "minimum": 1,
+              "description": "Maximum number of mental models to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of mental models to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -5068,13 +5078,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 50,
               "minimum": 1,
-              "description": "Maximum results to return",
+              "description": "Maximum results to return. Values above 50 are trimmed to 50.",
               "default": 10,
               "title": "Limit"
             },
-            "description": "Maximum results to return"
+            "description": "Maximum results to return. Values above 50 are trimmed to 50."
           },
           {
             "name": "tags",
@@ -5214,13 +5223,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 50,
               "minimum": 1,
-              "description": "Maximum results to return",
+              "description": "Maximum results to return. Values above 50 are trimmed to 50.",
               "default": 10,
               "title": "Limit"
             },
-            "description": "Maximum results to return"
+            "description": "Maximum results to return. Values above 50 are trimmed to 50."
           },
           {
             "name": "tags",
@@ -5821,11 +5829,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
               "minimum": 1,
+              "description": "Maximum number of directives to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of directives to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -6298,9 +6307,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
+              "description": "Maximum number of documents to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
-            }
+            },
+            "description": "Maximum number of documents to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -6390,13 +6401,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
               "minimum": 1,
-              "description": "Maximum number of chunks to return",
+              "description": "Maximum number of chunks to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
             },
-            "description": "Maximum number of chunks to return"
+            "description": "Maximum number of chunks to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -6485,13 +6495,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
               "minimum": 1,
-              "description": "Maximum number of operations to read",
+              "description": "Maximum number of operations to read. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
             },
-            "description": "Maximum number of operations to read"
+            "description": "Maximum number of operations to read. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -6884,11 +6893,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "description": "Maximum number of tags to return",
+              "description": "Maximum number of tags to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
             },
-            "description": "Maximum number of tags to return"
+            "description": "Maximum number of tags to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -7066,13 +7075,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 100,
               "minimum": 1,
-              "description": "Maximum number of operations to return",
+              "description": "Maximum number of operations to return. Values above 100 are trimmed to 100.",
               "default": 20,
               "title": "Limit"
             },
-            "description": "Maximum number of operations to return"
+            "description": "Maximum number of operations to return. Values above 100 are trimmed to 100."
           },
           {
             "name": "offset",
@@ -9099,13 +9107,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
               "minimum": 0,
-              "description": "Maximum number of scopes to return",
+              "description": "Maximum number of scopes to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
             },
-            "description": "Maximum number of scopes to return"
+            "description": "Maximum number of scopes to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -9716,13 +9723,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1000,
               "minimum": 0,
-              "description": "Maximum number of webhooks to return",
+              "description": "Maximum number of webhooks to return. Values above 1000 are trimmed to 1000.",
               "default": 100,
               "title": "Limit"
             },
-            "description": "Maximum number of webhooks to return"
+            "description": "Maximum number of webhooks to return. Values above 1000 are trimmed to 1000."
           },
           {
             "name": "offset",
@@ -9958,12 +9964,11 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 200,
-              "description": "Maximum number of deliveries to return",
+              "description": "Maximum number of deliveries to return. Values above 200 are trimmed to 200.",
               "default": 50,
               "title": "Limit"
             },
-            "description": "Maximum number of deliveries to return"
+            "description": "Maximum number of deliveries to return. Values above 200 are trimmed to 200."
           },
           {
             "name": "cursor",
@@ -10333,13 +10338,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 500,
               "minimum": 1,
-              "description": "Max items to return",
+              "description": "Max items to return. Values above 500 are trimmed to 500.",
               "default": 50,
               "title": "Limit"
             },
-            "description": "Max items to return"
+            "description": "Max items to return. Values above 500 are trimmed to 500."
           },
           {
             "name": "offset",
@@ -10783,13 +10787,12 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 500,
               "minimum": 1,
-              "description": "Max items to return",
+              "description": "Max items to return. Values above 500 are trimmed to 500.",
               "default": 50,
               "title": "Limit"
             },
-            "description": "Max items to return"
+            "description": "Max items to return. Values above 500 are trimmed to 500."
           },
           {
             "name": "offset",

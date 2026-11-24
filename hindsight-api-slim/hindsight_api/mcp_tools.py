@@ -39,6 +39,7 @@ from hindsight_api.engine.search.tags import TagGroup, TagsMatch
 from hindsight_api.engine.stored_dates import is_placeholder_date
 from hindsight_api.extensions import OperationValidationError
 from hindsight_api.models import RequestContext
+from hindsight_api.pagination import TRIM_TO_PAGE, trim_to
 
 if TYPE_CHECKING:
     from hindsight_api.knowledge.service import KnowledgeService
@@ -46,11 +47,12 @@ if TYPE_CHECKING:
 _TAG_GROUP_LIST_ADAPTER = TypeAdapter(list[TagGroup])
 
 # Paging bounds for the list tools. They match the HTTP endpoints' Query bounds
-# so a limit rejected over HTTP is rejected over MCP too (#4859).
+# so a limit rejected over HTTP is rejected over MCP too (#4859), and a limit over
+# the cap is trimmed to it on both.
 _Offset = Annotated[int, Field(ge=0)]
-_Limit = Annotated[int, Field(ge=0)]
-_Limit1000 = Annotated[int, Field(ge=1, le=1000)]
-_OperationsLimit = Annotated[int, Field(ge=1, le=100)]
+_Limit = Annotated[int, Field(ge=0), TRIM_TO_PAGE]
+_Limit1000 = Annotated[int, Field(ge=1), TRIM_TO_PAGE]
+_OperationsLimit = Annotated[int, Field(ge=1), trim_to(100)]
 
 # All tools available in the system (explicit list — no wildcards).
 # Defined here (shared module) to avoid circular imports with api/mcp.py.
@@ -4984,7 +4986,6 @@ def _register_delete_knowledge_bank(mcp: FastMCP, memory: MemoryEngine, config: 
             )
 
 
-_KnowledgeTagLimit = Annotated[int, Field(ge=0, le=1000)]
 _KnowledgeMediaType = Literal["document", "image", "audio", "video", "text"]
 
 
@@ -5236,7 +5237,7 @@ def _register_list_knowledge_documents(mcp: FastMCP, memory: MemoryEngine, confi
             status: Literal["pending", "processing", "ready", "failed"] | None = None,
             media_type: _KnowledgeMediaType | None = None,
             tags: list[str] | None = None,
-            limit: Annotated[int, Field(ge=1, le=500)] = 50,
+            limit: Annotated[int, Field(ge=1), trim_to(500)] = 50,
             offset: _Offset = 0,
             bank_id: str | None = None,
         ) -> str:
@@ -5270,7 +5271,7 @@ def _register_list_knowledge_documents(mcp: FastMCP, memory: MemoryEngine, confi
             status: Literal["pending", "processing", "ready", "failed"] | None = None,
             media_type: _KnowledgeMediaType | None = None,
             tags: list[str] | None = None,
-            limit: Annotated[int, Field(ge=1, le=500)] = 50,
+            limit: Annotated[int, Field(ge=1), trim_to(500)] = 50,
             offset: _Offset = 0,
         ) -> dict:
             """
@@ -5415,7 +5416,7 @@ def _register_list_knowledge_tags(mcp: FastMCP, memory: MemoryEngine, config: MC
         @mcp.tool(annotations=_tool_annotations("list_knowledge_tags"), output_schema=None)
         async def list_knowledge_tags(
             q: str | None = None,
-            limit: _KnowledgeTagLimit = 100,
+            limit: _Limit = 100,
             offset: _Offset = 0,
             bank_id: str | None = None,
         ) -> str:
@@ -5443,7 +5444,7 @@ def _register_list_knowledge_tags(mcp: FastMCP, memory: MemoryEngine, config: MC
         @mcp.tool(annotations=_tool_annotations("list_knowledge_tags"))
         async def list_knowledge_tags(
             q: str | None = None,
-            limit: _KnowledgeTagLimit = 100,
+            limit: _Limit = 100,
             offset: _Offset = 0,
         ) -> dict:
             """

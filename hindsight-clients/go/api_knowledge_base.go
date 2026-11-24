@@ -863,7 +863,7 @@ func (r ApiSearchKnowledgeBaseRequest) Q(q string) ApiSearchKnowledgeBaseRequest
 	return r
 }
 
-// Maximum results to return
+// Maximum results to return. Values above 50 are trimmed to 50.
 func (r ApiSearchKnowledgeBaseRequest) Limit(limit int32) ApiSearchKnowledgeBaseRequest {
 	r.limit = &limit
 	return r

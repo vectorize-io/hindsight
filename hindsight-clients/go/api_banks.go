@@ -1463,7 +1463,7 @@ func (r ApiListBanksRequest) Q(q string) ApiListBanksRequest {
 	return r
 }
 
-// Maximum number of banks to return
+// Maximum number of banks to return. Values above 1000 are trimmed to 1000.
 func (r ApiListBanksRequest) Limit(limit int32) ApiListBanksRequest {
 	r.limit = &limit
 	return r

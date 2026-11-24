@@ -16,7 +16,7 @@ from pydantic import validate_call, Field, StrictFloat, StrictStr, StrictInt
 from typing import Any, Dict, List, Optional, Tuple, Union
 from typing_extensions import Annotated
 
-from pydantic import Field, StrictStr
+from pydantic import Field, StrictInt, StrictStr
 from typing import Optional
 from typing_extensions import Annotated
 from hindsight_client_api.models.create_webhook_request import CreateWebhookRequest
@@ -648,7 +648,7 @@ class WebhooksApi:
         self,
         bank_id: StrictStr,
         webhook_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=200, strict=True)]], Field(description="Maximum number of deliveries to return")] = None,
+        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200.")] = None,
         cursor: Annotated[Optional[StrictStr], Field(description="Pagination cursor (created_at of last item)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -672,7 +672,7 @@ class WebhooksApi:
         :type bank_id: str
         :param webhook_id: (required)
         :type webhook_id: str
-        :param limit: Maximum number of deliveries to return
+        :param limit: Maximum number of deliveries to return. Values above 200 are trimmed to 200.
         :type limit: int
         :param cursor: Pagination cursor (created_at of last item)
         :type cursor: str
@@ -732,7 +732,7 @@ class WebhooksApi:
         self,
         bank_id: StrictStr,
         webhook_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=200, strict=True)]], Field(description="Maximum number of deliveries to return")] = None,
+        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200.")] = None,
         cursor: Annotated[Optional[StrictStr], Field(description="Pagination cursor (created_at of last item)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -756,7 +756,7 @@ class WebhooksApi:
         :type bank_id: str
         :param webhook_id: (required)
         :type webhook_id: str
-        :param limit: Maximum number of deliveries to return
+        :param limit: Maximum number of deliveries to return. Values above 200 are trimmed to 200.
         :type limit: int
         :param cursor: Pagination cursor (created_at of last item)
         :type cursor: str
@@ -816,7 +816,7 @@ class WebhooksApi:
         self,
         bank_id: StrictStr,
         webhook_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=200, strict=True)]], Field(description="Maximum number of deliveries to return")] = None,
+        limit: Annotated[Optional[StrictInt], Field(description="Maximum number of deliveries to return. Values above 200 are trimmed to 200.")] = None,
         cursor: Annotated[Optional[StrictStr], Field(description="Pagination cursor (created_at of last item)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -840,7 +840,7 @@ class WebhooksApi:
         :type bank_id: str
         :param webhook_id: (required)
         :type webhook_id: str
-        :param limit: Maximum number of deliveries to return
+        :param limit: Maximum number of deliveries to return. Values above 200 are trimmed to 200.
         :type limit: int
         :param cursor: Pagination cursor (created_at of last item)
         :type cursor: str
@@ -974,7 +974,7 @@ class WebhooksApi:
     async def list_webhooks(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of webhooks to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of webhooks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -996,7 +996,7 @@ class WebhooksApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of webhooks to return
+        :param limit: Maximum number of webhooks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -1055,7 +1055,7 @@ class WebhooksApi:
     async def list_webhooks_with_http_info(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of webhooks to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of webhooks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1077,7 +1077,7 @@ class WebhooksApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of webhooks to return
+        :param limit: Maximum number of webhooks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -1136,7 +1136,7 @@ class WebhooksApi:
     async def list_webhooks_without_preload_content(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=0)]], Field(description="Maximum number of webhooks to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of webhooks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1158,7 +1158,7 @@ class WebhooksApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of webhooks to return
+        :param limit: Maximum number of webhooks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int

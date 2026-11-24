@@ -941,7 +941,7 @@ class DirectivesApi:
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter directives by execution scope. Omit or pass [] to list all directives.")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How tagged directives match the requested scope. Untagged/global directives are included.")] = None,
         active_only: Annotated[Optional[StrictBool], Field(description="Only return active directives")] = None,
-        limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of directives to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -969,7 +969,7 @@ class DirectivesApi:
         :type tags_match: str
         :param active_only: Only return active directives
         :type active_only: bool
-        :param limit:
+        :param limit: Maximum number of directives to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -1034,7 +1034,7 @@ class DirectivesApi:
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter directives by execution scope. Omit or pass [] to list all directives.")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How tagged directives match the requested scope. Untagged/global directives are included.")] = None,
         active_only: Annotated[Optional[StrictBool], Field(description="Only return active directives")] = None,
-        limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of directives to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1062,7 +1062,7 @@ class DirectivesApi:
         :type tags_match: str
         :param active_only: Only return active directives
         :type active_only: bool
-        :param limit:
+        :param limit: Maximum number of directives to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -1127,7 +1127,7 @@ class DirectivesApi:
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter directives by execution scope. Omit or pass [] to list all directives.")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How tagged directives match the requested scope. Untagged/global directives are included.")] = None,
         active_only: Annotated[Optional[StrictBool], Field(description="Only return active directives")] = None,
-        limit: Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of directives to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1155,7 +1155,7 @@ class DirectivesApi:
         :type tags_match: str
         :param active_only: Only return active directives
         :type active_only: bool
-        :param limit:
+        :param limit: Maximum number of directives to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int

@@ -916,7 +916,7 @@ class DocumentsApi:
         self,
         bank_id: StrictStr,
         document_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of operations to read")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of operations to read. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination, in operations")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -940,7 +940,7 @@ class DocumentsApi:
         :type bank_id: str
         :param document_id: (required)
         :type document_id: str
-        :param limit: Maximum number of operations to read
+        :param limit: Maximum number of operations to read. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination, in operations
         :type offset: int
@@ -1000,7 +1000,7 @@ class DocumentsApi:
         self,
         bank_id: StrictStr,
         document_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of operations to read")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of operations to read. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination, in operations")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1024,7 +1024,7 @@ class DocumentsApi:
         :type bank_id: str
         :param document_id: (required)
         :type document_id: str
-        :param limit: Maximum number of operations to read
+        :param limit: Maximum number of operations to read. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination, in operations
         :type offset: int
@@ -1084,7 +1084,7 @@ class DocumentsApi:
         self,
         bank_id: StrictStr,
         document_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of operations to read")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of operations to read. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination, in operations")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1108,7 +1108,7 @@ class DocumentsApi:
         :type bank_id: str
         :param document_id: (required)
         :type document_id: str
-        :param limit: Maximum number of operations to read
+        :param limit: Maximum number of operations to read. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination, in operations
         :type offset: int
@@ -1243,7 +1243,7 @@ class DocumentsApi:
         self,
         bank_id: StrictStr,
         document_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of chunks to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of chunks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1267,7 +1267,7 @@ class DocumentsApi:
         :type bank_id: str
         :param document_id: (required)
         :type document_id: str
-        :param limit: Maximum number of chunks to return
+        :param limit: Maximum number of chunks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -1327,7 +1327,7 @@ class DocumentsApi:
         self,
         bank_id: StrictStr,
         document_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of chunks to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of chunks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1351,7 +1351,7 @@ class DocumentsApi:
         :type bank_id: str
         :param document_id: (required)
         :type document_id: str
-        :param limit: Maximum number of chunks to return
+        :param limit: Maximum number of chunks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -1411,7 +1411,7 @@ class DocumentsApi:
         self,
         bank_id: StrictStr,
         document_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(le=1000, strict=True, ge=1)]], Field(description="Maximum number of chunks to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of chunks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1435,7 +1435,7 @@ class DocumentsApi:
         :type bank_id: str
         :param document_id: (required)
         :type document_id: str
-        :param limit: Maximum number of chunks to return
+        :param limit: Maximum number of chunks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -1575,7 +1575,7 @@ class DocumentsApi:
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of documents to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1609,7 +1609,7 @@ class DocumentsApi:
         :type start_date: str
         :param end_date: Filter until this ISO datetime (exclusive)
         :type end_date: str
-        :param limit:
+        :param limit: Maximum number of documents to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -1680,7 +1680,7 @@ class DocumentsApi:
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of documents to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1714,7 +1714,7 @@ class DocumentsApi:
         :type start_date: str
         :param end_date: Filter until this ISO datetime (exclusive)
         :type end_date: str
-        :param limit:
+        :param limit: Maximum number of documents to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int
@@ -1785,7 +1785,7 @@ class DocumentsApi:
         time_field: Annotated[Optional[StrictStr], Field(description="Time axis to filter and order by: `created_at` (when the document first arrived) or `updated_at` (its last write, the default ordering). Filtering and ordering both follow `time_field`, and rows with no value on that column are excluded — so `total` counts only rows carrying that timestamp, and can be 0 on a bank that is not empty.")] = None,
         start_date: Annotated[Optional[StrictStr], Field(description="Filter from this ISO datetime (inclusive)")] = None,
         end_date: Annotated[Optional[StrictStr], Field(description="Filter until this ISO datetime (exclusive)")] = None,
-        limit: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of documents to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -1819,7 +1819,7 @@ class DocumentsApi:
         :type start_date: str
         :param end_date: Filter until this ISO datetime (exclusive)
         :type end_date: str
-        :param limit:
+        :param limit: Maximum number of documents to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset:
         :type offset: int

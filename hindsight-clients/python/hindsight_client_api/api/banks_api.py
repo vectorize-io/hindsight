@@ -3285,7 +3285,7 @@ class BanksApi:
     async def list_banks(
         self,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on bank ID or name (e.g. 'alice')")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of banks to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of banks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -3307,7 +3307,7 @@ class BanksApi:
 
         :param q: Case-insensitive substring filter on bank ID or name (e.g. 'alice')
         :type q: str
-        :param limit: Maximum number of banks to return
+        :param limit: Maximum number of banks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -3365,7 +3365,7 @@ class BanksApi:
     async def list_banks_with_http_info(
         self,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on bank ID or name (e.g. 'alice')")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of banks to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of banks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -3387,7 +3387,7 @@ class BanksApi:
 
         :param q: Case-insensitive substring filter on bank ID or name (e.g. 'alice')
         :type q: str
-        :param limit: Maximum number of banks to return
+        :param limit: Maximum number of banks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -3445,7 +3445,7 @@ class BanksApi:
     async def list_banks_without_preload_content(
         self,
         q: Annotated[Optional[StrictStr], Field(description="Case-insensitive substring filter on bank ID or name (e.g. 'alice')")] = None,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of banks to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of banks to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
@@ -3467,7 +3467,7 @@ class BanksApi:
 
         :param q: Case-insensitive substring filter on bank ID or name (e.g. 'alice')
         :type q: str
-        :param limit: Maximum number of banks to return
+        :param limit: Maximum number of banks to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int

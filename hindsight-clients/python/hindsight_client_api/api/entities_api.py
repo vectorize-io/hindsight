@@ -390,7 +390,7 @@ class EntitiesApi:
     async def get_entity_graph(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000.")] = None,
         min_count: Annotated[Optional[StrictInt], Field(description="Minimum cooccurrence_count to include an edge")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
@@ -415,7 +415,7 @@ class EntitiesApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of co-occurrence edges to return
+        :param limit: Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000.
         :type limit: int
         :param min_count: Minimum cooccurrence_count to include an edge
         :type min_count: int
@@ -483,7 +483,7 @@ class EntitiesApi:
     async def get_entity_graph_with_http_info(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000.")] = None,
         min_count: Annotated[Optional[StrictInt], Field(description="Minimum cooccurrence_count to include an edge")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
@@ -508,7 +508,7 @@ class EntitiesApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of co-occurrence edges to return
+        :param limit: Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000.
         :type limit: int
         :param min_count: Minimum cooccurrence_count to include an edge
         :type min_count: int
@@ -576,7 +576,7 @@ class EntitiesApi:
     async def get_entity_graph_without_preload_content(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000.")] = None,
         min_count: Annotated[Optional[StrictInt], Field(description="Minimum cooccurrence_count to include an edge")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. Edges and node mention counts are computed from the matching memories only.")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
@@ -601,7 +601,7 @@ class EntitiesApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of co-occurrence edges to return
+        :param limit: Maximum number of co-occurrence edges to return. Values above 5000 are trimmed to 5000.
         :type limit: int
         :param min_count: Minimum cooccurrence_count to include an edge
         :type min_count: int
@@ -757,7 +757,7 @@ class EntitiesApi:
     async def list_entities(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
@@ -782,7 +782,7 @@ class EntitiesApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of entities to return
+        :param limit: Maximum number of entities to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -850,7 +850,7 @@ class EntitiesApi:
     async def list_entities_with_http_info(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
@@ -875,7 +875,7 @@ class EntitiesApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of entities to return
+        :param limit: Maximum number of entities to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
@@ -943,7 +943,7 @@ class EntitiesApi:
     async def list_entities_without_preload_content(
         self,
         bank_id: StrictStr,
-        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return")] = None,
+        limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Maximum number of entities to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Annotated[Optional[Annotated[int, Field(strict=True, ge=0)]], Field(description="Offset for pagination")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only count memories carrying these tags. An entity is returned only when a matching memory mentions it, and its mention count and dates cover the matching memories only.")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match (same modes as listing memories).")] = None,
@@ -968,7 +968,7 @@ class EntitiesApi:
 
         :param bank_id: (required)
         :type bank_id: str
-        :param limit: Maximum number of entities to return
+        :param limit: Maximum number of entities to return. Values above 1000 are trimmed to 1000.
         :type limit: int
         :param offset: Offset for pagination
         :type offset: int
