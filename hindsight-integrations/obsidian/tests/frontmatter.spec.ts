@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 import { normalizeNote } from "../src/frontmatter";
 
 describe("normalizeNote", () => {
+  it("keeps note tags apart from aliases, normalized for exclusion (#6759)", () => {
+    const raw = "---\ntags:\n  - '#Private'\n  - Work\naliases: [secret]\n---\nbody";
+    expect(normalizeNote(raw, "").noteTags).toEqual(["private", "work"]);
+    expect(normalizeNote("---\ntags: [A, b]\n---\nx", "").noteTags).toEqual(["a", "b"]);
+  });
+
+  it("lifts hindsight_retain_strategy out of metadata; blank means none (#6661)", () => {
+    const note = normalizeNote('---\nhindsight_retain_strategy: "report-notes"\n---\nbody', "");
+    expect(note.retainStrategy).toBe("report-notes");
+    expect(note.metadata).not.toHaveProperty("hindsight_retain_strategy");
+    expect(normalizeNote("---\nhindsight_retain_strategy:\n---\nbody", "").retainStrategy).toBe(
+      undefined
+    );
+  });
+
   it("returns the raw body (trimmed) with the folder when there is no frontmatter", () => {
     const note = normalizeNote("  # Title\n\njust a body  ", "Work/Clients");
     expect(note.body).toBe("# Title\n\njust a body");

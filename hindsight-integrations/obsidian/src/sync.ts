@@ -135,7 +135,10 @@ export class SyncEngine {
 
   /**
    * Ingest a single note, upserting it into the bank. Returns whether the note
-   * was newly created, updated, or skipped (unchanged / excluded / empty).
+   * was newly created, updated, skipped (unchanged / excluded / empty), or
+   * removed (it now carries an excluded tag, so its synced document is deleted).
+   * The tag check runs on the parsed frontmatter, before the hash shortcut, so
+   * a tag added to the exclude list also catches notes whose text is unchanged.
    */
   async ingestFile(
     file: SyncFile,
@@ -226,8 +229,10 @@ export class SyncEngine {
 
   /**
    * Full reconcile: ingest every (drifted) included note, then prune documents
-   * we previously synced whose note is now gone or excluded. Self-heals after
-   * the plugin was disabled during edits.
+   * we previously synced whose note is now gone or in an excluded folder.
+   * Notes with an excluded tag are pruned by `ingestFile` itself (it needs the
+   * frontmatter, so it cannot be decided from the path list here). Self-heals
+   * after the plugin was disabled during edits.
    */
   async reconcile(): Promise<ReconcileSummary> {
     const summary: ReconcileSummary = { added: 0, updated: 0, deleted: 0, unchanged: 0 };
