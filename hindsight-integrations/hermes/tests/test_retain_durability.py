@@ -161,3 +161,40 @@ def test_a_bank_without_document_text_stops_getting_appends(provider):
     # Later turns use the non-append path: a per-process document, rewritten whole each time.
     assert "update_mode" not in later["items"][0]
     assert later["document_id"] == instance._document_id
+
+
+def test_ops_are_not_kept_for_a_wait_that_is_turned_off(provider):
+    """#6548: with the prefetch wait off nothing ever cleared these, one per turn for the session."""
+    client = FlakyClient()
+    instance, _ = provider({"prefetch_waits_for_retain": False}, client=client)
+    instance.sync_turn("first", "one")
+    instance._retain_queue.join()
+
+    assert instance._pending_retain_ops == set()
+    assert instance._unsettled_retain_ops  # the retry watch (#5591) still holds the op
+    instance.shutdown()
+
+
+def test_the_status_line_says_when_saves_fail(provider, monkeypatch):
+    """#6819: the line said "saving to memory…" on every turn while every write failed."""
+    import hindsight_hermes as plugin
+
+    monkeypatch.setattr(plugin, "_RETAIN_MAX_ATTEMPTS", 2)
+    lines: list[str] = []
+    client = FlakyClient(failures=2)
+    instance, _ = provider({"prefetch_waits_for_retain": False}, client=client, status_callback=lines.append)
+    instance.sync_turn("first", "one")  # fails once: kept for a resend
+    instance._retain_queue.join()
+    instance.sync_turn("second", "two")  # the resend fails too: dropped
+    instance._retain_queue.join()
+    instance.sync_turn("third", "three")
+    instance._retain_queue.join()
+    instance.sync_turn("fourth", "four")
+    instance.shutdown()
+
+    assert [line.split(" — ", 1)[1] for line in lines] == [
+        "saving to memory…",
+        "couldn't save to memory yet, will retry (1 waiting)",
+        "1 earlier save(s) to memory failed and were dropped (see the Hermes log)",
+        "saving to memory…",
+    ]

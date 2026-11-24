@@ -243,6 +243,15 @@ def test_prefetch_injects_recalled_memories(provider):
     instance.shutdown()
 
 
+def test_read_only_tool_names_is_recall_only(provider):
+    """#6601: Hermes gives a delegated child only the tools a provider declares read-only."""
+    instance, _ = provider({"memory_mode": "tools"})
+    names = {schema["name"] for schema in instance.get_tool_schemas()}
+    assert instance.read_only_tool_names() == ["hindsight_recall"]
+    assert set(instance.read_only_tool_names()) <= names
+    instance.shutdown()
+
+
 def test_context_mode_hides_tools_tools_mode_skips_recall(provider):
     context_only, _ = provider({"memory_mode": "context"})
     assert context_only.get_tool_schemas() == []

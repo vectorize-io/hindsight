@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+import agent.secret_scope as _secret_scope
 from agent.memory_provider import MemoryProvider, RecallStatus, spawn_context_thread
 from agent.secret_scope import UnscopedSecretError, get_secret
 from hermes_cli.config import cfg_get
@@ -424,8 +425,13 @@ def _bank_not_written_yet(exc: Exception) -> bool:
 
 def _load_config() -> dict:
     """$HERMES_HOME/hindsight/config.json (profile-scoped), else ~/.hindsight/config.json
-    (legacy, shared), else environment variables."""
-    for path in (get_hermes_home() / "hindsight" / "config.json", Path.home() / ".hindsight" / "config.json"):
+    (legacy, shared; standalone profiles only), else environment variables."""
+    paths = [get_hermes_home() / "hindsight" / "config.json"]
+    # A routed profile never falls back to the process user's shared file (#6754). Hermes
+    # releases before v2026.9.21 can't tell, so they keep the legacy lookup.
+    if not getattr(_secret_scope, "serves_routed_profile", lambda: False)():
+        paths.append(Path.home() / ".hindsight" / "config.json")
+    for path in paths:
         # A corrupt (or empty) file falls through to the next source, as before the dedup.
         if path.exists() and (data := read_json_or_empty(path)):
             return data
@@ -589,6 +595,10 @@ class HindsightMemoryProvider(MemoryProvider):
         self._unsettled_retain_ops: dict[tuple[str, str], int] = {}
         # Writer-thread only: retains that failed on a transient error, oldest first (#5218).
         self._retain_backlog: list[_QueuedRetain] = []
+        # Retains given up on (writer thread increments), and how many the status line has
+        # already reported (turn path). Lets the indicator tell the truth instead of "saving…" (#6819).
+        self._retains_dropped = 0
+        self._retains_dropped_shown = 0
         # Set once the primary bank rejects append because it keeps no document text (#5599).
         self._append_unsupported = False
         self._apply_retain_policy({})
@@ -848,12 +858,12 @@ class HindsightMemoryProvider(MemoryProvider):
             },
             {
                 "key": "recall_indicator",
-                "description": "Show a '👁️ Hindsight — recalled N memories' status line when auto-recall injects memory (turn off for customer-facing agents)",
+                "description": "Show a '💭 Hindsight — recalled N memories' status line when auto-recall injects memory (turn off for customer-facing agents)",
                 "default": True,
             },
             {
                 "key": "retain_indicator",
-                "description": "Show a '👁️ Hindsight — saving to memory…' status line when a turn is saved to memory (turn off for customer-facing agents)",
+                "description": "Show a '💭 Hindsight — saving to memory…' status line when a turn is saved to memory (turn off for customer-facing agents)",
                 "default": True,
             },
             {"key": "auto_retain", "description": "Automatically retain conversation turns", "default": True},
@@ -1118,6 +1128,7 @@ class HindsightMemoryProvider(MemoryProvider):
                         exc,
                         exc_info=True,
                     )
+                    self._retains_dropped += 1
                     continue
                 logger.warning(
                     "Hindsight retain failed (attempt %d), will resend it with the next retain: %s",
@@ -1129,6 +1140,7 @@ class HindsightMemoryProvider(MemoryProvider):
         if (excess := len(self._retain_backlog) - _RETAIN_BACKLOG_LIMIT) > 0:
             logger.warning("Hindsight retain backlog full; dropping the %d oldest unsent retain(s)", excess)
             del self._retain_backlog[:excess]
+            self._retains_dropped += excess
 
     def _atexit_shutdown(self) -> None:
         try:
@@ -1195,6 +1207,7 @@ class HindsightMemoryProvider(MemoryProvider):
                         op_id,
                         retries + 1,
                     )
+                    self._retains_dropped += 1
                     continue
                 try:
                     self._run_hindsight_operation(
@@ -2051,7 +2064,7 @@ class HindsightMemoryProvider(MemoryProvider):
                 # Async retains are only *accepted* here; track the op id(s) so the
                 # next-turn prefetch can wait for true server-side completion.
                 if retain_async:
-                    self._track_retain_ops(resp, bank_id, wait=track_ops)
+                    self._track_retain_ops(resp, bank_id, wait=track_ops and self._prefetch_waits_for_retain)
 
             self._write_to_banks(bank_ids, _write)
             logger.debug("Hindsight %s succeeded", label)
@@ -2108,7 +2121,7 @@ class HindsightMemoryProvider(MemoryProvider):
         # Model-independent status line; no-op without retain_indicator/status channel.
         if self._retain_indicator and self._status_callback is not None:
             try:
-                self._status_callback(f"{_HINDSIGHT_GLYPH} Hindsight — saving to memory…")
+                self._status_callback(f"{_HINDSIGHT_GLYPH} Hindsight — {self._retain_status()}")
             except Exception:
                 logger.debug("Retain indicator emit failed (non-fatal)", exc_info=True)
         self._enqueue_retain(job)
@@ -2148,6 +2161,15 @@ class HindsightMemoryProvider(MemoryProvider):
 
         self._enqueue_retain(lambda: self._write_to_banks(bank_ids, _write))
 
+    def _retain_status(self) -> str:
+        """The retain indicator's text: says so when earlier saves failed, not just "saving…"."""
+        if (dropped := self._retains_dropped - self._retains_dropped_shown) > 0:
+            self._retains_dropped_shown += dropped
+            return f"{dropped} earlier save(s) to memory failed and were dropped (see the Hermes log)"
+        if waiting := len(self._retain_backlog):
+            return f"couldn't save to memory yet, will retry ({waiting} waiting)"
+        return "saving to memory…"
+
     def _enqueue_retain(self, job: Callable[[], None]) -> None:
         """Hand *job* to the (lazily started) writer and arm the atexit drain."""
         self._ensure_writer()
@@ -2162,6 +2184,13 @@ class HindsightMemoryProvider(MemoryProvider):
         return (
             [RECALL_SCHEMA, REFLECT_SCHEMA] if self._writes_disabled else [RETAIN_SCHEMA, RECALL_SCHEMA, REFLECT_SCHEMA]
         )
+
+    def read_only_tool_names(self) -> List[str]:
+        """Tools a read-only delegated child may use (Hermes ``delegation.memory_read``, #6601).
+
+        Only recall: retain writes to the bank, and reflect may consolidate server-side. Hermes
+        intersects this with :meth:`get_tool_schemas`, so ``context`` mode exposes none."""
+        return ["hindsight_recall"]
 
     def _tool_retain(self, args: dict) -> str:
         if self._writes_disabled:

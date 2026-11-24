@@ -36,7 +36,7 @@ _DEFAULT_RETAIN_STRATEGY = ""
 # ``shared`` merges them across sessions; the lineage tags stay on the facts.
 _DEFAULT_OBSERVATION_SCOPES = "shared"
 # Hindsight brand mark (eye ringed by graph nodes) for the recall/retain indicators.
-_HINDSIGHT_GLYPH = "👁️"
+_HINDSIGHT_GLYPH = "💭"
 # Hindsight 0.5.0 added ``update_mode='append'``; older APIs would silently
 # overwrite prior turns under a stable document_id, so they keep the per-process id.
 # Mirrors hindsight-integrations/openclaw — Hindsight 0.5.0 added `update_mode='append'` semantics on retain

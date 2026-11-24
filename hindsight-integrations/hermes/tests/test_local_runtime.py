@@ -18,6 +18,9 @@ import pytest
 from conftest import SECRETS
 from hindsight_hermes import embedded
 
+# shutil.which finds a launcher by its extension on Windows, so a bare "uvx" is invisible there (#6658).
+_UVX = "uvx.exe" if os.name == "nt" else "uvx"
+
 
 def test_the_probe_requires_only_the_client_and_the_daemon_manager(monkeypatch):
     """Probing for in-process ``hindsight`` / ``sentence_transformers`` is what dragged the whole
@@ -219,8 +222,8 @@ def test_the_helper_finds_the_uvx_hermes_installed_when_path_has_none(tmp_path, 
     """#5192: a package-manager Hermes keeps uvx under ~/.hermes/tools/uv-*/, off PATH."""
     uv_dir = tmp_path / ".hermes" / "tools" / "uv-0.12.3-darwin-arm64"
     uv_dir.mkdir(parents=True)
-    (uv_dir / "uvx").write_text("#!/bin/sh\n")
-    (uv_dir / "uvx").chmod(0o755)
+    (uv_dir / _UVX).write_text("#!/bin/sh\n")
+    (uv_dir / _UVX).chmod(0o755)
     monkeypatch.setattr(embedded.Path, "home", lambda: tmp_path)
 
     assert embedded._managed_uvx_dir(str(tmp_path / "empty")) == str(uv_dir)
@@ -231,8 +234,8 @@ def test_the_helper_finds_the_uvx_under_the_hermes_install_root(tmp_path, monkey
     """#5580: in the Docker image uv lives under /opt/hermes/tools, beside /opt/hermes/.venv."""
     uv_dir = tmp_path / "opt" / "hermes" / "tools" / "uv-0.12.3-linux-x64"
     uv_dir.mkdir(parents=True)
-    (uv_dir / "uvx").write_text("#!/bin/sh\n")
-    (uv_dir / "uvx").chmod(0o755)
+    (uv_dir / _UVX).write_text("#!/bin/sh\n")
+    (uv_dir / _UVX).chmod(0o755)
     monkeypatch.setattr(embedded.Path, "home", lambda: tmp_path / "data")
     monkeypatch.setattr(sys, "prefix", str(tmp_path / "opt" / "hermes" / ".venv"))
 
@@ -264,8 +267,8 @@ def test_the_helper_finds_the_uvx_under_the_hermes_root_hermes_names(tmp_path, m
     root = tmp_path / "AppData" / "Local" / "hermes"
     uv_dir = root / "tools" / "uv-0.13.5-win32-x64"
     uv_dir.mkdir(parents=True)
-    (uv_dir / "uvx").write_text("#!/bin/sh\n")
-    (uv_dir / "uvx").chmod(0o755)
+    (uv_dir / _UVX).write_text("#!/bin/sh\n")
+    (uv_dir / _UVX).chmod(0o755)
     monkeypatch.setattr(embedded.Path, "home", lambda: tmp_path / "home")
     monkeypatch.setattr(sys, "prefix", str(tmp_path / "elsewhere" / ".venv"))
     monkeypatch.setitem(sys.modules, "hermes_constants", SimpleNamespace(get_default_hermes_root=lambda: root))
