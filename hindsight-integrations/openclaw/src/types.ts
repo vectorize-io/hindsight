@@ -18,7 +18,11 @@ export interface MoltbotPluginAPI {
     handler: (event: any, ctx?: any) => void | Promise<void | PluginPromptHookResult>
   ): void;
   // OpenClaw >= 2026.10: the memory-slot owner's native read runtime. Absent on older hosts.
-  registerMemoryCapability?(capability: { providerRuntime: MemoryProviderRuntime }): void;
+  registerMemoryCapability?(capability: {
+    providerRuntime: MemoryProviderRuntime;
+    /** Agent tools Active Memory's deep-recall turn may call (OpenClaw 2026.11+). */
+    recallToolNames?: readonly string[];
+  }): void;
   // Agent tools. A factory runs per agent run and may return null to offer none.
   registerTool?(
     factory: (ctx: PluginToolContext) => PluginTool[] | null,
@@ -39,6 +43,8 @@ export interface PluginToolContext {
   workspaceDir?: string;
   /** Trusted sender id from the inbound message (set by the runtime, not by tool arguments). */
   requesterSenderId?: string;
+  /** Surface the run was dispatched on ("webchat", "telegram"); Control UI keys carry none. */
+  messageChannel?: string;
 }
 
 export interface PluginToolResult {

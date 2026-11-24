@@ -15,6 +15,7 @@ import {
 import { RetainQueue } from "./retain-queue.js";
 import { createMemoryProviderRuntime } from "./memory-provider.js";
 import {
+  bankNotWrittenYet,
   createHindsightTools,
   HINDSIGHT_TOOL_NAMES,
   oldToolNamesIn,
@@ -317,6 +318,19 @@ const turnCountBySession = new Map<string, number>();
 // Where the running agent run started in each session's transcript, recorded by
 // before_prompt_build and consumed by agent_end. See runStartMarker.
 const runStartBySession = new Map<string, string | null>();
+// The run's request as before_prompt_build saw it. Codex drops an already-persisted
+// user message from agent_end's snapshot, and a run with no user message was
+// never saved. (#6073)
+const runUserTextBySession = new Map<string, string>();
+
+/**
+ * Active Memory's deep-recall child turn (`<parent>:active-memory:<id>`). It is an
+ * internal search prompt: injecting recall into it duplicates the parent's, and
+ * saving it stores the search prompt as memory. It keeps the tools. (#6303)
+ */
+export function isActiveMemoryChildSession(sessionKey: string): boolean {
+  return /:active-memory:[^:]+$/.test(sessionKey);
+}
 const MAX_TRACKED_SESSIONS = 10_000;
 const DEFAULT_RECALL_TIMEOUT_MS = 10_000;
 
@@ -423,7 +437,7 @@ export async function flushRetainQueue(
   signal: globalThis.AbortSignal | undefined = serviceAbortController?.signal
 ): Promise<void> {
   const activeQueue = queueOverride ?? retainQueue;
-  const activeClient = clientOverride ?? client;
+  let activeClient = clientOverride ?? client;
   if (
     !activeQueue ||
     isFlushInProgress ||
@@ -456,6 +470,12 @@ export async function flushRetainQueue(
         `retain queue flush deferred (${pending} queued): server operation-id capability unknown`
       );
       return;
+    }
+    if (!activeClient) {
+      // The API is back (the probe above answered) but no turn has come to
+      // reconnect: do it here, or queued turns wait for the next message. (#6196)
+      await lazyReinit();
+      activeClient = client;
     }
     if (!activeClient) return; // no client yet — can't flush
 
@@ -622,6 +642,16 @@ async function lazyReinit(configOverride?: PluginConfig): Promise<void> {
     return; // Only external API mode supports lazy reinit
   }
 
+  // A copy that was never started has no retain queue, so a failed retain
+  // would be dropped instead of replayed (#4537). Open it before the health
+  // check: an API that is down right now is when the queue is needed. (#6196)
+  // ponytail: the started copy may hold the same file, so both can replay one
+  // item; the persisted operation id keeps that idempotent on API >= 0.8.6.
+  // Share one queue per process via globalThis if duplicates show up on older APIs.
+  if (!retainQueue && serviceGeneration === 0 && !preServiceController.signal.aborted) {
+    initRetainQueue(config, 0, preServiceController.signal);
+  }
+
   debug("[Hindsight] Attempting lazy re-initialization...");
   try {
     await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
@@ -638,14 +668,6 @@ async function lazyReinit(configOverride?: PluginConfig): Promise<void> {
 
     usingExternalApi = true;
     isInitialized = true;
-    // A copy that was never started has no retain queue, so a failed retain
-    // would be dropped instead of replayed. (#4537)
-    // ponytail: the started copy may hold the same file, so both can replay one
-    // item; the persisted operation id keeps that idempotent on API >= 0.8.6.
-    // Share one queue per process via globalThis if duplicates show up on older APIs.
-    if (!retainQueue && serviceGeneration === 0 && !preServiceController.signal.aborted) {
-      initRetainQueue(config, 0, preServiceController.signal);
-    }
     // Replace the rejected initPromise with a resolved one
     initPromise = Promise.resolve();
     debug("[Hindsight] ✓ Lazy re-initialization succeeded");
@@ -1580,7 +1602,18 @@ export function getIdentitySkipReason(
       reason: finalSkipReason(`operational provider ${resolvedCtx.messageProvider}`),
     };
   }
-  if (!resolvedCtx?.messageProvider || resolvedCtx.messageProvider === "unknown") {
+  // The provider only matters when it picks the bank. A bank keyed by agent alone,
+  // a static bank or a mapped agent is the same on every surface, so a run with no
+  // provider (a CLI `--session-key`, a Control UI tab) still has its bank.
+  const granularity = pluginConfig?.dynamicBankGranularity ?? DEFAULT_DYNAMIC_BANK_GRANULARITY;
+  const bankNeedsProvider =
+    !staticBanking &&
+    !mappedBanking &&
+    granularity.some((g) => g === "channel" || g === "provider" || g === "user");
+  if (
+    bankNeedsProvider &&
+    (!resolvedCtx?.messageProvider || resolvedCtx.messageProvider === "unknown")
+  ) {
     return { resolvedCtx, reason: retryableSkipReason("missing stable message provider") };
   }
   if (!resolvedCtx?.senderId || resolvedCtx.senderId === "anonymous") {
@@ -2065,6 +2098,14 @@ async function detectAppendCapability(
 }
 
 async function checkExternalApiHealth(apiUrl: string, apiToken?: string | null): Promise<void> {
+  // /health accepts any token, so an unresolved SecretRef would pass here and then
+  // send "Bearer [object Object]" on every call. Fail init instead. (#6201)
+  if (apiToken != null && typeof apiToken !== "string") {
+    throw new Error(
+      "hindsightApiToken is an unresolved SecretRef (OpenClaw passed the reference, not its value); " +
+        "check that the secret it points to exists"
+    );
+  }
   const healthUrl = `${apiUrl.replace(/\/$/, "")}/health`;
   const maxRetries = 3;
   const retryDelay = 2000;
@@ -2392,7 +2433,7 @@ export default function (api: MoltbotPluginAPI) {
           debug(`[Hindsight] API Port: ${apiPort}`);
         }
 
-        // Initialize (runs synchronously in service.start())
+        // Initialize; start() does not wait for it (see below)
         debug("[Hindsight] Starting initialization...");
         initPromise = (async () => {
           try {
@@ -2488,117 +2529,128 @@ export default function (api: MoltbotPluginAPI) {
           }
         })();
 
-        // Wait for initialization to complete
-        try {
-          await initPromise;
-        } catch (error) {
-          log.error("initial initialization failed", error);
-          // Continue to health check below
-        }
+        // OpenClaw (2026.11+) fails a service whose start() runs past ~5s, stops it
+        // and drops every later turn. A health check against a down API, or a
+        // booting local daemon, takes longer, so finish in the background: the
+        // hooks wait on initPromise and recover lazily on their own. (#6196)
+        void (async () => {
+          // Wait for initialization to complete
+          try {
+            await initPromise;
+          } catch (error) {
+            log.error("initial initialization failed", error);
+            // Continue to health check below
+          }
+          // stop() (or a newer start()) may have run while this was in the
+          // background; don't build a client or spawn a daemon for it.
+          if (startGeneration !== serviceGeneration) return;
 
-        // External API mode: check external API health
-        if (usingExternalApi) {
-          const externalApi = detectExternalApi(pluginConfig);
-          if (externalApi.apiUrl && isInitialized) {
-            try {
-              await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
-              await detectAppendCapability(externalApi.apiUrl, externalApi.apiToken);
-              debug("[Hindsight] External API is healthy");
-              return;
-            } catch (error) {
-              log.error("external API health check failed", error);
-              // Reset state for reinitialization attempt
+          // External API mode: check external API health
+          if (usingExternalApi) {
+            const externalApi = detectExternalApi(pluginConfig);
+            if (externalApi.apiUrl && isInitialized) {
+              try {
+                await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
+                await detectAppendCapability(externalApi.apiUrl, externalApi.apiToken);
+                debug("[Hindsight] External API is healthy");
+                return;
+              } catch (error) {
+                log.error("external API health check failed", error);
+                // Reset state for reinitialization attempt
+                client = null;
+                clientOptions = null;
+                banksWithDefaultsApplied.clear();
+                isInitialized = false;
+              }
+            }
+          } else {
+            // Local daemon mode: check daemon health (handles SIGUSR1 restart case)
+            if (hindsightServer && isInitialized) {
+              const healthy = await hindsightServer.checkHealth();
+              if (healthy) {
+                // Same re-probe the external branch does after its health check:
+                // the daemon may have been restarted (SIGUSR1) onto a different
+                // embed version since we last looked. (#3686)
+                await detectAppendCapability(hindsightServer.getBaseUrl());
+                debug("[Hindsight] Daemon is healthy");
+                return;
+              }
+
+              debug("[Hindsight] Daemon is not responding - reinitializing...");
+              // Reset state for reinitialization
+              hindsightServer = null;
               client = null;
               clientOptions = null;
               banksWithDefaultsApplied.clear();
               isInitialized = false;
             }
           }
-        } else {
-          // Local daemon mode: check daemon health (handles SIGUSR1 restart case)
-          if (hindsightServer && isInitialized) {
-            const healthy = await hindsightServer.checkHealth();
-            if (healthy) {
-              // Same re-probe the external branch does after its health check:
-              // the daemon may have been restarted (SIGUSR1) onto a different
-              // embed version since we last looked. (#3686)
+
+          // Reinitialize if needed (fresh start or recovery)
+          if (!isInitialized) {
+            debug("[Hindsight] Reinitializing...");
+            const reinitPluginConfig = getPluginConfig(api);
+            currentPluginConfig = reinitPluginConfig;
+            const llmConfig = detectLLMConfig(reinitPluginConfig);
+            const externalApi = detectExternalApi(reinitPluginConfig);
+            const apiPort = reinitPluginConfig.apiPort || 9077;
+
+            if (externalApi.apiUrl) {
+              // External API mode
+              usingExternalApi = true;
+
+              await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
+              await detectAppendCapability(externalApi.apiUrl, externalApi.apiToken);
+
+              clientOptions = buildClientOptions(llmConfig, reinitPluginConfig, externalApi);
+              banksWithDefaultsApplied.clear();
+              client = new HindsightClient(clientOptions);
+              const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
+
+              if (usesStaticBank(reinitPluginConfig)) {
+                await ensureBankDefaultsApplied(defaultBankId, reinitPluginConfig);
+              }
+
+              isInitialized = true;
+              debug("[Hindsight] Reinitialization complete (external API mode)");
+            } else {
+              // Local daemon mode
+              hindsightServer = new HindsightServer({
+                profile: "openclaw",
+                port: apiPort,
+                embedVersion: reinitPluginConfig.embedVersion,
+                embedPackagePath: reinitPluginConfig.embedPackagePath,
+                env: {
+                  HINDSIGHT_API_LLM_PROVIDER: llmConfig.provider || "",
+                  HINDSIGHT_API_LLM_API_KEY: llmConfig.apiKey || "",
+                  HINDSIGHT_API_LLM_MODEL: llmConfig.model,
+                  HINDSIGHT_API_LLM_BASE_URL: llmConfig.baseUrl,
+                  HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: String(
+                    reinitPluginConfig.daemonIdleTimeout ?? 0
+                  ),
+                },
+                logger: embedLogger,
+              });
+
+              await hindsightServer.start();
               await detectAppendCapability(hindsightServer.getBaseUrl());
-              debug("[Hindsight] Daemon is healthy");
-              return;
-            }
 
-            debug("[Hindsight] Daemon is not responding - reinitializing...");
-            // Reset state for reinitialization
-            hindsightServer = null;
-            client = null;
-            clientOptions = null;
-            banksWithDefaultsApplied.clear();
-            isInitialized = false;
+              clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
+              banksWithDefaultsApplied.clear();
+              client = new HindsightClient(clientOptions);
+              const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
+
+              if (usesStaticBank(reinitPluginConfig)) {
+                await ensureBankDefaultsApplied(defaultBankId, reinitPluginConfig);
+              }
+
+              isInitialized = true;
+              debug("[Hindsight] Reinitialization complete");
+            }
           }
-        }
-
-        // Reinitialize if needed (fresh start or recovery)
-        if (!isInitialized) {
-          debug("[Hindsight] Reinitializing...");
-          const reinitPluginConfig = getPluginConfig(api);
-          currentPluginConfig = reinitPluginConfig;
-          const llmConfig = detectLLMConfig(reinitPluginConfig);
-          const externalApi = detectExternalApi(reinitPluginConfig);
-          const apiPort = reinitPluginConfig.apiPort || 9077;
-
-          if (externalApi.apiUrl) {
-            // External API mode
-            usingExternalApi = true;
-
-            await checkExternalApiHealth(externalApi.apiUrl, externalApi.apiToken);
-            await detectAppendCapability(externalApi.apiUrl, externalApi.apiToken);
-
-            clientOptions = buildClientOptions(llmConfig, reinitPluginConfig, externalApi);
-            banksWithDefaultsApplied.clear();
-            client = new HindsightClient(clientOptions);
-            const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
-
-            if (usesStaticBank(reinitPluginConfig)) {
-              await ensureBankDefaultsApplied(defaultBankId, reinitPluginConfig);
-            }
-
-            isInitialized = true;
-            debug("[Hindsight] Reinitialization complete (external API mode)");
-          } else {
-            // Local daemon mode
-            hindsightServer = new HindsightServer({
-              profile: "openclaw",
-              port: apiPort,
-              embedVersion: reinitPluginConfig.embedVersion,
-              embedPackagePath: reinitPluginConfig.embedPackagePath,
-              env: {
-                HINDSIGHT_API_LLM_PROVIDER: llmConfig.provider || "",
-                HINDSIGHT_API_LLM_API_KEY: llmConfig.apiKey || "",
-                HINDSIGHT_API_LLM_MODEL: llmConfig.model,
-                HINDSIGHT_API_LLM_BASE_URL: llmConfig.baseUrl,
-                HINDSIGHT_EMBED_DAEMON_IDLE_TIMEOUT: String(
-                  reinitPluginConfig.daemonIdleTimeout ?? 0
-                ),
-              },
-              logger: embedLogger,
-            });
-
-            await hindsightServer.start();
-            await detectAppendCapability(hindsightServer.getBaseUrl());
-
-            clientOptions = { baseUrl: hindsightServer.getBaseUrl() };
-            banksWithDefaultsApplied.clear();
-            client = new HindsightClient(clientOptions);
-            const defaultBankId = deriveBankId(undefined, reinitPluginConfig);
-
-            if (usesStaticBank(reinitPluginConfig)) {
-              await ensureBankDefaultsApplied(defaultBankId, reinitPluginConfig);
-            }
-
-            isInitialized = true;
-            debug("[Hindsight] Reinitialization complete");
-          }
-        }
+        })().catch((error) => {
+          log.error("initialization failed, will retry on the next turn", error);
+        });
       },
 
       async stop() {
@@ -2740,6 +2792,11 @@ export default function (api: MoltbotPluginAPI) {
           runSessionKey,
           runStartMarker(event.messages, event.currentUserMessage)
         );
+        if (typeof event.currentUserMessage === "string" && event.currentUserMessage.trim()) {
+          setCappedMapValue(runUserTextBySession, runSessionKey, event.currentUserMessage);
+        } else {
+          runUserTextBySession.delete(runSessionKey);
+        }
       }
       // Optional perf instrumentation (#1406). Captured here at hook entry so
       // the early-return paths below don't influence the measurement of slow
@@ -2755,6 +2812,10 @@ export default function (api: MoltbotPluginAPI) {
         // Session pattern filtering
         const sessionKey = ctx?.sessionKey;
         if (sessionKey) {
+          if (isActiveMemoryChildSession(sessionKey)) {
+            debug(`[Hindsight] Skipping recall: Active Memory child turn '${sessionKey}'`);
+            return;
+          }
           const ignorePatterns = compileSessionPatterns(pluginConfig.ignoreSessionPatterns ?? []);
           if (ignorePatterns.length > 0 && matchesSessionPattern(sessionKey, ignorePatterns)) {
             debug(
@@ -2826,9 +2887,16 @@ export default function (api: MoltbotPluginAPI) {
         // Get the user's latest message for recall — only the raw user text, not the full prompt
         // rawMessage is clean user text; prompt includes envelope, system events, media notes, etc.
         debug(
-          `[Hindsight] extractRecallQuery input lengths - raw: ${event.rawMessage?.length ?? 0}, prompt: ${event.prompt?.length ?? 0}`
+          `[Hindsight] extractRecallQuery input lengths - current: ${event.currentUserMessage?.length ?? 0}, raw: ${event.rawMessage?.length ?? 0}, prompt: ${event.prompt?.length ?? 0}`
         );
-        const extracted = extractRecallQuery(event.rawMessage, event.prompt);
+        // Current hosts send the request as currentUserMessage and no rawMessage; the
+        // assembled prompt can lead with enough context that the query cap drops the
+        // question itself. (#6515)
+        const userText =
+          typeof event.currentUserMessage === "string" && event.currentUserMessage.trim()
+            ? event.currentUserMessage
+            : event.rawMessage;
+        const extracted = extractRecallQuery(userText, event.prompt);
         if (!extracted) {
           debug("[Hindsight] extractRecallQuery returned null, skipping recall");
           return;
@@ -3004,6 +3072,9 @@ ${memoriesFormatted}
               `[Hindsight] Auto-recall aborted after ${pluginConfig.recallTimeoutMs ?? DEFAULT_RECALL_TIMEOUT_MS}ms, skipping memory injection`
             );
           }
+        } else if (bankNotWrittenYet(error)) {
+          // A new bank's first turn: nothing retained yet, so nothing to recall.
+          debug("[Hindsight] Auto-recall: bank has no memories yet, skipping memory injection");
         } else {
           log.error("auto-recall error", error);
         }
@@ -3045,7 +3116,12 @@ ${memoriesFormatted}
           !force && runStartKey && runStartBySession.has(runStartKey)
             ? runStartBySession.get(runStartKey)
             : undefined;
-        if (!force && runStartKey) runStartBySession.delete(runStartKey);
+        const runUserText =
+          !force && runStartKey ? runUserTextBySession.get(runStartKey) : undefined;
+        if (!force && runStartKey) {
+          runStartBySession.delete(runStartKey);
+          runUserTextBySession.delete(runStartKey);
+        }
 
         // Check if this provider is excluded
         if (
@@ -3061,6 +3137,10 @@ ${memoriesFormatted}
         // Session pattern filtering
         const agentEndSessionKey = effectiveCtx?.sessionKey;
         if (agentEndSessionKey) {
+          if (isActiveMemoryChildSession(agentEndSessionKey)) {
+            debug(`[Hindsight] Skipping retain: Active Memory child turn '${agentEndSessionKey}'`);
+            return;
+          }
           const ignorePatterns = compileSessionPatterns(pluginConfig.ignoreSessionPatterns ?? []);
           if (
             ignorePatterns.length > 0 &&
@@ -3253,6 +3333,18 @@ ${memoriesFormatted}
             "[Hindsight Hook] Run start not found in transcript, retaining from the last user message"
           );
         }
+        if (
+          runStartIdx !== undefined &&
+          runUserText &&
+          !messagesToRetain.slice(runStartIdx).some((m: any) => m?.role === "user")
+        ) {
+          debug("[Hindsight Hook] Run has no user message in its snapshot, restoring its request");
+          messagesToRetain = [
+            ...messagesToRetain.slice(0, runStartIdx),
+            { role: "user", content: runUserText },
+            ...messagesToRetain.slice(runStartIdx),
+          ];
+        }
         const retention = prepareRetentionTranscript(
           messagesToRetain,
           pluginConfig,
@@ -3283,20 +3375,6 @@ ${memoriesFormatted}
         // Get client configured for this context's bank (async to handle mission setup)
         const client = await clientGlobal.getClientForContext(resolvedCtxForRetain);
         if (!retainLifecycleIsCurrent()) return;
-        if (!client) {
-          log.warn("client not initialized, skipping retain");
-          return;
-        }
-
-        // Use the cached capability, and only pay for a /version round trip while
-        // it is still unknown. Probing on every retain would put an extra
-        // request in front of every turn, and the answer changes at most once
-        // per server restart — the queue flush re-probes on its own timer.
-        const retainOperationIdCapability =
-          asyncRetainOperationIdCapability === "unknown"
-            ? await refreshQueueOperationIdCapability(retainGeneration, retainSignal)
-            : asyncRetainOperationIdCapability;
-        if (!retainLifecycleIsCurrent()) return;
         const retainNow = Date.now();
         const retainRequest = buildRetainRequest(
           transcript,
@@ -3314,6 +3392,30 @@ ${memoriesFormatted}
             operationId: createAsyncRetainOperationId(),
           }
         );
+
+        if (!client) {
+          // No client means the API was unreachable at start or at lazy init: the
+          // exact case the queue exists for, so don't drop the turn. (#6196)
+          if (retainQueue) {
+            retainQueue.enqueue(bankId, retainRequest, retainRequest.metadata);
+            log.warn(
+              `API unreachable — retain queued (${retainQueue.size()} pending, bank: ${bankId}): client not initialized`
+            );
+          } else {
+            log.warn("client not initialized and no retain queue, skipping retain");
+          }
+          return;
+        }
+
+        // Use the cached capability, and only pay for a /version round trip while
+        // it is still unknown. Probing on every retain would put an extra
+        // request in front of every turn, and the answer changes at most once
+        // per server restart — the queue flush re-probes on its own timer.
+        const retainOperationIdCapability =
+          asyncRetainOperationIdCapability === "unknown"
+            ? await refreshQueueOperationIdCapability(retainGeneration, retainSignal)
+            : asyncRetainOperationIdCapability;
+        if (!retainLifecycleIsCurrent()) return;
 
         // Retain to Hindsight
         debug(
@@ -3439,6 +3541,12 @@ ${memoriesFormatted}
           return res?.ok === true;
         },
       }),
+      // Active Memory's deep-recall turn runs only the tools named here; without
+      // them it falls back to memory-core's tools, which are gone once Hindsight
+      // owns the memory slot. (#6303)
+      // Not hindsight_reflect: its LLM rounds run the child past Active Memory's
+      // timeout, so it ends with no summary at all.
+      recallToolNames: ["hindsight_recall"],
     });
 
     // Deprecated tool names, remove in 2.x: an allow/deny list naming an old tool no longer matches.
@@ -3463,6 +3571,9 @@ ${memoriesFormatted}
                   workspaceDir: ctx.workspaceDir,
                 },
                 senderIdHint: ctx.requesterSenderId,
+                // Control UI session keys carry no provider, and message_received
+                // does not fire for them, so the run's surface is the only one. (#6572)
+                dispatchChannel: ctx.messageChannel,
                 pluginConfig: config,
               });
               return skipReason

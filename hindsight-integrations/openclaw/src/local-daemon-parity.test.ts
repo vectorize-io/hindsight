@@ -101,6 +101,7 @@ describe("local-daemon mode parity (#3686)", () => {
 
     plugin(api);
     await service().start();
+    await (globalThis as any).__hindsightClient.waitForReady(); // start() no longer blocks on init
     try {
       expect(daemonStart).toHaveBeenCalled();
       const probed = fetchMock.mock.calls.map((call) => String(call[0]));
@@ -124,6 +125,7 @@ describe("local-daemon mode parity (#3686)", () => {
 
     plugin(api);
     await service().start();
+    await (globalThis as any).__hindsightClient.waitForReady(); // start() no longer blocks on init
     try {
       const probed = fetchMock.mock.calls.map((call) => String(call[0]));
       expect(probed).toContain(`${DAEMON_BASE_URL}/version`);
@@ -165,6 +167,7 @@ describe("local-daemon mode parity (#3686)", () => {
 
     plugin(api);
     await service().start();
+    await (globalThis as any).__hindsightClient.waitForReady(); // start() no longer blocks on init
     try {
       expect(infoLines.some((line) => line.includes("retain queue: 1 items pending"))).toBe(true);
     } finally {

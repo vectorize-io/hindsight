@@ -99,7 +99,7 @@ function requiredString(params: Record<string, unknown>, name: string): string {
 }
 
 // Hindsight answers 404 for a bank nothing has been retained to yet: nothing to find, not an error.
-function bankNotWrittenYet(error: unknown): boolean {
+export function bankNotWrittenYet(error: unknown): boolean {
   return error instanceof HindsightError && error.statusCode === 404;
 }
 
