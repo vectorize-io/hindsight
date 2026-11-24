@@ -2373,6 +2373,7 @@
     "fallbackDocUnreadable": "无法读取已存储的文档",
     "fallbackOpsFailed": "增量操作调用失败",
     "fallbackOpsAllSkipped": "所有增量操作均被拒绝",
+    "fallbackGroundingGone": "页面引用的所有事实均已不存在",
     "outcomeWritten": "写入新内容",
     "outcomePreserved": "没有新事实，保留内容",
     "outcomeFailed": "结果为空，刷新失败",

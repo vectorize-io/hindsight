@@ -766,6 +766,7 @@ from .reflect.models import StructuredOutputResult
 from .reflect.retractions import (
     RetractedGrounding,
     based_on_fact_ids,
+    drop_inline_citations,
     partition_retracted,
     prune_based_on,
 )
@@ -2477,8 +2478,8 @@ def _delta_failure_reason(fallback: ModeFallbackReason | None) -> RefreshFailure
     """Narrow a delta run's fallback reason to the failure vocabulary.
 
     Only the three reasons a delta can hit *after* it has been chosen are
-    reachable here — ``no_baseline_content`` and ``source_query_changed`` turn
-    delta off before it runs, so a refresh carrying them is a legitimate full
+    reachable here — ``no_baseline_content``, ``source_query_changed`` and
+    ``grounding_gone`` turn delta off before it runs, so a refresh carrying them is a legitimate full
     regeneration, not a failure. Anything else degrades to the generic value
     rather than widening the failure enum with values it can never mean.
     """
@@ -18875,6 +18876,63 @@ class MemoryEngine(MemoryEngineInterface):
                 else:
                     stored_structured_content = raw_struct
 
+        # Retracted grounding: facts the stored document still cites that no longer
+        # exist. Derived here rather than passed in by whatever removed them, because
+        # ``submit_async_refresh_mental_model`` guarantees that refreshes carry no
+        # per-request options — that is what makes its pending-dedupe safe (#3487), and
+        # a payload of ids would break it by making one queued refresh no longer cover
+        # the next caller's intent. Deriving also makes the pass idempotent (a failed
+        # run recomputes the same set) and covers invalidation, every delete path, and
+        # the observation sweep without instrumenting any of them.
+        #
+        # Only delta needs this. A full refresh regenerates the document from live
+        # facts and rebuilds ``based_on`` wholesale, so a retracted fact cannot survive
+        # either surface. It is read before reflect runs because it can turn delta off.
+        retracted = RetractedGrounding()
+        retraction_deferred_reason: str | None = None
+        # Set once the unsay pass has run to completion, which is what licenses
+        # pruning the retracted ids out of based_on below.
+        retraction_handled = False
+        retraction_operations: MentalModelDeltaOperations | None = None
+        if use_delta:
+            stored_based_on = (mental_model.get("reflect_response") or {}).get("based_on")
+            cited_ids = based_on_fact_ids(stored_based_on)
+            if cited_ids:
+                from .memories import get_memories
+
+                store = get_memories()
+                async with self._store_read_conn(bank_id) as conn:
+                    live_ids = await store.live_memory_ids(
+                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=cited_ids
+                    )
+                    retracted = partition_retracted(stored_based_on, live_ids)
+                    if retracted:
+                        # Re-ingesting a document deletes its facts and re-extracts them
+                        # under fresh ids, so the old ones read exactly like a retraction.
+                        # The replacements are not observations yet — those are minted by a
+                        # consolidation run that happens *after* retain commits — so waiting
+                        # for the commit is not enough. Unsaying in that gap deletes prose
+                        # whose replacement does not exist, and because the ids leave
+                        # ``based_on`` with it, nothing would ever notice again. Wait for the
+                        # bank to be caught up instead; staleness re-offers this every round.
+                        freshness = await store.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
+                        if freshness.get("pending"):
+                            retraction_deferred_reason = (
+                                f"{freshness['pending']} fact(s) are still pending consolidation"
+                            )
+
+        # Nothing the page cites exists any more: its whole source was deleted, or
+        # re-ingested under new ids. Unsaying every claim at once is not an edit, so
+        # rebuild the page from what the bank holds now instead. A deleted source then
+        # leaves nothing to say, a re-ingested one writes the page again under its new
+        # ids, and no stale citation survives in either the text or ``based_on``.
+        # Still deferred while consolidation is pending: right after a re-ingest the
+        # replacements are not there yet, and a rebuild then would empty the page.
+        if retracted.unresolvable and retraction_deferred_reason is None:
+            use_delta = False
+            mode_fallback_reason = "grounding_gone"
+            retracted = RetractedGrounding()
+
         tag_filtering = _resolve_refresh_tag_filtering(model_tags, trigger_data)
         exclude_ids = sorted({*stored_exclude_ids, mental_model_id})
         scope = MentalModelRefreshScope(
@@ -19077,51 +19135,6 @@ class MemoryEngine(MemoryEngineInterface):
         for _facts in based_on_serialized_payload.values():
             delta_supporting_facts.extend(_facts)
 
-        # Retracted grounding: facts the stored document still cites that no longer
-        # exist. Derived here rather than passed in by whatever removed them, because
-        # ``submit_async_refresh_mental_model`` guarantees that refreshes carry no
-        # per-request options — that is what makes its pending-dedupe safe (#3487), and
-        # a payload of ids would break it by making one queued refresh no longer cover
-        # the next caller's intent. Deriving also makes the pass idempotent (a failed
-        # run recomputes the same set) and covers invalidation, every delete path, and
-        # the observation sweep without instrumenting any of them.
-        #
-        # Only delta needs this. A full refresh regenerates the document from live
-        # facts and rebuilds ``based_on`` wholesale, so a retracted fact cannot survive
-        # either surface.
-        retracted = RetractedGrounding()
-        retraction_deferred_reason: str | None = None
-        # Set once the unsay pass has run to completion, which is what licenses
-        # pruning the retracted ids out of based_on below.
-        retraction_handled = False
-        retraction_operations: MentalModelDeltaOperations | None = None
-        if use_delta:
-            stored_based_on = (mental_model.get("reflect_response") or {}).get("based_on")
-            cited_ids = based_on_fact_ids(stored_based_on)
-            if cited_ids:
-                from .memories import get_memories
-
-                store = get_memories()
-                async with self._store_read_conn(bank_id) as conn:
-                    live_ids = await store.live_memory_ids(
-                        conn=conn, fq_table=fq_table, bank_id=bank_id, unit_ids=cited_ids
-                    )
-                    retracted = partition_retracted(stored_based_on, live_ids)
-                    if retracted:
-                        # Re-ingesting a document deletes its facts and re-extracts them
-                        # under fresh ids, so the old ones read exactly like a retraction.
-                        # The replacements are not observations yet — those are minted by a
-                        # consolidation run that happens *after* retain commits — so waiting
-                        # for the commit is not enough. Unsaying in that gap deletes prose
-                        # whose replacement does not exist, and because the ids leave
-                        # ``based_on`` with it, nothing would ever notice again. Wait for the
-                        # bank to be caught up instead; staleness re-offers this every round.
-                        freshness = await store.consolidation_freshness(conn=conn, fq_table=fq_table, bank_id=bank_id)
-                        if freshness.get("pending"):
-                            retraction_deferred_reason = (
-                                f"{freshness['pending']} fact(s) are still pending consolidation"
-                            )
-
         # In delta mode, based_on must accumulate: the mental model is
         # grounded on ALL facts ever used, not just the latest delta's new
         # ones. Merge previous based_on with current, deduplicating by id.
@@ -19286,20 +19299,7 @@ class MemoryEngine(MemoryEngineInterface):
                 # because a retraction is a reason to edit the document all by itself —
                 # gating it on new facts arriving is exactly the coupling that let a
                 # retired claim survive indefinitely on a quiet bank.
-                if retracted.unresolvable:
-                    # None of the grounding resolves, so this is a broken provenance
-                    # link rather than a retraction — see RetractedGrounding.unresolvable.
-                    # Drop the dangling citations (nothing should report a fact that is
-                    # not there) but leave the prose exactly as it is.
-                    retraction_handled = True
-                    warnings.append(
-                        f"None of the {retracted.cited_count} fact(s) this document cites could be "
-                        "resolved in this bank, which is a broken provenance link rather than a "
-                        "retraction — a restored or copied bank carries its documents but re-creates "
-                        "its memories under new ids. The citations were dropped; the content was left "
-                        "untouched and will be re-grounded by future refreshes."
-                    )
-                elif retracted and retraction_deferred_reason is None:
+                if retracted and retraction_deferred_reason is None:
                     try:
                         doc_max_tokens = stored_max_tokens or 2048
                         unsay_prompt = build_structured_retraction_prompt(
@@ -19327,10 +19327,14 @@ class MemoryEngine(MemoryEngineInterface):
                         # facts — and still counts as handled, so the citations are pruned
                         # and the same call is not repaid on every future refresh.
                         retraction_handled = True
-                        if unsay_outcome.applied:
-                            current_doc = unsay_outcome.document
-                            final_structured = unsay_outcome.document
-                            final_content = render_document(unsay_outcome.document)
+                        # The model is shown the retracted facts without their ids, so a
+                        # sentence it keeps still carries the old ``[id]`` — and once the
+                        # id leaves ``based_on`` below, nothing would ever notice it again.
+                        cleaned_doc = drop_inline_citations(unsay_outcome.document, retracted.ids)
+                        if unsay_outcome.applied or cleaned_doc != unsay_outcome.document:
+                            current_doc = cleaned_doc
+                            final_structured = cleaned_doc
+                            final_content = render_document(cleaned_doc)
                             delta_applied = True
                         logger.info(
                             f"[MENTAL_MODELS] Retraction pass for {mental_model_id}: "
@@ -19558,7 +19562,12 @@ class MemoryEngine(MemoryEngineInterface):
         #
         # Reached by a full refresh, and by a delta refresh whose baseline could not be
         # read (a delta with a baseline has already returned via the no-new-facts leg).
-        if not has_sources and not delta_applied:
+        #
+        # Not for a page whose whole grounding is gone: there, nothing to read is the
+        # answer — its source was deleted — and keeping the document would keep stating
+        # it. Both guards let that page be written empty.
+        grounding_gone = mode_fallback_reason == "grounding_gone"
+        if not has_sources and not delta_applied and not grounding_gone:
             return _finish(
                 effective_mode=effective_mode,
                 mode_fallback_reason=mode_fallback_reason,
@@ -19578,7 +19587,7 @@ class MemoryEngine(MemoryEngineInterface):
         # existing content and raises, rather than persisting the empty render.
         # A gated delta has no reflect candidate at all, so its empty text says nothing
         # about the LLM: a failed edit there is reported by the delta guard below.
-        if not final_content.strip() and gate is None:
+        if not final_content.strip() and gate is None and not grounding_gone:
             warnings.append(
                 "The refresh produced empty content, which usually means an upstream LLM failure. "
                 "A real refresh would preserve the existing content and fail."

@@ -2373,6 +2373,7 @@
     "fallbackDocUnreadable": "讀唔到已儲存嘅文件",
     "fallbackOpsFailed": "增量操作呼叫失敗",
     "fallbackOpsAllSkipped": "所有增量操作都被拒絕",
+    "fallbackGroundingGone": "頁面引用嘅所有事實都已經冇咗",
     "outcomeWritten": "寫入新內容",
     "outcomePreserved": "冇新事實，保留內容",
     "outcomeFailed": "結果係空，重新整理失敗",

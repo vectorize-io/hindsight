@@ -366,7 +366,8 @@ export type ModeFallbackReason =
   | "source_query_changed"
   | "structured_doc_unreadable"
   | "delta_ops_failed"
-  | "delta_ops_all_skipped";
+  | "delta_ops_all_skipped"
+  | "grounding_gone";
 
 export type RefreshOutcome =
   | "content_written"

@@ -2373,6 +2373,7 @@
     "fallbackDocUnreadable": "저장된 문서를 읽을 수 없음",
     "fallbackOpsFailed": "델타 작업 호출 실패",
     "fallbackOpsAllSkipped": "모든 델타 작업이 거부됨",
+    "fallbackGroundingGone": "페이지가 인용한 모든 사실이 사라짐",
     "outcomeWritten": "새 콘텐츠 기록됨",
     "outcomePreserved": "새 사실 없음, 콘텐츠 유지",
     "outcomeFailed": "결과가 비어 새로 고침 실패",

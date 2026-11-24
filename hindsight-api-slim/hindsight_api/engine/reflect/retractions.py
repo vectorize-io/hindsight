@@ -29,8 +29,11 @@ acts (never while consolidation is pending) and by the prompt, not here.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from .structured_doc import Block, StructuredDocument
 
 # The ``based_on`` keys whose ids address rows in ``memory_units``.
 #
@@ -65,21 +68,13 @@ class RetractedGrounding:
 
     @property
     def unresolvable(self) -> bool:
-        """True when *none* of the cited grounding resolves — a broken link, not a retraction.
+        """True when *none* of the cited grounding resolves: the page's whole source is gone.
 
-        A retraction removes some of a document's evidence. Losing all of it at once
-        is the signature of provenance that never pointed at this bank in the first
-        place: a whole-bank import carries ``mental_models`` rows verbatim while the
-        memories are re-created under fresh ids, so every id a restored page cites is
-        absent on arrival. Treating that as a retraction would ask the unsay pass to
-        delete everything the page says — irreversibly, on a page that is perfectly
-        correct.
-
-        So this case prunes the dangling citations and leaves the prose alone. The
-        cost is a false negative for a page whose entire (small) grounding really was
-        retracted; it keeps a stale sentence until later refreshes re-ground it. That
-        is the right way round: the failure mode here is unrecoverable and the other
-        one is not.
+        That is a deleted source, or one re-ingested under fresh ids. Either way an
+        unsay pass would be asked to remove everything the page says, so the refresh
+        rebuilds the page from live facts instead (``mode_fallback_reason=
+        "grounding_gone"``). Bank transfer does not land here: import rewrites
+        ``based_on`` to the new ids (#3833).
         """
         return self.cited_count > 0 and len(self.facts) == self.cited_count
 
@@ -154,3 +149,45 @@ def prune_based_on(based_on: dict[str, Any] | None, drop_ids: set[str]) -> dict[
         ]
         pruned[fact_type] = kept
     return pruned
+
+
+#: A bracketed citation group — ``[id]`` or ``[id1, id2]`` — with the spaces before it.
+_CITATION_GROUP_RE = re.compile(r"([ \t]*)\[([^\[\]\n]+)\]")
+
+
+def _drop_ids_from_text(text: str, drop_ids: set[str]) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        parts = [part.strip() for part in match.group(2).split(",")]
+        kept = [part for part in parts if part.lower() not in drop_ids]
+        if len(kept) == len(parts):
+            return match.group(0)
+        return f"{match.group(1)}[{', '.join(kept)}]" if kept else ""
+
+    return _CITATION_GROUP_RE.sub(_replace, text)
+
+
+def drop_inline_citations(doc: StructuredDocument, drop_ids: set[str]) -> StructuredDocument:
+    """A copy of ``doc`` with ``drop_ids`` removed from its bracketed inline citations.
+
+    The text twin of :func:`prune_based_on`. Only an exact id inside a bracket group
+    is removed; a group left empty goes with the spaces before it. Any other
+    UUID, or bracket, in the text is left alone.
+    """
+    lowered = {i.lower() for i in drop_ids}
+    if not lowered:
+        return doc
+    return doc.model_copy(
+        update={
+            "sections": [
+                section.model_copy(
+                    update={
+                        "blocks": [
+                            Block(id=block.id, text=_drop_ids_from_text(block.text, lowered))
+                            for block in section.blocks
+                        ]
+                    }
+                )
+                for section in doc.sections
+            ]
+        }
+    )

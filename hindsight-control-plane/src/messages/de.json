@@ -2373,6 +2373,7 @@
     "fallbackDocUnreadable": "Das gespeicherte Dokument war nicht lesbar",
     "fallbackOpsFailed": "Der Aufruf der Delta-Operationen ist fehlgeschlagen",
     "fallbackOpsAllSkipped": "Jede Delta-Operation wurde abgelehnt",
+    "fallbackGroundingGone": "Keiner der zitierten Fakten der Seite existiert mehr",
     "outcomeWritten": "Neuer Inhalt geschrieben",
     "outcomePreserved": "Keine neuen Fakten, Inhalt behalten",
     "outcomeFailed": "Leeres Ergebnis, Aktualisierung schlägt fehl",

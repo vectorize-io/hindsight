@@ -126,9 +126,9 @@ async def _seed_fact_row(memory: MemoryEngine, bank_id: str, text: str) -> str:
     """Insert one real memory and return its id.
 
     Canned ``based_on`` entries have to name rows that actually exist: a refresh now
-    checks its stored grounding against the live memories and treats a document whose
-    citations resolve to nothing as a restored/copied bank rather than as evidence
-    about this one (see ``reflect.retractions``). Synthetic ids would trip that.
+    checks its stored grounding against the live memories and rebuilds a document whose
+    citations resolve to nothing from scratch (``grounding_gone``, see
+    ``reflect.retractions``). Synthetic ids would trip that.
     """
     from types import SimpleNamespace
 
@@ -549,7 +549,14 @@ class TestDeltaRefreshPlumbing:
         patch_reflect(
             memory,
             text=candidate,
-            facts=[{"id": "obs-1", "text": "Alice leads the team", "type": "observation", "context": None}],
+            facts=[
+                {
+                    "id": await _seed_fact_row(memory, bank_id, "Alice leads the team"),
+                    "text": "Alice leads the team",
+                    "type": "observation",
+                    "context": None,
+                }
+            ],
         )
         llm_calls = patch_llm_call(memory, returns=[{"op": "append_block", "section_id": "team", "text": "New note."}])
 
@@ -1633,7 +1640,14 @@ class TestDeltaRefreshPlumbing:
         patch_reflect(
             memory,
             text="ignored",
-            facts=[{"id": "obs-seed", "text": "seed", "type": "observation", "context": None}],
+            facts=[
+                {
+                    "id": await _seed_fact_row(memory, bank_id, "seed"),
+                    "text": "seed",
+                    "type": "observation",
+                    "context": None,
+                }
+            ],
         )
         patch_llm_call(memory, returns=[])
         seeded = await memory.refresh_mental_model(

@@ -25,9 +25,11 @@ from hindsight_api.engine.schema import fq_store_table
 from hindsight_api.engine.reflect.retractions import (
     MEMORY_BACKED_FACT_TYPES,
     based_on_fact_ids,
+    drop_inline_citations,
     partition_retracted,
     prune_based_on,
 )
+from hindsight_api.engine.reflect.structured_doc import render_document, split_markdown
 
 # ---------------------------------------------------------------------------
 # Pure helpers — no DB, no LLM
@@ -95,6 +97,37 @@ def test_prune_based_on_drops_named_ids_and_keeps_the_rest():
     pruned = prune_based_on(based_on, {"drop"})
     assert [f["id"] for f in pruned["observation"]] == ["keep"]
     assert [f["id"] for f in pruned["mental-models"]] == ["mm1"]
+
+
+_A = "11111111-1111-4111-8111-111111111111"
+_B = "22222222-2222-4222-8222-222222222222"
+_C = "33333333-3333-4333-8333-333333333333"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (f"Opens at 09:00. [{_A}]", "Opens at 09:00."),
+        (f"Opens at 09:00. [{_A}, {_B}]", f"Opens at 09:00. [{_B}]"),
+        (f"Opens at 09:00. [{_A}][{_B}]", f"Opens at 09:00.[{_B}]"),
+        (f"- Opens at 09:00 [{_A}]\n- Closes at 17:00 [{_B}]", f"- Opens at 09:00\n- Closes at 17:00 [{_B}]"),
+        # Case does not hide an id, and a group of only dropped ids leaves no ``[]``.
+        (f"Opens at 09:00 [{_A.upper()}, {_A}].", "Opens at 09:00."),
+        # A UUID that is not being dropped, in brackets or not, is not a citation to touch.
+        (f"Ticket {_C} [{_C}] and [see notes].", f"Ticket {_C} [{_C}] and [see notes]."),
+    ],
+)
+def test_drop_inline_citations_removes_only_the_dropped_ids(text: str, expected: str):
+    doc = split_markdown(f"## Hours\n\n{text}\n")
+    cleaned = drop_inline_citations(doc, {_A})
+    assert cleaned.sections[0].blocks[0].text == expected
+    assert cleaned.sections[0].blocks[0].id == doc.sections[0].blocks[0].id
+
+
+def test_drop_inline_citations_without_ids_is_a_no_op():
+    doc = split_markdown(f"## Hours\n\nOpens at 09:00. [{_A}]\n")
+    assert drop_inline_citations(doc, set()) == doc
+    assert render_document(drop_inline_citations(doc, {_B})) == render_document(doc)
 
 
 # ---------------------------------------------------------------------------
@@ -788,14 +821,8 @@ async def test_full_mode_needs_no_unsay_pass(
     await memory.delete_bank(bank_id, request_context=request_context)
 
 
-def test_grounding_that_resolves_to_nothing_is_a_broken_link_not_a_retraction():
-    """All citations missing is the signature of a restored bank, not of a retraction.
-
-    Whole-bank transfer carries ``mental_models`` rows verbatim while re-creating the
-    memories under fresh ids, so every id a restored page cites is absent on arrival.
-    Reading that as a retraction would ask the unsay pass to delete everything the
-    page says — irreversibly, on a page that is perfectly correct.
-    """
+def test_grounding_that_resolves_to_nothing_is_unresolvable():
+    """Every cited fact missing: the page's whole source is gone, so it is rebuilt."""
     based_on = {"observation": [_fact("a"), _fact("b"), _fact("c")]}
     retracted = partition_retracted(based_on, live_ids=set())
     assert retracted.unresolvable is True
@@ -815,12 +842,18 @@ def test_intact_grounding_is_never_unresolvable():
 
 
 @pytest.mark.asyncio
-async def test_restored_page_keeps_its_content_and_drops_its_dangling_citations(
+async def test_page_whose_whole_source_was_deleted_is_emptied(
     memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
 ):
-    """End to end: a page whose whole grounding is unresolvable must not be gutted."""
-    bank_id = f"test-retract-restored-{uuid.uuid4().hex[:8]}"
+    """Every cited fact is gone and nothing replaced them: the page has nothing left to say.
+
+    It used to keep its prose (and its inline citations) forever, on the theory that
+    all-missing meant a restored bank — but import rewrites the ids now (#3833), so
+    all-missing means the source was deleted (#6764).
+    """
+    bank_id = f"test-retract-gone-{uuid.uuid4().hex[:8]}"
     await _ensure_bank(memory, bank_id, request_context)
+    gone_id = str(uuid.uuid4())
 
     pool = await memory._get_pool()
     async with pool.acquire() as conn:
@@ -829,29 +862,164 @@ async def test_restored_page_keeps_its_content_and_drops_its_dangling_citations(
             conn,
             bank_id,
             request_context,
-            based_on={"world": [_fact(str(uuid.uuid4()), "carried over from the source bank", "world")]},
+            based_on={"world": [_fact(gone_id, "Autocommit is disabled.", "world")]},
+            content=f"## Conventions\n\nAutocommit is disabled. [{gone_id}]\n",
         )
 
-    patch_reflect(memory, text="No new information.")
-    calls = _patch_op_calls(
-        monkeypatch,
-        memory,
-        retraction_ops=[{"op": "remove_section", "section_id": "conventions"}],
-        delta_ops=[],
-    )
+    patch_reflect(memory, text="")
+    calls = _patch_op_calls(monkeypatch, memory, retraction_ops=[], delta_ops=[])
+
+    preview = await memory.dry_run_refresh_mental_model(bank_id, mm_id, request_context=request_context)
+    assert preview is not None
+    assert preview.effective_mode == "full"
+    assert preview.mode_fallback_reason == "grounding_gone"
 
     refreshed = await memory.refresh_mental_model(
         bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
     )
 
     assert refreshed is not None
-    assert calls == [], "no unsay pass may run against unresolvable grounding"
-    assert "Autocommit is disabled" in refreshed["content"]
-    assert "Tests run on every push" in refreshed["content"]
-
-    # The dangling citations do go: nothing should report a fact that is not there.
+    assert calls == [], "a rebuild makes no op calls"
+    assert refreshed["content"].strip() == ""
     stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
     assert based_on_fact_ids(stored["reflect_response"]["based_on"]) == []
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_page_whose_source_was_reingested_is_rebuilt_without_stale_ids(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
+):
+    """The #6764 scenario: the same fact came back under a new id.
+
+    The rebuild writes the page from the replacement, so neither the text nor
+    ``based_on`` keeps pointing at the old id.
+    """
+    bank_id = f"test-retract-reingest-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    old_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        new_id = await _insert_memory(memory, conn, bank_id, "The office opens at 09:00.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={"world": [_fact(old_id, "The office opens at 09:00.", "world")]},
+            content=f"## Office hours\n\nThe office opens at 09:00. [{old_id}]\n",
+        )
+
+    patch_reflect(
+        memory,
+        text="## Office hours\n\nThe office opens at 09:00.\n",
+        facts=[{"id": str(new_id), "text": "The office opens at 09:00.", "fact_type": "world"}],
+    )
+    calls = _patch_op_calls(monkeypatch, memory, retraction_ops=[], delta_ops=[])
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
+    )
+
+    assert refreshed is not None
+    assert calls == [], "a rebuild makes no op calls"
+    assert "The office opens at 09:00." in refreshed["content"]
+    assert old_id not in refreshed["content"]
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    cited = based_on_fact_ids(stored["reflect_response"]["based_on"])
+    assert old_id not in cited
+    assert str(new_id) in cited
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_page_whose_whole_source_is_gone_waits_for_pending_consolidation(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
+):
+    """Right after a re-ingest the replacements are not consolidated yet: no rebuild."""
+    bank_id = f"test-retract-gone-defer-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={"world": [_fact(gone_id, "Autocommit is disabled.", "world")]},
+        )
+        pending = await _insert_memory(memory, conn, bank_id, "Autocommit is disabled.")
+        await conn.execute(
+            f"UPDATE {fq_store_table('memory_units')} SET consolidated_at = NULL WHERE bank_id = $1 AND id = $2",
+            bank_id,
+            pending,
+        )
+
+    patch_reflect(memory, text="No new information.")
+    calls = _patch_op_calls(monkeypatch, memory, retraction_ops=[], delta_ops=[])
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
+    )
+
+    assert refreshed is not None
+    assert not [call for call in calls if call["kind"] == "retraction"]
+    assert "Autocommit is disabled" in refreshed["content"], "content must be preserved while deferred"
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    assert gone_id in based_on_fact_ids(stored["reflect_response"]["based_on"])
+
+    await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_unsay_drops_the_retracted_inline_citations_from_kept_text(
+    memory: MemoryEngine, request_context: RequestContext, monkeypatch, patch_reflect
+):
+    """The unsay model never sees ids, so a sentence it keeps still cites the dead fact.
+
+    Pruning ``based_on`` alone left that ``[id]`` in the page with nothing to notice it
+    again (#6764); the text loses exactly the ids ``based_on`` loses.
+    """
+    bank_id = f"test-retract-inline-{uuid.uuid4().hex[:8]}"
+    await _ensure_bank(memory, bank_id, request_context)
+    gone_id = str(uuid.uuid4())
+
+    pool = await memory._get_pool()
+    async with pool.acquire() as conn:
+        live = await _insert_memory(memory, conn, bank_id, "Tests run on every push.")
+        mm_id = await _create_page(
+            memory,
+            conn,
+            bank_id,
+            request_context,
+            based_on={
+                "world": [_fact(gone_id, "Retired.", "world"), _fact(str(live), "Tests run on every push.", "world")]
+            },
+            content=(
+                f"## Conventions\n\nAutocommit is disabled. [{gone_id}]\n\n"
+                f"Tests run on every push. [{gone_id}, {live}]\n"
+            ),
+        )
+
+    patch_reflect(memory, text="No new information.")
+    _patch_op_calls(monkeypatch, memory, retraction_ops=[], delta_ops=[])
+
+    refreshed = await memory.refresh_mental_model(
+        bank_id=bank_id, mental_model_id=mm_id, request_context=request_context
+    )
+
+    assert refreshed is not None
+    assert gone_id not in refreshed["content"]
+    assert "Autocommit is disabled." in refreshed["content"], "the model kept it; only the citation goes"
+    assert f"Tests run on every push. [{live}]" in refreshed["content"]
+    stored = await memory.get_mental_model(bank_id, mm_id, detail="full", request_context=request_context)
+    assert gone_id not in based_on_fact_ids(stored["reflect_response"]["based_on"])
+    assert gone_id not in json.dumps(stored.get("structured_content") or {})
 
     await memory.delete_bank(bank_id, request_context=request_context)
 
