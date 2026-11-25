@@ -1,7 +1,6 @@
 """Tests for the admin CLI whole-bank transfer boundary."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -88,6 +87,11 @@ def test_export_bank_command_exits_nonzero_for_missing_bank(monkeypatch: pytest.
         raise BankNotFoundError("Bank 'zzz' not found")
 
     monkeypatch.setenv("HINDSIGHT_API_DATABASE_URL", "postgresql://user:secret@db.example:5432/hs")
+    # Remote providers keep HindsightConfig.from_env() from warning that the local-ml extra is
+    # missing: with log_cli on, pytest suspends and resumes its capture around every log record,
+    # which puts its own stream back on sys.stdout and steals the output from CliRunner.
+    monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "openai")
+    monkeypatch.setenv("HINDSIGHT_API_RERANKER_PROVIDER", "none")
     monkeypatch.setattr(cli, "_run_export_bank", fake_run_export_bank)
     output = tmp_path / "out.zip"
     result = CliRunner().invoke(cli.app, ["export-bank", "--bank", "zzz", "--output", str(output)])
