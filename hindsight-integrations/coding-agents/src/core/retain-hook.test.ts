@@ -29,7 +29,10 @@ vi.mock("node:fs", async (importOriginal) => {
 let rawConfig: RawConfig = {};
 vi.mock("./config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./config")>();
-  return { ...actual, loadConfig: () => actual.resolveConfig(rawConfig) };
+  return {
+    ...actual,
+    loadConfig: () => actual.resolveConfig({ apiToken: "test-key", ...rawConfig }),
+  };
 });
 
 let root: string;

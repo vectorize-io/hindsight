@@ -21,7 +21,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, isAbsolute } from "node:path";
-import { DEFAULT_DAEMON_PORT } from "./config";
+import { CLOUD_URL, DEFAULT_DAEMON_PORT } from "./config";
 
 /** The old per-agent Claude Code plugin's name in Claude's plugin registry (`<name>@<marketplace>`). */
 const LEGACY_CLAUDE_PLUGIN = "hindsight-memory";
@@ -116,8 +116,6 @@ export interface LegacyEndpoint {
   /** The file it came from, so the installer can say where it looked. */
   source: string;
 }
-
-const CLOUD_URL = "https://api.hindsight.vectorize.io";
 
 /**
  * Read the old plugin's endpoint, or undefined when it was never configured.

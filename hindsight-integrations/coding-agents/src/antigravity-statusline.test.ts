@@ -8,7 +8,7 @@ describe("Antigravity status line", () => {
   it("identifies the resolved Hindsight bank for the active workspace", () => {
     const out = buildAntigravityStatusLine(
       { cwd: "/workspace/acme" },
-      resolveConfig({ bankId: "team::acme" })
+      resolveConfig({ bankId: "team::acme", apiToken: "test-key" })
     );
     expect(stripAnsi(out)).toBe("Hindsight · team::acme");
   });

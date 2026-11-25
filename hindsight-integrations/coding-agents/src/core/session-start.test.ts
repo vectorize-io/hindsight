@@ -30,7 +30,9 @@ vi.mock("./config", async (importOriginal) => {
   return {
     ...actual,
     loadConfig: (...a: Parameters<typeof actual.loadConfig>) =>
-      rawConfig ? actual.resolveConfig(rawConfig) : actual.loadConfig(...a),
+      rawConfig
+        ? actual.resolveConfig({ apiToken: "test-key", ...rawConfig })
+        : actual.loadConfig(...a),
   };
 });
 
@@ -736,7 +738,7 @@ describe("buildSessionStartContext — crashed-survey retry (baseline without fi
     const out = await buildSessionStartContext({
       cwd: "/tmp/x",
       bankId: "bank-1",
-      cfg: resolveConfig({ surveyRefreshCommits: 50 }),
+      cfg: resolveConfig({ surveyRefreshCommits: 50, apiToken: "test-key" }),
       client,
       hasGit: () => true,
       startSeed: vi.fn(),
@@ -754,6 +756,7 @@ describe("buildSessionStartContext — survey attempt limit (#5623)", () => {
   // this hook makes — so the count must hold with every retain failing.
   it("stops surveying a commit after SURVEY_MAX_ATTEMPTS launches, with every retain failing", async () => {
     const leaseDir = mkdtempSync(join(tmpdir(), "hindsight-attempts-"));
+    rawConfig = {}; // the survey re-resolves config; keep it off this machine's real file
     try {
       const spawn = vi.fn().mockImplementation(() => {
         const child = Object.assign(new EventEmitter(), { unref: vi.fn() });
@@ -776,7 +779,7 @@ describe("buildSessionStartContext — survey attempt limit (#5623)", () => {
         buildSessionStartContext({
           cwd: "/tmp/x",
           bankId: "bank-1",
-          cfg: resolveConfig({ surveyRefreshCommits: 50 }),
+          cfg: resolveConfig({ surveyRefreshCommits: 50, apiToken: "test-key" }),
           client: {
             listDocumentIds: async (tag: string) =>
               tag === "source:survey-baseline"
@@ -796,6 +799,7 @@ describe("buildSessionStartContext — survey attempt limit (#5623)", () => {
       for (let i = 0; i < SURVEY_MAX_ATTEMPTS + 2; i++) await session();
       expect(spawn).toHaveBeenCalledTimes(SURVEY_MAX_ATTEMPTS);
     } finally {
+      rawConfig = undefined;
       rmSync(leaseDir, { recursive: true, force: true });
     }
   });
