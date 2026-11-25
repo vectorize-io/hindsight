@@ -39,10 +39,14 @@ def _by_member(facts_reply):
 
 async def test_a_schema_echo_is_answered_by_the_next_member(echo_primary_client, llm, bank_id):
     llm.on_step("extract_facts", contains="Odalys").answers_with(
-        _by_member(extracted(fact("Odalys Brenwick repairs harpsichords in Trieste", where="Trieste", who="Odalys Brenwick")))
+        _by_member(
+            extracted(fact("Odalys Brenwick repairs harpsichords in Trieste", where="Trieste", who="Odalys Brenwick"))
+        )
     )
     llm.on_step("extract_facts", contains="Teodor").answers_with(
-        _by_member(extracted(fact("Teodor Vasquez tunes church organs in Ljubljana", where="Ljubljana", who="Teodor Vasquez")))
+        _by_member(
+            extracted(fact("Teodor Vasquez tunes church organs in Ljubljana", where="Ljubljana", who="Teodor Vasquez"))
+        )
     )
     # The retain enqueues consolidation; another server's worker may claim it.
     llm.on_step("consolidate").returns(consolidation())
@@ -59,7 +63,5 @@ async def test_a_schema_echo_is_answered_by_the_next_member(echo_primary_client,
     # Each document went to member 0 first, then member 1: the echo did not cool member 0
     # down, so the second document still started on it.
     anchor = anchor_for("extract_facts")
-    extraction_calls = [
-        (call.model, "Odalys" in call.all_text) for call in llm.calls if anchor in call.all_text
-    ]
+    extraction_calls = [(call.model, "Odalys" in call.all_text) for call in llm.calls if anchor in call.all_text]
     assert extraction_calls == [("stub-echo", True), ("stub-model", True), ("stub-echo", False), ("stub-model", False)]

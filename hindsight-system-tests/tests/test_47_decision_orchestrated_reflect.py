@@ -123,7 +123,7 @@ async def test_a_bank_that_opts_out_runs_agent_turns(typesafe_client, llm, stubs
 
 
 async def test_source_text_reaches_reflect_with_the_day_it_was_said(typesafe_client, llm, stubs):
-    """"Yesterday" in a conversation means nothing without the day it was said on.
+    """ "Yesterday" in a conversation means nothing without the day it was said on.
 
     Facts carried their dates, but the source text they came from reached reflect undated, so
     the answer read "yesterday" against the question's date: on LoComo a July sign-up came back

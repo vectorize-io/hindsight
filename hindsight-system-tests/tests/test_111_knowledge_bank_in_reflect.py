@@ -52,9 +52,7 @@ def _reflect_turns_with(llm, text: str) -> list[str]:
     return [call.all_text for call in llm.calls if text in call.all_text]
 
 
-async def test_reflect_hands_the_model_the_linked_documents_as_the_authority(
-    client, llm, memory_bank, knowledge_bank
-):
+async def test_reflect_hands_the_model_the_linked_documents_as_the_authority(client, llm, memory_bank, knowledge_bank):
     await client.aupdate_bank_config(memory_bank, knowledge_banks=[knowledge_bank])
     reflect_loop(llm, answer="60 days, with the original receipt.", query=QUERY)
 

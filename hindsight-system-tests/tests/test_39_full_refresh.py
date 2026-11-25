@@ -61,9 +61,7 @@ async def test_the_first_write_of_a_delta_model_counts_as_a_full_refresh(client,
     assert model.trigger.full_refresh_cron == WEEKLY
 
 
-async def test_a_full_refresh_rewrites_a_delta_model_and_leaves_it_delta(
-    client, llm, bank_id, delta_model, settled
-):
+async def test_a_full_refresh_rewrites_a_delta_model_and_leaves_it_delta(client, llm, bank_id, delta_model, settled):
     before = await client.mental_models.get_mental_model(bank_id, delta_model, detail="full")
 
     llm.reset()

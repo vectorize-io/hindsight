@@ -20,7 +20,6 @@ Two spellings one character apart, opposite meanings, no error either way.
 from __future__ import annotations
 
 import pytest
-
 from hindsight_client_api.models.update_document_observation_scopes import UpdateDocumentObservationScopes
 from hindsight_client_api.models.update_document_request import UpdateDocumentRequest
 

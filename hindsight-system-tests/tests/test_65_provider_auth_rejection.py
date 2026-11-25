@@ -34,7 +34,9 @@ async def _failed_retain(client, llm, bank: str):
 
 
 @pytest.mark.parametrize("status", [401, 403])
-async def test_a_rejected_key_fails_the_retain_on_the_first_attempt(worker_retry_client, llm, worker_retry_bank, status):
+async def test_a_rejected_key_fails_the_retain_on_the_first_attempt(
+    worker_retry_client, llm, worker_retry_bank, status
+):
     llm.on_step("extract_facts").fails_with_status(status)
 
     failed = await _failed_retain(worker_retry_client, llm, worker_retry_bank)

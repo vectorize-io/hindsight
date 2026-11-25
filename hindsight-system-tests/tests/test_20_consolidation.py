@@ -86,7 +86,6 @@ async def test_raw_recall_is_unaffected_by_the_observation(client, consolidated_
     assert sorted(r.text for r in response.results) == sorted([BERLIN, STAYED])
 
 
-
 async def test_reading_a_fact_alone_agrees_with_the_listing(client, consolidated_bank):
     """Opening one memory must show what the listing showed for it, including
     when it was consolidated. The single read used to drop the consolidation

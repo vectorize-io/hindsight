@@ -89,9 +89,7 @@ async def _assert_the_revision_landed(client, bank: str) -> None:
     assert await _fact_texts(client, bank) == sorted([LISBON, CELLO])
 
 
-async def test_an_embeddings_outage_during_an_update_keeps_the_previous_version(
-    client, llm, stubs, original, settled
-):
+async def test_an_embeddings_outage_during_an_update_keeps_the_previous_version(client, llm, stubs, original, settled):
     _extracts_the_revision(llm)
     stubs.embeddings.fail_with_status = 503
 

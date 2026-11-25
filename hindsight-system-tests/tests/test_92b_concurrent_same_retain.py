@@ -42,9 +42,7 @@ async def test_two_identical_retains_at_once_store_each_fact_once(client, llm, b
     llm.on_step("extract_facts").answers_with(one_fact_per_chunk)
     llm.on_step("consolidate").returns(consolidation())
 
-    await asyncio.gather(
-        *(client.aretain(bank_id=bank_id, content=CONTENT, document_id=DOCUMENT_ID) for _ in range(2))
-    )
+    await asyncio.gather(*(client.aretain(bank_id=bank_id, content=CONTENT, document_id=DOCUMENT_ID) for _ in range(2)))
     await settled(bank_id)
 
     chunks = await client.documents.list_document_chunks(bank_id, DOCUMENT_ID)

@@ -146,9 +146,7 @@ async def test_a_request_turns_prune_and_dedup_on(decision_model_client, tea_ban
     query = "What tea does Marta like?"
 
     dedup_only = await decision_model_client.arecall(bank_id=tea_bank, query=query, rerank={"dedup": True})
-    both = await decision_model_client.arecall(
-        bank_id=tea_bank, query=query, rerank={"prune": True, "dedup": True}
-    )
+    both = await decision_model_client.arecall(bank_id=tea_bank, query=query, rerank={"prune": True, "dedup": True})
 
     assert _texts(dedup_only) == [TEA, SENCHA, UNRELATED]
     assert _texts(both) == [TEA, SENCHA]
