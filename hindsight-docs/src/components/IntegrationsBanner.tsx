@@ -2,6 +2,8 @@ import React from 'react';
 import type {IconType} from 'react-icons';
 import {SiPython, SiGo, SiOpenai, SiAnthropic, SiGooglegemini, SiOllama, SiVercel} from 'react-icons/si';
 import {LuTerminal, LuZap, LuBrainCog, LuSparkles, LuGlobe} from 'react-icons/lu';
+import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import styles from './IntegrationsBanner.module.css';
 
 interface BannerItem {
@@ -55,17 +57,18 @@ const ITEMS: BannerItem[] = [
 ];
 
 function BannerItemComponent({item}: {item: BannerItem}) {
+  const imgSrc = useBaseUrl(item.imgSrc);
   const content = (
     <span className={styles.item}>
       <span className={styles.itemIcon}>
         {item.icon && <item.icon size={18} />}
-        {item.imgSrc && <img src={item.imgSrc} alt={item.label} width={18} height={18} style={{objectFit: 'contain'}} />}
+        {item.imgSrc && <img src={imgSrc} alt={item.label} width={18} height={18} style={{objectFit: 'contain'}} />}
       </span>
       <span className={styles.itemLabel}>{item.label}</span>
     </span>
   );
   return item.href
-    ? <a href={item.href} className={styles.itemLink}>{content}</a>
+    ? <Link to={item.href} className={styles.itemLink}>{content}</Link>
     : <span>{content}</span>;
 }
 

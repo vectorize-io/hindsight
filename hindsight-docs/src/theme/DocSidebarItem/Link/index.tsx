@@ -3,6 +3,7 @@ import Link from '@theme-original/DocSidebarItem/Link';
 import type LinkType from '@theme/DocSidebarItem/Link';
 import type {WrapperProps} from '@docusaurus/types';
 import type {IconType} from 'react-icons';
+import {useBaseUrlUtils} from '@docusaurus/useBaseUrl';
 
 import {
   LuBrain, LuRefreshCw, LuSearch, LuMessageSquare, LuLanguages,
@@ -69,6 +70,7 @@ type Props = WrapperProps<typeof LinkType>;
 
 export default function LinkWrapper(props: Props): JSX.Element {
   const {item} = props;
+  const {withBaseUrl} = useBaseUrlUtils();
   const icon = item.customProps?.icon as string | undefined;
   const iconAfter = item.customProps?.iconAfter as string | undefined;
   const cover = item.customProps?.cover as string | undefined;
@@ -81,7 +83,7 @@ export default function LinkWrapper(props: Props): JSX.Element {
       label: (
         <span style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
           <img
-            src={cover}
+            src={withBaseUrl(cover)}
             alt=""
             style={{width: '64px', aspectRatio: '16 / 9', objectFit: 'cover', borderRadius: '4px', flexShrink: 0}}
           />
@@ -116,7 +118,7 @@ export default function LinkWrapper(props: Props): JSX.Element {
   const iconNode = icon
     ? IconComponent
       ? <IconComponent size={16} style={{flexShrink: 0, opacity: 0.65}} />
-      : <img src={icon} alt="" style={{width: '16px', height: '16px', flexShrink: 0, objectFit: 'contain'}} />
+      : <img src={withBaseUrl(icon)} alt="" style={{width: '16px', height: '16px', flexShrink: 0, objectFit: 'contain'}} />
     : null;
 
   const iconAfterNode = IconAfterComponent

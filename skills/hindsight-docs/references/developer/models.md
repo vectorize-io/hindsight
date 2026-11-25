@@ -24,7 +24,7 @@ Every provider is set the same way, with `HINDSIGHT_API_LLM_PROVIDER` and, for m
 
 The **[Model Leaderboard →](https://benchmarks.hindsight.vectorize.io/)** runs every LLM through Hindsight's own evals, alone and with the decision model, and ranks them on quality and cost.
 
-<a href="https://benchmarks.hindsight.vectorize.io/"><ThemedImage alt="Model Leaderboard: LLMs ranked by score, quality and cost on all Hindsight operations" sources={{light: '/img/leaderboard-light.png', dark: '/img/leaderboard-dark.png'}} /></a>
+<a href="https://benchmarks.hindsight.vectorize.io/"><ThemedImage alt="Model Leaderboard: LLMs ranked by score, quality and cost on all Hindsight operations" sources={{light: useBaseUrl('/img/leaderboard-light.png'), dark: useBaseUrl('/img/leaderboard-dark.png')}} /></a>
 
 ### Provider Capabilities
 

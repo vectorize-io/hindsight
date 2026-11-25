@@ -12,7 +12,12 @@ const umamiWebsiteId = process.env.UMAMI_WEBSITE_ID;
 // points at the thing we want people to do, not off-site. The paper used to live
 // here and now sits in the homepage hero, which is where a visitor who wants
 // evidence is already looking.
-const ANNOUNCEMENT_BAR = 'New: <strong>Introducing Hindsight Models</strong>: memory 2.5x cheaper and 2x faster, with better answers. <a href="/blog/2026/11/03/hindsight-models">Read the post →</a>';
+// Path prefix the site is served under (see `baseUrl` below). Raw HTML strings
+// in this file are not rewritten by Docusaurus, so internal links in them are
+// built with this prefix.
+const BASE_URL = (process.env.DOCS_BASE_URL || '/').replace(/\/?$/, '/');
+
+const ANNOUNCEMENT_BAR = `New: <strong>Introducing Hindsight Models</strong>: memory 2.5x cheaper and 2x faster, with better answers. <a href="${BASE_URL}blog/2026/11/03/hindsight-models">Read the post →</a>`;
 
 const config: Config = {
   title: 'Hindsight',
@@ -44,8 +49,11 @@ const config: Config = {
     mermaid: true,
   },
 
-  url: 'https://hindsight.vectorize.io',
-  baseUrl: '/',
+  // Where the site is published. Overridable so the same source can be built
+  // for another host or under a path prefix (e.g. DOCS_BASE_URL=/oss/); the
+  // defaults are the current site.
+  url: process.env.DOCS_SITE_URL || 'https://hindsight.vectorize.io',
+  baseUrl: BASE_URL,
 
   organizationName: 'vectorize-io',
   projectName: 'hindsight',

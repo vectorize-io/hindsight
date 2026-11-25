@@ -9,6 +9,8 @@ tags: [release, knowledge-banks]
 hide_table_of_contents: false
 ---
 
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
 import ThemedImage from '@theme/ThemedImage';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
@@ -39,7 +41,7 @@ import TabItem from '@theme/TabItem';
 
 <div className="post-wide">
 
-<ThemedImage alt={"A memory bank turns a chat into facts and observations that update"} sources={{light: "/img/blog/knowledge-banks/why-memory-light.png", dark: "/img/blog/knowledge-banks/why-memory-dark.png"}} />
+<ThemedImage alt={"A memory bank turns a chat into facts and observations that update"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/why-memory-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/why-memory-dark.png")}} />
 
 </div>
 
@@ -51,7 +53,7 @@ That's exactly right for a person's history. It's wrong for a manual. A manual s
 
 <div className="post-wide">
 
-<ThemedImage alt={"A knowledge bank splits files into passages and returns the page or the second"} sources={{light: "/img/blog/knowledge-banks/why-knowledge-light.png", dark: "/img/blog/knowledge-banks/why-knowledge-dark.png"}} />
+<ThemedImage alt={"A knowledge bank splits files into passages and returns the page or the second"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/why-knowledge-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/why-knowledge-dark.png")}} />
 
 </div>
 
@@ -63,7 +65,7 @@ That's exactly right for a manual. It's wrong for a person. A knowledge bank doe
 
 <div className="post-wide">
 
-<ThemedImage alt={"One reflect call combines Lukas's version from memory with the support policy from the manual"} sources={{light: "/img/blog/knowledge-banks/why-together-light.png", dark: "/img/blog/knowledge-banks/why-together-dark.png"}} />
+<ThemedImage alt={"One reflect call combines Lukas's version from memory with the support policy from the manual"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/why-together-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/why-together-dark.png")}} />
 
 </div>
 
@@ -75,7 +77,7 @@ So link them. Add a knowledge bank to a memory bank's config, and reflect search
 
 <div className="post-wide">
 
-<ThemedImage alt={"A vector store next to memory, against a knowledge bank linked to a memory bank"} sources={{light: "/img/blog/knowledge-banks/rag-vs-link-light.png", dark: "/img/blog/knowledge-banks/rag-vs-link-dark.png"}} />
+<ThemedImage alt={"A vector store next to memory, against a knowledge bank linked to a memory bank"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/rag-vs-link-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/rag-vs-link-dark.png")}} />
 
 </div>
 
@@ -97,7 +99,7 @@ We ran it three ways, with the same model (Gemma 4 26B) answering through reflec
 
 <div className="post-wide">
 
-<ThemedImage alt={"SupportBench scores by kind of question for the three setups"} sources={{light: "/img/blog/knowledge-banks/supportbench-categories-light.png", dark: "/img/blog/knowledge-banks/supportbench-categories-dark.png"}} />
+<ThemedImage alt={"SupportBench scores by kind of question for the three setups"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/supportbench-categories-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/supportbench-categories-dark.png")}} />
 
 </div>
 
@@ -112,28 +114,28 @@ Here's one question of each kind, with what each setup answered.
 <Tabs>
 <TabItem value="docs" label="Manual only">
 
-<ThemedImage alt={"A federated share's only permission option, answered by each setup"} sources={{light: "/img/blog/knowledge-banks/supportbench-docs-light.png", dark: "/img/blog/knowledge-banks/supportbench-docs-dark.png"}} />
+<ThemedImage alt={"A federated share's only permission option, answered by each setup"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/supportbench-docs-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/supportbench-docs-dark.png")}} />
 
 The manual says there's only one option: **Can edit**. With everything in memory, the manual had been broken into loose facts, and the agent mixed in the options for calendars and public links.
 
 </TabItem>
 <TabItem value="both" label="Manual + chat history">
 
-<ThemedImage alt={"Whether an old Nextcloud 30 server still gets updates, answered by each setup"} sources={{light: "/img/blog/knowledge-banks/supportbench-both-light.png", dark: "/img/blog/knowledge-banks/supportbench-both-dark.png"}} />
+<ThemedImage alt={"Whether an old Nextcloud 30 server still gets updates, answered by each setup"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/supportbench-both-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/supportbench-both-dark.png")}} />
 
 Only Lukas's chats say the server runs Nextcloud 30, released in September 2024. Only the manual says each version is supported for one year. Each single-bank setup missed one half. Together, it put them side by side: **no, it reached end of life around September 2025**.
 
 </TabItem>
 <TabItem value="conflict" label="Chat contradicts the manual">
 
-<ThemedImage alt={"Whether adding a file to a project shares it, answered by each setup"} sources={{light: "/img/blog/knowledge-banks/supportbench-conflict-light.png", dark: "/img/blog/knowledge-banks/supportbench-conflict-dark.png"}} />
+<ThemedImage alt={"Whether adding a file to a project shares it, answered by each setup"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/supportbench-conflict-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/supportbench-conflict-dark.png")}} />
 
 In an old chat a colleague says, with confidence, that adding a file to a project shares it. Both single-bank setups repeated that. Together, the agent went with the manual: **share the file with Daisuke first**.
 
 </TabItem>
 <TabItem value="exception" label="Approved exception">
 
-<ThemedImage alt={"Activity retention for two customers, one with an approved exception, answered by each setup"} sources={{light: "/img/blog/knowledge-banks/supportbench-exception-light.png", dark: "/img/blog/knowledge-banks/supportbench-exception-dark.png"}} />
+<ThemedImage alt={"Activity retention for two customers, one with an approved exception, answered by each setup"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/supportbench-exception-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/supportbench-exception-dark.png")}} />
 
 Two customers ask the exact same question, and only Amara has an exception. Both single-bank setups told both customers 365 days. Together, each got their own answer, because the exception note is tagged to its customer and the other customer's question never sees it.
 
@@ -146,7 +148,7 @@ Two customers ask the exact same question, and only Amara has an exception. Both
 
 <div className="post-wide">
 
-<ThemedImage alt={"Ingest splits each kind of file; search runs by meaning and rare words, reranks and fills the token budget"} sources={{light: "/img/blog/knowledge-banks/how-it-works-light.png", dark: "/img/blog/knowledge-banks/how-it-works-dark.png"}} />
+<ThemedImage alt={"Ingest splits each kind of file; search runs by meaning and rare words, reranks and fills the token budget"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/how-it-works-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/how-it-works-dark.png")}} />
 
 </div>
 
@@ -172,9 +174,9 @@ Eight sets of real enterprise documents (HR, finance in English and French, phar
 
 We ran it two ways. From the **raw PDFs**, the server reads and splits every file itself. From the **page text** the dataset ships, every page is already plain text.
 
-<ThemedImage alt={"ViDoRe V3 raw PDFs, nDCG@10: Mixedbread with reranker 69.5, Hindsight 68.0, Cohere Embed 4 with Rerank 4 Pro 67.4"} sources={{light: "/img/blog/knowledge-banks/bench-vidore-pdf-light.png", dark: "/img/blog/knowledge-banks/bench-vidore-pdf-dark.png"}} />
+<ThemedImage alt={"ViDoRe V3 raw PDFs, nDCG@10: Mixedbread with reranker 69.5, Hindsight 68.0, Cohere Embed 4 with Rerank 4 Pro 67.4"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/bench-vidore-pdf-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/bench-vidore-pdf-dark.png")}} />
 
-<ThemedImage alt={"ViDoRe V3 page text, nDCG@10: Mixedbread with reranker 69.9, Hindsight 66.2, Mixedbread 62.3"} sources={{light: "/img/blog/knowledge-banks/bench-vidore-text-light.png", dark: "/img/blog/knowledge-banks/bench-vidore-text-dark.png"}} />
+<ThemedImage alt={"ViDoRe V3 page text, nDCG@10: Mixedbread with reranker 69.9, Hindsight 66.2, Mixedbread 62.3"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/bench-vidore-text-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/bench-vidore-text-dark.png")}} />
 
 A knowledge bank does better on the raw PDFs than on the clean text, because it reads each page as an image as well as its text. Mixedbread with its reranker stays ahead on both.
 
@@ -182,7 +184,7 @@ A knowledge bank does better on the raw PDFs than on the clean text, because it 
 
 776 questions over 714 contracts (NDAs, M&A agreements, commercial contracts, privacy policies): the benchmark's official mini set. The score is the share of the exact text lawyers marked that the top 5 results contain.
 
-<ThemedImage alt={"LegalBench-RAG mini, recall@5: Hindsight 95.0 with file names and 87.2 without, Conare 85.4"} sources={{light: "/img/blog/knowledge-banks/bench-legalbench-light.png", dark: "/img/blog/knowledge-banks/bench-legalbench-dark.png"}} />
+<ThemedImage alt={"LegalBench-RAG mini, recall@5: Hindsight 95.0 with file names and 87.2 without, Conare 85.4"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/bench-legalbench-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/bench-legalbench-dark.png")}} />
 
 This metric rewards returning more text, so here is how much we return: the search runs at the API's default 4,096-token budget, and the 5 results average about 3,800 tokens, about what 5 chunks of a typical RAG setup hold. The other systems ran without the contracts' file names, so this is our score without them too. With the file names, which a real contract store would have, a knowledge bank reaches **95.0**. Competitor numbers are from [Conare's table](https://conare.ai/benchmarks), as of 9 November 2026.
 
@@ -190,7 +192,7 @@ This metric rewards returning more text, so here is how much we return: the sear
 
 Four years of one person's data: 3,759 photos, 533 videos and 6,742 emails, and 1,013 questions about them. A knowledge bank finds **93.1%** of the evidence in its top 10 results, above every entry on the [ATM-Bench leaderboard](https://atmbench.github.io/leaderboard.html) (we haven't submitted there yet).
 
-<ThemedImage alt={"ATM-Bench, recall@10: Hindsight 93.1, Memexa v2 92.3, RE-call 90.1"} sources={{light: "/img/blog/knowledge-banks/bench-atm-light.png", dark: "/img/blog/knowledge-banks/bench-atm-dark.png"}} />
+<ThemedImage alt={"ATM-Bench, recall@10: Hindsight 93.1, Memexa v2 92.3, RE-call 90.1"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/bench-atm-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/bench-atm-dark.png")}} />
 
 Each photo and video goes in twice: as the raw file, and as the text record the benchmark ships with it (time, place, caption, OCR, tags). A hit on either counts. Memexa v2 and Graphon V1, the closest behind, run an LLM over every item to build their memory. A knowledge bank runs no LLM of its own: it embeds the files and the records as they come.
 
@@ -200,7 +202,7 @@ Memexa v2's recall counts the items it passes to its answer model, which may not
 
 <div className="post-wide">
 
-<ThemedImage alt={"LLM cost to fill, hosted search price, and Hindsight Inference prices"} sources={{light: "/img/blog/knowledge-banks/cost-light.png", dark: "/img/blog/knowledge-banks/cost-dark.png"}} />
+<ThemedImage alt={"LLM cost to fill, hosted search price, and Hindsight Inference prices"} sources={{light: useBaseUrl("/img/blog/knowledge-banks/cost-light.png"), dark: useBaseUrl("/img/blog/knowledge-banks/cost-dark.png")}} />
 
 </div>
 

@@ -1,5 +1,6 @@
 import React from 'react';
 import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import type {Props} from '@theme/BlogTagsPostsPage';
 import type {PropBlogPostContent} from '@docusaurus/plugin-content-blog';
@@ -13,7 +14,7 @@ function formatDate(dateString: string): string {
 function BlogCard({content}: {content: PropBlogPostContent}) {
   const {metadata, assets} = content;
   const {title, description, date, readingTime, permalink, frontMatter} = metadata;
-  const image = assets.image ?? frontMatter.image ?? '/img/blog-default.jpg';
+  const image = useBaseUrl(assets.image ?? frontMatter.image ?? '/img/blog-default.jpg');
 
   return (
     <Link to={permalink} className={styles.card}>

@@ -7,6 +7,7 @@ description: "One Hindsight memory plugin for coding agents — per-repo memory 
 {/* GENERATED from hindsight-integrations/coding-agents/README.md — edit that file, then run
     node hindsight-docs/scripts/sync-coding-agents-doc.mjs */}
 
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Figure from '@site/src/components/Figure';
 import codingAgents from '@site/figures/coding-agents.json';
 import CodingAgentsChart from '@site/src/components/CodingAgentsChart';
@@ -90,7 +91,7 @@ local daemon on this machine (see Where memory lives). Scripted installs pass
 
 Same command, only the harness name changes. Run after installing the package globally.
 
-#### <img src="/img/harness/claude-code.png" alt="" width="20" height="20" /> Claude Code
+#### <img src={useBaseUrl("/img/harness/claude-code.png")} alt="" width="20" height="20" /> Claude Code
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install claude-code
@@ -98,7 +99,7 @@ npx @vectorize-io/hindsight-coding-agents install claude-code
 
 3 hooks in `~/.claude/settings.json`, MCP via `claude mcp add` (user scope), and the companion skill.
 
-#### <img src="/img/harness/codex.svg" alt="" width="20" height="20" /> Codex CLI
+#### <img src={useBaseUrl("/img/harness/codex.svg")} alt="" width="20" height="20" /> Codex CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install codex
@@ -106,7 +107,7 @@ npx @vectorize-io/hindsight-coding-agents install codex
 
 3 hooks in `~/.codex/hooks.json` plus `[mcp_servers]` in `config.toml` (needs `codex_hooks = true`).
 
-#### <img src="/img/harness/dcode.svg" alt="" width="20" height="20" /> DeepAgents Dcode
+#### <img src={useBaseUrl("/img/harness/dcode.svg")} alt="" width="20" height="20" /> DeepAgents Dcode
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install dcode
@@ -127,7 +128,7 @@ capture an initiative or ingest a document. For the same reason Dcode gets no on
 survey: the survey runs only under the current agent's own CLI, and only Claude Code, Codex,
 Antigravity and opencode v1 have a headless, read-only recipe for it.
 
-#### <img src="/img/harness/opencode.png" alt="" width="20" height="20" /> opencode
+#### <img src={useBaseUrl("/img/harness/opencode.png")} alt="" width="20" height="20" /> opencode
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install opencode
@@ -135,7 +136,7 @@ npx @vectorize-io/hindsight-coding-agents install opencode
 
 A plugin entry in `~/.config/opencode/opencode.json` — native tools, no MCP needed.
 
-#### <img src="/img/harness/opencode.png" alt="" width="20" height="20" /> opencode 2
+#### <img src={useBaseUrl("/img/harness/opencode.png")} alt="" width="20" height="20" /> opencode 2
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install opencode2
@@ -155,7 +156,7 @@ The companion skill is identical too, but it is registered in memory through v2'
 than copied into a skills directory — opencode2 has none of its own, and the two it reads belong to
 other agents.
 
-#### <img src="/img/harness/kilo.svg" alt="" width="20" height="20" /> Kilo CLI
+#### <img src={useBaseUrl("/img/harness/kilo.svg")} alt="" width="20" height="20" /> Kilo CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install kilo
@@ -163,7 +164,7 @@ npx @vectorize-io/hindsight-coding-agents install kilo
 
 A plugin entry in `~/.config/kilo/kilo.json[c]`.
 
-#### <img src="/img/harness/cursor-cli.svg" alt="" width="20" height="20" /> Cursor CLI
+#### <img src={useBaseUrl("/img/harness/cursor-cli.svg")} alt="" width="20" height="20" /> Cursor CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install cursor-cli
@@ -171,7 +172,7 @@ npx @vectorize-io/hindsight-coding-agents install cursor-cli
 
 Hooks in `~/.cursor/hooks.json`, `~/.cursor/mcp.json`, and the companion skill.
 
-#### <img src="/img/harness/copilot-cli.svg" alt="" width="20" height="20" /> GitHub Copilot CLI
+#### <img src={useBaseUrl("/img/harness/copilot-cli.svg")} alt="" width="20" height="20" /> GitHub Copilot CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install copilot-cli
@@ -179,7 +180,7 @@ npx @vectorize-io/hindsight-coding-agents install copilot-cli
 
 `~/.copilot/hooks/`, `mcp-config.json`, and the companion skill.
 
-#### <img src="/img/harness/grok-build.svg" alt="" width="20" height="20" /> Grok Build
+#### <img src={useBaseUrl("/img/harness/grok-build.svg")} alt="" width="20" height="20" /> Grok Build
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install grok-build
@@ -191,7 +192,7 @@ Grok, so a machine wired for both hosts records each Grok session once. Grok pas
 the model only from tool hooks, so the session and prompt context arrive with the result of the
 agent's first tool call after each prompt (a `PostToolUse` hook).
 
-#### <img src="/img/harness/qwen-code.svg" alt="" width="20" height="20" /> Qwen Code
+#### <img src={useBaseUrl("/img/harness/qwen-code.svg")} alt="" width="20" height="20" /> Qwen Code
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install qwen-code
@@ -205,7 +206,7 @@ Native hooks in `~/.qwen/settings.json`, plus MCP and the companion skill.
 > continuations, so interactive sessions recall once per prompt while headless (`qwen -p`),
 > `serve`, SDK and ACP sessions seed and retain but do not recall.
 
-#### <img src="/img/harness/kimi-code.svg" alt="" width="20" height="20" /> Kimi Code
+#### <img src={useBaseUrl("/img/harness/kimi-code.svg")} alt="" width="20" height="20" /> Kimi Code
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install kimi-code
@@ -218,7 +219,7 @@ Native hooks in `~/.kimi-code/config.toml`, plus MCP in `~/.kimi-code/mcp.json` 
 > recalled memory arrives on the first prompt instead, as a `<hook_result>` block. Sessions are
 > retained from every agent's `wire.jsonl` under the session directory, subagents included.
 
-#### <img src="/img/harness/factory-droid.svg" alt="" width="20" height="20" /> Factory Droid
+#### <img src={useBaseUrl("/img/harness/factory-droid.svg")} alt="" width="20" height="20" /> Factory Droid
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install factory-droid
@@ -233,7 +234,7 @@ user-managed MCP server already named `hindsight`. Droid's hook protocol matches
 injection use the same protocol; write-back also handles Droid's cancellation notification because
 Droid does not emit `Stop` after a cancelled turn.
 
-#### <img src="/img/harness/zcode.svg" alt="" width="20" height="20" /> ZCode
+#### <img src={useBaseUrl("/img/harness/zcode.svg")} alt="" width="20" height="20" /> ZCode
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install zcode
@@ -257,7 +258,7 @@ refuses to touch an MCP server named `hindsight` that it did not write.
 > appending each new turn to the same session document. `--import-conversations` is therefore not
 > available for ZCode: there is no past history on disk to backfill from.
 
-#### <img src="/img/harness/traecode.png" alt="" width="20" height="20" /> TraeCode
+#### <img src={useBaseUrl("/img/harness/traecode.png")} alt="" width="20" height="20" /> TraeCode
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install traecode
@@ -307,7 +308,7 @@ once there.
 > `last_assistant_message`. `--import-conversations` is therefore not available for TraeCode:
 > there is no past history on disk to backfill from.
 
-#### <img src="/img/harness/antigravity-cli.png" alt="" width="20" height="20" /> Antigravity CLI
+#### <img src={useBaseUrl("/img/harness/antigravity-cli.png")} alt="" width="20" height="20" /> Antigravity CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install agy
@@ -315,7 +316,7 @@ npx @vectorize-io/hindsight-coding-agents install agy
 
 Lifecycle hooks, MCP, and the `Hindsight · <bank>` status line.
 
-#### <img src="/img/harness/devin-cli.svg" alt="" width="20" height="20" /> Devin CLI
+#### <img src={useBaseUrl("/img/harness/devin-cli.svg")} alt="" width="20" height="20" /> Devin CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install devin-cli
@@ -323,7 +324,7 @@ npx @vectorize-io/hindsight-coding-agents install devin-cli
 
 Hooks in `~/.config/devin/config.json` plus MCP. Needs Node 22.5+ — see below.
 
-#### <img src="/img/harness/cline-cli.svg" alt="" width="20" height="20" /> Cline CLI
+#### <img src={useBaseUrl("/img/harness/cline-cli.svg")} alt="" width="20" height="20" /> Cline CLI
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install cline-cli
@@ -331,7 +332,7 @@ npx @vectorize-io/hindsight-coding-agents install cline-cli
 
 A native plugin via `cline plugin install`, plus MCP and the companion skill.
 
-#### <img src="/img/harness/pi.svg" alt="" width="20" height="20" /> pi
+#### <img src={useBaseUrl("/img/harness/pi.svg")} alt="" width="20" height="20" /> pi
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install pi
@@ -347,7 +348,7 @@ whichever host it did not name would load the other's bundle and report itself a
 taking that harness's config section and stamping every document it retains with it. So the package
 carries no `pi` key at all, and each host is pointed at its own bundle by the install command above.
 
-#### <img src="/img/harness/prime-agent.svg" alt="" width="20" height="20" /> Prime Agent
+#### <img src={useBaseUrl("/img/harness/prime-agent.svg")} alt="" width="20" height="20" /> Prime Agent
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install prime-agent
@@ -361,7 +362,7 @@ each host loads its own entry from its own settings file, and like every other p
 when you open Prime Agent. Separate entries are what keeps each side attributable — its own
 `harnesses.<name>` config section, and its own agent stamped on every document it retains.
 
-#### <img src="/img/harness/dsh.svg" alt="" width="20" height="20" /> DeepSeek Harness
+#### <img src={useBaseUrl("/img/harness/dsh.svg")} alt="" width="20" height="20" /> DeepSeek Harness
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install dsh
@@ -380,7 +381,7 @@ too: the package ships the profile patch layer, so nothing else needs editing. E
 companion skill — a plugin wired by the host's own plugin manager installs it itself on the first
 session, since that route never runs our installer.
 
-#### <img src="/img/harness/workbuddy.png" alt="" width="20" height="20" /> WorkBuddy
+#### <img src={useBaseUrl("/img/harness/workbuddy.png")} alt="" width="20" height="20" /> WorkBuddy
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install workbuddy
@@ -392,7 +393,7 @@ companion skill in `~/.workbuddy/skills`. WorkBuddy (Tencent's AI workbench) is 
 transcript schema (`type:"message"` records carrying top-level `role`/`content`), which the
 package's own reader normalizes.
 
-#### <img src="/img/harness/codebuddy.png" alt="" width="20" height="20" /> CodeBuddy
+#### <img src={useBaseUrl("/img/harness/codebuddy.png")} alt="" width="20" height="20" /> CodeBuddy
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install codebuddy

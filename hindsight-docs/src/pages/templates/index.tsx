@@ -166,7 +166,7 @@ export default function TemplateGallery(): React.ReactElement {
         <h1 className={styles.heroTitle}>Bank Templates Hub</h1>
         <p className={styles.heroSubtitle}>
           Pre-built bank templates to get started fast. Browse, preview, and import into your Hindsight banks.
-          {' '}<a href="/developer/api/bank-templates" className={styles.heroLink}>Learn how templates work &rarr;</a>
+          {' '}<Link to="/developer/api/bank-templates" className={styles.heroLink}>Learn how templates work &rarr;</Link>
         </p>
 
         <div className={styles.hubSearchWrapper}>

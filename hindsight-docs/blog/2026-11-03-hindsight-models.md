@@ -9,6 +9,8 @@ image: /img/blog/hindsight-models/cover.png
 hide_table_of_contents: false
 ---
 
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
 import ThemedImage from '@theme/ThemedImage';
 import YouTubeVideo from '@site/src/components/YouTubeVideo';
 
@@ -16,7 +18,7 @@ import YouTubeVideo from '@site/src/components/YouTubeVideo';
 
 <div className="post-wide">
 
-<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/all-operations"><ThemedImage alt={"Quality against cost for every LLM on all of Hindsight; an arrow joins each LLM to the same LLM with hs-decide-1-flash, which sits to the left (cheaper) and mostly higher (better)"} sources={{light: "/img/blog/hindsight-models/chart-all-operations-light.png", dark: "/img/blog/hindsight-models/chart-all-operations-dark.png"}} /></a>
+<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/all-operations"><ThemedImage alt={"Quality against cost for every LLM on all of Hindsight; an arrow joins each LLM to the same LLM with hs-decide-1-flash, which sits to the left (cheaper) and mostly higher (better)"} sources={{light: useBaseUrl("/img/blog/hindsight-models/chart-all-operations-light.png"), dark: useBaseUrl("/img/blog/hindsight-models/chart-all-operations-dark.png")}} /></a>
 
 </div>
 
@@ -82,7 +84,7 @@ Each chart plots quality against cost, one point per LLM; an arrow joins an LLM 
 
 <div className="post-wide">
 
-<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/all-operations"><ThemedImage alt={"All of Hindsight: quality against cost for each LLM, with arrows to the same LLM with hs-decide-1-flash"} sources={{light: "/img/blog/hindsight-models/chart-all-operations-light.png", dark: "/img/blog/hindsight-models/chart-all-operations-dark.png"}} /></a>
+<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/all-operations"><ThemedImage alt={"All of Hindsight: quality against cost for each LLM, with arrows to the same LLM with hs-decide-1-flash"} sources={{light: useBaseUrl("/img/blog/hindsight-models/chart-all-operations-light.png"), dark: useBaseUrl("/img/blog/hindsight-models/chart-all-operations-dark.png")}} /></a>
 
 </div>
 
@@ -107,7 +109,7 @@ The decision model makes Hindsight cheaper and faster almost everywhere, and bet
 
 <div className="post-wide">
 
-<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/reflect"><ThemedImage alt={"Reflect: quality against cost for each LLM, with arrows to the same LLM with hs-decide-1-flash"} sources={{light: "/img/blog/hindsight-models/chart-reflect-light.png", dark: "/img/blog/hindsight-models/chart-reflect-dark.png"}} /></a>
+<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/reflect"><ThemedImage alt={"Reflect: quality against cost for each LLM, with arrows to the same LLM with hs-decide-1-flash"} sources={{light: useBaseUrl("/img/blog/hindsight-models/chart-reflect-light.png"), dark: useBaseUrl("/img/blog/hindsight-models/chart-reflect-dark.png")}} /></a>
 
 </div>
 
@@ -117,7 +119,7 @@ Five of the seven arrows point left. The LLM takes about half the turns (4.4 →
 
 <div className="post-wide">
 
-<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/refresh-pages"><ThemedImage alt={"Refresh pages: quality against cost for each LLM, with arrows to the same LLM with hs-decide-1-flash"} sources={{light: "/img/blog/hindsight-models/chart-refresh-pages-light.png", dark: "/img/blog/hindsight-models/chart-refresh-pages-dark.png"}} /></a>
+<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/refresh-pages"><ThemedImage alt={"Refresh pages: quality against cost for each LLM, with arrows to the same LLM with hs-decide-1-flash"} sources={{light: useBaseUrl("/img/blog/hindsight-models/chart-refresh-pages-light.png"), dark: useBaseUrl("/img/blog/hindsight-models/chart-refresh-pages-dark.png")}} /></a>
 
 </div>
 
@@ -127,7 +129,7 @@ Here the arrows point up and left at once. `gpt-6-luna` goes from 82.5 to 90.0 a
 
 <div className="post-wide">
 
-<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/consolidation"><ThemedImage alt={"Consolidation: quality against cost for each LLM, with arrows to the same LLM with hs-decide-1-flash"} sources={{light: "/img/blog/hindsight-models/chart-consolidation-light.png", dark: "/img/blog/hindsight-models/chart-consolidation-dark.png"}} /></a>
+<a href="https://benchmarks.hindsight.vectorize.io/leaderboards/consolidation"><ThemedImage alt={"Consolidation: quality against cost for each LLM, with arrows to the same LLM with hs-decide-1-flash"} sources={{light: useBaseUrl("/img/blog/hindsight-models/chart-consolidation-light.png"), dark: useBaseUrl("/img/blog/hindsight-models/chart-consolidation-dark.png")}} /></a>
 
 </div>
 
@@ -180,7 +182,7 @@ Full tables: [Hindsight Models benchmarks](https://benchmarks.hindsight.vectoriz
 
 <div className="post-wide">
 
-<a href="https://benchmarks.hindsight.vectorize.io/models/decision"><ThemedImage alt={"Decision model benchmarks: hs-decide-1-flash against other open decision models"} sources={{light: "/img/blog/hindsight-models/decision-light.png", dark: "/img/blog/hindsight-models/decision-dark.png"}} /></a>
+<a href="https://benchmarks.hindsight.vectorize.io/models/decision"><ThemedImage alt={"Decision model benchmarks: hs-decide-1-flash against other open decision models"} sources={{light: useBaseUrl("/img/blog/hindsight-models/decision-light.png"), dark: useBaseUrl("/img/blog/hindsight-models/decision-dark.png")}} /></a>
 
 </div>
 
@@ -188,7 +190,7 @@ Full tables: [Hindsight Models benchmarks](https://benchmarks.hindsight.vectoriz
 
 <div className="post-wide">
 
-<a href="https://benchmarks.hindsight.vectorize.io/models/reranker"><ThemedImage alt={"Reranker benchmarks: hs-rerank-1 against open rerankers up to 278M parameters"} sources={{light: "/img/blog/hindsight-models/reranker-light.png", dark: "/img/blog/hindsight-models/reranker-dark.png"}} /></a>
+<a href="https://benchmarks.hindsight.vectorize.io/models/reranker"><ThemedImage alt={"Reranker benchmarks: hs-rerank-1 against open rerankers up to 278M parameters"} sources={{light: useBaseUrl("/img/blog/hindsight-models/reranker-light.png"), dark: useBaseUrl("/img/blog/hindsight-models/reranker-dark.png")}} /></a>
 
 </div>
 
@@ -196,7 +198,7 @@ Full tables: [Hindsight Models benchmarks](https://benchmarks.hindsight.vectoriz
 
 <div className="post-wide">
 
-<a href="https://benchmarks.hindsight.vectorize.io/models/embeddings"><ThemedImage alt={"Embedding benchmarks: hs-embed-1 against open embedding models up to 118M parameters, six of twelve benchmarks shown"} sources={{light: "/img/blog/hindsight-models/embeddings-light.png", dark: "/img/blog/hindsight-models/embeddings-dark.png"}} /></a>
+<a href="https://benchmarks.hindsight.vectorize.io/models/embeddings"><ThemedImage alt={"Embedding benchmarks: hs-embed-1 against open embedding models up to 118M parameters, six of twelve benchmarks shown"} sources={{light: useBaseUrl("/img/blog/hindsight-models/embeddings-light.png"), dark: useBaseUrl("/img/blog/hindsight-models/embeddings-dark.png")}} /></a>
 
 </div>
 
@@ -208,7 +210,7 @@ Hindsight Inference serves the same three models to any application. It's part o
 
 <div className="post-wide">
 
-<a href="https://inference.hindsight.vectorize.io/playground"><img alt="The Hindsight Inference Playground: a rerank of four memories with Drop irrelevant documents on returns the right memory first and drops two" src="/img/blog/hindsight-models/playground-rerank.png" /></a>
+<a href="https://inference.hindsight.vectorize.io/playground"><img alt="The Hindsight Inference Playground: a rerank of four memories with Drop irrelevant documents on returns the right memory first and drops two" src={useBaseUrl("/img/blog/hindsight-models/playground-rerank.png")} /></a>
 
 </div>
 

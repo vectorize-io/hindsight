@@ -17,7 +17,8 @@ const RENAMED = {
   '/developer/api/pages': '/developer/api/knowledge-pages',
 };
 
-module.exports = function renamedDocsPlugin() {
+module.exports = function renamedDocsPlugin(context) {
+  const {baseUrl} = context.siteConfig;
   return {
     name: 'renamed-docs',
 
@@ -30,7 +31,8 @@ module.exports = function renamedDocsPlugin() {
           if (routes.has(oldRoute)) continue;
           const html = `<!doctype html><html><head><meta charset="utf-8"><title>Redirecting…</title><link rel="canonical" href="${route}"><meta http-equiv="refresh" content="0; url=${route}"><script>location.replace(${JSON.stringify(route)} + location.hash)</script></head><body><a href="${route}">${route}</a></body></html>`;
           // trailingSlash: false -> pages are written as <route>.html
-          const file = path.join(outDir, `${oldRoute}.html`);
+          // Routes carry the site's baseUrl; the build directory is already served under it.
+          const file = path.join(outDir, `${oldRoute.slice(baseUrl.length - 1)}.html`);
           fs.mkdirSync(path.dirname(file), {recursive: true});
           fs.writeFileSync(file, html);
         }

@@ -1,5 +1,6 @@
 import React, {type ReactNode} from 'react';
 import Link from '@docusaurus/Link';
+import {useBaseUrlUtils} from '@docusaurus/useBaseUrl';
 import {SiPostgresql} from 'react-icons/si';
 import {LuArrowRight} from 'react-icons/lu';
 import CodingAgentsChart from './CodingAgentsChart';
@@ -62,16 +63,18 @@ const CLIENTS = [
 ];
 
 function Icons({items}: {items: {label: string; src: string}[]}): ReactNode {
+  const {withBaseUrl} = useBaseUrlUtils();
   return (
     <div className={styles.icons}>
       {items.map((i) => (
-        <img key={i.label} src={i.src} alt={i.label} title={i.label} loading="lazy" />
+        <img key={i.label} src={withBaseUrl(i.src)} alt={i.label} title={i.label} loading="lazy" />
       ))}
     </div>
   );
 }
 
 export default function HomeFlow(): ReactNode {
+  const {withBaseUrl} = useBaseUrlUtils();
   return (
     <div className={styles.flow}>
       <div className={styles.sources}>
@@ -99,7 +102,7 @@ export default function HomeFlow(): ReactNode {
           <div className={styles.assistants}>
             {ASSISTANTS.map((a) => (
               <Link key={a.label} className={styles.assistant} to={a.to}>
-                <img src={a.src} alt="" loading="lazy" />
+                <img src={withBaseUrl(a.src)} alt="" loading="lazy" />
                 {a.label}
                 <LuArrowRight size={12} />
               </Link>

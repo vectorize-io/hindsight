@@ -2,6 +2,7 @@ import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {flushSync} from 'react-dom';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import {useLocation, useHistory} from '@docusaurus/router';
 import type {Props} from '@theme/BlogListPage';
@@ -62,7 +63,7 @@ function categoryLabelFor(content: PropBlogPostContent): string | null {
 function BlogCard({content, animate = true}: {content: PropBlogPostContent; animate?: boolean}) {
   const {metadata, assets} = content;
   const {title, description, date, readingTime, permalink, frontMatter} = metadata;
-  const image = assets.image ?? frontMatter.image ?? '/img/blog-default.jpg';
+  const image = useBaseUrl(assets.image ?? frontMatter.image ?? '/img/blog-default.jpg');
   const categoryLabel = categoryLabelFor(content);
 
   return (
