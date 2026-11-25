@@ -67,16 +67,20 @@ from .settings import (
     _PROVIDER_DEFAULT_MODELS,
     _VALID_BUDGETS,
     _clears_min_scores,
+    _compile_line_patterns,
     _daemon_llm_provider,
     _discover_cwd_bank_id,
+    _format_memory,
     _normalize_min_scores,
     _normalize_observation_scopes,
     _normalize_string_list,
     _parse_float_setting,
     _parse_int_setting,
+    _parse_session_context,
     _project_name,
     _repository_root,
     _resolve_bank_id_template,
+    _strip_query_lines,
     _template_fields,
 )
 
@@ -528,6 +532,10 @@ _SYSTEM_PROMPT_TAILS = {
 }
 
 
+# A session_context read runs before the first prompt is built, so it gets its own short bound.
+_SESSION_CONTEXT_TIMEOUT = 5.0
+
+
 class HindsightMemoryProvider(MemoryProvider):
     """Hindsight long-term memory with knowledge graph and multi-strategy retrieval."""
 
@@ -915,7 +923,17 @@ class HindsightMemoryProvider(MemoryProvider):
                 "description": "Maximum input query length for auto-recall",
                 "default": 800,
             },
+            {
+                "key": "recall_query_strip_patterns",
+                "description": "Regexes, one per line: matching lines are removed from the auto-recall query before recall_max_input_chars is applied (the message the model sees is unchanged)",
+                "default": "",
+            },
             {"key": "recall_prompt_preamble", "description": "Custom preamble for recalled memories in context"},
+            {
+                "key": "session_context",
+                "description": "Mental models and pages to put in the system prompt at session start, in order (comma-separated mental_model:<id> or page:<id>; a bare id is a mental model)",
+                "default": "",
+            },
             {"key": "timeout", "description": "API request timeout in seconds", "default": _DEFAULT_TIMEOUT},
             {
                 "key": "idle_timeout",
@@ -1636,6 +1654,9 @@ class HindsightMemoryProvider(MemoryProvider):
         self._recall_max_tokens = _parse_int_setting(cfg.get("recall_max_tokens"), 4096)
         self._recall_split_tokens = cfg.get("recall_max_tokens_mode") == "split"
         self._recall_max_input_chars = _parse_int_setting(cfg.get("recall_max_input_chars"), 800)
+        self._recall_query_strip_patterns = _compile_line_patterns(cfg.get("recall_query_strip_patterns"))
+        self._session_context_refs = _parse_session_context(cfg.get("session_context"))
+        self._session_context_block: str | None = None  # read once, on the first system prompt
         # None -> observation-only (Hindsight's consolidated, deduplicated layer; raw
         # world/experience facts re-ship the evidence they summarize and burn the
         # recall_max_tokens budget); a comma-separated string is accepted for parity
@@ -1733,7 +1754,50 @@ class HindsightMemoryProvider(MemoryProvider):
         tail = _TOOL_GUIDANCE if mode == "hybrid" and not self._auto_recall else _SYSTEM_PROMPT_TAILS[mode]
         if self._writes_disabled:  # the retain tool is not offered to a read-only kanban worker
             tail = tail.replace(" Use hindsight_retain to store facts.", "")
-        return f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{tail}"
+        block = f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{tail}"
+        if self._session_context_block is None:
+            self._session_context_block = self._load_session_context()
+        return f"{block}\n\n{self._session_context_block}" if self._session_context_block else block
+
+    def _load_session_context(self) -> str:
+        """The configured mental models and pages, in order, read once per session (#5285).
+
+        Read once and kept, so the system prompt stays byte-identical for the whole session and
+        prompt caching keeps working; a refreshed model shows up in the next session. Each read is
+        a stored-document read (no LLM call), bounded to a few seconds; one that fails is skipped
+        with a warning. In local_embedded mode a daemon that is not up yet is not started for this:
+        the session goes without and the next one picks it up."""
+        if not self._session_context_refs:
+            return ""
+        if self._mode == "local_embedded" and not _daemon_is_running(self._config.get("profile", "hermes")):
+            logger.info("Hindsight session_context skipped: the local daemon is not running yet")
+            return ""
+        sections = []
+        for entry in self._session_context_refs:
+            try:
+                client = self._get_client()
+                if entry.kind == "page":
+                    # Pages were "knowledge pages" before hindsight-client 1.2.1 (the floor is 0.10.1).
+                    get_page = getattr(client, "aget_page", None) or client.aget_knowledge_page
+                    doc = _run_sync(get_page(bank_id=self._bank_id, page_id=entry.ref), _SESSION_CONTEXT_TIMEOUT)
+                    content = getattr(doc, "body", None)
+                else:
+                    doc = _run_sync(
+                        client.aget_mental_model(bank_id=self._bank_id, mental_model_id=entry.ref, detail="content"),
+                        _SESSION_CONTEXT_TIMEOUT,
+                    )
+                    content = getattr(doc, "content", None)
+            except Exception as exc:
+                logger.warning("Hindsight session_context: could not read %s %s: %s", entry.kind, entry.ref, exc)
+                continue
+            if not (content or "").strip():
+                logger.warning("Hindsight session_context: %s %s has no content yet", entry.kind, entry.ref)
+                continue
+            name = getattr(doc, "name", None) or entry.ref
+            sections.append(f"## {name}\n{content.strip()}")
+        if not sections:
+            return ""
+        return "# Hindsight Session Context\nBackground from memory, read at session start.\n\n" + "\n\n".join(sections)
 
     # -- recall ------------------------------------------------------------------
 
@@ -1838,6 +1902,9 @@ class HindsightMemoryProvider(MemoryProvider):
         """One recall/reflect for *query* (background prefetch and ``recall_sync`` paths)
         -> (text, memory count); the count is 0 for reflect (synthesis) and on error, where the text
         is ``_RECALL_FAILED_NOTE``."""
+        # Boilerplate lines (a provenance header on every message) go first, or they fill the
+        # recall_max_input_chars window and recall finds nothing (#5639).
+        query = _strip_query_lines(query, self._recall_query_strip_patterns)
         if self._recall_max_input_chars:
             query = query[: self._recall_max_input_chars]
         try:
@@ -1849,7 +1916,8 @@ class HindsightMemoryProvider(MemoryProvider):
             )
             results = self._recall(query)
             logger.debug("Recall: returned %d results", len(results))
-            return "\n".join(f"- {r.text}" for r in results if r.text), len(results)
+            tz = _hermes_now().tzinfo
+            return "\n".join(f"- {_format_memory(r, tz)}" for r in results if r.text), len(results)
         except Exception as e:
             logger.warning("Hindsight recall failed: %s", e, exc_info=True)
             return _RECALL_FAILED_NOTE, 0
@@ -2237,7 +2305,11 @@ class HindsightMemoryProvider(MemoryProvider):
         logger.debug("Tool hindsight_recall: bank=%s, query_len=%d, budget=%s", self._bank_id, len(query), self._budget)
         results = self._recall(query)
         logger.debug("Tool hindsight_recall: %d results", len(results))
-        return "\n".join(f"{i}. {r.text}" for i, r in enumerate(results, 1)) or "No relevant memories found."
+        tz = _hermes_now().tzinfo
+        return (
+            "\n".join(f"{i}. {_format_memory(r, tz)}" for i, r in enumerate(results, 1))
+            or "No relevant memories found."
+        )
 
     def _tool_reflect(self, args: dict) -> str:
         query = args["query"]
@@ -2326,6 +2398,9 @@ class HindsightMemoryProvider(MemoryProvider):
             self._write_bank_ids = self._build_write_bank_ids()
         self._session_turns = []
         self._turn_counter = self._turn_index = self._last_retained_turn_count = 0
+        # The new session reads session_context afresh: the bank may have changed above, and a
+        # mental model refreshed since the last session is picked up here, as the docs promise.
+        self._session_context_block = None
         logger.debug(
             "Hindsight on_session_switch: new_session=%s parent=%s reset=%s doc=%s",
             self._session_id,

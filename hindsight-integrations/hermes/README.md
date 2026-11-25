@@ -261,6 +261,8 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `recall_max_tokens_mode` | `per_bank` | With several recall banks: `per_bank` gives each bank the full `recall_max_tokens`; `split` divides it evenly across the banks searched, so the total stays under it |
 | `recall_max_input_chars` | `800` | Maximum input query length for auto-recall |
 | `recall_prompt_preamble` | — | Custom preamble for recalled memories in context |
+| `recall_query_strip_patterns` | — | Regexes, one per line (or a JSON list): lines of the incoming message that match any of them are removed from the auto-recall query before `recall_max_input_chars` is applied. Use it for boilerplate that repeats on every message, such as a provenance header, which would otherwise fill the query and make recall find nothing. If every line matches, the full message is used. The message the model sees is unchanged, and the `hindsight_recall` tool is not affected. |
+| `session_context` | — | Mental models and pages to add to the system prompt when a session starts, in the order listed: a JSON list or comma-separated text of `mental_model:<id>` or `page:<id>` (a bare id is a mental model). Each is read once per session (no LLM call, 5 s limit) and stays the same for the whole session, so prompt caching keeps working; an update shows up in the next session. One that cannot be read is skipped with a warning. In `local_embedded` mode it is skipped when the local daemon is not running yet. |
 | `recall_tags` | — | Tags to filter when searching memories: a JSON list (e.g. `["project-x", "team"]`) or comma-separated text (`"project-x, team"`) |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
 | `reflect_tags` | — | Tags that scope what reflect reasons over (the `hindsight_reflect` tool and `recall_prefetch_method: reflect`), as a JSON list or comma-separated text. Unset, reflect uses the whole bank; `recall_tags` does not apply to reflect. |
@@ -271,6 +273,8 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `recall_cron` | `false` | Also auto-recall in scheduled (cron) runs. Off by default: Hermes starts every cron prompt with a fixed notice longer than `recall_max_input_chars`, so the recall would search for that notice instead of the job and inject unrelated memories. The `hindsight_recall` and `hindsight_reflect` tools still work in cron runs. |
 | `recall_sync` | `false` | Recall synchronously against the *current* message each turn (higher relevance, adds recall latency). Default off: recall runs in the background and is injected on the next turn. |
 | `recall_indicator` | `true` | Show a `💭 Hindsight — recalled N memories` status line when auto-recall injects memory. Turn off for customer-facing agents. |
+
+Each recalled memory, in auto-recall and in the `hindsight_recall` tool, carries its dates so the model can tell an old fact from a fresh one: `- <text> (mentioned: 2026-10-18) [occurred: 2026-09-01 → 2026-09-03]`. `mentioned` is when the fact was stated, `occurred` is when the event itself happened. Dates are shown in Hermes' configured timezone; a memory without a date shows none.
 
 > **Behavior change — `recall_types` defaults to `observation` only.**
 >
