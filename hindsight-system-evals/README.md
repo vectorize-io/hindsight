@@ -53,6 +53,7 @@ stays out of the category counts.
 | retain | temporal | 4 | relative dates resolved; a year spans the year; open-ended and undated facts; no event date, no invented date |
 | retain | language | 7 | German, Chinese, Spanish keep their language and script; English, Italian, Japanese inputs retained 6× never switch |
 | retain | fidelity | 5 | hedges stay hedged, past states stay past, a correction wins, the prompt's examples never leak, instructions inside content are not obeyed |
+| retain | scope | 3 | an order for one task keeps its task, never a standing preference; "from now on" stays a rule |
 | retain | no_invention | 3 | a date, owner or place stated for a neighbouring subject is not borrowed |
 | retain | mission | 2 | the retain mission filters what is kept and outranks the generic selectivity rules |
 | retain | mode | 4 | custom instructions, verbose, verbatim, a strategy chosen per item |

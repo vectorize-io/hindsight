@@ -640,6 +640,55 @@ CASES: tuple[Case, ...] = (
         must=("A fact records that Ana presented the Q3 roadmap.",),
         traps=("A fact states, as true, that the CEO resigned.",),
     ),
+    # ── Focus: an order for one task keeps its task ──────────────────────────────
+    Case(
+        id="task-order-keeps-its-task",
+        category="scope",
+        origin="#6770 an instruction for one task stored as a standing preference of the user",
+        items=(
+            Item(
+                '[{"role": "user", "content": "for this UI use the small model, not the big one, it\'s just a '
+                'prototype"}, {"role": "assistant", "content": "OK, the prototype UI will call the small model."}]',
+                timestamp="2026-11-17T10:00:00",
+            ),
+        ),
+        must=("A fact records that the user chose the small model for the prototype UI.",),
+        traps=(
+            "A fact words the choice as a preference of the user ('prefers', 'likes', 'wants') rather than as a "
+            "decision the user made for the prototype UI.",
+        ),
+    ),
+    Case(
+        id="this-one-is-not-a-habit",
+        category="scope",
+        origin="#6770 'for this one' dropped, the order stored as a habit",
+        items=(
+            Item(
+                '[{"role": "user", "content": "don\'t spin up a dev server for this one, just edit the css"}, '
+                '{"role": "assistant", "content": "Will do, editing the stylesheet only."}]',
+                timestamp="2026-11-17T10:05:00",
+            ),
+        ),
+        must=("A fact records that the user asked to edit the CSS without starting a dev server.",),
+        traps=(
+            "A fact states the instruction with nothing tying it to the one task it was given for (no 'for this "
+            "task/change' or the work it was for; a date alone does not count), so it reads as a general rule or preference about dev servers.",
+        ),
+    ),
+    Case(
+        id="from-now-on-is-a-rule",
+        category="scope",
+        origin="#6770 control: a rule the user marks as lasting stays a lasting rule",
+        items=(
+            Item(
+                '[{"role": "user", "content": "from now on, always use the small model for prototypes"}, '
+                '{"role": "assistant", "content": "Got it, small model for every prototype going forward."}]',
+                timestamp="2026-11-17T10:10:00",
+            ),
+        ),
+        must=("A fact records, as a standing rule, that the user wants the small model used for prototypes.",),
+        traps=("A fact limits the rule to a single task, prototype or date.",),
+    ),
     # ── Focus: the bank's retain mission ─────────────────────────────────────────
     Case(
         id="mission-filters",
