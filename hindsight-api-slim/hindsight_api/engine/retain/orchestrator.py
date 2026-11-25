@@ -3056,7 +3056,7 @@ async def _streaming_retain_batch(
     # semaphore inside fact_extraction to 32 concurrent).  As each completes
     # it pushes the enriched result into the queue for the DB consumer.
     async def _llm_producer() -> None:
-        async def _extract_one(global_idx: int, chunk_text: str) -> None:
+        async def _extract_one(global_idx: int, chunk_text: str, before: str, after: str) -> None:
             source = contents[chunk_to_content[global_idx]] if contents else _default_content
             event_date = source.event_date
             if prior_dates is not None and source.event_date_defaulted and event_date is not None:
@@ -3073,6 +3073,8 @@ async def _streaming_retain_batch(
                 tags=source.tags,
                 attachment_filenames=source.attachment_filenames,
                 observation_scopes=source.observation_scopes,
+                context_before=before,
+                context_after=after,
             )
             # Attribute this chunk's extraction LLM call to its document, so the
             # trace row carries document_id (a document accrues one such trace
@@ -3117,8 +3119,18 @@ async def _streaming_retain_batch(
 
         tasks: list[asyncio.Task] = []
         skipped_total = 0
+        # The neighbours a chunk is extracted with (#6645), from the same content item only; the
+        # prompt trims them. The list entries are freed as the loop and the tasks go, so the
+        # previous chunk is kept here before its entry is cleared.
+        with_context = config.retain_chunk_context_tokens > 0
+        previous_chunk = ""
         try:
             for i, chunk_text in enumerate(all_pre_chunks):
+                same_item_before = i > 0 and chunk_to_content[i - 1] == chunk_to_content[i]
+                same_item_after = i + 1 < len(all_pre_chunks) and chunk_to_content[i + 1] == chunk_to_content[i]
+                before = previous_chunk if with_context and same_item_before else ""
+                after = all_pre_chunks[i + 1] if with_context and same_item_after else ""
+                previous_chunk = chunk_text
                 chunk_hash = chunk_storage.compute_chunk_hash(chunk_text)
                 if chunk_hash in existing_chunk_hashes:
                     # Memory: skipped chunks aren't needed either.
@@ -3132,7 +3144,7 @@ async def _streaming_retain_batch(
                     # return below throws away.
                     source = contents[chunk_to_content[i]] if contents else _default_content
                     extracted_content_tokens[0] += count_tokens(chunk_text) + count_tokens(source.context or "")
-                tasks.append(asyncio.create_task(_extract_one(i, chunk_text)))
+                tasks.append(asyncio.create_task(_extract_one(i, chunk_text, before, after)))
 
             if skipped_total > 0:
                 log_buffer.append(
@@ -5004,6 +5016,9 @@ def _build_delta_contents(
             resolve_entities=template_content.resolve_entities,
             tags=template_content.tags,
             observation_scopes=template_content.observation_scopes,
+            # Unchanged neighbours too: an appended reply must see the turn it answers (#6645).
+            context_before=new_chunks_with_contents.get(original_chunk_idx - 1, ""),
+            context_after=new_chunks_with_contents.get(original_chunk_idx + 1, ""),
         )
         delta_contents.append(delta_content)
         delta_chunk_map[len(delta_contents) - 1] = original_chunk_idx

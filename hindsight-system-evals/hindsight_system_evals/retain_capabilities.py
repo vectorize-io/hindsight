@@ -75,6 +75,10 @@ class Case:
     max_facts: int | None = None
     #: Whether the case runs in minimum acceptance; the rest need ``--full``.
     minimum: bool = False
+    #: Two texts of the input the stored chunks must keep apart (``boundary_split``) or
+    #: together — the shape a chunk-boundary case is about, checked so it cannot drift.
+    boundary: tuple[str, str] | None = None
+    boundary_split: bool = True
 
 
 @dataclass(frozen=True)
@@ -143,6 +147,26 @@ async def _extraction_calls(client: Hindsight, bank_id: str) -> str:
     return "; ".join(calls) or "none traced"
 
 
+async def boundary_problems(client: Hindsight, bank_id: str, case: Case) -> list[str]:
+    """Why the stored chunks do not have the shape the case is about, if they do not."""
+    if case.boundary is None:
+        return []
+    first, second = case.boundary
+    docs = await client.documents.list_documents(bank_id, limit=10)
+    chunks: list[str] = []
+    for doc in docs.items:
+        listed = await client.documents.list_document_chunks(bank_id, doc.id, limit=1000)
+        chunks.extend(chunk.chunk_text for chunk in listed.items)
+    together = any(first in chunk and second in chunk for chunk in chunks)
+    if not any(first in chunk for chunk in chunks) or not any(second in chunk for chunk in chunks):
+        return [f"boundary texts {case.boundary!r} not found in the stored chunks"]
+    if case.boundary_split and together:
+        return [f"{first!r} and {second!r} share a chunk: the case no longer crosses a boundary"]
+    if not case.boundary_split and not together:
+        return [f"{first!r} and {second!r} are in different chunks: the control is not one chunk"]
+    return []
+
+
 def _input(case: Case) -> str:
     parts = []
     for item in case.items:
@@ -207,6 +231,7 @@ async def run_case(client: Hindsight, bank_id: str, settled: SettleFn, case: Cas
     for tag in case.tags:
         if tag not in tagged:
             outcome.broken.append(f"no fact carries the tag {tag!r} (tags: {sorted(tagged)})")
+    outcome.broken.extend(await boundary_problems(client, bank_id, case))
     if case.max_facts is not None and len(facts) > case.max_facts:
         outcome.broken.append(f"{len(facts)} facts stored, at most {case.max_facts} expected")
 

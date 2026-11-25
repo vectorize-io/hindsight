@@ -953,6 +953,7 @@ ENV_LLM_DEBUG_DUMP_4XX = "HINDSIGHT_API_LLM_DEBUG_DUMP_4XX"
 ENV_RETAIN_MAX_COMPLETION_TOKENS = "HINDSIGHT_API_RETAIN_MAX_COMPLETION_TOKENS"
 ENV_RETAIN_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_CHUNK_SIZE"
 ENV_RETAIN_STRUCTURED_CHUNK_SIZE = "HINDSIGHT_API_RETAIN_STRUCTURED_CHUNK_SIZE"
+ENV_RETAIN_CHUNK_CONTEXT_TOKENS = "HINDSIGHT_API_RETAIN_CHUNK_CONTEXT_TOKENS"
 ENV_RETAIN_EXTRACT_CAUSAL_LINKS = "HINDSIGHT_API_RETAIN_EXTRACT_CAUSAL_LINKS"
 ENV_RETAIN_OPTIONAL_FACT_DIMENSIONS = "HINDSIGHT_API_RETAIN_OPTIONAL_FACT_DIMENSIONS"
 ENV_RETAIN_EXTRACTION_MODE = "HINDSIGHT_API_RETAIN_EXTRACTION_MODE"
@@ -2047,6 +2048,8 @@ DEFAULT_BANK_STATS_CACHE_MAX_ENTRIES = 1024  # LRU bound across (schema, bank) k
 # Retain settings
 DEFAULT_RETAIN_MAX_COMPLETION_TOKENS = 64000  # Max tokens for fact extraction LLM call
 DEFAULT_RETAIN_CHUNK_SIZE = 3000  # Max chars per chunk for fact extraction
+# Tokens of each neighbouring chunk shown to extraction as read-only context (0 = off, #6645)
+DEFAULT_RETAIN_CHUNK_CONTEXT_TOKENS = 0
 DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS = True  # Extract causal links between facts
 # Let a fact leave when/where/who/why empty instead of filling them with "N/A" (#4457).
 # Off by default because it is not free: the four fields become `string | null` and the
@@ -4086,6 +4089,7 @@ class HindsightConfig:
     retain_max_completion_tokens: int
     retain_chunk_size: int
     retain_structured_chunk_size: int | None
+    retain_chunk_context_tokens: int
     retain_extract_causal_links: bool
     retain_optional_fact_dimensions: bool
     retain_extraction_mode: str
@@ -5929,6 +5933,9 @@ class HindsightConfig:
             retain_structured_chunk_size=_parse_optional_positive_int(
                 ENV_RETAIN_STRUCTURED_CHUNK_SIZE,
                 os.getenv(ENV_RETAIN_STRUCTURED_CHUNK_SIZE),
+            ),
+            retain_chunk_context_tokens=int(
+                os.getenv(ENV_RETAIN_CHUNK_CONTEXT_TOKENS, str(DEFAULT_RETAIN_CHUNK_CONTEXT_TOKENS))
             ),
             retain_extract_causal_links=os.getenv(
                 ENV_RETAIN_EXTRACT_CAUSAL_LINKS, str(DEFAULT_RETAIN_EXTRACT_CAUSAL_LINKS)

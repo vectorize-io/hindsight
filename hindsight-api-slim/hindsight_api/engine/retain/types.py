@@ -193,6 +193,11 @@ class RetainContent:
     #: True when the caller sent no timestamp and ``event_date`` is the retain's "now". A full
     #: re-extraction may then reuse the date the same text was first retained on (#6783).
     event_date_defaulted: bool = False
+    #: The neighbouring chunks of the same document, shown to extraction as read-only context
+    #: so a reply can be read against the message it answers (#6645). Set per chunk by the
+    #: streaming and delta paths; trimmed to ``retain_chunk_context_tokens`` at prompt time.
+    context_before: str = ""
+    context_after: str = ""
 
     def __post_init__(self) -> None:
         # Drop null-valued metadata keys (issue #3209): the retain API accepts

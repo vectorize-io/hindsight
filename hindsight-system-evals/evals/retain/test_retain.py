@@ -96,6 +96,7 @@ from hindsight_client import Hindsight
 from hindsight_system_evals import evaluate
 from hindsight_system_evals.pages import SettleFn
 from hindsight_system_evals.report import RECORDED, EvalRecord, case_params
+from hindsight_system_evals.chunk_boundary import CHUNK_BOUNDARY_CASES
 from hindsight_system_evals.retain_capabilities import CASES, Case, run_case
 
 log = logging.getLogger(__name__)
@@ -123,7 +124,7 @@ async def _check(client: Hindsight, bank_id: str, settled: SettleFn, case: Case)
     assert not failed, f"{case.id}:\n" + "\n".join(failed) + f"\n{evidence}"
 
 
-@pytest.mark.parametrize("case", case_params(CASES, {c.id for c in CASES if c.minimum}))
+@pytest.mark.parametrize("case", case_params(CASES + CHUNK_BOUNDARY_CASES, {c.id for c in CASES if c.minimum}))
 async def test_retain(client: Hindsight, bank_id: str, settled: SettleFn, case: Case) -> None:
     await _check(client, bank_id, settled, case)
 
