@@ -232,4 +232,21 @@ describe("deriveBankId with agentBankMap", () => {
     } as unknown as PluginConfig;
     expect(deriveBankId(ctx, config)).toBe("inbound::channel-456::user-789");
   });
+
+  it("puts every Control UI tab in one bank (#6876)", () => {
+    // OpenClaw reports the tab's whole session key as its channel.
+    const tab = (uuid: string): PluginHookAgentContext => ({
+      agentId: "main",
+      sessionKey: `agent:main:dashboard:${uuid}`,
+      channelId: `agent:main:dashboard:${uuid}`,
+      messageProvider: "webchat",
+    });
+    const config: PluginConfig = { dynamicBankGranularity: ["agent", "channel"] };
+    expect(deriveBankId(tab("cd65818e-5d9e-49b3-bc56-66d2ce1cf6a6"), config)).toBe(
+      "main::dashboard"
+    );
+    expect(deriveBankId(tab("0b1c2d3e-0000-0000-0000-000000000000"), config)).toBe(
+      "main::dashboard"
+    );
+  });
 });

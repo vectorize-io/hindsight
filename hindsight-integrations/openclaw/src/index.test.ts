@@ -1326,6 +1326,7 @@ describe("session identity helpers", () => {
   it("parses Control UI Dashboard sessions", () => {
     expect(parseSessionKey("agent:main:dashboard:12345678-90ab-cdef-1234-567890abcdef")).toEqual({
       agentId: "main",
+      channel: "dashboard",
     });
   });
 
@@ -1490,7 +1491,7 @@ describe("session identity helpers", () => {
       sessionKey: "agent:main:dashboard:12345678-90ab-cdef-1234-567890abcdef",
       agentId: "main",
       messageProvider: "webchat",
-      channelId: undefined,
+      channelId: "dashboard",
       senderId: "agent-user:main",
     });
   });

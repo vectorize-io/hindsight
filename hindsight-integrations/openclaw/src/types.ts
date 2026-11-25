@@ -178,6 +178,7 @@ export interface PluginConfig {
   recallMaxTokens?: number; // Max tokens for recall response. Default: 1024
   recallTypes?: Array<"world" | "experience" | "observation">; // Memory types to recall. Default: ['observation'] — surfaces only the consolidated, deduplicated view (raw world/experience facts can drive the same answer multiple times when many memories say the same thing).
   preferObservations?: boolean; // When true, recall drops raw facts already consolidated into an observation while keeping unconsolidated ones. Pair with recallTypes including raw types to catch just-retained facts without duplicating consolidated content. Default: false.
+  recallIncludeChunks?: boolean; // When true, hindsight_recall also returns the original text (chunk) each memory was extracted from, plus its document id. Auto-recall is unaffected. Default: false
   recallMinScores?: MinScores; // Optional per-stage score floors. Missing fields impose no floor; missing/null result scores pass.
   recallRoles?: Array<"user" | "assistant" | "system" | "tool">; // Roles to include when composing contextual recall query. Default: ['user', 'assistant']
   retainEveryNTurns?: number; // Retain every Nth turn (1 = every turn, default: 1). Values > 1 enable chunked retention.

@@ -10,7 +10,13 @@
  */
 import { HindsightError, type HindsightClient } from "@vectorize-io/hindsight-client";
 import { compileSessionPatterns, matchesSessionPattern } from "./session-patterns.js";
-import type { PluginConfig, PluginTool, PluginToolContext, PluginToolResult } from "./types.js";
+import type {
+  PluginConfig,
+  PluginTool,
+  PluginToolContext,
+  PluginToolResult,
+  RecallResponse,
+} from "./types.js";
 
 // The page tools mirror Hindsight's own MCP tools of the same names
 // (hindsight_api/mcp_tools.py), on the session's bank. Deleting needs
@@ -58,6 +64,38 @@ const WRITE_TOOLS = new Set([
 ]);
 
 /** What the tools need from the plugin; index.ts supplies the live implementations. */
+/**
+ * Numbered memories, then the original text they came from when chunks were
+ * requested (#6879). An observation has no chunk of its own: its chunks are its
+ * source facts' chunks. Several memories often share a chunk, so each chunk is
+ * listed once at the end and the memories point to it by number.
+ */
+export function formatRecall(response: RecallResponse): string {
+  const sourceNumber = new Map<string, number>();
+  const sources: string[] = [];
+  const lines = (response.results ?? []).map((r, i) => {
+    const line = `${i + 1}. ${r.text}`;
+    const facts = [r, ...(r.source_fact_ids ?? []).map((id) => response.source_facts?.[id])];
+    const refs = new Set<number>();
+    for (const fact of facts) {
+      const chunk = fact?.chunk_id ? response.chunks?.[fact.chunk_id] : undefined;
+      if (!fact?.chunk_id || !chunk) continue;
+      let n = sourceNumber.get(fact.chunk_id);
+      if (n === undefined) {
+        n = sources.length + 1;
+        sourceNumber.set(fact.chunk_id, n);
+        const doc = fact.document_id ? ` (document ${fact.document_id})` : "";
+        const cut = chunk.truncated ? " [truncated]" : "";
+        sources.push(`[S${n}]${doc}${cut}: ${chunk.text}`);
+      }
+      refs.add(n);
+    }
+    return refs.size ? `${line} [${[...refs].map((n) => `S${n}`).join(", ")}]` : line;
+  });
+  if (sources.length) lines.push("", "Sources:", ...sources);
+  return lines.join("\n");
+}
+
 export interface HindsightToolDeps {
   /** The bank this session's automatic recall and retain use, or why the session has none. */
   bankFor(ctx: PluginToolContext): { bankId: string } | { error: string };
@@ -221,10 +259,12 @@ export function createHindsightTools(
             types: config.recallTypes,
             preferObservations: config.preferObservations,
             minScores: config.recallMinScores,
+            // Observations reach their chunks through their source facts.
+            includeChunks: config.recallIncludeChunks,
+            includeSourceFacts: config.recallIncludeChunks,
             signal,
           });
-          const lines = (response.results ?? []).map((r, i) => `${i + 1}. ${r.text}`);
-          return text(lines.join("\n") || NOTHING_FOUND);
+          return text(formatRecall(response) || NOTHING_FOUND);
         } catch (error) {
           if (bankNotWrittenYet(error)) return text(NOTHING_FOUND);
           throw error;
