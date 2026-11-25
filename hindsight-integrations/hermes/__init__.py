@@ -33,6 +33,7 @@ from agent.secret_scope import UnscopedSecretError, get_secret
 from hermes_cli.config import cfg_get
 from hermes_constants import get_hermes_home
 from hermes_time import now as _hermes_now
+from pydantic import BaseModel, ValidationError, field_validator
 from tools.registry import tool_error
 from utils import read_json_or_empty
 
@@ -99,6 +100,78 @@ _EXTRA_BANK_TIMEOUT_SHARE = 0.8
 # unreachable bank costs one timeout per cooldown instead of one on every turn.
 _EXTRA_BANK_COOLDOWN = 300.0
 _RETAIN_CONTEXT_DEFAULT = "conversation between Hermes Agent and the User"
+# Added after every retain context, a custom one included. Without it, a reply that repeats a
+# fetched article or video in its author's first person ("I tested...") is stored as the
+# agent's or the User's own experience (#6818). The tool message only names what was fetched:
+# the model needs this sentence to read the reply as relayed.
+_RELAYED_CONTENT_NOTE = (
+    "Tool messages show what the assistant fetched (pages, videos, files), written by other people; "
+    "when the Assistant repeats or summarises them, their claims and first person belong to that source, "
+    "not to the User or the Assistant."
+)
+# A turn's tool calls are sent as one line each, never their output (too costly to retain).
+_MAX_TOOL_CALLS_PER_TURN = 20
+_MAX_TOOL_ARG_CHARS = 120
+
+
+def _with_relayed_note(context: str | None) -> str:
+    context = (context or "").strip().rstrip(".")
+    return f"{context}. {_RELAYED_CONTENT_NOTE}" if context else _RELAYED_CONTENT_NOTE
+
+
+class _ToolFunction(BaseModel):
+    name: str = "unknown"
+    arguments: Any = None  # a JSON string in OpenAI's shape; some providers send the object
+
+
+class _ToolCall(BaseModel):
+    function: _ToolFunction = _ToolFunction()
+
+
+class _TranscriptMessage(BaseModel):
+    """One row of the OpenAI-style transcript Hermes passes to ``sync_turn``; other keys ignored."""
+
+    role: str = ""
+    tool_calls: List[_ToolCall] = []
+
+    @field_validator("tool_calls", mode="before")
+    @classmethod
+    def _none_is_empty(cls, v: Any) -> Any:
+        return v or []
+
+
+def _parse_transcript(messages: List[Any]) -> List[_TranscriptMessage]:
+    """A row that is not a message (or a tool call of an unknown shape) is skipped, not fatal:
+    a malformed transcript must never cost the turn its retain."""
+    parsed = []
+    for message in messages:
+        try:
+            parsed.append(_TranscriptMessage.model_validate(message))
+        except ValidationError:
+            continue
+    return parsed
+
+
+def _format_arguments(arguments: Any) -> str:
+    try:
+        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+    except ValueError:
+        args = arguments
+    if isinstance(args, dict):
+        return ", ".join(f"{k}={str(v)[:_MAX_TOOL_ARG_CHARS]}" for k, v in args.items())
+    return str(args or "")[:_MAX_TOOL_ARG_CHARS]
+
+
+def _tool_call_lines(messages: List[Any] | None) -> List[str]:
+    """One "Tool call: name(arg=value, ...)" line per tool call the agent made this turn, i.e.
+    after the last user message of Hermes' transcript. Arguments are cut short; outputs dropped."""
+    transcript = _parse_transcript(messages or [])
+    last_user = max((i for i, m in enumerate(transcript) if m.role == "user"), default=-1)
+    calls = [call.function for m in transcript[last_user + 1 :] if m.role == "assistant" for call in m.tool_calls]
+    lines = [f"Tool call: {fn.name}({_format_arguments(fn.arguments)})" for fn in calls[:_MAX_TOOL_CALLS_PER_TURN]]
+    if len(calls) > _MAX_TOOL_CALLS_PER_TURN:
+        lines.append(f"... and {len(calls) - _MAX_TOOL_CALLS_PER_TURN} more tool calls")
+    return lines
 
 
 def _bot_label(turn_author: Dict[str, Any] | None) -> str | None:
@@ -2187,20 +2260,25 @@ class HindsightMemoryProvider(MemoryProvider):
     # -- retain ------------------------------------------------------------------
 
     def _build_turn_messages(
-        self, user_content: str, assistant_content: str, bot_label: str | None = None
+        self,
+        user_content: str,
+        assistant_content: str,
+        bot_label: str | None = None,
+        tool_calls: List[str] | None = None,
     ) -> List[Dict[str, str]]:
         """*bot_label* names the agent that wrote the user side (None: a human did). It becomes
         that message's role and label, so extraction doesn't read a bot's words as the User's
-        (#5374). The server reads role as plain text, so any name is accepted."""
-        now = _event_timestamp()  # one turn -> both messages share the event timestamp
+        (#5374). The server reads role as plain text, so any name is accepted. *tool_calls*
+        (see ``_tool_call_lines``) go between the two as one ``tool`` message (#6818)."""
+        now = _event_timestamp()  # one turn -> every message shares the event timestamp
         user_role, user_label = ("user", self._retain_user_prefix) if bot_label is None else (bot_label, bot_label)
-        return [
-            {"role": role, "content": f"{prefix}: {content}", "timestamp": now}
-            for role, prefix, content in (
-                (user_role, user_label, user_content),
-                ("assistant", self._retain_assistant_prefix, assistant_content),
-            )
-        ]
+        messages = [{"role": user_role, "content": f"{user_label}: {user_content}", "timestamp": now}]
+        if tool_calls:
+            messages.append({"role": "tool", "content": "\n".join(tool_calls), "timestamp": now})
+        messages.append(
+            {"role": "assistant", "content": f"{self._retain_assistant_prefix}: {assistant_content}", "timestamp": now}
+        )
+        return messages
 
     def _build_metadata(self, *, message_count: int, turn_index: int) -> Dict[str, str]:
         metadata: Dict[str, str] = {
@@ -2273,8 +2351,9 @@ class HindsightMemoryProvider(MemoryProvider):
         writer runs after later sync_turn() calls mutate _session_turns/_turn_index/_session_id."""
         # One flat message array: the server only chunks by turn (and merges appends)
         # when the document is a list of messages, not a list of per-turn lists.
-        content = json.dumps([message for turn in turns for message in json.loads(turn)], ensure_ascii=False)
-        metadata = self._build_metadata(message_count=len(turns) * 2, turn_index=self._turn_index)
+        messages = [message for turn in turns for message in json.loads(turn)]
+        content = json.dumps(messages, ensure_ascii=False)
+        metadata = self._build_metadata(message_count=len(messages), turn_index=self._turn_index)
         if update_mode == "append":
             # An append sets the document's metadata on every memory the session already has, so a
             # value that changes per call would rewrite all of them on each turn (#6241).
@@ -2286,7 +2365,7 @@ class HindsightMemoryProvider(MemoryProvider):
         lineage = (("session", self._session_id), ("parent", parent))
         tags = [f"{kind}:{sid}" for kind, sid in lineage if sid] or None
         bank_ids = list(self._write_bank_ids)
-        retain_async, retain_context = self._retain_async, self._retain_context
+        retain_async, retain_context = self._retain_async, _with_relayed_note(self._retain_context)
         # Fixed per job and bank, so a resend after a failure the server did receive is a
         # replay, not a second copy (#5218). One id can't serve two banks: the server answers 409.
         operation_ids = {bank_id: str(uuid.uuid4()) for bank_id in bank_ids}
@@ -2358,11 +2437,13 @@ class HindsightMemoryProvider(MemoryProvider):
         *,
         session_id: str = "",
         turn_author: Dict[str, Any] | None = None,
+        messages: List[Any] | None = None,
     ) -> None:
         """Enqueue a retain for the current turn (non-blocking; writer thread). Dropped
         once shutdown() fired so post-exit retains never reach aiohttp during teardown.
-        *turn_author* (``{"id", "name", "is_bot"}``) is who wrote the user side; Hermes sends
-        it only to a signature that names it."""
+        *turn_author* (``{"id", "name", "is_bot"}``) is who wrote the user side; *messages* is
+        Hermes' transcript so far, read only for this turn's tool calls. Hermes sends each only
+        to a signature that names it."""
         why = (
             "auto_retain disabled"
             if not self._auto_retain
@@ -2378,7 +2459,9 @@ class HindsightMemoryProvider(MemoryProvider):
 
         self._session_turns.append(
             json.dumps(
-                self._build_turn_messages(user_content, assistant_content, _bot_label(turn_author)),
+                self._build_turn_messages(
+                    user_content, assistant_content, _bot_label(turn_author), _tool_call_lines(messages)
+                ),
                 ensure_ascii=False,
             )
         )
@@ -2718,7 +2801,7 @@ class HindsightMemoryProvider(MemoryProvider):
         document_id = f"{self._session_id}-checkpoint-{uuid.uuid5(uuid.NAMESPACE_OID, content).hex[:16]}"
         item = self._build_retain_kwargs(
             content,
-            context=self._retain_context,
+            context=_with_relayed_note(self._retain_context),
             metadata=self._build_metadata(message_count=len(messages), turn_index=self._turn_index),
             tags=[f"session:{self._session_id}", "checkpoint:pre-compress"],
         )
