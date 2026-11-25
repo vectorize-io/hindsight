@@ -3732,6 +3732,15 @@ jobs:
       working-directory: ./hindsight-system-tests
       run: uv sync --frozen
 
+    # verify-generated-files (which runs lint.sh) skips a PR confined to this
+    # package, so check its lint here too. Same ruff lint.sh uses: the root
+    # .venv got it from api-slim's dev group in the sync above.
+    - name: Lint system tests
+      working-directory: ./hindsight-system-tests
+      run: |
+        ../.venv/bin/ruff check .
+        ../.venv/bin/ruff format --check .
+
     - name: Run system tests
       working-directory: ./hindsight-system-tests
       run: uv run pytest tests -v
