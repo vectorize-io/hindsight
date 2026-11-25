@@ -34,7 +34,7 @@ def test_the_environment_sets_the_retain_label_the_indicators_and_sync_recall(he
 
 def test_unset_variables_keep_the_defaults(hermes_env, monkeypatch):
     instance = _provider_from_env(monkeypatch)
-    assert instance._retain_context == plugin._RETAIN_CONTEXT_DEFAULT.format(user="User", assistant="Assistant")
+    assert instance._retain_context == plugin._RETAIN_CONTEXT_DEFAULT
     assert instance._retain_indicator is True
     assert instance._recall_indicator is True
     assert instance._recall_sync is False

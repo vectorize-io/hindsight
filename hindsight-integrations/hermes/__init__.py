@@ -93,14 +93,16 @@ _EXTRA_BANK_TIMEOUT_SHARE = 0.8
 # How long an extra bank is skipped after it fails, for recall and writes alike, so an
 # unreachable bank costs one timeout per cooldown instead of one on every turn.
 _EXTRA_BANK_COOLDOWN = 300.0
-# Names the speakers by the labels the transcript uses, so extraction can match each line to
-# its speaker; the second sentence keeps material the agent relays from being read as the
-# User's own words (#6818). Filled in with the configured labels; a custom context is used as is.
-_RETAIN_CONTEXT_DEFAULT = (
-    "conversation between {user} and the AI agent {assistant} (Hermes Agent). Each message belongs to the "
-    "speaker it is labelled with; what {assistant} quotes or summarises from other sources belongs to those sources"
-)
-_RETAIN_CONTEXT_LEGACY_DEFAULT = "conversation between Hermes Agent and the User"
+_RETAIN_CONTEXT_DEFAULT = "conversation between Hermes Agent and the User"
+
+
+def _bot_label(turn_author: Dict[str, Any] | None) -> str | None:
+    """The label for a turn another agent wrote, from Hermes' ``turn_author`` ({"id", "name",
+    "is_bot"}); None when a human wrote it or Hermes sent nothing. "Bot" when it has no name."""
+    if not (isinstance(turn_author, dict) and turn_author.get("is_bot")):
+        return None
+    return str(turn_author.get("name") or "").strip() or "Bot"
+
 
 # Injected instead of nothing when recall raises, so the agent can tell "memory is down" from
 # "nothing found" (#6482). Fixed text, never the exception: errors can carry hosts and URLs. It is
@@ -925,8 +927,8 @@ class HindsightMemoryProvider(MemoryProvider):
             },
             {
                 "key": "retain_context",
-                "description": "Context sent with each retained conversation (the default names the two speakers by their labels)",
-                "default": _RETAIN_CONTEXT_DEFAULT.format(user="User", assistant="Assistant"),
+                "description": "Context label for retained memories",
+                "default": "conversation between Hermes Agent and the User",
             },
             {"key": "recall_max_tokens", "description": "Maximum tokens for recall results", "default": 4096},
             {
@@ -1645,11 +1647,6 @@ class HindsightMemoryProvider(MemoryProvider):
         self._mirror_builtin_memory = bool(cfg.get("mirror_builtin_memory", True))
         self._retain_every_n_turns = max(1, _parse_int_setting(cfg.get("retain_every_n_turns"), 1))
         self._retain_context = cfg.get("retain_context", _RETAIN_CONTEXT_DEFAULT)
-        # The old default counts as the default: setup may have written it into config.json.
-        if self._retain_context in (_RETAIN_CONTEXT_DEFAULT, _RETAIN_CONTEXT_LEGACY_DEFAULT):
-            self._retain_context = _RETAIN_CONTEXT_DEFAULT.format(
-                user=self._retain_user_prefix, assistant=self._retain_assistant_prefix
-            )
         self._retain_async = cfg.get("retain_async", True)
         # On by default so the user SEES memory working whether or not the model
         # mentions it; off switch for customer-facing agents (recall_indicator too).
@@ -2027,14 +2024,13 @@ class HindsightMemoryProvider(MemoryProvider):
     # -- retain ------------------------------------------------------------------
 
     def _build_turn_messages(
-        self, user_content: str, assistant_content: str, turn_author: Dict[str, Any] | None = None
+        self, user_content: str, assistant_content: str, bot_label: str | None = None
     ) -> List[Dict[str, str]]:
+        """*bot_label* names the agent that wrote the user side (None: a human did). It becomes
+        that message's role and label, so extraction doesn't read a bot's words as the User's
+        (#5374). The server reads role as plain text, so any name is accepted."""
         now = _event_timestamp()  # one turn -> both messages share the event timestamp
-        # Another agent wrote the user side: its role and label name that agent, so extraction
-        # doesn't read its words as the User's (#5374). The server reads role as plain text.
-        user_role, user_label = "user", self._retain_user_prefix
-        if turn_author and turn_author.get("is_bot"):
-            user_role = user_label = str(turn_author.get("name") or "").strip() or "Bot"
+        user_role, user_label = ("user", self._retain_user_prefix) if bot_label is None else (bot_label, bot_label)
         return [
             {"role": role, "content": f"{prefix}: {content}", "timestamp": now}
             for role, prefix, content in (
@@ -2218,7 +2214,10 @@ class HindsightMemoryProvider(MemoryProvider):
             self._session_id = str(session_id).strip()
 
         self._session_turns.append(
-            json.dumps(self._build_turn_messages(user_content, assistant_content, turn_author), ensure_ascii=False)
+            json.dumps(
+                self._build_turn_messages(user_content, assistant_content, _bot_label(turn_author)),
+                ensure_ascii=False,
+            )
         )
         self._turn_counter = self._turn_index = self._turn_counter + 1
         if remainder := self._turn_counter % self._retain_every_n_turns:

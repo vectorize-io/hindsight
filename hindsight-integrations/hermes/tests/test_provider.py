@@ -59,32 +59,6 @@ def test_a_turn_written_by_another_agent_is_labelled_with_that_agent(provider):
     ]
 
 
-def test_the_default_context_names_the_speakers_by_their_labels(provider):
-    """#6818: the context must use the transcript's own labels, and say relayed material isn't the User's."""
-    instance, fake = provider({"retain_user_prefix": "Utente", "retain_assistant_prefix": "Agente"})
-    instance.sync_turn("ciao", "Ciao!")
-    instance.shutdown()
-
-    context = _retain_item(fake)["context"]
-    assert "Utente" in context and "Agente" in context and "{" not in context
-    assert "other sources" in context
-
-
-def test_the_old_default_context_upgrades_to_the_new_one(provider):
-    """Setup may have saved the old default into config.json; it must not keep stock installs on it."""
-    instance, fake = provider({"retain_context": "conversation between Hermes Agent and the User"})
-    instance.sync_turn("q", "a")
-    instance.shutdown()
-    assert "other sources" in _retain_item(fake)["context"]
-
-
-def test_a_custom_context_is_sent_as_is(provider):
-    instance, fake = provider({"retain_context": "support chat with a customer"})
-    instance.sync_turn("q", "a")
-    instance.shutdown()
-    assert _retain_item(fake)["context"] == "support chat with a customer"
-
-
 def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):
     instance, fake = provider({"retain_every_n_turns": 2})
     instance.sync_turn("one", "1")
