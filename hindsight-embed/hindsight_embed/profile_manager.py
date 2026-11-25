@@ -744,35 +744,30 @@ class ProfileManager:
             return ProfileMetadata()
 
     def _save_metadata(self, metadata: ProfileMetadata):
-        """Save profile metadata to disk with file locking.
+        """Save profile metadata to disk atomically.
 
         Args:
             metadata: ProfileMetadata to save.
         """
         self._ensure_directories()
 
-        # Use atomic write with temp file
+        # Write a per-process temp file, then swap it in. The temp name used to be
+        # shared and guarded by a lock on the temp file itself, but the swap ran
+        # after the lock was released: one process could swap in a temp another
+        # was still writing, and the other then failed on a missing temp file.
+        # `.replace()`, not `.rename()`: rename fails on Windows when the
+        # destination exists (WinError 183).
         metadata_file = self._get_metadata_file()
-        temp_file = metadata_file.with_suffix(".json.tmp")
-
-        with open(temp_file, "w") as f:
-            # Acquire exclusive lock (cross-platform)
-            lock_file(f)
-            try:
-                json.dump(
-                    {"version": metadata.version, "profiles": metadata.profiles},
-                    f,
-                    indent=2,
-                )
+        temp_file = metadata_file.with_name(f"{metadata_file.name}.{os.getpid()}.tmp")
+        try:
+            with open(temp_file, "w") as f:
+                json.dump({"version": metadata.version, "profiles": metadata.profiles}, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
-            finally:
-                unlock_file(f)
-
-        # Atomic replace. `.rename()` fails on Windows when the destination
-        # exists (WinError 183); `.replace()` is the cross-platform atomic
-        # rename added in Python 3.3 exactly for this pattern.
-        replace_file(temp_file, metadata_file)
+            replace_file(temp_file, metadata_file)
+        except OSError:
+            temp_file.unlink(missing_ok=True)
+            raise
 
 
 # The --profile flag value, set by cli.main(). It lives here, not in cli.py, on
