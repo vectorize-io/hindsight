@@ -182,6 +182,28 @@ def unlock_file(file_obj: IO[str]) -> None:
     _release_lock(file_obj)
 
 
+_REPLACE_RETRY_BUDGET = 2.0
+
+
+def replace_file(src: Path, dst: Path) -> None:
+    """`src.replace(dst)`, retrying briefly while Windows refuses it.
+
+    Windows denies the swap (WinError 5) while any other process has `dst` open,
+    even just to read it. Readers hold it for milliseconds, so wait them out (#6875).
+    """
+    deadline = time.monotonic() + _REPLACE_RETRY_BUDGET
+    delay = _LOCK_RETRY_INITIAL
+    while True:
+        try:
+            src.replace(dst)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, _LOCK_RETRY_MAX)
+
+
 from ._http_probe import probe_get
 
 # Configuration paths
@@ -445,12 +467,13 @@ class ProfileManager:
         # mid-rewrite saw it empty and wrote it back without the user's
         # DATABASE_URL, so the next daemon start fell back to a new, empty pg0
         # (#6485). The temp name is per-process so two writers never share one.
-        # On Windows the swap fails while another process has the .env open; the
-        # old file then stays intact, so drop the temp file and let it raise.
+        # On Windows the swap is refused while another process has the .env open;
+        # replace_file waits that out, and if it still fails the old file stays
+        # intact, so drop the temp file and let it raise.
         temp_path = config_path.with_name(f"{config_path.name}.{os.getpid()}.tmp")
         try:
             temp_path.write_text(render_config(config), encoding="utf-8")
-            temp_path.replace(config_path)
+            replace_file(temp_path, config_path)
         except OSError:
             temp_path.unlink(missing_ok=True)
             raise
@@ -721,35 +744,30 @@ class ProfileManager:
             return ProfileMetadata()
 
     def _save_metadata(self, metadata: ProfileMetadata):
-        """Save profile metadata to disk with file locking.
+        """Save profile metadata to disk atomically.
 
         Args:
             metadata: ProfileMetadata to save.
         """
         self._ensure_directories()
 
-        # Use atomic write with temp file
+        # Write a per-process temp file, then swap it in. The temp name used to be
+        # shared and guarded by a lock on the temp file itself, but the swap ran
+        # after the lock was released: one process could swap in a temp another
+        # was still writing, and the other then failed on a missing temp file.
+        # `.replace()`, not `.rename()`: rename fails on Windows when the
+        # destination exists (WinError 183).
         metadata_file = self._get_metadata_file()
-        temp_file = metadata_file.with_suffix(".json.tmp")
-
-        with open(temp_file, "w") as f:
-            # Acquire exclusive lock (cross-platform)
-            lock_file(f)
-            try:
-                json.dump(
-                    {"version": metadata.version, "profiles": metadata.profiles},
-                    f,
-                    indent=2,
-                )
+        temp_file = metadata_file.with_name(f"{metadata_file.name}.{os.getpid()}.tmp")
+        try:
+            with open(temp_file, "w") as f:
+                json.dump({"version": metadata.version, "profiles": metadata.profiles}, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
-            finally:
-                unlock_file(f)
-
-        # Atomic replace. `.rename()` fails on Windows when the destination
-        # exists (WinError 183); `.replace()` is the cross-platform atomic
-        # rename added in Python 3.3 exactly for this pattern.
-        temp_file.replace(metadata_file)
+            replace_file(temp_file, metadata_file)
+        except OSError:
+            temp_file.unlink(missing_ok=True)
+            raise
 
 
 # The --profile flag value, set by cli.main(). It lives here, not in cli.py, on
