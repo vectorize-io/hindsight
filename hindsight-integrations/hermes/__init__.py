@@ -1668,7 +1668,7 @@ class HindsightMemoryProvider(MemoryProvider):
         )
 
     def _tag_setting(self, value: Any) -> List[str]:
-        """A tag list setting (retain/recall/reflect tags) with its placeholders filled in."""
+        """A tag list setting (retain, recall, recall-exclude and reflect tags) with its placeholders filled in."""
         return _fill_tag_templates(
             _normalize_string_list(value),
             profile=self._agent_identity,
