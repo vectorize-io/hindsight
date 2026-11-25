@@ -625,14 +625,20 @@ _TOOL_GUIDANCE = (
     "deduplicated, high-density observations across sessions. "
     "Use hindsight_reflect for cross-session pattern synthesis. "
     "Use session_search only when you need verbatim transcripts or "
-    "exact wording from a specific conversation. "
-    "Use hindsight_retain to store facts."
+    "exact wording from a specific conversation."
+)
+# A wrong memory left alone is served again next session; a stated correction outranks it.
+_RETAIN_GUIDANCE = (
+    " Use hindsight_retain to store facts."
+    " When the user says a memory is wrong or out of date, or you find it is, store the correction"
+    " with hindsight_retain: what memory said, what is true now, and why (e.g. 'User moved from"
+    " Porto to Lisbon; Porto is no longer their city')."
 )
 _CONTEXT_NOTE = "Relevant memories are automatically injected into context."
 _SYSTEM_PROMPT_TAILS = {
     "context": _CONTEXT_NOTE,
-    "tools": _TOOL_GUIDANCE,
-    "hybrid": f"{_CONTEXT_NOTE} {_TOOL_GUIDANCE}",
+    "tools": _TOOL_GUIDANCE + _RETAIN_GUIDANCE,
+    "hybrid": f"{_CONTEXT_NOTE} {_TOOL_GUIDANCE}{_RETAIN_GUIDANCE}",
 }
 
 
@@ -1925,11 +1931,15 @@ class HindsightMemoryProvider(MemoryProvider):
         mode = self._memory_mode if self._memory_mode in _SYSTEM_PROMPT_TAILS else "hybrid"
         label = "" if mode == "hybrid" else f" ({mode} mode)"
         # With auto_recall off nothing is injected, so hybrid must not promise injected context.
-        tail = _TOOL_GUIDANCE if mode == "hybrid" and not self._auto_recall else _SYSTEM_PROMPT_TAILS[mode]
+        tail = (
+            _TOOL_GUIDANCE + _RETAIN_GUIDANCE
+            if mode == "hybrid" and not self._auto_recall
+            else _SYSTEM_PROMPT_TAILS[mode]
+        )
         if mode != "context" and self._page_tools:
             tail += _PAGE_GUIDANCE
         if self._writes_disabled:  # the retain tool is not offered to a read-only kanban worker
-            tail = tail.replace(" Use hindsight_retain to store facts.", "")
+            tail = tail.replace(_RETAIN_GUIDANCE, "")
         block = f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{tail}"
         if self._session_context_block is None:
             self._session_context_block = self._load_session_context()
