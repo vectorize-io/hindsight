@@ -60,7 +60,8 @@ func (v *DocumentEventKind) UnmarshalJSON(src []byte) error {
 		}
 	}
 
-	return fmt.Errorf("%+v is not a valid DocumentEventKind", value)
+	*v = enumTypeValue
+	return nil
 }
 
 // NewDocumentEventKindFromValue returns a pointer to a valid DocumentEventKind

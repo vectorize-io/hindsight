@@ -31,26 +31,6 @@ class TagGroupLeaf(BaseModel):
     resolve: Optional[StrictStr] = 'exact'
     __properties: ClassVar[List[str]] = ["tags", "match", "resolve"]
 
-    @field_validator('match')
-    def match_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
-            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
-        return value
-
-    @field_validator('resolve')
-    def resolve_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['exact', 'fuzzy']):
-            raise ValueError("must be one of enum values ('exact', 'fuzzy')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

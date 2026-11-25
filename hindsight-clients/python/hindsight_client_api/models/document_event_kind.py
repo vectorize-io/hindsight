@@ -38,6 +38,16 @@ class DocumentEventKind(str, Enum):
     CONSOLIDATION = 'consolidation'
 
     @classmethod
+    def _missing_(cls, value):
+        """Accept a value added on the server after this client was built."""
+        if not isinstance(value, str):
+            return None
+        member = str.__new__(cls, value)
+        member._name_ = value.upper()
+        member._value_ = value
+        return member
+
+    @classmethod
     def from_json(cls, json_str: str) -> Self:
         """Create an instance of DocumentEventKind from a JSON string"""
         return cls(json.loads(json_str))

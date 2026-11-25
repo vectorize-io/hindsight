@@ -37,16 +37,6 @@ class LabelGroupInput(BaseModel):
     fields: Optional[Dict[str, MapFieldInput]] = None
     __properties: ClassVar[List[str]] = ["key", "description", "type", "optional", "tag", "values", "fields"]
 
-    @field_validator('type')
-    def type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['value', 'multi-values', 'text', 'multi-text', 'map']):
-            raise ValueError("must be one of enum values ('value', 'multi-values', 'text', 'multi-text', 'map')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

@@ -31,16 +31,6 @@ class Base64AttachmentSource(BaseModel):
     data: StrictStr = Field(description="Base64-encoded bytes (no data: URI prefix).")
     __properties: ClassVar[List[str]] = ["type", "media_type", "data"]
 
-    @field_validator('type')
-    def type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['base64']):
-            raise ValueError("must be one of enum values ('base64')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

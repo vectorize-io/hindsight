@@ -31,13 +31,6 @@ class ImageContentBlock(BaseModel):
     source: Base64AttachmentSource
     __properties: ClassVar[List[str]] = ["type", "source"]
 
-    @field_validator('type')
-    def type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['image']):
-            raise ValueError("must be one of enum values ('image')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

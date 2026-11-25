@@ -35,13 +35,6 @@ class MentalModelRefreshScope(BaseModel):
     exclude_mental_model_ids: Optional[List[StrictStr]] = Field(default=None, description="Mental models excluded by ID (always includes the model being refreshed).")
     __properties: ClassVar[List[str]] = ["tags", "tags_match", "tag_groups", "fact_types", "exclude_mental_models", "exclude_mental_model_ids"]
 
-    @field_validator('tags_match')
-    def tags_match_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
-            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

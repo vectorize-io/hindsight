@@ -38,14 +38,6 @@ class KnowledgeBankSettings(BaseModel):
     disabled_media_types: List[StrictStr]
     __properties: ClassVar[List[str]] = ["text_passage_tokens", "pdf_page_pixels", "pdf_bands", "image_tokens", "audio_window_seconds", "video_window_seconds", "media_overlap_seconds", "max_media_seconds", "max_pdf_pages", "disabled_media_types"]
 
-    @field_validator('disabled_media_types')
-    def disabled_media_types_validate_enum(cls, value):
-        """Validates the enum"""
-        for i in value:
-            if i not in set(['document', 'image', 'audio', 'video', 'text']):
-                raise ValueError("each list item must be one of ('document', 'image', 'audio', 'video', 'text')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

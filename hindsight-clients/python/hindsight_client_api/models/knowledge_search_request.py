@@ -42,37 +42,6 @@ class KnowledgeSearchRequest(BaseModel):
     trace: Optional[StrictBool] = Field(default=False, description="Also return how the search ranked and what the token budget kept: every ranked candidate with its score step by step, the keyword words and their weights, and each phase's time.")
     __properties: ClassVar[List[str]] = ["query", "query_image", "query_video", "budget", "max_tokens", "tags", "tags_match", "tag_groups", "document_ids", "media_types", "enable_reranking", "trace"]
 
-    @field_validator('budget')
-    def budget_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['low', 'mid', 'high']):
-            raise ValueError("must be one of enum values ('low', 'mid', 'high')")
-        return value
-
-    @field_validator('tags_match')
-    def tags_match_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
-            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
-        return value
-
-    @field_validator('media_types')
-    def media_types_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        for i in value:
-            if i not in set(['document', 'image', 'audio', 'video', 'text']):
-                raise ValueError("each list item must be one of ('document', 'image', 'audio', 'video', 'text')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

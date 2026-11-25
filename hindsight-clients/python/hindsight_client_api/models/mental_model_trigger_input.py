@@ -49,37 +49,6 @@ class MentalModelTriggerInput(BaseModel):
     keep_trace: Optional[StrictBool] = Field(default=False, description="If true, every refresh of this mental model records how it reached its result under reflect_response.trace: the mode it ran in and why, the resolved scope and time window, how many facts retrieval returned versus how many the agent used, the tool and LLM calls, and any delta operations. Only the latest refresh's trace is kept. This is the only way to diagnose a cron- or consolidation-driven refresh after the fact, since no human sees those run. Tool outputs are reduced to result counts to keep the stored trace bounded; use LLM request tracing for raw prompts and responses.")
     __properties: ClassVar[List[str]] = ["budget", "mode", "refresh_after_consolidation", "refresh_cron", "full_refresh_cron", "min_refresh_interval_seconds", "fact_types", "exclude_mental_models", "exclude_mental_model_ids", "tags_match", "tag_groups", "include_chunks", "recall_max_tokens", "recall_chunks_max_tokens", "reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "response_schema", "keep_trace"]
 
-    @field_validator('mode')
-    def mode_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['full', 'delta']):
-            raise ValueError("must be one of enum values ('full', 'delta')")
-        return value
-
-    @field_validator('fact_types')
-    def fact_types_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        for i in value:
-            if i not in set(['world', 'experience', 'observation']):
-                raise ValueError("each list item must be one of ('world', 'experience', 'observation')")
-        return value
-
-    @field_validator('tags_match')
-    def tags_match_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
-            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

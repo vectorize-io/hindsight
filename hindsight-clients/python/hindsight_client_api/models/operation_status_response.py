@@ -48,13 +48,6 @@ class OperationStatusResponse(BaseModel):
     task_payload: Optional[Dict[str, Any]] = None
     __properties: ClassVar[List[str]] = ["operation_id", "status", "operation_type", "id", "task_type", "mental_model_id", "created_at", "updated_at", "completed_at", "error_message", "retry_count", "next_retry_at", "progress", "result_metadata", "details", "child_operations", "task_payload"]
 
-    @field_validator('status')
-    def status_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['pending', 'processing', 'completed', 'failed', 'cancelled', 'not_found']):
-            raise ValueError("must be one of enum values ('pending', 'processing', 'completed', 'failed', 'cancelled', 'not_found')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

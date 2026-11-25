@@ -32,13 +32,6 @@ class RunSettingModel(BaseModel):
     editable: Optional[StrictBool] = Field(default=False, description="Whether this bank may override the field via the bank config API.")
     __properties: ClassVar[List[str]] = ["field", "value", "kind", "editable"]
 
-    @field_validator('kind')
-    def kind_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['text', 'boolean', 'choice', 'complex']):
-            raise ValueError("must be one of enum values ('text', 'boolean', 'choice', 'complex')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

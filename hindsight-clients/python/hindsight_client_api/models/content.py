@@ -107,8 +107,9 @@ class Content(BaseModel):
             error_messages.append(str(e))
 
         if error_messages:
-            # no match
-            raise ValueError("No match found when deserializing the JSON string into Content with anyOf schemas: List[ContentAnyOfInner], str. Details: " + ", ".join(error_messages))
+            # no match: a shape added after this client was built, keep it as raw JSON
+            instance.__dict__["actual_instance"] = json.loads(json_str)
+            return instance
         else:
             return instance
 

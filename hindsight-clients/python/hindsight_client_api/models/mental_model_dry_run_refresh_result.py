@@ -56,37 +56,6 @@ class MentalModelDryRunRefreshResult(BaseModel):
     warnings: Optional[List[StrictStr]] = Field(default=None, description="Conditions worth a human's attention, in plain language.")
     __properties: ClassVar[List[str]] = ["mental_model_id", "name", "requested_mode", "effective_mode", "mode_fallback_reason", "outcome", "would_persist", "scope", "window", "facts", "based_on", "current_content", "candidate_content", "preview_content", "diff", "delta_operations", "retraction", "trace", "usage", "duration_ms", "warnings"]
 
-    @field_validator('requested_mode')
-    def requested_mode_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['full', 'delta']):
-            raise ValueError("must be one of enum values ('full', 'delta')")
-        return value
-
-    @field_validator('effective_mode')
-    def effective_mode_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['full', 'delta']):
-            raise ValueError("must be one of enum values ('full', 'delta')")
-        return value
-
-    @field_validator('mode_fallback_reason')
-    def mode_fallback_reason_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped', 'grounding_gone']):
-            raise ValueError("must be one of enum values ('no_baseline_content', 'source_query_changed', 'structured_doc_unreadable', 'delta_ops_failed', 'delta_ops_all_skipped', 'grounding_gone')")
-        return value
-
-    @field_validator('outcome')
-    def outcome_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied']):
-            raise ValueError("must be one of enum values ('content_written', 'content_unchanged', 'content_preserved_no_new_facts', 'refresh_failed_empty_candidate', 'refresh_failed_delta_not_applied')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

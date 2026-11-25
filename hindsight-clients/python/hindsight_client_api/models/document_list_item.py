@@ -39,17 +39,6 @@ class DocumentListItem(BaseModel):
     matched_fields: Optional[List[StrictStr]] = Field(default=None, description="Which fields matched the `q` search: 'id', 'original_text', or both. Empty when no `q` is given.")
     __properties: ClassVar[List[str]] = ["id", "bank_id", "content_hash", "created_at", "updated_at", "text_length", "memory_unit_count", "retain_params", "document_metadata", "tags", "matched_fields"]
 
-    @field_validator('matched_fields')
-    def matched_fields_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        for i in value:
-            if i not in set(['id', 'original_text']):
-                raise ValueError("each list item must be one of ('id', 'original_text')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

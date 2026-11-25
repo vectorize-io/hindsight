@@ -138,8 +138,9 @@ class ContentAnyOfInner(BaseModel):
             # more than 1 match
             raise ValueError("Multiple matches found when deserializing the JSON string into ContentAnyOfInner with oneOf schemas: FileContentBlock, ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
         elif match == 0:
-            # no match
-            raise ValueError("No match found when deserializing the JSON string into ContentAnyOfInner with oneOf schemas: FileContentBlock, ImageContentBlock, TextContentBlock. Details: " + ", ".join(error_messages))
+            # no match: a shape added after this client was built, keep it as raw JSON
+            instance.__dict__["actual_instance"] = json.loads(json_str)
+            return instance
         else:
             return instance
 

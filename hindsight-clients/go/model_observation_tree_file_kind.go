@@ -44,7 +44,8 @@ func (v *ObservationTreeFileKind) UnmarshalJSON(src []byte) error {
 		}
 	}
 
-	return fmt.Errorf("%+v is not a valid ObservationTreeFileKind", value)
+	*v = enumTypeValue
+	return nil
 }
 
 // NewObservationTreeFileKindFromValue returns a pointer to a valid ObservationTreeFileKind

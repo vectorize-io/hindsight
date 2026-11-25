@@ -31,13 +31,6 @@ class KnowledgeTraceArm(BaseModel):
     results: List[KnowledgeTraceArmHit]
     __properties: ClassVar[List[str]] = ["name", "results"]
 
-    @field_validator('name')
-    def name_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['vector', 'extra_vectors', 'keyword', 'document']):
-            raise ValueError("must be one of enum values ('vector', 'extra_vectors', 'keyword', 'document')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

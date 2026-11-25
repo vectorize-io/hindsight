@@ -33,20 +33,6 @@ class KnowledgeTimeseriesResponse(BaseModel):
     buckets: List[KnowledgeTimeseriesBucket]
     __properties: ClassVar[List[str]] = ["bank_id", "period", "trunc", "buckets"]
 
-    @field_validator('period')
-    def period_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['1d', '7d', '30d', '90d']):
-            raise ValueError("must be one of enum values ('1d', '7d', '30d', '90d')")
-        return value
-
-    @field_validator('trunc')
-    def trunc_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['hour', 'day']):
-            raise ValueError("must be one of enum values ('hour', 'day')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

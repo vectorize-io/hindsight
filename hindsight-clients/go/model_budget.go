@@ -46,7 +46,8 @@ func (v *Budget) UnmarshalJSON(src []byte) error {
 		}
 	}
 
-	return fmt.Errorf("%+v is not a valid Budget", value)
+	*v = enumTypeValue
+	return nil
 }
 
 // NewBudgetFromValue returns a pointer to a valid Budget

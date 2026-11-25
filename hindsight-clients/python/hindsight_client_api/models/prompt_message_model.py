@@ -31,13 +31,6 @@ class PromptMessageModel(BaseModel):
     blocks: Optional[List[PromptBlockModel]] = None
     __properties: ClassVar[List[str]] = ["role", "blocks"]
 
-    @field_validator('role')
-    def role_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['system', 'user']):
-            raise ValueError("must be one of enum values ('system', 'user')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

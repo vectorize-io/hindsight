@@ -29,16 +29,6 @@ class RefreshMentalModelRequest(BaseModel):
     mode: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["mode"]
 
-    @field_validator('mode')
-    def mode_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['full']):
-            raise ValueError("must be one of enum values ('full')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

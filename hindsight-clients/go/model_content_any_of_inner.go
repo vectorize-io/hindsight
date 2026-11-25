@@ -21,6 +21,8 @@ type ContentAnyOfInner struct {
 	FileContentBlock *FileContentBlock
 	ImageContentBlock *ImageContentBlock
 	TextContentBlock *TextContentBlock
+	// Raw holds a shape added on the server after this client was built.
+	Raw *json.RawMessage
 }
 
 // FileContentBlockAsContentAnyOfInner is a convenience function that returns FileContentBlock wrapped in ContentAnyOfInner
@@ -110,7 +112,9 @@ func (dst *ContentAnyOfInner) UnmarshalJSON(data []byte) error {
 	} else if match == 1 {
 		return nil // exactly one match
 	} else { // no match
-		return fmt.Errorf("data failed to match schemas in oneOf(ContentAnyOfInner)")
+		raw := append(json.RawMessage(nil), data...)
+		dst.Raw = &raw
+		return nil
 	}
 }
 
@@ -126,6 +130,10 @@ func (src ContentAnyOfInner) MarshalJSON() ([]byte, error) {
 
 	if src.TextContentBlock != nil {
 		return json.Marshal(&src.TextContentBlock)
+	}
+
+	if src.Raw != nil {
+		return *src.Raw, nil
 	}
 
 	return nil, nil // no data in oneOf schemas

@@ -13,7 +13,6 @@ package hindsight
 import (
 	"encoding/json"
 	"time"
-	"fmt"
 )
 
 
@@ -21,6 +20,8 @@ import (
 type Timestamp struct {
 	String *string
 	TimeTime *time.Time
+	// Raw holds a shape added on the server after this client was built.
+	Raw *json.RawMessage
 }
 
 // Unmarshal JSON data into any of the pointers in the struct
@@ -57,7 +58,9 @@ func (dst *Timestamp) UnmarshalJSON(data []byte) error {
 		dst.TimeTime = nil
 	}
 
-	return fmt.Errorf("data failed to match schemas in anyOf(Timestamp)")
+	raw := append(json.RawMessage(nil), data...)
+	dst.Raw = &raw
+	return nil
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
@@ -68,6 +71,10 @@ func (src Timestamp) MarshalJSON() ([]byte, error) {
 
 	if src.TimeTime != nil {
 		return json.Marshal(&src.TimeTime)
+	}
+
+	if src.Raw != nil {
+		return *src.Raw, nil
 	}
 
 	return nil, nil // no data in anyOf schemas

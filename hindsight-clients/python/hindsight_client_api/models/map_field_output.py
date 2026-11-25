@@ -33,16 +33,6 @@ class MapFieldOutput(BaseModel):
     fields: Optional[Dict[str, MapFieldOutput]] = None
     __properties: ClassVar[List[str]] = ["type", "description", "values", "fields"]
 
-    @field_validator('type')
-    def type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['text', 'multi-text', 'value', 'multi-values', 'map']):
-            raise ValueError("must be one of enum values ('text', 'multi-text', 'value', 'multi-values', 'map')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,
