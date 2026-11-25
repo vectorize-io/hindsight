@@ -1611,7 +1611,8 @@ class HindsightMemoryProvider(MemoryProvider):
         # retain tool and the built-in memory mirror write task chatter into it, mostly duplicate reports
         # the parent already retains (#6124). Unless retain_kanban opts it in (#6419), it writes nothing.
         self._writes_disabled = context == "kanban" and not retain_kanban
-        self._mirror_builtin_memory = bool(cfg.get("mirror_builtin_memory", True))  # #6725
+        # A curated bank may not want MEMORY.md/USER.md notes copied in, in any context (#6725).
+        self._mirror_builtin_memory = bool(cfg.get("mirror_builtin_memory", True))
         self._retain_every_n_turns = max(1, _parse_int_setting(cfg.get("retain_every_n_turns"), 1))
         self._retain_context = cfg.get("retain_context", _RETAIN_CONTEXT_DEFAULT)
         self._retain_async = cfg.get("retain_async", True)
