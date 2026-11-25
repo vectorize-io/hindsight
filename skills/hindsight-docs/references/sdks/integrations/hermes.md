@@ -408,14 +408,14 @@ Renaming, moving and deleting pages are left to the Hindsight UI.
 | `mirror_builtin_memory` | `true` | Copy built-in memory writes (`MEMORY.md`, `USER.md` adds and replaces) into the bank, tagged `builtin-memory`. Turn it off to keep those notes out of a curated bank; the `hindsight_retain` tool and auto-retain are not affected. |
 | `retain_async` | `true` | Process retain asynchronously on the Hindsight server |
 | `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |
-| `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories |
+| `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories. A sentence saying that what a tool fetched belongs to its source, not to the User or the agent, is always added after it |
 | `retain_tags` | — | Default tags applied to retained memories; merged with per-call tool tags. JSON list or comma-separated text. Accepts the tag placeholders. |
 | `observation_scopes` | `shared` | How observations are grouped by tag during consolidation: `shared` (one scope for the whole bank, so observations merge across sessions; the `session:`/`parent:` tags stay on the facts for filtering), `combined` (one scope per exact tag set, which here means one per session), `per_tag` (one pass per tag), `all_combinations` (every tag subset, expensive), or a JSON list of tag lists for custom scopes (e.g. `[["user:alice"], ["project-x"]]`). |
 | `retain_source` | — | Opt-in `metadata.source` attached to retained memories (identifies the storing client, e.g. `hermes`). Empty by default — no attribution tag ships unless you set it. |
 | `retain_strategy` | — | Named retain strategy sent with every stored item (`HINDSIGHT_RETAIN_STRATEGY`). The bank must define it under `retain_strategies`; an unknown name is ignored by the server. Empty lets the bank decide. |
 | `retain_indicator` | `true` | Show a `💭 Hindsight — saving to memory…` status line when a turn is saved (or that earlier saves failed, so a broken save path is not silent). Turn off for customer-facing agents. |
 | `retain_user_prefix` | `User` | Label used before user turns in auto-retained transcripts. A turn Hermes marks as written by another agent gets that agent's name as its role and label instead (`Bot` when it has none) |
-| `retain_assistant_prefix` | `Assistant` | Label used before assistant turns in auto-retained transcripts |
+| `retain_assistant_prefix` | `Assistant` | Label used before assistant turns in auto-retained transcripts. The tools the agent called that turn go just before it, as one `Tool call: name(args)` line each (arguments cut short, output never sent), so a reply that summarises a page or video is not stored as the agent's or the user's own experience |
 | `prefetch_waits_for_retain` | `true` | Before the background recall for the next turn, wait until the turn just saved can be found, so recall includes it. Runs off the reply path and adds no response time. |
 | `prefetch_retain_drain_timeout` | `10` | Most seconds that background recall waits for the save above before recalling anyway |
 

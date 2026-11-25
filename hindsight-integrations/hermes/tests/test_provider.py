@@ -59,6 +59,57 @@ def test_a_turn_written_by_another_agent_is_labelled_with_that_agent(provider):
     ]
 
 
+def test_a_turns_tool_calls_are_retained_by_name_and_arguments_not_output(provider):
+    """#6818: a reply relaying a fetched video in its creator's first person was stored as the
+    agent's own experiment. The tool message says what was fetched; its output is never sent."""
+    instance, fake = provider({"retain_context": "my notes"})
+    transcript = [
+        {"role": "user", "content": "earlier question"},
+        {"role": "assistant", "tool_calls": [{"function": {"name": "old_tool", "arguments": "{}"}}]},
+        {"role": "user", "content": "summarise this video"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"function": {"name": "youtube_transcript", "arguments": json.dumps({"url": "https://yt/abc"})}},
+                {"function": {"name": "write_file", "arguments": json.dumps({"path": "a.md", "body": "x" * 500})}},
+            ],
+        },
+        {"role": "tool", "content": "I tested 65% hydration... (the whole transcript)"},
+        {"role": "assistant", "content": "I tested 65% hydration."},
+    ]
+    instance.sync_turn("summarise this video", "I tested 65% hydration.", messages=transcript)
+    instance.sync_turn("thanks", "Welcome.")  # Hermes without `messages`: no tool message
+    instance.shutdown()
+
+    retained = [json.loads(_retain_item(fake, i)["content"]) for i in range(2)]
+    assert [m["role"] for m in retained[0]] == ["user", "tool", "assistant"]
+    assert retained[0][1]["content"] == (
+        "Tool call: youtube_transcript(url=https://yt/abc)\nTool call: write_file(path=a.md, body=" + "x" * 120 + ")"
+    )
+    assert [m["role"] for m in retained[1]] == ["user", "assistant"]
+    context = _retain_item(fake)["context"]
+    assert context.startswith("my notes. ") and plugin._RELAYED_CONTENT_NOTE in context  # custom context kept
+
+
+def test_tool_calls_beyond_the_cap_are_counted_not_listed():
+    calls = [{"function": {"name": f"t{i}", "arguments": "not json"}} for i in range(25)]
+    lines = plugin._tool_call_lines([{"role": "user"}, {"role": "assistant", "tool_calls": calls}])
+    assert len(lines) == 21 and lines[0] == "Tool call: t0(not json)" and lines[-1] == "... and 5 more tool calls"
+
+
+def test_a_malformed_transcript_row_is_skipped_not_fatal():
+    """A row of an unknown shape must never cost the turn its retain."""
+    messages = [
+        "not a message",
+        {"role": "user", "content": "go"},
+        {"role": "assistant", "tool_calls": [{"function": {"name": None}}]},
+        {"role": "assistant", "tool_calls": None},
+        {"role": "assistant", "tool_calls": [{"function": {"name": "search", "arguments": {"query": "x"}}}]},
+    ]
+    assert plugin._tool_call_lines(messages) == ["Tool call: search(query=x)"]
+    assert plugin._tool_call_lines(None) == []
+
+
 def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):
     instance, fake = provider({"retain_every_n_turns": 2})
     instance.sync_turn("one", "1")
