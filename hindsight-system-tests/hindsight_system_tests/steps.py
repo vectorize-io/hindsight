@@ -35,6 +35,8 @@ STEP_ANCHORS: dict[str, str] = {
     # standalone `reflect_answer` prompt. It carries the `reflect` preamble too, so
     # a rule for it has to be registered before the generic `reflect` rules.
     "reflect_closing": "Stop retrieving. Call the `done` tool",
+    # An abstain reflect's answer, written from what the decision model picked (one tool-less call).
+    "reflect_abstain_answer": "Answer the question from the memories given, and from nothing else.",
     # Structured output is a *second* call after the answer: an extraction pass
     # that reshapes the prose into the caller's schema. Anchored separately
     # because a story about the schema is about this call, not the answer.
@@ -50,6 +52,8 @@ STEP_ANCHORS: dict[str, str] = {
     "mental_model_delta": "You are integrating *new information* into an existing structured document.",
     # The same refresh's other edit, run first: removing what rests on deleted memories.
     "mental_model_retraction": "You are removing *retracted information* from an existing structured document.",
+    # A live session's rule writer: what an agent's verdict on a note teaches the bank (sessions/learn.py).
+    "session_learn": "You keep the rules of a software project",
     "connection_probe": "Say 'ok'",
 }
 

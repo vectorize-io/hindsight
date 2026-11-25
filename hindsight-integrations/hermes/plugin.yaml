@@ -6,3 +6,6 @@ description: "Hindsight — long-term memory with knowledge graph, entity resolu
 # the manifest lists), so a copy here would be dead and could only drift. The setup card shows
 # manifest deps only until NousResearch/hermes-agent#128408 lands — display, not installation.
 requires_env: []
+# The live session follows each tool call as it returns (only with live_session on).
+provides_hooks:
+  - transform_tool_result

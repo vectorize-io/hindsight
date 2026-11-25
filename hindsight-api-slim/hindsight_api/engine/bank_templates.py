@@ -125,6 +125,9 @@ class BankTemplateConfig(BaseModel):
         default=None,
         description="Instructions sent to MCP clients in the initialize response when they connect to this bank",
     )
+    session_learn_rules: bool | None = Field(
+        default=None, description="Learn rules (mental models) from the verdicts on a session's notes"
+    )
     knowledge_banks: list[str] | None = Field(
         default=None, description="Knowledge banks whose passages this bank's reflect reads"
     )

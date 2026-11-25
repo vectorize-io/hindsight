@@ -29,7 +29,8 @@ class LLMCallTrace(BaseModel):
     scope: StrictStr = Field(description="Call scope: agent_1, agent_2, final, etc.")
     duration_ms: StrictInt = Field(description="Execution time in milliseconds")
     started_at_ms: Optional[StrictInt] = Field(default=0, description="When the call started, in Unix epoch milliseconds")
-    __properties: ClassVar[List[str]] = ["scope", "duration_ms", "started_at_ms"]
+    detail: Optional[StrictStr] = None
+    __properties: ClassVar[List[str]] = ["scope", "duration_ms", "started_at_ms", "detail"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -70,6 +71,11 @@ class LLMCallTrace(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # set to None if detail (nullable) is None
+        # and model_fields_set contains the field
+        if self.detail is None and "detail" in self.model_fields_set:
+            _dict['detail'] = None
+
         return _dict
 
     @classmethod
@@ -84,7 +90,8 @@ class LLMCallTrace(BaseModel):
         _obj = cls.model_validate({
             "scope": obj.get("scope"),
             "duration_ms": obj.get("duration_ms"),
-            "started_at_ms": obj.get("started_at_ms") if obj.get("started_at_ms") is not None else 0
+            "started_at_ms": obj.get("started_at_ms") if obj.get("started_at_ms") is not None else 0,
+            "detail": obj.get("detail")
         })
         return _obj
 

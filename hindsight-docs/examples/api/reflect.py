@@ -120,6 +120,22 @@ print(f"Key factors: {result.key_factors}")
 # [/docs:reflect-structured-output]
 
 
+# [docs:reflect-abstain]
+# Ask a question that may need no answer: an empty text means memory has nothing to say.
+response = client.reflect(
+    bank_id="my-bank",
+    query="Does my change go against a recorded decision about Alice's role? If so, say which, briefly.",
+    context="I am updating the team page to list Alice as a junior engineer.",
+    abstain=True,
+    search_queries=["Alice role", "Alice promotion"],
+)
+if response.abstained:
+    print("nothing to say")
+else:
+    print(response.text)
+# [/docs:reflect-abstain]
+
+
 # =============================================================================
 # Cleanup (not shown in docs)
 # =============================================================================

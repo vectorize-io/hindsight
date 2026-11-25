@@ -266,6 +266,9 @@ async def test_pruned_evidence_never_reaches_the_answer():
             "chunks": {"ch-1": {"chunk_text": "Alice, Berlin"}, "ch-2": {"chunk_text": "tea notes"}},
         }
     )
+    functions["search_mental_models_fn"] = AsyncMock(
+        return_value={"mental_models": [{"id": "mm-1", "content": "Team handbook: deploys on Tuesdays"}]}
+    )
 
     async def prune(question: str, texts: list[str]) -> list[bool]:
         assert question == "where does Alice live?"
@@ -289,6 +292,7 @@ async def test_pruned_evidence_never_reaches_the_answer():
     assert "Alice lives in Berlin" in evidence and "Alice moved to Berlin" in evidence and "Alice, Berlin" in evidence
     assert not any(gone in evidence for gone in ("Bob likes tea", "Bob's tea", "tea notes", '"tea"'))
     assert '"moved"' in evidence, "a kept observation keeps its source facts"
+    assert "deploys on Tuesdays" in evidence, "pages are scored with the pool but never pruned"
     assert result.text == "A"
     assert [c.scope for c in result.llm_trace] == [
         "round_query",

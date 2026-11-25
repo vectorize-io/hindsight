@@ -63,7 +63,7 @@ from ..config import (
 )
 from .aiohttp_session import LoopLocal, LoopLocalSession, UpstreamHTTPError, per_phase_timeout, raise_for_status
 from .bank_attribution import reranker_bank_attribution_headers
-from .decision_model import DecisionModel
+from .decision_model import DecisionModel, EvidencePick  # noqa: F401  (re-exported)
 from .llm_trace import RERANK_SCOPE, trace_model_call
 from .local_device import (
     LOCAL_MODEL_BUILD_LOCK,

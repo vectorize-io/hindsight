@@ -18,6 +18,7 @@ import {
   Settings,
   Menu,
   X,
+  MessagesSquare,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ type NavItem =
   | "reflect"
   | "data"
   | "documents"
+  | "sessions"
   | "entities"
   | "pages"
   | "profile";
@@ -115,6 +117,7 @@ export function Sidebar<T extends string = NavItem>({
     { id: "recall" as NavItem, label: t("recall"), icon: Search },
     { id: "reflect" as NavItem, label: t("reflect"), icon: Sparkles },
     { id: "documents" as NavItem, label: t("documents"), icon: FileText },
+    { id: "sessions" as NavItem, label: t("sessions"), icon: MessagesSquare },
     { id: "entities" as NavItem, label: t("entities"), icon: Users },
     { id: "profile" as NavItem, label: tBank("bankConfiguration"), icon: Settings },
   ];

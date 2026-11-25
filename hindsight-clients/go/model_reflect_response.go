@@ -23,6 +23,8 @@ var _ MappedNullable = &ReflectResponse{}
 type ReflectResponse struct {
 	// The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)
 	Text string `json:"text"`
+	// True when the request set `abstain` and memory held nothing that answers it: `text` is empty.
+	Abstained *bool `json:"abstained,omitempty"`
 	BasedOn NullableReflectBasedOn `json:"based_on,omitempty"`
 	StructuredOutput map[string]interface{} `json:"structured_output,omitempty"`
 	StructuredOutputError NullableString `json:"structured_output_error,omitempty"`
@@ -39,6 +41,8 @@ type _ReflectResponse ReflectResponse
 func NewReflectResponse(text string) *ReflectResponse {
 	this := ReflectResponse{}
 	this.Text = text
+	var abstained bool = false
+	this.Abstained = &abstained
 	return &this
 }
 
@@ -47,6 +51,8 @@ func NewReflectResponse(text string) *ReflectResponse {
 // but it doesn't guarantee that properties required by API are set
 func NewReflectResponseWithDefaults() *ReflectResponse {
 	this := ReflectResponse{}
+	var abstained bool = false
+	this.Abstained = &abstained
 	return &this
 }
 
@@ -72,6 +78,38 @@ func (o *ReflectResponse) GetTextOk() (*string, bool) {
 // SetText sets field value
 func (o *ReflectResponse) SetText(v string) {
 	o.Text = v
+}
+
+// GetAbstained returns the Abstained field value if set, zero value otherwise.
+func (o *ReflectResponse) GetAbstained() bool {
+	if o == nil || IsNil(o.Abstained) {
+		var ret bool
+		return ret
+	}
+	return *o.Abstained
+}
+
+// GetAbstainedOk returns a tuple with the Abstained field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *ReflectResponse) GetAbstainedOk() (*bool, bool) {
+	if o == nil || IsNil(o.Abstained) {
+		return nil, false
+	}
+	return o.Abstained, true
+}
+
+// HasAbstained returns a boolean if a field has been set.
+func (o *ReflectResponse) HasAbstained() bool {
+	if o != nil && !IsNil(o.Abstained) {
+		return true
+	}
+
+	return false
+}
+
+// SetAbstained gets a reference to the given bool and assigns it to the Abstained field.
+func (o *ReflectResponse) SetAbstained(v bool) {
+	o.Abstained = &v
 }
 
 // GetBasedOn returns the BasedOn field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -286,6 +324,9 @@ func (o ReflectResponse) MarshalJSON() ([]byte, error) {
 func (o ReflectResponse) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["text"] = o.Text
+	if !IsNil(o.Abstained) {
+		toSerialize["abstained"] = o.Abstained
+	}
 	if o.BasedOn.IsSet() {
 		toSerialize["based_on"] = o.BasedOn.Get()
 	}

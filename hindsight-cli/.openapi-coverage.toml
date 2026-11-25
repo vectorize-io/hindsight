@@ -223,3 +223,8 @@ primary = "Creating an alias never changes which id the bank is displayed under;
 
 [fields.set_bank_alias_primary]
 primary = "Exposed inverted as `--clear` on `bank alias primary`: the command's whole purpose is to promote, so the flag only has to express the opposite."
+
+[fields.append_session_events]
+messages = "Read from a JSON file (`session append --messages-file`) or built from --role / --text."
+session = "Flattened into --live / --retain on `session append`."
+state = "The working-tree state a coding-agent plugin sends with each edit; not something a person types."

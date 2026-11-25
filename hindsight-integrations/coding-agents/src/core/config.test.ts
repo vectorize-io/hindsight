@@ -294,6 +294,16 @@ describe("defaultBankConfig (#4725)", () => {
 });
 
 describe("banks.<bankId> overrides (per-repo opt-in/out, applied AFTER bank resolution)", () => {
+  it("an override's autoInject live falls back to reflect where the live session does not run", () => {
+    const banks = { b1: { autoInject: "live" as const } };
+    expect(
+      applyBankConfig(resolveConfig({ harness: "cursor-cli", banks }), "b1").cfg.autoInject
+    ).toBe("reflect");
+    expect(
+      applyBankConfig(resolveConfig({ harness: "claude-code", banks }), "b1").cfg.autoInject
+    ).toBe("live");
+  });
+
   it("overrides behavioral fields for the matching bank only; others untouched", () => {
     const cfg = resolveConfig({
       apiToken: "test-key",
@@ -655,5 +665,23 @@ describe("keyless Hindsight Cloud", () => {
     const cfg = resolveConfig({ banks: { b: { apiToken: "k" } } });
     expect(applyBankConfig(cfg, "b").cfg.disabled).toBe(false);
     expect(applyBankConfig(cfg, "other").cfg.disabled).toBe(true);
+  });
+});
+
+describe("autoInject live", () => {
+  it("is kept on Claude Code and Codex and falls back to reflect elsewhere", () => {
+    expect(resolveConfig({ autoInject: "live", harness: "claude-code" }).autoInject).toBe("live");
+    expect(resolveConfig({ autoInject: "live", harness: "codex" }).autoInject).toBe("live");
+    expect(resolveConfig({ autoInject: "live", harness: "cursor-cli" }).autoInject).toBe("reflect");
+  });
+
+  it("is opt-in: reflect stays the default everywhere", () => {
+    expect(resolveConfig({ harness: "claude-code" }).autoInject).toBe("reflect");
+    expect(resolveConfig({ harness: "codex" }).autoInject).toBe("reflect");
+    expect(resolveConfig({ harness: "cursor-cli" }).autoInject).toBe("reflect");
+    expect(resolveConfig({ harness: "claude-code", autoReflect: true }).autoInject).toBe("reflect");
+    expect(resolveConfig({ harness: "claude-code", autoInject: "reflect" }).autoInject).toBe(
+      "reflect"
+    );
   });
 });

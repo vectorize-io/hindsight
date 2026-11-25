@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.reflect_based_on import ReflectBasedOn
 from hindsight_client_api.models.reflect_trace import ReflectTrace
@@ -30,12 +30,13 @@ class ReflectResponse(BaseModel):
     Response model for think endpoint.
     """ # noqa: E501
     text: StrictStr = Field(description="The reflect response as well-formatted markdown (headers, lists, bold/italic, code blocks, etc.)")
+    abstained: Optional[StrictBool] = Field(default=False, description="True when the request set `abstain` and memory held nothing that answers it: `text` is empty.")
     based_on: Optional[ReflectBasedOn] = None
     structured_output: Optional[Dict[str, Any]] = None
     structured_output_error: Optional[StrictStr] = None
     usage: Optional[TokenUsage] = None
     trace: Optional[ReflectTrace] = None
-    __properties: ClassVar[List[str]] = ["text", "based_on", "structured_output", "structured_output_error", "usage", "trace"]
+    __properties: ClassVar[List[str]] = ["text", "abstained", "based_on", "structured_output", "structured_output_error", "usage", "trace"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -123,6 +124,7 @@ class ReflectResponse(BaseModel):
 
         _obj = cls.model_validate({
             "text": obj.get("text"),
+            "abstained": obj.get("abstained") if obj.get("abstained") is not None else False,
             "based_on": ReflectBasedOn.from_dict(obj["based_on"]) if obj.get("based_on") is not None else None,
             "structured_output": obj.get("structured_output"),
             "structured_output_error": obj.get("structured_output_error"),

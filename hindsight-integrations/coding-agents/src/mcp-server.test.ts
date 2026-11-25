@@ -18,6 +18,11 @@ describe("selectTools", () => {
     expect(selectTools(cfg, stubClient, "b")).toEqual([]);
   });
 
+  it("returns [] in a live session — memory reaches the agent only as live notes", () => {
+    const cfg = resolveConfig({ harness: "claude-code", autoInject: "live" });
+    expect(selectTools(cfg, stubClient, "b")).toEqual([]);
+  });
+
   it("returns the eight hindsight_* tool specs when enabled", () => {
     const cfg = resolveConfig({});
     const tools = selectTools(cfg, stubClient, "b");
@@ -36,7 +41,7 @@ describe("selectTools", () => {
   });
 
   it("propagates the configured harness to diagnostics", async () => {
-    const cfg = resolveConfig({ harness: "codex" });
+    const cfg = resolveConfig({ harness: "codex", autoInject: "reflect" });
     const tools = selectTools(cfg, stubClient, "b");
     const diagnose = tools.find((tool) => tool.name === "hindsight_diagnose");
 
@@ -63,7 +68,11 @@ describe("selectTools", () => {
     // so MCP-ingested documents used to show up unattributed.
     const retain = vi.fn().mockResolvedValue(undefined);
     const client = { retain } as unknown as HindsightClient;
-    const tools = selectTools(resolveConfig({ harness: "codex" }), client, "b");
+    const tools = selectTools(
+      resolveConfig({ harness: "codex", autoInject: "reflect" }),
+      client,
+      "b"
+    );
     const ingest = tools.find((tool) => tool.name === "hindsight_ingest_document");
 
     await ingest!.handler({ title: "Runbook", content: "steps" });

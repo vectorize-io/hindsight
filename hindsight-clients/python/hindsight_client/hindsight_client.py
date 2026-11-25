@@ -62,6 +62,7 @@ from hindsight_client_api.api import (
     monitoring_api,
     operations_api,
     pages_api,
+    sessions_api,
     webhooks_api,
 )
 from hindsight_client_api.models import (
@@ -303,6 +304,7 @@ class Hindsight:
         - ``client.mental_models``: Mental model management (MentalModelsApi)
         - ``client.directives``: Directive management (DirectivesApi)
         - ``client.operations``: Async operation tracking (OperationsApi)
+        - ``client.sessions``: Live sessions and the memory watcher's notes (SessionsApi)
         - ``client.webhooks``: Webhook management (WebhooksApi)
         - ``client.files``: File upload (FilesApi)
         - ``client.knowledge_banks``: Knowledge banks (KnowledgeBanksApi)
@@ -363,6 +365,7 @@ class Hindsight:
         self._documents_api = documents_api.DocumentsApi(self._api_client)
         self._entities_api = entities_api.EntitiesApi(self._api_client)
         self._operations_api = operations_api.OperationsApi(self._api_client)
+        self._sessions_api = sessions_api.SessionsApi(self._api_client)
         self._webhooks_api = webhooks_api.WebhooksApi(self._api_client)
         self._monitoring_api = monitoring_api.MonitoringApi(self._api_client)
         self._audit_api = audit_api.AuditApi(self._api_client)
@@ -458,6 +461,11 @@ class Hindsight:
     def operations(self) -> operations_api.OperationsApi:
         """Low-level Operations API — get status, list, cancel, retry async operations."""
         return self._operations_api
+
+    @property
+    def sessions(self) -> sessions_api.SessionsApi:
+        """Low-level Sessions API — stream a live conversation in, get the memory watcher's notes back."""
+        return self._sessions_api
 
     @property
     def webhooks(self) -> webhooks_api.WebhooksApi:
@@ -814,6 +822,8 @@ class Hindsight:
         exclude_mental_model_ids: list[str] | None = None,
         reflect_search_observations_max_tokens: int | None = None,
         reflect_search_observations_include_entities: bool | None = None,
+        abstain: bool = False,
+        search_queries: list[str] | None = None,
         reflect_search_mental_models_max_tokens: int | None = None,
     ) -> ReflectResponse:
         """
@@ -852,6 +862,12 @@ class Hindsight:
             reflect_search_observations_include_entities: Whether search_observations attaches
                 resolved entity names, which can be over half the tool payload. None uses the
                 bank default (enabled).
+            abstain: Allow an empty answer: when memory holds nothing that answers the query, the
+                response has empty ``text`` and ``abstained=True`` instead of reflect searching on or
+                failing (default: False).
+            search_queries: What the first retrieval round searches, each query through every layer,
+                instead of an LLM rewriting the query into one search. Applies on a server with a
+                decision model.
             reflect_search_mental_models_max_tokens: Token budget for the mental models the
                 agent's search_mental_models calls return in full. The best-ranked one is always in
                 full; the rest that do not fit come back as a snippet. None uses the bank's
@@ -882,6 +898,8 @@ class Hindsight:
                 exclude_mental_model_ids=exclude_mental_model_ids,
                 reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
                 reflect_search_observations_include_entities=reflect_search_observations_include_entities,
+                abstain=abstain,
+                search_queries=search_queries,
                 reflect_search_mental_models_max_tokens=reflect_search_mental_models_max_tokens,
             )
         )
@@ -1558,6 +1576,8 @@ class Hindsight:
         exclude_mental_model_ids: list[str] | None = None,
         reflect_search_observations_max_tokens: int | None = None,
         reflect_search_observations_include_entities: bool | None = None,
+        abstain: bool = False,
+        search_queries: list[str] | None = None,
         reflect_search_mental_models_max_tokens: int | None = None,
     ) -> ReflectResponse:
         """
@@ -1596,6 +1616,12 @@ class Hindsight:
             reflect_search_observations_include_entities: Whether search_observations attaches
                 resolved entity names, which can be over half the tool payload. None uses the
                 bank default (enabled).
+            abstain: Allow an empty answer: when memory holds nothing that answers the query, the
+                response has empty ``text`` and ``abstained=True`` instead of reflect searching on or
+                failing (default: False).
+            search_queries: What the first retrieval round searches, each query through every layer,
+                instead of an LLM rewriting the query into one search. Applies on a server with a
+                decision model.
             reflect_search_mental_models_max_tokens: Token budget for the mental models the
                 agent's search_mental_models calls return in full. The best-ranked one is always in
                 full; the rest that do not fit come back as a snippet. None uses the bank's
@@ -1631,6 +1657,8 @@ class Hindsight:
             exclude_mental_model_ids=exclude_mental_model_ids,
             reflect_search_observations_max_tokens=reflect_search_observations_max_tokens,
             reflect_search_observations_include_entities=reflect_search_observations_include_entities,
+            abstain=abstain or None,
+            search_queries=search_queries,
             reflect_search_mental_models_max_tokens=reflect_search_mental_models_max_tokens,
         )
 
@@ -3550,6 +3578,7 @@ class Hindsight:
         consolidation_use_decision_model: bool | None = None,
         consolidation_llm_parallelism: int | None = None,
         consolidation_max_memories_per_round: int | None = None,
+        session_learn_rules: bool | None = None,
         mental_model_min_refresh_interval_seconds: int | None = None,
         page_default_trigger: dict[str, Any] | None = None,
         knowledge_page_default_trigger: dict[str, Any] | None = None,  # deprecated alias, remove in 2.x
@@ -3631,6 +3660,7 @@ class Hindsight:
                 consolidation_use_decision_model=consolidation_use_decision_model,
                 consolidation_llm_parallelism=consolidation_llm_parallelism,
                 consolidation_max_memories_per_round=consolidation_max_memories_per_round,
+                session_learn_rules=session_learn_rules,
                 mental_model_min_refresh_interval_seconds=mental_model_min_refresh_interval_seconds,
                 page_default_trigger=page_default_trigger,
                 knowledge_page_default_trigger=knowledge_page_default_trigger,  # deprecated alias, remove in 2.x
@@ -3707,6 +3737,7 @@ class Hindsight:
         consolidation_use_decision_model: bool | None = None,
         consolidation_llm_parallelism: int | None = None,
         consolidation_max_memories_per_round: int | None = None,
+        session_learn_rules: bool | None = None,
         mental_model_min_refresh_interval_seconds: int | None = None,
         page_default_trigger: dict[str, Any] | None = None,
         knowledge_page_default_trigger: dict[str, Any] | None = None,  # deprecated alias, remove in 2.x
@@ -3797,6 +3828,8 @@ class Hindsight:
                 restatements, new facts and chatter before the consolidation LLM call.
             consolidation_llm_parallelism: Concurrent LLM calls during consolidation.
             consolidation_max_memories_per_round: Memories consolidated per round.
+            session_learn_rules: Turn what agents say about live-session notes into rules
+                (mental models) that later sessions read.
             mental_model_min_refresh_interval_seconds: Debounce between mental-model refreshes.
             reflect_default_options: Default reflect options for this bank, applied whenever a
                 reflect request leaves the option unset (mental-model refreshes use their trigger):
@@ -3887,6 +3920,7 @@ class Hindsight:
                 "consolidation_use_decision_model": consolidation_use_decision_model,
                 "consolidation_llm_parallelism": consolidation_llm_parallelism,
                 "consolidation_max_memories_per_round": consolidation_max_memories_per_round,
+                "session_learn_rules": session_learn_rules,
                 "mental_model_min_refresh_interval_seconds": mental_model_min_refresh_interval_seconds,
                 "page_default_trigger": _renamed_arg(
                     page_default_trigger,

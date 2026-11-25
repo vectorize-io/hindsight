@@ -56,6 +56,7 @@ class BankTemplateConfig(BaseModel):
     retain_max_attachments_per_chunk: Optional[StrictInt] = None
     mcp_enabled_tools: Optional[List[StrictStr]] = None
     mcp_server_instructions: Optional[StrictStr] = None
+    session_learn_rules: Optional[StrictBool] = None
     knowledge_banks: Optional[List[StrictStr]] = None
     reflect_kb_search_media_types: Optional[List[StrictStr]] = None
     reflect_kb_search_apply_tags: Optional[StrictBool] = None
@@ -95,7 +96,7 @@ class BankTemplateConfig(BaseModel):
     recall_max_tokens: Optional[StrictInt] = None
     recall_chunks_max_tokens: Optional[StrictInt] = None
     memory_defense: Optional[Dict[str, Any]] = None
-    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "reflect_use_decision_model", "mental_model_refresh_use_decision_model", "mental_model_delta_use_decision_model", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "mcp_server_instructions", "knowledge_banks", "reflect_kb_search_media_types", "reflect_kb_search_apply_tags", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "default_observation_scopes", "consolidation_strategies", "reflect_source_facts_max_tokens", "page_default_trigger", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "default_timezone", "enable_auto_consolidation", "consolidation_use_decision_model", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "recall_include_chunks", "recall_prefer_observations", "recall_decision_model_prune", "recall_decision_model_dedup", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
+    __properties: ClassVar[List[str]] = ["reflect_mission", "retain_mission", "retain_extraction_mode", "retain_custom_instructions", "retain_chunk_size", "retain_structured_chunk_size", "enable_observations", "observations_mission", "enable_text_search", "enable_temporal_retrieval", "enable_graph_retrieval", "enable_reranking", "reflect_use_decision_model", "mental_model_refresh_use_decision_model", "mental_model_delta_use_decision_model", "disposition_skepticism", "disposition_literalism", "disposition_empathy", "entity_labels", "entities_allow_free_form", "retain_default_strategy", "retain_strategies", "retain_chunk_batch_size", "retain_max_attachments_per_chunk", "mcp_enabled_tools", "mcp_server_instructions", "session_learn_rules", "knowledge_banks", "reflect_kb_search_media_types", "reflect_kb_search_apply_tags", "consolidation_llm_batch_size", "consolidation_source_facts_max_tokens", "consolidation_source_facts_max_tokens_per_observation", "max_observations_per_scope", "observation_scope_limits", "default_observation_scopes", "consolidation_strategies", "reflect_source_facts_max_tokens", "page_default_trigger", "knowledge_page_default_trigger", "reflect_default_options", "mental_model_min_refresh_interval_seconds", "llm_gemini_safety_settings", "recall_budget_function", "recall_budget_fixed_low", "recall_budget_fixed_mid", "recall_budget_fixed_high", "recall_budget_adaptive_low", "recall_budget_adaptive_mid", "recall_budget_adaptive_high", "recall_budget_min", "recall_budget_max", "audit_log_enabled", "store_document_text", "default_timezone", "enable_auto_consolidation", "consolidation_use_decision_model", "consolidation_max_memories_per_round", "consolidation_llm_parallelism", "recall_include_chunks", "recall_prefer_observations", "recall_decision_model_prune", "recall_decision_model_dedup", "recall_max_tokens", "recall_chunks_max_tokens", "memory_defense"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -282,6 +283,11 @@ class BankTemplateConfig(BaseModel):
         # and model_fields_set contains the field
         if self.mcp_server_instructions is None and "mcp_server_instructions" in self.model_fields_set:
             _dict['mcp_server_instructions'] = None
+
+        # set to None if session_learn_rules (nullable) is None
+        # and model_fields_set contains the field
+        if self.session_learn_rules is None and "session_learn_rules" in self.model_fields_set:
+            _dict['session_learn_rules'] = None
 
         # set to None if knowledge_banks (nullable) is None
         # and model_fields_set contains the field
@@ -516,6 +522,7 @@ class BankTemplateConfig(BaseModel):
             "retain_max_attachments_per_chunk": obj.get("retain_max_attachments_per_chunk"),
             "mcp_enabled_tools": obj.get("mcp_enabled_tools"),
             "mcp_server_instructions": obj.get("mcp_server_instructions"),
+            "session_learn_rules": obj.get("session_learn_rules"),
             "knowledge_banks": obj.get("knowledge_banks"),
             "reflect_kb_search_media_types": obj.get("reflect_kb_search_media_types"),
             "reflect_kb_search_apply_tags": obj.get("reflect_kb_search_apply_tags"),

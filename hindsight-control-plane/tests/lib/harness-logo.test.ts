@@ -66,6 +66,8 @@ describe("resolveHarnessLogo", () => {
   // Ids the integration used to emit. Kept so documents already retained under
   // them keep their logo; a new id never belongs here.
   const RETIRED_HARNESSES = ["gemini"];
+  // Written by other integrations: the Hermes plugin's live sessions.
+  const OTHER_INTEGRATIONS = ["hermes"];
 
   it("resolves every id the coding-agent integration emits", () => {
     for (const id of EMITTED_HARNESSES) {
@@ -75,7 +77,7 @@ describe("resolveHarnessLogo", () => {
 
   it("registers no harness that nothing writes", () => {
     expect(Object.keys(HARNESS_LOGO_REGISTRY).sort()).toEqual(
-      [...EMITTED_HARNESSES, ...RETIRED_HARNESSES].sort()
+      [...EMITTED_HARNESSES, ...RETIRED_HARNESSES, ...OTHER_INTEGRATIONS].sort()
     );
   });
 

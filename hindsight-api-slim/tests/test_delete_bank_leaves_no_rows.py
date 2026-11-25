@@ -150,6 +150,14 @@ async def _seed_bank(conn: asyncpg.Connection, bank_id: str) -> list[uuid.UUID]:
         bank_id,
     )
     await conn.execute("INSERT INTO directives (bank_id, name, content) VALUES ($1, 'tone', 'be brief')", bank_id)
+    await conn.execute(
+        "INSERT INTO sessions (bank_id, session_id, document_id) VALUES ($1, 'sess', 'session-sess')", bank_id
+    )
+    await conn.execute(
+        """INSERT INTO session_events (bank_id, session_id, seq, event_id, source, kind, payload)
+           VALUES ($1, 'sess', 1, 'ev-1', 'client', 'message', '{}'::jsonb)""",
+        bank_id,
+    )
     await conn.execute("INSERT INTO webhooks (bank_id, url) VALUES ($1, 'https://example.com/hook')", bank_id)
     await conn.execute(
         "INSERT INTO async_operations (bank_id, operation_type, status) VALUES ($1, 'consolidation', 'completed')",

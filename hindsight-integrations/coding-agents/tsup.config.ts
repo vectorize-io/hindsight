@@ -13,6 +13,8 @@ export default defineConfig({
     status: "src/status.ts",
     "claude-hook": "src/claude-hook.ts",
     "claude-stop-hook": "src/claude-stop-hook.ts",
+    "claude-live-hook": "src/claude-live-hook.ts",
+    "codex-live-hook": "src/codex-live-hook.ts",
     "claude-sessionstart-hook": "src/claude-sessionstart-hook.ts",
     "cursor-hook": "src/cursor-hook.ts",
     "cursor-sessionstart-hook": "src/cursor-sessionstart-hook.ts",
