@@ -323,6 +323,8 @@ Each recalled memory, in auto-recall and in the `hindsight_recall` tool, carries
 - If the bank keeps no document text (`store_document_text` off), it can't append to a session document. The plugin then stops appending and stores the turns in a separate document per process instead.
 - An error that can never succeed (any other 4xx) is logged and the save is dropped.
 
+**Context compression.** Every turn is already saved as it happens, so a normal compression loses nothing. With Hermes' `compression.checkpoint_required: true`, the plugin also saves the messages about to be compressed, and waits for the server to confirm, before Hermes compresses them. The save goes into its own document tagged `checkpoint:pre-compress`, and waits up to `timeout` seconds; raise `timeout` if your server's retain takes longer. If that save fails or times out, Hermes keeps the full conversation and does not compress. Kanban workers without `retain_kanban` cannot write, so with that setting Hermes never compresses their conversations.
+
 ### Integration
 
 | Key | Default | Description |

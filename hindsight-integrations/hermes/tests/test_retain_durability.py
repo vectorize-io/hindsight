@@ -5,9 +5,10 @@ bank that keeps no document text (#5599)."""
 import json
 import types
 
+import pytest
 from hindsight_client_api.exceptions import ApiException
 
-from conftest import FakeClient
+from conftest import FakeClient, plugin
 
 
 class FlakyClient(FakeClient):
@@ -198,3 +199,42 @@ def test_the_status_line_says_when_saves_fail(provider, monkeypatch):
         "1 earlier save(s) to memory failed and were dropped (see the Hermes log)",
         "saving to memory…",
     ]
+
+
+def test_a_required_pre_compress_checkpoint_is_stored_synchronously_before_compaction(provider):
+    """#6449: Hermes' strict compression gate needs a v2 provider that saves before it compacts."""
+    instance, client = provider()
+    messages = [{"role": "user", "content": "my cat is Miso ✓"}, {"role": "assistant", "content": "noted"}]
+
+    assert plugin.HindsightMemoryProvider.pre_compress_checkpoint_api_version == 2
+    assert instance.on_pre_compress(messages) == ""  # best effort: turns are already retained
+    assert client.retains == []
+
+    assert instance.on_pre_compress(messages, require_checkpoint=True) == ""
+    instance.on_pre_compress(messages, require_checkpoint=True)  # a retried compaction
+    first, again = client.retains
+    assert first["retain_async"] is False
+    assert first["document_id"] == again["document_id"]  # same messages, same document
+    assert first["document_id"].startswith("session-1-checkpoint-")
+    assert json.loads(first["items"][0]["content"]) == messages
+    assert "checkpoint:pre-compress" in first["items"][0]["tags"]
+
+
+def test_a_failed_required_checkpoint_raises_so_hermes_keeps_the_transcript(provider):
+    instance, _ = provider(client=FlakyClient(failures=1, error=ApiException(status=400)))
+    with pytest.raises(ApiException):
+        instance.on_pre_compress([{"role": "user", "content": "x"}], require_checkpoint=True)
+
+
+def test_a_message_that_is_not_plain_json_still_checkpoints(provider):
+    """A raise here would block every compression of the conversation, retries included."""
+    instance, client = provider()
+    instance.on_pre_compress([{"role": "user", "content": [object()]}], require_checkpoint=True)
+    assert len(client.retains) == 1
+
+
+def test_a_run_that_cannot_write_refuses_a_required_checkpoint(provider):
+    instance, client = provider(agent_context="kanban")
+    with pytest.raises(RuntimeError):
+        instance.on_pre_compress([{"role": "user", "content": "x"}], require_checkpoint=True)
+    assert client.retains == []

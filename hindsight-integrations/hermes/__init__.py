@@ -2422,6 +2422,37 @@ class HindsightMemoryProvider(MemoryProvider):
             self._document_id,
         )
 
+    # Hermes pre-compress checkpoint API v2: with compression.checkpoint_required on, Hermes
+    # compacts only after on_pre_compress returns, and keeps the full transcript if it raises.
+    pre_compress_checkpoint_api_version = 2
+
+    def on_pre_compress(
+        self, messages: list[dict[str, Any]], *, require_checkpoint: bool = False, **kwargs: Any
+    ) -> str:
+        """Best effort: nothing to do, sync_turn already retained these turns. Required: store the
+        messages about to be compacted, synchronously, before Hermes drops them; raise on failure."""
+        if not require_checkpoint:
+            return ""
+        if self._writes_disabled:
+            raise RuntimeError("Hindsight cannot write from this run, so it cannot checkpoint")
+        # default=str: an odd value in a message (a multimodal part object) must not raise here, or
+        # Hermes would refuse every compression of this conversation for a reason no retry can fix.
+        content = json.dumps(messages, ensure_ascii=False, default=str)
+        # Same messages -> same document: a retried compaction overwrites, it doesn't duplicate.
+        document_id = f"{self._session_id}-checkpoint-{uuid.uuid5(uuid.NAMESPACE_OID, content).hex[:16]}"
+        item = self._build_retain_kwargs(
+            content,
+            context=self._retain_context,
+            metadata=self._build_metadata(message_count=len(messages), turn_index=self._turn_index),
+            tags=[f"session:{self._session_id}", "checkpoint:pre-compress"],
+        )
+        # A primary-bank failure raises (Hermes then refuses to compact); extra banks are best effort.
+        self._write_to_banks(
+            list(self._write_bank_ids),
+            lambda bank_id: self._retain_batch(item, bank_id=bank_id, document_id=document_id, retain_async=False),
+        )
+        return ""
+
     def _close_client(self) -> None:
         """Both modes now hold a plain ``hindsight_client.Hindsight``, so one aclose on the
         shared loop is the whole story. The old local_embedded branch existed because
