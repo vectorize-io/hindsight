@@ -40,6 +40,7 @@ def _mock_config() -> MagicMock:
     """A stand-in config that models the fields the streaming pipeline actually reads."""
     config = MagicMock()
     config.retain_memory_budget_mb = 128
+    config.retain_chunk_context_tokens = 0
     return config
 
 

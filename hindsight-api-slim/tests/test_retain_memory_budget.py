@@ -385,6 +385,7 @@ async def test_streaming_retain_writes_a_held_batch_instead_of_hanging(monkeypat
     monkeypatch.setattr("hindsight_api.engine.memories.get_memories", lambda: store)
     config = MagicMock()
     config.retain_memory_budget_mb = 1
+    config.retain_chunk_context_tokens = 0
     chunks = ["chunk one", "chunk two"]
 
     with pytest.raises(_ReachedWrite):

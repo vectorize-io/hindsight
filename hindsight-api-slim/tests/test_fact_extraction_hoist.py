@@ -34,6 +34,7 @@ def _minimal_config(**overrides):
         "retain_optional_fact_dimensions": False,
         "retain_chunk_size": 50,
         "retain_structured_chunk_size": None,
+        "retain_chunk_context_tokens": 0,
         "retain_max_attachments_per_chunk": 8,
         "retain_batch_enabled": False,
         "default_observation_scopes": None,
