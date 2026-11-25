@@ -225,9 +225,10 @@ not empty:
 2. `~/.hindsight/config.json` — shared by every profile
 3. Environment variables (see Environment Variables)
 
-A profile has exactly one config. To give one profile different banks per repository, workspace, platform or user,
-use `bank_id_template` or the multiple banks settings below; for fully separate setups, use
-separate Hermes profiles.
+A profile has exactly one config file. To change settings for one platform, chat or thread (another bank, no
+auto-recall, extra recall banks, different tags), add a `chats` entry. To derive banks
+from the repository, workspace, platform, user or chat, use `bank_id_template` or the
+multiple banks settings below. For fully separate setups, use separate Hermes profiles.
 
 Some keys also accept an older name: `apiKey` for `api_key`, `budget` for `recall_budget`, `prefetch_method` for
 `recall_prefetch_method`, `llmApiKey` for `llm_api_key`.
@@ -246,7 +247,7 @@ Some keys also accept an older name: `apiKey` for `api_key`, `budget` for `recal
 | Key | Default | Description |
 |-----|---------|-------------|
 | `bank_id` | `hermes` | Memory bank name (static fallback used when `bank_id_template` is unset or resolves empty) |
-| `bank_id_template` | — | Optional template to derive the bank name dynamically. Placeholders: `{profile}`, `{workspace}`, `{project}`, `{platform}`, `{user}`, `{session}`. `{project}` is the name of the git repository Hermes runs in; every worktree of a repository resolves to the same name, and it is empty outside a repository or for one rooted at your home directory. Example: `hermes-{profile}` isolates memory per active Hermes profile, `{project}` gives each repository its own bank. Empty placeholders collapse cleanly (e.g. `hermes-{user}` with no user becomes `hermes`). |
+| `bank_id_template` | — | Optional template to derive the bank name dynamically. Placeholders: `{profile}`, `{workspace}`, `{project}`, `{platform}`, `{user}`, `{session}`, `{chat}` (the chat id), `{thread}` (the thread or topic id). `{project}` is the name of the git repository Hermes runs in; every worktree of a repository resolves to the same name, and it is empty outside a repository or for one rooted at your home directory. Example: `hermes-{profile}` isolates memory per active Hermes profile, `{project}` gives each repository its own bank. Empty placeholders collapse cleanly (e.g. `hermes-{user}` with no user becomes `hermes`). |
 | `mirror_to_own_bank` | `false` | Also write to `bank_id` when the template resolves to a different bank, so a profile keeps its own memory while working in project banks. |
 | `additional_banks` | — | Extra banks to write to and recall from, in priority order. |
 | `recall_additional_banks` | — | Extra banks to recall from but never write to, searched after the write banks. Alias `recallAdditionalBanks`, the name the Claude Code integration uses. A bank also listed in `additional_banks` stays writable. |
@@ -256,7 +257,7 @@ A bank's missions, dispositions, mental models and directives come from a [bank 
 
 #### Multiple banks
 
-The primary bank is chosen in this order: a `.hindsight/config.toml` in a trusted repository, then `bank_id_template`, then `HINDSIGHT_BANK_ID` or `bank_id`. Writes go to the primary, then `bank_id` when `mirror_to_own_bank` is on, then each `additional_banks` entry. Recall searches the same banks and then each `recall_additional_banks` entry, all at once, each with the configured budget and `recall_max_tokens` (or an even share of it when `recall_max_tokens_mode` is `split`); results are merged in that order and deduplicated by text. Reflect uses the primary bank only.
+The primary bank is chosen in this order: a `chats` entry's `bank_id`, then a `.hindsight/config.toml` in a trusted repository, then `bank_id_template`, then `HINDSIGHT_BANK_ID` or `bank_id`. Writes go to the primary, then `bank_id` when `mirror_to_own_bank` is on, then each `additional_banks` entry. Recall searches the same banks and then each `recall_additional_banks` entry, all at once, each with the configured budget and `recall_max_tokens` (or an even share of it when `recall_max_tokens_mode` is `split`); results are merged in that order and deduplicated by text. Reflect uses the primary bank only.
 
 The three list settings take a JSON list or comma-separated text; use the JSON form for a value that contains a comma.
 
@@ -269,6 +270,83 @@ bank_id = "acme-billing"
 ```
 
 The lookup stops at the repository root. Only `bank_id` is read.
+
+### Per-chat settings — `chats`
+
+One profile often serves several places at once: Telegram topics, a Discord DM, a capture channel, the CLI. `chats`
+changes settings for some of them. Each key names a place, each value holds settings, and **any setting on this page
+can go in an entry**, with the same name and meaning as at the top level:
+
+```json
+{
+  "bank_id": "hermes",
+  "auto_recall": true,
+  "chats": {
+    "pocket": { "auto_recall": false },
+    "telegram/-1009999999999": { "recall_additional_banks": ["peptides"] },
+    "telegram/-1001234567890": { "bank_id_template": "project-a-{thread}" },
+    "telegram/-1001234567890/42": { "bank_id": "home-automation" },
+    "discord": { "retain_tags": ["chat:{chat}"], "recall_indicator": false }
+  }
+}
+```
+
+- `pocket` (a platform alone): every chat on that platform. Here, no auto-recall on a capture channel.
+- `telegram/-1009999999999` (platform and chat): one chat. Here, it also reads the `peptides` bank; other chats don't.
+- `telegram/-1001234567890` with a template: a bank per forum topic (`project-a-17`, `project-a-42`, …), and
+  `project-a` for messages outside a topic.
+- `telegram/-1001234567890/42` (platform, chat and thread): one topic. Here, its own bank.
+
+**Finding the key.** Hermes tells the plugin where each conversation happens, and the key is those values joined by
+`/`: `platform`, then `chat_id`, then `thread_id` when there is one. To get it, send one message in the chat and look
+for this line in Hermes' log (`~/.hermes/logs/agent.log`):
+
+```
+Hindsight initialized: chat=telegram/-1001234567890/42 (no chats entry), mode=cloud, …, bank=hermes (from bank_id), …
+```
+
+Copy the `chat=` value into `chats`. After the next message the same line shows which entry matched
+(`chats['telegram/-1001234567890/42']`) and which bank it picked. The three values are also stored on every memory
+the plugin saves (`platform`, `chat_id`, `thread_id` in its metadata), so a chat that already has memories can be
+read off them in the control plane. Use ids, not chat names: names can change, ids don't. `platform` is Hermes'
+own name for it (`telegram`, `discord`, `slack`, `whatsapp`, `cli`, a platform plugin's name, …).
+
+**Which entry applies.** The most specific key that exists: `platform/chat/thread`, then `platform/chat`, then
+`platform`. Only that one entry applies. Entries don't stack, so a topic entry doesn't inherit its group's entry;
+repeat a setting in both if both need it. With no matching entry, the top level applies unchanged.
+
+**How an entry merges.** A setting in the entry replaces the top-level value. Lists are replaced, not added to:
+`"recall_additional_banks": ["shared", "peptides"]` reads exactly those two, and `[]` reads none. An entry's
+`bank_id` is that chat's bank. It wins over `HINDSIGHT_BANK_ID`, a repository's `.hindsight/config.toml` and the
+top-level `bank_id_template`, unless the same entry also sets `bank_id_template`. Settings that don't exist yet
+work the same way: anything the plugin reads from its config can go in an entry.
+
+**Things to know.**
+
+- The entry is picked when Hermes sets up the agent for a chat. After editing `chats`, restart the gateway
+  (`hermes gateway restart`) so every chat picks up the change.
+- Moving a chat to another bank doesn't move its memories. Earlier memories stay in the old bank; add it to that
+  entry's `recall_additional_banks` to keep reading them.
+- Whether the plugin is available at all (`mode`, and the API key for cloud) is checked with the top-level settings
+  before a chat is known. An entry can still point one chat at another server with `mode`, `api_url` and `api_key`.
+- With `local_embedded`, the daemon's own settings (the Local Embedded LLM keys) belong to
+  its `profile`. To change them for one chat, set a different `profile` in the same entry, so that chat gets its
+  own daemon instead of restarting the shared one.
+- A Discord thread has its own `chat_id`, and Hermes doesn't tell the plugin its parent channel. Give each thread
+  its own entry, or use a `discord` platform entry.
+- `chats` is read from `config.json` only; there is no environment variable for it. Entries don't nest.
+
+#### Tag placeholders
+
+`retain_tags`, `recall_tags` and `reflect_tags` accept `{platform}`, `{chat}`, `{thread}`, `{user}`, `{profile}`,
+`{workspace}` and `{project}`, so one bank can be split softly by chat or topic:
+
+```json
+{ "retain_tags": ["topic:{thread}"], "recall_tags": ["topic:{thread}"], "recall_tags_match": "any_strict" }
+```
+
+A tag whose placeholder is empty is left out (`topic:{thread}` outside a thread adds no tag), so the example above
+recalls everything in a chat without topics. Values are used as they are, not cleaned up like bank names.
 
 ### Recall
 
@@ -283,11 +361,13 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `recall_prompt_preamble` | — | Custom preamble for recalled memories in context |
 | `recall_query_strip_patterns` | — | Regexes, one per line (or a JSON list): lines of the incoming message that match any of them are removed from the auto-recall query before `recall_max_input_chars` is applied. Use it for boilerplate that repeats on every message, such as a provenance header, which would otherwise fill the query and make recall find nothing. If every line matches, the full message is used. The message the model sees is unchanged, and the `hindsight_recall` tool is not affected. |
 | `session_context` | — | Mental models and pages to add to the system prompt when a session starts, in the order listed: a JSON list or comma-separated text of `mental_model:<id>` or `page:<id>` (a bare id is a mental model). Each is read once per session (no LLM call, 5 s limit) and stays the same for the whole session, so prompt caching keeps working; an update shows up in the next session. One that cannot be read is skipped with a warning. In `local_embedded` mode it is skipped when the local daemon is not running yet. |
-| `recall_tags` | — | Tags to filter when searching memories: a JSON list (e.g. `["project-x", "team"]`) or comma-separated text (`"project-x, team"`) |
+| `recall_tags` | — | Tags to filter when searching memories: a JSON list (e.g. `["project-x", "team"]`) or comma-separated text (`"project-x, team"`). Accepts the tag placeholders. |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
 | `recall_exclude_tags` | — | Tags to keep out of recall (auto-recall and the `hindsight_recall` tool), as a JSON list or comma-separated text (e.g. `"draft, scratch"`). A memory carrying any of them is skipped but stays in the bank; untagged memories and other tags are unaffected. Combines with `recall_tags`; does not apply to reflect. |
 | `reflect_tags` | — | Tags that scope what reflect reasons over (the `hindsight_reflect` tool and `recall_prefetch_method: reflect`), as a JSON list or comma-separated text. Unset, reflect uses the whole bank; `recall_tags` does not apply to reflect. |
 | `reflect_tags_match` | `any` | Tag matching mode for `reflect_tags` |
+
+`reflect_tags` accepts the tag placeholders too.
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
 | `recall_min_scores` | — | Minimum relevance per score field, as a JSON object (e.g. `{"reranker": 0.25}` or `{"semantic": 0.5}`). Applies to both auto-recall and the `hindsight_recall` tool. See the tip below. |
 | `auto_recall` | `true` | Automatically recall memories before each turn |
@@ -338,7 +418,7 @@ Renaming, moving and deleting pages are left to the Hindsight UI.
 | `retain_async` | `true` | Process retain asynchronously on the Hindsight server |
 | `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |
 | `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories |
-| `retain_tags` | — | Default tags applied to retained memories; merged with per-call tool tags. JSON list or comma-separated text. |
+| `retain_tags` | — | Default tags applied to retained memories; merged with per-call tool tags. JSON list or comma-separated text. Accepts the tag placeholders. |
 | `observation_scopes` | `shared` | How observations are grouped by tag during consolidation: `shared` (one scope for the whole bank, so observations merge across sessions; the `session:`/`parent:` tags stay on the facts for filtering), `combined` (one scope per exact tag set, which here means one per session), `per_tag` (one pass per tag), `all_combinations` (every tag subset, expensive), or a JSON list of tag lists for custom scopes (e.g. `[["user:alice"], ["project-x"]]`). |
 | `retain_source` | — | Opt-in `metadata.source` attached to retained memories (identifies the storing client, e.g. `hermes`). Empty by default — no attribution tag ships unless you set it. |
 | `retain_strategy` | — | Named retain strategy sent with every stored item (`HINDSIGHT_RETAIN_STRATEGY`). The bank must define it under `retain_strategies`; an unknown name is ignored by the server. Empty lets the bank decide. |
@@ -416,7 +496,7 @@ These are used whenever the matching config key is not set:
 |----------|-------------|
 | `HINDSIGHT_API_KEY` | Hindsight API key (`api_key`) |
 | `HINDSIGHT_API_URL` | API endpoint (`api_url`) |
-| `HINDSIGHT_BANK_ID` | Bank name; when set, wins over `bank_id` in `config.json` (a `bank_id_template` still takes precedence) |
+| `HINDSIGHT_BANK_ID` | Bank name; when set, wins over `bank_id` in `config.json` (a `bank_id_template` and a `chats` entry's `bank_id` still take precedence) |
 | `HINDSIGHT_TIMEOUT` | API request timeout in seconds (`timeout`) |
 | `HINDSIGHT_LLM_API_KEY` | LLM API key for local_embedded (`llm_api_key`); `HINDSIGHT_API_LLM_API_KEY` also works |
 | `HINDSIGHT_API_LLM_BASE_URL` | LLM endpoint for local_embedded (`llm_base_url`) |
@@ -460,6 +540,8 @@ provider is re-initialized with it, so auto-recall runs for each turn regardless
 
 Two settings are worth turning off for customer-facing bots: `recall_indicator` and
 `retain_indicator`, which otherwise print a `💭 Hindsight` status line into the user's channel.
+
+To use different settings in different chats, topics or platforms, see Per-chat settings.
 
 ## Disabling Hermes' built-in memory
 
