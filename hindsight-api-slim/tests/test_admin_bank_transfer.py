@@ -91,7 +91,7 @@ def test_export_bank_command_exits_nonzero_for_missing_bank(monkeypatch: pytest.
     # missing: with log_cli on, pytest suspends and resumes its capture around every log record,
     # which puts its own stream back on sys.stdout and steals the output from CliRunner.
     monkeypatch.setenv("HINDSIGHT_API_EMBEDDINGS_PROVIDER", "openai")
-    monkeypatch.setenv("HINDSIGHT_API_RERANKER_PROVIDER", "none")
+    monkeypatch.setenv("HINDSIGHT_API_RERANKER_PROVIDER", "rrf")
     monkeypatch.setattr(cli, "_run_export_bank", fake_run_export_bank)
     output = tmp_path / "out.zip"
     result = CliRunner().invoke(cli.app, ["export-bank", "--bank", "zzz", "--output", str(output)])
