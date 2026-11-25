@@ -226,6 +226,13 @@ def test_a_failed_required_checkpoint_raises_so_hermes_keeps_the_transcript(prov
         instance.on_pre_compress([{"role": "user", "content": "x"}], require_checkpoint=True)
 
 
+def test_a_message_that_is_not_plain_json_still_checkpoints(provider):
+    """A raise here would block every compression of the conversation, retries included."""
+    instance, client = provider()
+    instance.on_pre_compress([{"role": "user", "content": [object()]}], require_checkpoint=True)
+    assert len(client.retains) == 1
+
+
 def test_a_run_that_cannot_write_refuses_a_required_checkpoint(provider):
     instance, client = provider(agent_context="kanban")
     with pytest.raises(RuntimeError):

@@ -2413,14 +2413,18 @@ class HindsightMemoryProvider(MemoryProvider):
     # compacts only after on_pre_compress returns, and keeps the full transcript if it raises.
     pre_compress_checkpoint_api_version = 2
 
-    def on_pre_compress(self, messages: list[dict[str, Any]], *, require_checkpoint: bool = False, **kwargs) -> str:
+    def on_pre_compress(
+        self, messages: list[dict[str, Any]], *, require_checkpoint: bool = False, **kwargs: Any
+    ) -> str:
         """Best effort: nothing to do, sync_turn already retained these turns. Required: store the
         messages about to be compacted, synchronously, before Hermes drops them; raise on failure."""
         if not require_checkpoint:
             return ""
         if self._writes_disabled:
             raise RuntimeError("Hindsight cannot write from this run, so it cannot checkpoint")
-        content = json.dumps(messages, ensure_ascii=False)
+        # default=str: an odd value in a message (a multimodal part object) must not raise here, or
+        # Hermes would refuse every compression of this conversation for a reason no retry can fix.
+        content = json.dumps(messages, ensure_ascii=False, default=str)
         # Same messages -> same document: a retried compaction overwrites, it doesn't duplicate.
         document_id = f"{self._session_id}-checkpoint-{uuid.uuid5(uuid.NAMESPACE_OID, content).hex[:16]}"
         item = self._build_retain_kwargs(
