@@ -39,7 +39,9 @@ async def scoped_bank(client, llm, bank_id, settled) -> str:
     )
     llm.on_step("extract_facts", contains="billing").returns(
         extracted(
-            fact("Kate asked Alice about the billing service", who="Kate", entities=["Alice", "Kate", "billing service"])
+            fact(
+                "Kate asked Alice about the billing service", who="Kate", entities=["Alice", "Kate", "billing service"]
+            )
         )
     )
     llm.on_step("consolidate").returns(consolidation())

@@ -63,9 +63,7 @@ USABLE = extracted(
 )
 
 
-async def test_a_drifted_extraction_is_corrected_and_the_facts_survive(
-    retrying_client, llm, bank_id, settled
-):
+async def test_a_drifted_extraction_is_corrected_and_the_facts_survive(retrying_client, llm, bank_id, settled):
     def answer(request: ChatRequest) -> BaseModel:
         # Drift until corrected. The correction arrives as a user turn, which is the
         # half a relay that drops the system message still delivers — so this is also

@@ -58,7 +58,9 @@ async def test_a_write_scope_refusal_keeps_no_attachment(clients, llm, scoped_ba
     with pytest.raises(NotFoundException):
         await admin.memory.get_bank_attachment(scoped_bank, PNG_ID)
 
-    llm.on_step("extract_facts").returns(extracted(fact("Dan photographed the whiteboard", who="Dan", entities=["Dan"])))
+    llm.on_step("extract_facts").returns(
+        extracted(fact("Dan photographed the whiteboard", who="Dan", entities=["Dan"]))
+    )
     llm.on_step("consolidate").returns(consolidation())
     await dan.aretain(bank_id=scoped_bank, content=CONTENT, document_id="dans", tags=["user:dan"])
     await wait_until_settled(admin, scoped_bank)

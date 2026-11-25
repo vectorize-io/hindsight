@@ -108,7 +108,10 @@ async def test_a_trigger_drains_the_backlog_with_auto_consolidation_off(client, 
     )
     llm.on_step("extract_facts").returns(
         extracted(
-            *(fact(f"Alice visited {city}", who="Alice", entities=["Alice", city]) for city in ("Berlin", "Paris", "Rome"))
+            *(
+                fact(f"Alice visited {city}", who="Alice", entities=["Alice", city])
+                for city in ("Berlin", "Paris", "Rome")
+            )
         )
     )
     llm.on_step("consolidate").answers_with(observes(OBSERVATION))

@@ -160,9 +160,7 @@ class RuleBuilder:
         self._contains = contains
         self._tool = tool
 
-    def returns(
-        self, payload: BaseModel, *, visible_tokens: int | None = None, reasoning_tokens: int = 0
-    ) -> LLMStub:
+    def returns(self, payload: BaseModel, *, visible_tokens: int | None = None, reasoning_tokens: int = 0) -> LLMStub:
         """Answer with ``payload`` serialized as the assistant message content.
 
         This is the structured-output path: the server asked for JSON matching a
@@ -172,9 +170,7 @@ class RuleBuilder:
         """
         body = payload.model_dump_json()
         return self._register(
-            lambda _request: _assistant_message(
-                body, visible_tokens=visible_tokens, reasoning_tokens=reasoning_tokens
-            )
+            lambda _request: _assistant_message(body, visible_tokens=visible_tokens, reasoning_tokens=reasoning_tokens)
         )
 
     def fails_with_status(
@@ -205,7 +201,9 @@ class RuleBuilder:
         A block is permanent, so the server must fail the operation once rather than retry it (#6503).
         """
         return self._register(
-            lambda _request: StubbedReply(message={"role": "assistant", "content": None}, finish_reason="content_filter")
+            lambda _request: StubbedReply(
+                message={"role": "assistant", "content": None}, finish_reason="content_filter"
+            )
         )
 
     def returns_text(self, text: str) -> LLMStub:
@@ -292,9 +290,7 @@ def _tool_call(tool_name: str, arguments: dict[str, Any], *, native: bool = Fals
     )
 
 
-def _assistant_message(
-    content: str, *, visible_tokens: int | None = None, reasoning_tokens: int = 0
-) -> StubbedReply:
+def _assistant_message(content: str, *, visible_tokens: int | None = None, reasoning_tokens: int = 0) -> StubbedReply:
     return StubbedReply(
         message={"role": "assistant", "content": content},
         finish_reason="stop",

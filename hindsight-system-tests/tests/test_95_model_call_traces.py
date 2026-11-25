@@ -121,7 +121,9 @@ async def test_request_stats_split_by_model_and_operation(client, llm, bank_id, 
             break
         await asyncio.sleep(0.1)
     else:
-        raise AssertionError(f"split mismatch: {got_operation} vs {expected_operation}; {got_model} vs {expected_model}")
+        raise AssertionError(
+            f"split mismatch: {got_operation} vs {expected_operation}; {got_model} vs {expected_model}"
+        )
 
     assert "retain" in got_operation
     for stats in (by_operation, by_model):

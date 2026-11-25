@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 from hindsight_client_api.models.update_document_request import UpdateDocumentRequest
+
 from hindsight_system_tests.payloads import (
     Consolidation,
     Observation,

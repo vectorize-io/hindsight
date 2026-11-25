@@ -34,9 +34,7 @@ ANSWER = "Alice lives in Berlin."
 
 
 async def _refreshes(client, bank_id: str, status: str | None = None) -> int:
-    operations = await client.operations.list_operations(
-        bank_id, type="refresh_mental_model", status=status, limit=100
-    )
+    operations = await client.operations.list_operations(bank_id, type="refresh_mental_model", status=status, limit=100)
     return operations.total
 
 
@@ -95,9 +93,7 @@ async def test_a_failed_refresh_is_not_retried_by_every_consolidation(client, ll
     assert await _refreshes(client, bank_id) == baseline + 3
 
 
-async def test_a_refresh_failed_by_a_rate_limit_runs_again_on_the_next_consolidation(
-    client, llm, bank_id, settled
-):
+async def test_a_refresh_failed_by_a_rate_limit_runs_again_on_the_next_consolidation(client, llm, bank_id, settled):
     reflect_loop(llm, answer=ANSWER)
     await _retain(client, llm, bank_id, "Alice moved to Berlin")
     created = await client.mental_models.create_mental_model(

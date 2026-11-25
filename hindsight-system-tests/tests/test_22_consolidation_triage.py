@@ -68,7 +68,9 @@ async def test_a_new_fact_is_written_by_the_llm(client, llm, stubs, bank_id, set
 async def test_chatter_is_dropped_without_a_call(client, llm, stubs, bank_id, settled):
     await _with_triage(client, bank_id)
     stubs.triage.verdicts["coffee"] = "chatter"
-    llm.on_step("extract_facts", contains="Berlin").returns(extracted(fact("The user lives in Berlin", entities=["user"])))
+    llm.on_step("extract_facts", contains="Berlin").returns(
+        extracted(fact("The user lives in Berlin", entities=["user"]))
+    )
     llm.on_step("consolidate").answers_with(observes("The user lives in Berlin"))
     await client.aretain(bank_id=bank_id, content="I live in Berlin.")
     await settled(bank_id)

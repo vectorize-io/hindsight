@@ -108,7 +108,7 @@ fi
 # The Python packages import each other (hindsight-dev and hindsight-embed use
 # hindsight_api), so a change to any of them type-checks all three.
 PYTHON_PACKAGES=(hindsight-api-slim/ hindsight-api/ hindsight-dev/ hindsight-embed/ hindsight-clients/python/)
-if changed "${PYTHON_PACKAGES[@]}" hindsight-integrations/; then
+if changed "${PYTHON_PACKAGES[@]}" hindsight-integrations/ hindsight-system-tests/; then
     echo "  Syncing Python dependencies..."
     # Run uv sync first so the environment is complete before the tools run.
     # Keep pre-commit from rewriting uv.lock. Dependency changes should update
@@ -177,6 +177,12 @@ if changed "${PYTHON_PACKAGES[@]}"; then
     run_task "ruff-embed-check" "$REPO_ROOT/hindsight-embed" "$VENV_BIN/ruff check --fix ."
     run_task "ruff-embed-format" "$REPO_ROOT/hindsight-embed" "$VENV_BIN/ruff format ."
     run_task "ty-embed" "$REPO_ROOT/hindsight-embed" "$VENV_BIN/ty check hindsight_embed"
+fi
+
+# hindsight-system-tests is not a workspace member; its own pyproject.toml holds the ruff config.
+if changed hindsight-system-tests/; then
+    run_task "ruff-system-tests-check" "$REPO_ROOT/hindsight-system-tests" "$VENV_BIN/ruff check --fix ."
+    run_task "ruff-system-tests-format" "$REPO_ROOT/hindsight-system-tests" "$VENV_BIN/ruff format ."
 fi
 
 # Python integrations use shared ruff.toml; Node integrations use shared .prettierrc.json.

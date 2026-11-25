@@ -60,7 +60,9 @@ async def test_every_model_call_carries_the_exchanged_token(wif_client, stubs, l
     # API key header beside it.
     issued = {exchange.access_token for exchange in exchanges}
     # `anthropic-version` marks a call that came in through /v1/messages, i.e. from this server.
-    extraction_calls = [call for call in llm.calls if "Quillon" in call.all_text and "anthropic-version" in call.headers]
+    extraction_calls = [
+        call for call in llm.calls if "Quillon" in call.all_text and "anthropic-version" in call.headers
+    ]
     assert len(extraction_calls) == 1
     (call,) = extraction_calls
     assert call.api_key in issued

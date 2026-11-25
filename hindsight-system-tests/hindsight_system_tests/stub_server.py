@@ -341,7 +341,9 @@ def create_stub_app(stubs: Stubs) -> FastAPI:
                     "legend": dict(enumerate(question["criteria"])),
                     "confidence": 0.9,
                 }
-        return JSONResponse({"model": body.get("model", "stub"), "answers": answers, "usage": {"input_tokens": 1, "output_tokens": 1}})
+        return JSONResponse(
+            {"model": body.get("model", "stub"), "answers": answers, "usage": {"input_tokens": 1, "output_tokens": 1}}
+        )
 
     @app.post("/rerank")
     async def rerank(request: Request) -> JSONResponse:
