@@ -67,10 +67,13 @@ from .settings import (
     _MIN_VERSION_FOR_UPDATE_MODE_APPEND,
     _PROVIDER_DEFAULT_MODELS,
     _VALID_BUDGETS,
+    ChatScope,
+    ResolvedConfig,
     _clears_min_scores,
     _compile_line_patterns,
     _daemon_llm_provider,
     _discover_cwd_bank_id,
+    _fill_tag_templates,
     _format_memory,
     _normalize_min_scores,
     _normalize_observation_scopes,
@@ -83,6 +86,7 @@ from .settings import (
     _resolve_bank_id_template,
     _strip_query_lines,
     _template_fields,
+    resolve_chat_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -580,6 +584,9 @@ def _mint_document_id(session_id: str) -> str:
     return f"{session_id}-{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
 
 
+# Settings the local_embedded daemon's profile env is built from (embedded._build_embedded_profile_env).
+_DAEMON_ENV_SETTINGS = ("llm_provider", "llm_api_key", "llmApiKey", "llm_model", "llm_base_url", "idle_timeout")
+
 # initialize() kwargs copied verbatim (str, stripped) onto ``self._<name>``.
 _SESSION_KWARGS = (
     "platform",
@@ -656,6 +663,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._mirror_to_own_bank = False
         self._static_bank_id = "hermes"
         self._project, self._bank_source = "", "bank_id"
+        self._chat_route = ResolvedConfig({}, "")
         self._extra_bank_down_until: dict[tuple[str, str], float] = {}
         self._additional_bank_ids: list[str] = []
         self._recall_additional_bank_ids: list[str] = []
@@ -1481,14 +1489,18 @@ class HindsightMemoryProvider(MemoryProvider):
             self._status_callback = kwargs["status_callback"]
         # Gated presentation for automatic startup warnings (agent._emit_warning on CLI).
         self._warning_callback = kwargs.get("warning_callback") if callable(kwargs.get("warning_callback")) else None
-        self._platform = str(kwargs.get("platform") or "cli")
         # session_id stays in tags so processes for one session remain filterable together.
         self._document_id = _mint_document_id(self._session_id)
         _warn_if_client_outdated()
 
-        self._config = cfg = _load_config()
         for name in _SESSION_KWARGS:
             setattr(self, f"_{name}", str(kwargs.get(name) or "").strip())
+        self._platform = self._platform or "cli"  # after the loop, which would blank it again
+        # The one config every setting below reads: the file with this chat's ``chats`` entry over it.
+        self._chat_route = resolve_chat_config(
+            _load_config(), ChatScope(self._platform, self._chat_id, self._thread_id)
+        )
+        self._config = cfg = self._chat_route.values
         self._turn_index = self._last_retained_turn_count = 0
         self._session_turns = []
         self._mode = cfg.get("mode", "cloud")
@@ -1518,10 +1530,14 @@ class HindsightMemoryProvider(MemoryProvider):
 
             client_version = pkg_version("hindsight-client")
         logger.info(
-            "Hindsight initialized: mode=%s, api_url=%s, bank=%s, budget=%s, memory_mode=%s, prefetch_method=%s, client=%s",
+            "Hindsight initialized: chat=%s (%s), mode=%s, api_url=%s, bank=%s (from %s), budget=%s, memory_mode=%s, "
+            "prefetch_method=%s, client=%s",
+            self._chat_route.chat_key,
+            f"chats[{self._chat_route.matched!r}]" if self._chat_route.matched else "no chats entry",
             self._mode,
             self._api_url,
             self._bank_id,
+            self._bank_source,
             self._budget,
             self._memory_mode,
             self._prefetch_method,
@@ -1555,6 +1571,15 @@ class HindsightMemoryProvider(MemoryProvider):
         )
 
         if self._mode == "local_embedded":
+            overrides = self._chat_route.overrides or {}
+            if "profile" not in overrides and any(key in overrides for key in _DAEMON_ENV_SETTINGS):
+                # Each chat would rewrite the shared daemon's env back and forth, restarting it every time.
+                logger.warning(
+                    "Hindsight chats[%r] changes daemon settings without its own profile: the %r daemon "
+                    "restarts whenever sessions switch between chats. Give the entry a profile.",
+                    self._chat_route.matched,
+                    cfg.get("profile", "hermes"),
+                )
             self._start_embedded_daemon()
 
     def _build_write_bank_ids(self) -> list[str]:
@@ -1638,6 +1663,21 @@ class HindsightMemoryProvider(MemoryProvider):
             platform=self._platform,
             user=self._user_id,
             session=self._session_id,
+            chat=self._chat_id,
+            thread=self._thread_id,
+        )
+
+    def _tag_setting(self, value: Any) -> List[str]:
+        """A tag list setting (retain, recall, recall-exclude and reflect tags) with its placeholders filled in."""
+        return _fill_tag_templates(
+            _normalize_string_list(value),
+            profile=self._agent_identity,
+            workspace=self._agent_workspace,
+            project=self._project,
+            platform=self._platform,
+            user=self._user_id,
+            chat=self._chat_id,
+            thread=self._thread_id,
         )
 
     def _apply_connection_settings(self, cfg: dict) -> None:
@@ -1651,13 +1691,21 @@ class HindsightMemoryProvider(MemoryProvider):
         # The static bank: the template's fallback and the mirror target, from one place.
         # A non-empty HINDSIGHT_BANK_ID wins over config.json's bank, as documented (#5171); without
         # config.json, _load_config already builds the bank from it.
+        # A chats entry's bank_id is this chat's bank: it beats HINDSIGHT_BANK_ID and repository config.
+        chat_bank = self._chat_route.chat_bank_id
         self._static_bank_id = (
-            get_secret("HINDSIGHT_BANK_ID", "") or cfg.get("bank_id") or banks.get("bankId") or "hermes"
+            chat_bank or get_secret("HINDSIGHT_BANK_ID", "") or cfg.get("bank_id") or banks.get("bankId") or "hermes"
         )
-        # Precedence: closest .hindsight/config.toml in a trusted repository → template → static bank_id.
+        # Precedence: chats entry bank_id → closest .hindsight/config.toml in a trusted repository →
+        # template → static bank_id.
         # The repository is only looked up when something needs it, and only once.
         trusted_dirs = _normalize_string_list(cfg.get("trusted_project_dirs"))
-        uses_project = "project" in _template_fields(self._bank_id_template)
+        # {project} may also appear in a tag setting, which is filled from self._project too.
+        tag_settings = [cfg.get(key) for key in ("recall_tags", "recall_exclude_tags", "reflect_tags", "retain_tags")]
+        tag_settings.append(_scoped_setting("HINDSIGHT_RETAIN_TAGS", ""))
+        uses_project = "project" in _template_fields(self._bank_id_template) or any(
+            "project" in _template_fields(tag) for value in tag_settings for tag in _normalize_string_list(value)
+        )
         root, cwd_bank, self._project = None, None, ""
         if self._cwd and (trusted_dirs or uses_project):
             try:
@@ -1671,7 +1719,9 @@ class HindsightMemoryProvider(MemoryProvider):
                 self._project = _project_name(root)
             except Exception as exc:
                 logger.warning("hindsight: cannot name the project at %s: %r — {project} is empty", root, exc)
-        if cwd_bank:
+        if chat_bank and not self._bank_id_template:
+            self._bank_id, self._bank_source = chat_bank, f"chats[{self._chat_route.matched!r}]"
+        elif cwd_bank:
             self._bank_id, self._bank_source = cwd_bank, "repository config"
         else:
             self._bank_id = self._resolve_template_bank()
@@ -1705,7 +1755,7 @@ class HindsightMemoryProvider(MemoryProvider):
             # a raw read here handed a multiplexed secondary the DEFAULT profile's retain shaping back.
             return cfg.get(key) or _scoped_setting(env_var, default)
 
-        self._retain_tags = _normalize_string_list(_cfg_or_env("retain_tags", "HINDSIGHT_RETAIN_TAGS"))
+        self._retain_tags = self._tag_setting(_cfg_or_env("retain_tags", "HINDSIGHT_RETAIN_TAGS"))
         self._tags = self._retain_tags or None
         self._observation_scopes = _normalize_observation_scopes(
             _cfg_or_env("observation_scopes", "HINDSIGHT_RETAIN_OBSERVATION_SCOPES", _DEFAULT_OBSERVATION_SCOPES)
@@ -1758,12 +1808,12 @@ class HindsightMemoryProvider(MemoryProvider):
     def _apply_recall_settings(self, cfg: dict) -> None:
         """Recall knobs are pure config too (``{}`` yields the defaults)."""
         # Documented as comma-separated; the client wants a list (a raw string is a 422).
-        self._recall_tags = _normalize_string_list(cfg.get("recall_tags")) or None
+        self._recall_tags = self._tag_setting(cfg.get("recall_tags")) or None
         self._recall_tags_match = cfg.get("recall_tags_match", "any")
-        self._recall_exclude_tags = _normalize_string_list(cfg.get("recall_exclude_tags")) or None
+        self._recall_exclude_tags = self._tag_setting(cfg.get("recall_exclude_tags")) or None
         # Reflect's own scope, opt-in: reflect searched the whole bank before recall_tags existed,
         # so inheriting them would quietly narrow it for every install that sets them (#5170).
-        self._reflect_tags = _normalize_string_list(cfg.get("reflect_tags")) or None
+        self._reflect_tags = self._tag_setting(cfg.get("reflect_tags")) or None
         self._reflect_tags_match = cfg.get("reflect_tags_match", "any")
         # A cron prompt opens with Hermes' fixed ~1.1k-char cron notice, so the first
         # recall_max_input_chars of every cron query were that notice, not the job: each fire injected

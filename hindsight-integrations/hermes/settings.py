@@ -284,7 +284,7 @@ def _sanitize_bank_segment(value: str) -> str:
 
 
 def _resolve_bank_id_template(template: str, fallback: str, **placeholders: str) -> str:
-    """Render a bank_id template ({profile}, {workspace}, {project}, {platform}, {user}, {session}),
+    """Render a bank_id template ({profile}, {workspace}, {project}, {platform}, {user}, {session}, {chat}, {thread}),
     sanitizing each placeholder; the ``-``/``_`` runs empty placeholders leave are
     collapsed (``hermes-{user}`` -> ``hermes``). Empty/invalid template -> *fallback*."""
     if not template:
@@ -297,6 +297,111 @@ def _resolve_bank_id_template(template: str, fallback: str, **placeholders: str)
         logger.warning("Invalid bank_id_template %r: %s — using fallback %r", template, exc, fallback)
         return fallback
     return re.sub(r"([-_])\1+", r"\1", rendered).strip("-_") or fallback
+
+
+# Settings read under more than one name. A ``chats`` entry that sets one name replaces every name in
+# its group, so an override can't lose to an alias the top level used (``[]`` must clear the list).
+_CONFIG_ALIASES = (
+    ("api_key", "apiKey"),
+    ("llm_api_key", "llmApiKey"),
+    ("recall_additional_banks", "recallAdditionalBanks"),
+    ("recall_budget", "budget"),
+    ("recall_prefetch_method", "prefetch_method"),
+)
+
+
+@dataclass(frozen=True)
+class ChatScope:
+    """Where a session is talking, as Hermes reports it: ``platform``, ``chat_id``, ``thread_id``."""
+
+    platform: str
+    chat_id: str = ""
+    thread_id: str = ""
+
+    @property
+    def key(self) -> str:
+        """``platform/chat_id/thread_id`` without the empty parts, e.g. ``telegram/-100123/42``."""
+        return "/".join(part for part in (self.platform, self.chat_id, self.thread_id) if part)
+
+    def candidates(self) -> list[str]:
+        """``chats`` keys that can match this scope, most specific first. Built from the parts, not
+        by splitting :attr:`key`, so an id that itself contains ``/`` never matches a shorter key."""
+        parts = [part for part in (self.platform, self.chat_id, self.thread_id) if part]
+        return ["/".join(parts[:n]) for n in range(len(parts), 0, -1)]
+
+
+@dataclass(frozen=True)
+class ResolvedConfig:
+    """The config one session runs with: the file's top level with its ``chats`` entry laid over it.
+
+    ``values`` is the only config the provider reads after ``initialize``; ``chats`` is resolved
+    here, before any setting is read, so every setting (including ones added later) can be set
+    per chat without being listed anywhere."""
+
+    values: dict[str, Any]
+    chat_key: str
+    matched: str | None = None
+    overrides: dict[str, Any] | None = None
+    # The entry's non-empty ``bank_id``: it pins this chat's bank over the env, repository and template.
+    chat_bank_id: str = ""
+
+
+def resolve_chat_config(raw: dict, scope: ChatScope) -> ResolvedConfig:
+    """Lay the most specific matching ``chats`` entry over the top-level config.
+
+    Only one entry applies (they don't stack). A key the entry sets replaces the top-level value
+    and its aliases. An entry's ``bank_id`` pins the bank, so without its own ``bank_id_template``
+    it also clears a top-level template. A malformed ``chats`` map or entry is ignored with a warning."""
+    chats = raw.get("chats")
+    base = {k: v for k, v in raw.items() if k != "chats"}
+    if chats is None:
+        return ResolvedConfig(base, scope.key)
+    if not isinstance(chats, dict):
+        logger.warning("Ignoring Hindsight chats: expected an object keyed by platform/chat/thread, got %r", chats)
+        return ResolvedConfig(base, scope.key)
+    matched = next((key for key in scope.candidates() if key in chats), None)
+    if matched is None:
+        return ResolvedConfig(base, scope.key)
+    entry = chats[matched]
+    if not isinstance(entry, dict):
+        logger.warning("Ignoring Hindsight chats[%r]: expected an object of settings, got %r", matched, entry)
+        return ResolvedConfig(base, scope.key)
+    if "chats" in entry:
+        logger.warning("Ignoring chats inside Hindsight chats[%r]: entries don't nest", matched)
+    overrides = {k: v for k, v in entry.items() if k != "chats"}
+    for group in _CONFIG_ALIASES:
+        if any(name in overrides for name in group):
+            for name in group:
+                if name not in overrides:
+                    base.pop(name, None)
+    chat_bank_id = str(overrides.get("bank_id") or "").strip()
+    if chat_bank_id and "bank_id_template" not in overrides:
+        base.pop("bank_id_template", None)
+    return ResolvedConfig({**base, **overrides}, scope.key, matched, overrides, chat_bank_id)
+
+
+def _fill_tag_templates(tags: List[str], **placeholders: str) -> List[str]:
+    """Fill ``{chat}``-style placeholders in tag settings (``{session}`` is not one: sessions rotate,
+    and every retain already carries its ``session:`` tag). A tag whose placeholder is empty is dropped
+    (``topic:{thread}`` outside a thread adds no tag); one naming an unknown placeholder, or not a
+    valid template, is kept as written."""
+    filled: list[str] = []
+    for tag in tags:
+        fields = _template_fields(tag)
+        if not fields:
+            filled.append(tag)
+            continue
+        if not fields <= placeholders.keys():
+            logger.warning("Hindsight tag %r names an unknown placeholder; kept as written", tag)
+            filled.append(tag)
+            continue
+        if not all(placeholders[name] for name in fields):
+            continue
+        try:
+            filled.append(tag.format(**placeholders))
+        except (ValueError, IndexError, KeyError, AttributeError):
+            filled.append(tag)
+    return list(dict.fromkeys(filled))
 
 
 def _repository_root(start_dir: str) -> Path | None:

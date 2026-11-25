@@ -116,7 +116,8 @@ def run_setup(provider, hermes_home: str, config: dict) -> None:
 
     print("\n  Configuring Hindsight memory:\n")
 
-    existing_config = provider._config if isinstance(provider._config, dict) else _load_config()
+    # The file itself, never provider._config: that one has this chat's chats entry merged in.
+    existing_config = _load_config()
     if not isinstance(existing_config, dict):
         existing_config = {}
 
