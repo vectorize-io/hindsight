@@ -13,6 +13,10 @@ EXAMPLES_DIR="$ROOT_DIR/hindsight-docs/examples"
 SKILL_DIR="$ROOT_DIR/skills/hindsight-docs"
 REFS_DIR="$SKILL_DIR/references"
 
+# Resolve the real interpreter once: version-manager shims (pyenv, asdf) cost
+# a lot per launch, and this script launches python once per docs file.
+PY="$(python3 -c "import sys; print(sys.executable)")"
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -57,7 +61,7 @@ process_file() {
 # Figures (<Figure doc={x} />) become their step-by-step narration, read from the figure's JSON.
 render_figures() {
     if grep -q '<Figure ' "$2"; then
-        python3 "$ROOT_DIR/scripts/docs_skill_figures.py" "$1" "$2"
+        "$PY" "$ROOT_DIR/scripts/docs_skill_figures.py" "$1" "$2"
     fi
 }
 
@@ -70,7 +74,7 @@ convert_mdx_to_md() {
     local dest="$2"
 
     # Use Python for more robust processing
-    python3 - "$src" "$dest" "$EXAMPLES_DIR" "$ROOT_DIR/hindsight-docs/src/data/llmProviders.json" <<'PYTHON'
+    "$PY" - "$src" "$dest" "$EXAMPLES_DIR" "$ROOT_DIR/hindsight-docs/src/data/llmProviders.json" <<'PYTHON'
 import json
 import sys
 import re
@@ -256,7 +260,7 @@ process_reference_tree() {
 normalize_markdown_file() {
     local file="$1"
 
-    python3 - "$file" <<'PYTHON'
+    "$PY" - "$file" <<'PYTHON'
 import re
 import sys
 from pathlib import Path
@@ -485,7 +489,7 @@ print_info "✓ SKILL.md created with search guidance"
 
 # Rewrite Docusaurus absolute paths (e.g. /developer/foo) to relative paths
 print_info "Rewriting Docusaurus absolute paths to relative paths..."
-python3 - "$REFS_DIR" <<'PYTHON'
+"$PY" - "$REFS_DIR" <<'PYTHON'
 import sys
 import re
 import os
@@ -568,7 +572,7 @@ PYTHON
 
 # Validate: no links point outside the skill directory
 print_info "Validating links in generated skill files..."
-python3 - "$SKILL_DIR" <<'PYTHON'
+"$PY" - "$SKILL_DIR" <<'PYTHON'
 import sys
 import re
 from pathlib import Path
