@@ -729,6 +729,16 @@
       "category": "tool",
       "link": "https://github.com/paabL/hindsight-desktop",
       "icon": "/img/icons/hindsight-desktop.png"
+    },
+    {
+      "id": "cimind",
+      "name": "CiMind",
+      "description": "Memory firewall for assistive-care agents. An operation validator extension that quarantines unverified speech, fences it out of recall and reflect, and ships a healthcare bank template.",
+      "type": "community",
+      "by": "TinkeringDao",
+      "category": "framework",
+      "link": "https://github.com/TinkeringDao/CiMind",
+      "icon": "/img/icons/cimind.png"
     }
   ]
 }
