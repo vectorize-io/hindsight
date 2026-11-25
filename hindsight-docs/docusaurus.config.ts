@@ -319,6 +319,8 @@ const config: Config = {
         alt: 'Hindsight Logo',
         src: 'img/logo.png',
         style: { height: '32px' },
+        // Under a prefix the logo is the main site's, so it goes to its home.
+        ...(EMBEDDED ? {href: MAIN_SITE_URL, target: '_self'} : {}),
       },
       items: [
         {
