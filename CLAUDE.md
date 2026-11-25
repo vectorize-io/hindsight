@@ -410,6 +410,13 @@ Every new integration in `hindsight-integrations/` must satisfy all of the follo
 
 If any of these are missing, the integration is incomplete and must not be pushed or merged.
 
+### GitHub Labels
+
+Only use labels that already exist (`gh label list`). Never create one, and never add a label
+that isn't listed — the API silently creates it. Any label outside the allowlist in
+`.github/workflows/label-allowlist.yml` is deleted automatically. Area: `core`, `integration`,
+`integration:<name>`. Blocked on someone else: `waiting-for-external`.
+
 ### Changelogs
 
 Never add "Unreleased" entries to changelogs (e.g. `hindsight-docs/src/pages/changelog/**`). Changelog entries are written by the release script (`./scripts/release-integration.sh`) when a version is actually cut. If a bug fix or feature needs documenting before release, describe it in the PR/commit — the release tooling will surface it in the published changelog section.

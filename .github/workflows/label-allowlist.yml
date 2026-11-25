@@ -1,0 +1,40 @@
+name: Label allowlist
+
+# GitHub can't restrict label creation, and adding a missing label through the
+# API creates it. So any label created (or renamed) outside this list is undone
+# right away: a new one is deleted, a renamed one gets its old name back.
+# To add a label for real: add it here first, then create it.
+on:
+  label:
+    types: [created, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ACTION: ${{ github.event.action }}
+          LABEL: ${{ github.event.label.name }}
+          OLD_NAME: ${{ github.event.changes.name.from }}
+        run: |
+          allowed=(
+            waiting-for-external
+            core integration integration:hermes integration:openclaw integration:coding-agents
+            security p0 p1 p2 p3
+            oracle-tests
+          )
+          # An edit that only changed color or description is fine.
+          [ "$ACTION" = edited ] && [ -z "$OLD_NAME" ] && exit 0
+          for a in "${allowed[@]}"; do [ "$a" = "$LABEL" ] && exit 0; done
+          if [ "$ACTION" = edited ]; then
+            echo "Renaming '$LABEL' back to '$OLD_NAME': not in the allowlist (.github/workflows/label-allowlist.yml)"
+            gh label edit "$LABEL" --name "$OLD_NAME"
+          else
+            echo "Deleting label '$LABEL': not in the allowlist (.github/workflows/label-allowlist.yml)"
+            gh label delete "$LABEL" --yes
+          fi

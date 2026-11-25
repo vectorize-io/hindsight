@@ -19,6 +19,7 @@ import urllib.request
 CORE = "core"
 INTEGRATION = "integration"
 # Integrations that get their own label; every other one is just INTEGRATION.
+# Every label here must also be in .github/workflows/label-allowlist.yml, or it is deleted on creation.
 OWN_LABEL = {
     "hermes": "integration:hermes",
     "openclaw": "integration:openclaw",
