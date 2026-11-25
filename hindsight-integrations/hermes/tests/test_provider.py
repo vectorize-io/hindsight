@@ -819,7 +819,7 @@ def test_prompt_does_not_promise_injected_memories_when_auto_recall_is_off(provi
 
 @pytest.mark.parametrize("config", [{}, {"auto_recall": False}, {"memory_mode": "tools"}])
 def test_prompt_tells_the_model_to_store_corrections(provider, config):
-    """#5373: with no instruction, a wrong memory the user corrected was served again next session."""
+    """#5373: the model was never told what to do when a memory is wrong, so it rarely stored a fix."""
     instance, _ = provider(config)
     assert "store the correction with hindsight_retain" in instance.system_prompt_block()
 

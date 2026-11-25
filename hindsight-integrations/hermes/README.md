@@ -464,6 +464,10 @@ Available in `hybrid` and `tools` memory modes:
 | `hindsight_list_pages` | Every page and folder by name and id (`page_tools`) |
 | `hindsight_create_page` | Create a page from a name and a question, only when the user asks (`page_create_tool`, off by default) |
 
+The model is told to fix wrong memories: when the user says a memory is wrong or out of date, or the
+model finds one is, it stores the correction with `hindsight_retain` (what memory said, what is true
+now, and why). The newer fact then replaces the old one when Hindsight rebuilds its observations.
+
 ## Environment Variables
 
 Set these in the profile's `$HERMES_HOME/.env`. A value in `config.json` wins over its variable, except where noted.
