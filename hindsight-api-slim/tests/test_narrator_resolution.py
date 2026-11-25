@@ -11,8 +11,9 @@ label like ``AuditProject_0825`` (#3962). Either way the string ends up verbatim
 stored fact text that never mentioned it. Retain now passes no narrator at all; a
 caller who wants to name the speaker says so in the item's ``context``.
 
-``extract_facts_from_text`` still accepts an explicit ``agent_name`` (the dry-run
-endpoint's deprecated override), so the injection itself is still exercised here.
+``extract_facts_from_text`` still accepts an explicit ``agent_name``, so the injection
+itself is still exercised here. The dry-run endpoint's deprecated ``agent_name`` is
+ignored, so a dry run builds the same prompt retain does.
 """
 
 from datetime import datetime, timezone
@@ -112,3 +113,24 @@ async def test_retain_primes_no_narrator_for_a_named_bank(memory, request_contex
         assert project_name not in stored, "the bank's display name leaked into stored memory"
     finally:
         await memory.delete_bank(bank_id, request_context=request_context)
+
+
+@pytest.mark.asyncio
+async def test_dry_run_ignores_deprecated_agent_name(api_client, monkeypatch):
+    """The dry run must build the prompt retain builds, so a passed ``agent_name`` is ignored."""
+    bank_id = f"test_dry_run_agent_name_{datetime.now(timezone.utc).timestamp()}"
+    spy = _PromptSpy()
+    spy.install(monkeypatch)
+    try:
+        response = await api_client.post(
+            f"/v1/default/banks/{bank_id}/memories/dry-run-extract",
+            json={"content": "I fixed the deploy script today.", "agent_name": "Hermes Agent"},
+        )
+        assert response.status_code == 200, response.text
+
+        assert spy.messages, "no extraction prompt was built — the test proves nothing"
+        for message in spy.messages:
+            assert "Narrator:" not in message, f"dry run primed a narrator: {message}"
+            assert "Hermes Agent" not in message
+    finally:
+        await api_client.delete(f"/v1/default/banks/{bank_id}")

@@ -13990,7 +13990,6 @@ class MemoryEngine(MemoryEngineInterface):
         event_date: "datetime | None" = None,
         strategy: str | None = None,
         overrides: dict | None = None,
-        agent_name: str | None = None,
         request_context: "RequestContext",
     ) -> "DryRunExtractionResult":
         """Run fact extraction ONLY — no entity resolution, links, embeddings, or persistence.
@@ -13998,8 +13997,8 @@ class MemoryEngine(MemoryEngineInterface):
         Returns candidate facts (a subset of the ``list_memory_units`` item shape) plus the LLM token
         usage, so callers can diff a mission's extraction output against stored memories without
         mutating the bank. Every prompt-affecting setting is overridable per call via ``overrides``
-        (e.g. to test a candidate retain mission). ``agent_name`` is deprecated (describe the speaker
-        in ``context`` instead) but still overrides the narrator when supplied, for backwards compatibility.
+        (e.g. to test a candidate retain mission). It never primes a narrator, exactly as retain doesn't:
+        a caller who wants to name the speaker says so in ``context``.
         Side-effect-free and idempotent.
         """
 
@@ -14114,9 +14113,7 @@ class MemoryEngine(MemoryEngineInterface):
                 usage=chunked.usage,
             )
 
-        # No narrator unless the caller passed one. The bank's display `name` is deliberately
-        # NOT consulted: it leaked into extracted fact text (#3962), and retain no longer
-        # derives a narrator from it either, so a dry run must mirror what retain would do.
+        # No narrator: retain primes none (#3962), and a dry run must build the prompt retain builds.
         retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
         facts, chunks, usage = await fact_extraction.extract_facts_from_text(
             text=canonical.text,
@@ -14125,7 +14122,6 @@ class MemoryEngine(MemoryEngineInterface):
             vlm_config=self._vlm_config,
             config=resolved_config,
             context=context,
-            agent_name=agent_name,
             attachment_loader=attachment_loader,
         )
 

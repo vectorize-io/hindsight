@@ -2479,7 +2479,7 @@ export type DryRunExtractRequest = {
   /**
    * Agent Name
    *
-   * Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) primed in the prompt; still honored for backwards compatibility.
+   * Deprecated and ignored: real retain never primes a narrator, so neither does the dry run. Describe the speaker in `context` instead. Still accepted so old callers don't fail.
    *
    * @deprecated
    */

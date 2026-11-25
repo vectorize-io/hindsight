@@ -2765,8 +2765,8 @@ class DryRunExtractRequest(BaseModel):
         default=None,
         deprecated=True,
         description=(
-            "Deprecated: describe the speaker in `context` instead. Narrator override (memory owner) "
-            "primed in the prompt; still honored for backwards compatibility."
+            "Deprecated and ignored: real retain never primes a narrator, so neither does the dry run. "
+            "Describe the speaker in `context` instead. Still accepted so old callers don't fail."
         ),
     )
     strategy: str | None = Field(
@@ -5340,7 +5340,6 @@ def _register_routes(app: FastAPI):
                 event_date=body.timestamp,
                 strategy=body.strategy,
                 overrides=overrides,
-                agent_name=body.agent_name,
                 request_context=request_context,
             )
         except ValueError as e:
