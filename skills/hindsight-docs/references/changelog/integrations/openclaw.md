@@ -8,6 +8,14 @@ import PageHero from '@site/src/components/PageHero';
 
 [← OpenClaw integration](../../sdks/integrations/openclaw.md)
 
+## [1.2.3](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v1.2.3)
+
+[Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/openclaw/v1.2.3)
+
+**Bug Fixes**
+
+- Fixed the OpenClaw setup wizard so Hindsight correctly occupies the configured memory slot, and updated installation compatibility for OpenClaw 2026.11 and ClawHub.<span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/nicoloboschi" target="_blank" rel="noopener noreferrer" style={{color: "var(--ifm-color-primary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "4px", verticalAlign: "middle"}}>@nicoloboschi</a><span style={{color: "var(--ifm-color-emphasis-500)", margin: "0 0.3em"}}>·</span><a href="https://github.com/vectorize-io/hindsight/commit/6ef019d6f" target="_blank" rel="noopener noreferrer" style={{fontFamily: "var(--ifm-font-family-monospace, monospace)", fontSize: "0.85em", color: "var(--ifm-color-emphasis-600)"}}>6ef019d6f</a>
+
 ## [1.2.2](https://github.com/vectorize-io/hindsight/tree/integrations/openclaw/v1.2.2)
 
 [Commits in this release →](https://github.com/vectorize-io/hindsight/commits/integrations/openclaw/v1.2.2)

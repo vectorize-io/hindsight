@@ -1,6 +1,6 @@
 {
   "name": "@vectorize-io/hindsight-openclaw",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Hindsight memory plugin for OpenClaw - biomimetic long-term memory with fact extraction",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
