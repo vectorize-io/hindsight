@@ -14114,6 +14114,9 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
         # No narrator: retain primes none (#3962), and a dry run must build the prompt retain builds.
+        # The dry run used to honour the deprecated request field `agent_name` as a narrator
+        # override; that made it test a "Narrator:" prompt production never sends, so the field
+        # is still accepted by the endpoint but no longer reaches extraction.
         retain_llm = self._retain_llm_config.with_config(resolved_config, bank_id=bank_id, operation="retain")
         facts, chunks, usage = await fact_extraction.extract_facts_from_text(
             text=canonical.text,
