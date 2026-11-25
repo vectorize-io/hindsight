@@ -5,6 +5,7 @@ import {SiPostgresql} from 'react-icons/si';
 import {LuArrowRight} from 'react-icons/lu';
 import CodingAgentsChart from './CodingAgentsChart';
 import styles from './HomeFlow.module.css';
+import {useSignupUrl} from './useSignupUrl';
 
 /**
  * The one-glance version of how Hindsight is used, and the homepage's router.
@@ -74,6 +75,7 @@ function Icons({items}: {items: {label: string; src: string}[]}): ReactNode {
 }
 
 export default function HomeFlow(): ReactNode {
+  const signupUrl = useSignupUrl();
   const {withBaseUrl} = useBaseUrlUtils();
   return (
     <div className={styles.flow}>
@@ -184,7 +186,7 @@ await hs.reflect(bank, "should I suggest Vue?")`}
         {/* Managed first: it is the one option that takes no decision. */}
         <ul className={styles.options}>
           <li className={styles.optionPrimary}>
-            <Link to="https://ui.hindsight.vectorize.io/signup">
+            <Link to={signupUrl}>
               Hindsight Cloud
               <LuArrowRight size={12} />
             </Link>
