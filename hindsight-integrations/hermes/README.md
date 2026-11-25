@@ -318,7 +318,7 @@ work the same way: anything the plugin reads from its config can go in an entry.
 
 #### Tag placeholders
 
-`retain_tags`, `recall_tags` and `reflect_tags` accept `{platform}`, `{chat}`, `{thread}`, `{user}`, `{profile}`,
+`retain_tags`, `recall_tags`, `recall_exclude_tags` and `reflect_tags` accept `{platform}`, `{chat}`, `{thread}`, `{user}`, `{profile}`,
 `{workspace}` and `{project}`, so one bank can be split softly by chat or topic:
 
 ```json
@@ -343,11 +343,9 @@ recalls everything in a chat without topics. Values are used as they are, not cl
 | `session_context` | — | Mental models and pages to add to the system prompt when a session starts, in the order listed: a JSON list or comma-separated text of `mental_model:<id>` or `page:<id>` (a bare id is a mental model). Each is read once per session (no LLM call, 5 s limit) and stays the same for the whole session, so prompt caching keeps working; an update shows up in the next session. One that cannot be read is skipped with a warning. In `local_embedded` mode it is skipped when the local daemon is not running yet. |
 | `recall_tags` | — | Tags to filter when searching memories: a JSON list (e.g. `["project-x", "team"]`) or comma-separated text (`"project-x, team"`). Accepts the [tag placeholders](#tag-placeholders). |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
-| `recall_exclude_tags` | — | Tags to keep out of recall (auto-recall and the `hindsight_recall` tool), as a JSON list or comma-separated text (e.g. `"draft, scratch"`). A memory carrying any of them is skipped but stays in the bank; untagged memories and other tags are unaffected. Combines with `recall_tags`; does not apply to reflect. |
-| `reflect_tags` | — | Tags that scope what reflect reasons over (the `hindsight_reflect` tool and `recall_prefetch_method: reflect`), as a JSON list or comma-separated text. Unset, reflect uses the whole bank; `recall_tags` does not apply to reflect. |
+| `recall_exclude_tags` | — | Tags to keep out of recall (auto-recall and the `hindsight_recall` tool), as a JSON list or comma-separated text (e.g. `"draft, scratch"`). A memory carrying any of them is skipped but stays in the bank; untagged memories and other tags are unaffected. Combines with `recall_tags`; does not apply to reflect. Accepts the [tag placeholders](#tag-placeholders). |
+| `reflect_tags` | — | Tags that scope what reflect reasons over (the `hindsight_reflect` tool and `recall_prefetch_method: reflect`), as a JSON list or comma-separated text. Unset, reflect uses the whole bank; `recall_tags` does not apply to reflect. Accepts the [tag placeholders](#tag-placeholders). |
 | `reflect_tags_match` | `any` | Tag matching mode for `reflect_tags` |
-
-`reflect_tags` accepts the [tag placeholders](#tag-placeholders) too.
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
 | `recall_min_scores` | — | Minimum relevance per score field, as a JSON object (e.g. `{"reranker": 0.25}` or `{"semantic": 0.5}`). Applies to both auto-recall and the `hindsight_recall` tool. See the tip below. |
 | `auto_recall` | `true` | Automatically recall memories before each turn |

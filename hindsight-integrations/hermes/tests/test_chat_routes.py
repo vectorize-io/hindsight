@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import PLUGIN_ROOT, SECRETS, FakeClient, plugin
 
+from hindsight_hermes.embedded import LocalRuntimeStatus
 from hindsight_hermes.settings import ChatScope, resolve_chat_config
 
 TOPIC = {"platform": "telegram", "chat_id": "-100123", "thread_id": "42"}
@@ -122,11 +123,13 @@ def test_tag_placeholders_follow_the_chat(provider):
         "retain_tags": ["hermes", "topic:{thread}", "chat:{chat}"],
         "recall_tags": ["topic:{thread}"],
         "reflect_tags": ["topic:{thread}", "{nope}"],
+        "recall_exclude_tags": ["draft:{chat}"],
     }
     topic, _ = provider(config, **TOPIC)
     assert topic._retain_tags == ["hermes", "topic:42", "chat:-100123"]
     assert topic._recall_tags == ["topic:42"]
     assert topic._reflect_tags == ["topic:42", "{nope}"]  # unknown placeholder: kept as written
+    assert topic._recall_exclude_tags == ["draft:-100123"]
     dm, _ = provider(config, platform="discord", chat_id="555")
     assert dm._retain_tags == ["hermes", "chat:555"]  # empty {thread}: that tag is dropped
     assert dm._recall_tags is None
@@ -180,3 +183,53 @@ def test_any_key_reaches_the_provider_config(provider):
     assert instance._config["a_setting_added_next_year"] == 7
     assert instance._config is instance._chat_route.values
     assert plugin.HindsightMemoryProvider()._chat_route.values == {}
+
+
+def test_an_empty_chat_bank_keeps_the_top_level_bank_and_template():
+    raw = {"bank_id": "top", "bank_id_template": "t-{platform}", "chats": {"telegram": {"bank_id": " "}}}
+    resolved = resolve_chat_config(raw, ChatScope("telegram"))
+    assert resolved.chat_bank_id == "" and resolved.values["bank_id_template"] == "t-{platform}"
+
+
+def test_no_platform_is_the_cli_key(provider):
+    """Hermes' background-review fork can pass an empty platform."""
+    instance, _ = provider({"chats": {"cli": {"auto_recall": False}}}, platform="")
+    assert instance._platform == "cli" and instance._chat_route.matched == "cli"
+
+
+def test_project_placeholder_in_a_tag_is_filled_without_a_project_template(provider, tmp_path):
+    repo = tmp_path / "my-repo"
+    (repo / ".git").mkdir(parents=True)
+    instance, _ = provider({"retain_tags": ["repo:{project}"]}, cwd=str(repo))
+    assert instance._retain_tags == ["repo:my-repo"]
+
+
+def test_daemon_settings_without_a_profile_warn(provider, monkeypatch, caplog):
+    monkeypatch.setattr(plugin, "_check_local_runtime", lambda: LocalRuntimeStatus(available=True))
+    monkeypatch.setattr(plugin.HindsightMemoryProvider, "_start_embedded_daemon", lambda self: None)
+    config = {
+        "mode": "local_embedded",
+        "chats": {"telegram": {"llm_model": "big"}, "discord": {"llm_model": "big", "profile": "dc"}},
+    }
+    provider(config, platform="telegram")
+    provider(config, platform="discord")
+    warnings = [r.getMessage() for r in caplog.records if "without its own profile" in r.getMessage()]
+    assert len(warnings) == 1 and "chats['telegram']" in warnings[0]
+
+
+def test_the_daemon_settings_list_covers_what_the_profile_env_reads():
+    """The warning above checks _DAEMON_ENV_SETTINGS; a key the daemon env adds later must join it."""
+    tree = ast.parse((PLUGIN_ROOT / "embedded.py").read_text(encoding="utf-8"))
+    builders = {"_build_embedded_profile_env", "_embedded_llm_api_key"}
+    read = {
+        node.args[0].value
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.FunctionDef) and fn.name in builders
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "attr", "") == "get"
+        and getattr(node.func.value, "id", "") == "config"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+    }
+    assert read == set(plugin._DAEMON_ENV_SETTINGS)

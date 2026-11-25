@@ -338,10 +338,12 @@ class ResolvedConfig:
     here, before any setting is read, so every setting (including ones added later) can be set
     per chat without being listed anywhere."""
 
-    values: dict
+    values: dict[str, Any]
     chat_key: str
     matched: str | None = None
-    overrides: dict | None = None
+    overrides: dict[str, Any] | None = None
+    # The entry's non-empty ``bank_id``: it pins this chat's bank over the env, repository and template.
+    chat_bank_id: str = ""
 
 
 def resolve_chat_config(raw: dict, scope: ChatScope) -> ResolvedConfig:
@@ -372,9 +374,10 @@ def resolve_chat_config(raw: dict, scope: ChatScope) -> ResolvedConfig:
             for name in group:
                 if name not in overrides:
                     base.pop(name, None)
-    if "bank_id" in overrides and "bank_id_template" not in overrides:
+    chat_bank_id = str(overrides.get("bank_id") or "").strip()
+    if chat_bank_id and "bank_id_template" not in overrides:
         base.pop("bank_id_template", None)
-    return ResolvedConfig({**base, **overrides}, scope.key, matched, overrides)
+    return ResolvedConfig({**base, **overrides}, scope.key, matched, overrides, chat_bank_id)
 
 
 def _fill_tag_templates(tags: List[str], **placeholders: str) -> List[str]:
