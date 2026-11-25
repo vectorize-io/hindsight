@@ -15,7 +15,7 @@ docker build --target api-only --build-arg INCLUDE_LOCAL_MODELS=false --build-ar
 BASE_IMAGE=hindsight-onnx-base:dev docker compose -f docker/docker-compose/cuda-onnx/docker-compose.yaml up --build
 ```
 
-The development base serves the API on port 8888; published standalone slim images also serve the control plane on port 9999. Set `HINDSIGHT_API_LLM_API_KEY` for your LLM provider before starting. The recipe disables local reranking to avoid installing PyTorch; configure a supported remote reranker if needed.
+The development base serves the API on port 8888; published standalone slim images also serve the control plane on port 9999. Set `HINDSIGHT_API_LLM_API_KEY` for your LLM provider before starting. The recipe skips reranking (`rrf`, no model) to avoid installing PyTorch; set `HINDSIGHT_API_RERANKER_PROVIDER` to a supported remote reranker if needed.
 
 The recipe targets Linux x86_64 and defaults to ONNX Runtime 1.26.0 with CUDA 12 and cuDNN 9. This pin retains CUDA 12 compatibility: the default PyPI GPU wheels switch to CUDA 13 starting with ORT 1.27. See the [ORT CUDA compatibility documentation](https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html). CUDA libraries are installed inside the image; the host needs a compatible NVIDIA driver and GPU passthrough. Set `ONNXRUNTIME_GPU_VERSION` to select another compatible wheel. Transitive NVIDIA dependency versions may change between builds. Set `HINDSIGHT_API_EMBEDDINGS_ONNX_CUDA_DEVICE_ID` to a non-negative GPU index within the container's visible devices (default: 0).
 
