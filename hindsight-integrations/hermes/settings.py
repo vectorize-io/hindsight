@@ -10,6 +10,7 @@ import re
 import string
 import tomllib
 from dataclasses import dataclass
+from datetime import datetime, timezone, tzinfo
 from pathlib import Path
 from typing import Any, List
 
@@ -106,6 +107,101 @@ def _normalize_string_list(value: Any) -> List[str]:
         if entry and entry not in normalized:
             normalized.append(entry)
     return normalized
+
+
+def _local_date(value: Any, tz: tzinfo | None) -> str:
+    """A server timestamp (UTC ISO 8601, or a datetime) as ``YYYY-MM-DD`` in *tz*, else ``""``.
+
+    Converted before cutting the day off: an 18:30 UTC fact is already the next day in UTC+8.
+    A naive value is UTC (the server's zone). Anything that does not parse renders nothing, so a
+    malformed field never becomes a fake date in the prompt."""
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return ""
+    else:
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(tz).date().isoformat()
+
+
+def _format_memory(result: Any, tz: tzinfo | None = None) -> str:
+    """One recalled memory with its dates, so the model can tell an old fact from a fresh one (#4697).
+
+    ``mentioned`` is when the fact was stated; ``occurred`` is when the event itself happened, which
+    is what dates the claim (a fact new to the bank can describe an old state). Same shape as the
+    OpenClaw plugin's ``formatMemories``; each bound can be missing, so each case reads plainly."""
+    text = getattr(result, "text", "") or ""
+    mentioned = _local_date(getattr(result, "mentioned_at", None), tz)
+    start = _local_date(getattr(result, "occurred_start", None), tz)
+    end = _local_date(getattr(result, "occurred_end", None), tz)
+    if start and end:
+        occurred = f" [occurred: {start}]" if start == end else f" [occurred: {start} → {end}]"
+    elif start:
+        occurred = f" [occurred from: {start}]"
+    elif end:
+        occurred = f" [occurred until: {end}]"
+    else:
+        occurred = ""
+    return f"{text}{f' (mentioned: {mentioned})' if mentioned else ''}{occurred}"
+
+
+def _compile_line_patterns(value: Any) -> list[re.Pattern[str]]:
+    """``recall_query_strip_patterns`` -> compiled regexes. A list, a JSON list or one pattern per
+    line (commas are regex syntax, so they do not split). An invalid pattern is skipped with a warning."""
+    if isinstance(value, str):
+        text = value.strip()
+        parsed = None
+        if text.startswith("["):
+            with contextlib.suppress(ValueError):
+                parsed = json.loads(text)
+        value = parsed if isinstance(parsed, list) else text.splitlines()
+    patterns: list[re.Pattern[str]] = []
+    for raw in value or []:
+        if not str(raw).strip():
+            continue
+        try:
+            patterns.append(re.compile(str(raw)))
+        except re.error as exc:
+            logger.warning("Ignoring invalid recall_query_strip_patterns entry %r: %s", raw, exc)
+    return patterns
+
+
+def _strip_query_lines(query: str, patterns: list[re.Pattern[str]]) -> str:
+    """Drop the query lines any pattern matches (#5639). If nothing would be left, keep the query
+    as it was: a too-broad pattern then degrades to the old behaviour instead of disabling recall."""
+    if not patterns:
+        return query
+    kept = "\n".join(line for line in query.splitlines() if not any(p.search(line) for p in patterns)).strip()
+    return kept or query
+
+
+@dataclass(frozen=True)
+class SessionContextRef:
+    """One ``session_context`` entry: a mental model or a page, by id."""
+
+    kind: str  # "mental_model" | "page"
+    ref: str
+
+
+def _parse_session_context(value: Any) -> list[SessionContextRef]:
+    """``session_context`` -> the entries in the configured order (#5285).
+
+    Each entry is ``mental_model:<id>`` or ``page:<id>``; a bare id is a mental model. Unknown
+    kinds are dropped with a warning."""
+    entries: list[SessionContextRef] = []
+    for item in _normalize_string_list(value):
+        kind, sep, ref = item.partition(":")
+        kind, ref = (kind.strip(), ref.strip()) if sep else ("mental_model", item)
+        if kind not in ("mental_model", "page") or not ref:
+            logger.warning("Ignoring session_context entry %r: expected mental_model:<id> or page:<id>", item)
+            continue
+        entries.append(SessionContextRef(kind, ref))
+    return entries
 
 
 def _normalize_min_scores(value: Any) -> dict[str, float] | None:

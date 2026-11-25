@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 import hindsight_hermes as plugin
-from conftest import FakeClient, FakeRecallResponse
+from conftest import FakeClient, FakeRecallResponse, FakeResult
 from hindsight_client_api.exceptions import NotFoundException
 
 
@@ -1114,3 +1114,112 @@ def test_retain_kanban_never_lets_sub_agents_write_automatically(provider):
     child.sync_turn("delegated", "done")
     child.shutdown()
     assert fake.retains == []
+
+
+# -- recalled memory dates (#4697) --------------------------------------------
+
+
+def test_format_memory_shows_mentioned_and_occurred_in_the_given_timezone():
+    from datetime import timedelta, timezone
+
+    utc8 = timezone(timedelta(hours=8))
+    r = SimpleNamespace(
+        text="Quota depends on the plan",
+        mentioned_at="2026-10-18T18:30:00Z",  # already the 19th in UTC+8
+        occurred_start="2026-09-01T00:00:00+00:00",
+        occurred_end="2026-09-03T00:00:00+00:00",
+    )
+    assert plugin._format_memory(r, utc8) == (
+        "Quota depends on the plan (mentioned: 2026-10-19) [occurred: 2026-09-01 → 2026-09-03]"
+    )
+
+
+def test_format_memory_handles_missing_partial_and_malformed_dates():
+    ns = SimpleNamespace
+    utc = __import__("datetime").timezone.utc
+    assert plugin._format_memory(ns(text="t"), utc) == "t"
+    assert plugin._format_memory(ns(text="t", mentioned_at="not a date", occurred_start=1700000000), utc) == "t"
+    assert (
+        plugin._format_memory(ns(text="t", occurred_start="2026-09-01T00:00:00"), utc)
+        == "t [occurred from: 2026-09-01]"
+    )
+    assert (
+        plugin._format_memory(ns(text="t", occurred_end="2026-09-01T00:00:00Z"), utc)
+        == "t [occurred until: 2026-09-01]"
+    )
+    same = ns(text="t", occurred_start="2026-09-01T10:00:00Z", occurred_end="2026-09-01T12:00:00Z")
+    assert plugin._format_memory(same, utc) == "t [occurred: 2026-09-01]"
+
+
+class _DatedClient(FakeClient):
+    async def arecall(self, **kwargs):
+        self.recalls.append(kwargs)
+        r = FakeResult("Alice drives a Subaru")
+        r.mentioned_at, r.occurred_start, r.occurred_end = "2026-10-18T10:00:00Z", None, None
+        return SimpleNamespace(results=[r])
+
+
+def test_auto_recall_and_recall_tool_both_show_dates(provider):
+    instance, _ = provider(client=_DatedClient())
+    text, count = instance._do_recall("what car")
+    assert count == 1 and text == "- Alice drives a Subaru (mentioned: 2026-10-18)"
+    assert instance._tool_recall({"query": "what car"}) == "1. Alice drives a Subaru (mentioned: 2026-10-18)"
+
+
+# -- recall_query_strip_patterns (#5639) --------------------------------------
+
+
+def test_strip_patterns_remove_boilerplate_before_the_input_cut(provider):
+    instance, fake = provider({"recall_query_strip_patterns": "^NONCE: \\w+\n[invalid", "recall_max_input_chars": 20})
+    instance._do_recall("NONCE: abc123 issued by orchestrator\nfix the lease renewal script please")
+    assert fake.recalls[-1]["query"] == "fix the lease renewa"
+
+
+def test_strip_patterns_unset_or_matching_everything_keep_the_query(provider):
+    instance, fake = provider({"recall_query_strip_patterns": [".*"]})
+    instance._do_recall("only boilerplate")
+    assert fake.recalls[-1]["query"] == "only boilerplate"
+    instance, fake = provider()
+    instance._do_recall("NONCE: x\nbody")
+    assert fake.recalls[-1]["query"] == "NONCE: x\nbody"
+
+
+# -- session_context (#5285) --------------------------------------------------
+
+
+class _ContextClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.reads: list[str] = []
+
+    async def aget_mental_model(self, *, bank_id, mental_model_id, detail):
+        self.reads.append(f"mm:{mental_model_id}")
+        if mental_model_id == "missing":
+            raise RuntimeError("404 not found")
+        return SimpleNamespace(name=f"Model {mental_model_id}", content=f"content of {mental_model_id}")
+
+    async def aget_page(self, *, bank_id, page_id):
+        self.reads.append(f"page:{page_id}")
+        return SimpleNamespace(name="Profile", body="page body")
+
+
+def test_session_context_injects_models_and_pages_in_order_once(provider):
+    client = _ContextClient()
+    instance, _ = provider({"session_context": "page:p1, missing, mental_model:m2"}, client=client)
+    first = instance.system_prompt_block()
+    assert first == instance.system_prompt_block()  # byte-stable: read once per session
+    assert client.reads == ["page:p1", "mm:missing", "mm:m2"]
+    assert first.index("## Profile\npage body") < first.index("## Model m2\ncontent of m2")
+    assert "missing" not in first
+
+
+def test_session_context_unset_makes_no_request(provider):
+    client = _ContextClient()
+    instance, _ = provider(client=client)
+    assert "Session Context" not in instance.system_prompt_block()
+    assert client.reads == []
+
+
+def test_session_context_rejects_unknown_kinds():
+    refs = plugin._parse_session_context(["page:a", "bogus:b", "plain", "page:"])
+    assert [(r.kind, r.ref) for r in refs] == [("page", "a"), ("mental_model", "plain")]
