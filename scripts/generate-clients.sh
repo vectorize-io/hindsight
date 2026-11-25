@@ -710,6 +710,11 @@ else
                 s/\t"fmt"\n// unless /fmt\./;
             }' "$f"
     done
+    # Fail loudly if a generator upgrade changed the code these patterns expect.
+    if grep -lE 'is not a valid \w+", value\)|data failed to match schemas' model_*.go; then
+        echo "❌ Error: Go enum/union patch no longer matches the generated code (see files above)"
+        exit 1
+    fi
 
     # Fix known generator issue: an API with file uploads uses os.File but the generator omits the "os" import
     for f in api_*.go; do
