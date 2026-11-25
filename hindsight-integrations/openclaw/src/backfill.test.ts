@@ -207,3 +207,27 @@ describe("backfill helpers", () => {
     expect(isDirectExecution(join(dir, "other-entrypoint"), moduleUrl)).toBe(false);
   });
 });
+
+describe("where backfill reads sessions (#5569)", () => {
+  const down = async () => {
+    throw new Error("gateway closed");
+  };
+
+  it("falls back to the session files when the Gateway can't be reached", async () => {
+    const { loadSessions } = await import("./backfill.js");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(loadSessions("auto", undefined, down)).resolves.toBeUndefined();
+  });
+
+  it("fails instead of falling back when the Gateway was asked for", async () => {
+    const { loadSessions } = await import("./backfill.js");
+    await expect(loadSessions("gateway", undefined, down)).rejects.toThrow("gateway closed");
+  });
+
+  it("never calls the Gateway for --source files", async () => {
+    const { loadSessions } = await import("./backfill.js");
+    const call = vi.fn(down);
+    await expect(loadSessions("files", undefined, call)).resolves.toBeUndefined();
+    expect(call).not.toHaveBeenCalled();
+  });
+});

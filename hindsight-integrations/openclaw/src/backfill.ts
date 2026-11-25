@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { existsSync, realpathSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { createRequire } from "module";
@@ -26,7 +28,10 @@ import {
   defaultOpenClawRoot,
   loadCheckpoint,
   loadPluginConfigFromOpenClawRoot,
+  readGatewaySessions,
   saveCheckpoint,
+  type GatewayCall,
+  type ParsedSessionFile,
   type BackfillCheckpoint,
   type BackfillPlanEntry,
   type BackfillCliOptions,
@@ -37,6 +42,7 @@ interface ParsedArgs {
   profile: string;
   agents: string[];
   includeArchive: boolean;
+  source: "auto" | "gateway" | "files";
   limit?: number;
   dryRun: boolean;
   json: boolean;
@@ -71,6 +77,10 @@ function usage(): string {
     "  --openclaw-root <path>        OpenClaw root directory (default: ~/.openclaw)",
     "  --profile <name>              Logical profile name for reporting (default: openclaw)",
     "  --agent <id>                  Restrict import to a specific agent (repeatable)",
+    "  --source <auto|gateway|files> Where sessions are read from. gateway: the running",
+    "                                OpenClaw Gateway (needed on 2026.10+, which keeps",
+    "                                sessions in its database). files: sessions/*.jsonl.",
+    "                                auto (default): gateway, or files if it can't be reached",
     "  --include-archive             Include migration archives (default)",
     "  --exclude-archive             Exclude migration archives",
     "  --limit <n>                   Stop after enqueueing N sessions",
@@ -94,6 +104,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     profile: "openclaw",
     agents: [],
     includeArchive: true,
+    source: "auto",
     dryRun: false,
     json: false,
     resume: false,
@@ -122,6 +133,14 @@ function parseArgs(argv: string[]): ParsedArgs {
       case "--agent":
         args.agents.push(next());
         break;
+      case "--source": {
+        const value = next();
+        if (value !== "auto" && value !== "gateway" && value !== "files") {
+          throw new Error(`invalid source: ${value}`);
+        }
+        args.source = value;
+        break;
+      }
       case "--include-archive":
         args.includeArchive = true;
         break;
@@ -433,6 +452,42 @@ async function waitForBanksToDrain(
   }
 }
 
+const execFileAsync = promisify(execFile);
+
+/**
+ * `openclaw gateway call` brings the Gateway URL and auth from the user's own
+ * OpenClaw config, so the backfill needs no token or protocol of its own.
+ */
+const openclawGatewayCall: GatewayCall = async (method, params) => {
+  const { stdout } = await execFileAsync(
+    "openclaw",
+    ["gateway", "call", method, "--params", JSON.stringify(params), "--json", "--timeout", "60000"],
+    { maxBuffer: 512 * 1024 * 1024 }
+  );
+  const result = JSON.parse(stdout) as { error?: { message?: string } };
+  if (result.error) throw new Error(`${method}: ${result.error.message ?? "gateway error"}`);
+  return result;
+};
+
+/** Gateway sessions, or undefined to read the `*.jsonl` files instead. */
+export async function loadSessions(
+  source: ParsedArgs["source"],
+  selectedAgents: Set<string> | undefined,
+  call: GatewayCall = openclawGatewayCall
+): Promise<ParsedSessionFile[] | undefined> {
+  if (source === "files") return undefined;
+  try {
+    return await readGatewaySessions(call, selectedAgents);
+  } catch (error) {
+    if (source === "gateway") throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(
+      `could not read sessions from the OpenClaw Gateway (${reason}); reading session files`
+    );
+    return undefined;
+  }
+}
+
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
   if (!existsSync(join(args.openclawRoot, "openclaw.json"))) {
@@ -449,9 +504,11 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     fixedBank: args.fixedBank,
   };
   const checkpoint = loadCheckpoint(args.checkpointPath);
-  const { entries, discoveredSessions, skippedEmpty } = buildBackfillPlan(
+  const sessions = await loadSessions(args.source, backfillOptions.selectedAgents);
+  const { entries, discoveredSessions, skippedEmpty, skippedFiltered } = buildBackfillPlan(
     pluginConfig,
-    backfillOptions
+    backfillOptions,
+    sessions
   );
   const plannedEntries = filterEntriesForResume(entries, checkpoint, args.resume);
   const { entriesToEnqueue, alreadyEnqueuedKeys } = splitResumeEntries(
@@ -472,6 +529,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
       discovered_sessions: discoveredSessions,
       planned_sessions: plannedEntries.length,
       skipped_empty: skippedEmpty,
+      skipped_filtered: skippedFiltered,
+      source: sessions ? "gateway" : "files",
       bank_strategy: args.bankStrategy,
       checkpoint_path: args.checkpointPath,
     };
@@ -626,6 +685,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     finalized_sessions: finalized,
     failed_sessions: failed,
     skipped_empty: skippedEmpty,
+    skipped_filtered: skippedFiltered,
+    source: sessions ? "gateway" : "files",
     bank_strategy: args.bankStrategy,
     checkpoint_path: args.checkpointPath,
   };

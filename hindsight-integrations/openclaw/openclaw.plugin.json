@@ -265,6 +265,11 @@
         "description": "When true, recall drops raw facts already consolidated into an observation while keeping unconsolidated ones. Pair with recallTypes including raw types (e.g. ['observation', 'world', 'experience']) to surface just-retained facts before consolidation, without duplicating already-consolidated content. Default: false.",
         "default": false
       },
+      "recallIncludeChunks": {
+        "type": "boolean",
+        "description": "When true, hindsight_recall also returns the original text (chunk) each memory was extracted from, with its document id, so the agent can check a memory against its source. Auto-recall is unaffected. Default: false.",
+        "default": false
+      },
       "recallMinScores": {
         "type": "object",
         "description": "Optional per-stage score floors for auto-recall. Missing fields impose no floor; memories with a missing or null score for a configured stage pass.",
@@ -567,6 +572,10 @@
     },
     "preferObservations": {
       "label": "Prefer Observations",
+      "placeholder": "false (default)"
+    },
+    "recallIncludeChunks": {
+      "label": "Recall Includes Source Text",
       "placeholder": "false (default)"
     },
     "recallMinScores": {

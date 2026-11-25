@@ -120,6 +120,7 @@ Optional settings in `~/.openclaw/openclaw.json` under `plugins.entries.hindsigh
 | `recallTimeoutMs`          | `10000`                        | Deadline for the auto-recall request, in ms. Values below `1000` are ignored. At the deadline the HTTP request itself is aborted, not just abandoned, so a slow recall stops consuming a connection.                                                                                                                                                                                                     |
 | `recallTypes`              | `["observation"]`              | Memory types to recall. Options: `world`, `experience`, `observation`. Defaults to observations — the consolidated, deduplicated view — to avoid surfacing the same answer multiple times when many raw memories say the same thing. Facts that are not consolidated yet (a fresh import or backfill, or a bank with `enableObservations: false`) stay invisible until you add `world` and `experience`. |
 | `preferObservations`       | `false`                        | When `true`, recall drops raw facts already consolidated into an observation while keeping unconsolidated ones. Pair with a `recallTypes` that includes raw types (e.g. `["observation", "world", "experience"]`) to surface just-retained facts before consolidation, without duplicating consolidated content.                                                                                         |
+| `recallIncludeChunks`      | `false`                        | When `true`, `hindsight_recall` also returns the original text each memory was extracted from, with its document id, so the agent can check a memory against its source. Auto-recall is unaffected.                                                                                                                                                                                                      |
 | `recallMinScores`          | `{}`                           | Optional score floors for auto-recall, keyed by stage (for example `{"reranker": 0.3}`). Missing fields impose no floor; memories with missing or `null` scores pass. Reranker scores are query-local, so use this as a garbage gate rather than a calibrated relevance dial.                                                                                                                            |
 | `recallRoles`              | `["user", "assistant"]`        | Roles included when building prior context for recall query composition. Options: `user`, `assistant`, `system`, `tool`.                                                                                                                                                                                                                                                                                 |
 | `recallTopK`               | —                              | Max number of memories to inject per turn. Applied after API response as a hard cap.                                                                                                                                                                                                                                                                                                                     |
@@ -246,7 +247,7 @@ Upgrading from 0.11.1 or earlier: installs could fail with `npm error Cannot rea
 The plugin gives the agent the same three memory tools the Hermes integration does:
 
 - `hindsight_retain` stores something the agent wants remembered (`content`, plus optional `context`, `tags` and `occurred_at`). Configured `retainTags` are added to its tags.
-- `hindsight_recall` searches memory with the same settings as auto-recall (`recallBudget`, `recallMaxTokens`, `recallTypes`, `preferObservations`, `recallMinScores`).
+- `hindsight_recall` searches memory with the same settings as auto-recall (`recallBudget`, `recallMaxTokens`, `recallTypes`, `preferObservations`, `recallMinScores`). With `recallIncludeChunks`, each memory is followed by the text it came from.
 - `hindsight_reflect` answers a question by reasoning over the memories.
 
 It also gives the agent Hindsight's page tools, the same ones Hindsight's MCP server offers:
@@ -330,6 +331,10 @@ uvx hindsight-embed@latest profile list
 
 The package includes a config-aware backfill CLI for importing historical OpenClaw sessions into Hindsight.
 
+It reads sessions through the running OpenClaw Gateway (`sessions.list` + `chat.history`), which works on OpenClaw 2026.10+ whether sessions live in SQLite or PostgreSQL. If the Gateway can't be reached it falls back to the old `agents/<agent>/sessions/*.jsonl` files. Each session spawns an `openclaw gateway call`, so a large gateway takes a few seconds per session.
+
+Like live saving, it skips cron, heartbeat and subagent sessions (unless `skipOperationalSessions: false`) and sessions matching `ignoreSessionPatterns`.
+
 By default it mirrors the active plugin settings for:
 
 - `dynamicBankId`
@@ -365,6 +370,7 @@ node dist/backfill.js \
 Useful options:
 
 - `--agent <id>` limit import to selected agents
+- `--source auto|gateway|files` where sessions are read from (default `auto`: the Gateway, or the files if it can't be reached)
 - `--exclude-archive` ignore `sessions-archive-from-migration_backup`
 - `--bank-strategy mirror-config|agent|fixed`
 - `--resume` skip only entries already finalized as completed

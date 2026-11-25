@@ -1320,6 +1320,10 @@ function sanitizeChannelId(channelId: string | undefined, provider?: string): st
   if (!channelId) return undefined;
   if (provider && channelId === provider) return undefined;
   if (PROVIDER_CHANNEL_ID_TOKENS.has(channelId.toLowerCase())) return undefined;
+  // A Control UI tab reports its whole session key (`agent:<id>:dashboard:<uuid>`)
+  // as the channel, which gave every tab its own bank (#6876). A session key is
+  // not a channel; the caller falls back to the one parsed from it.
+  if (channelId.startsWith("agent:")) return undefined;
   return channelId;
 }
 
@@ -1340,11 +1344,13 @@ export function parseSessionKey(sessionKey: string): ParsedSessionKey {
     };
   }
   // OpenClaw's Control UI creates `agent:<id>:dashboard:<opaque-id>` keys.
-  // Recover only the agent identity: "dashboard" is a session namespace, not
-  // the live message provider used for dynamic bank routing.
+  // "dashboard" is a session namespace, not the live message provider used for
+  // dynamic bank routing. The opaque id is per tab, so every tab shares one
+  // "dashboard" channel: memories from one tab are recalled in the next (#6876).
   if (parts.length === 4 && parts[2] === "dashboard") {
     return {
       agentId: parts[1],
+      channel: "dashboard",
     };
   }
   if (parts.length >= 4 && ["cron", "heartbeat", "subagent"].includes(parts[2])) {
@@ -1550,6 +1556,11 @@ export function resolveAndCacheIdentity(options: ResolveAndCacheIdentityOptions)
   return { effectiveCtx, resolvedCtx: identityCtx, skipReason };
 }
 
+/** Cron, heartbeat and subagent runs: OpenClaw's own work, not a conversation. */
+export function isOperationalSessionKey(sessionKey: string): boolean {
+  return /^agent:[^:]+:(cron|heartbeat|subagent):/.test(sessionKey);
+}
+
 export function getIdentitySkipReason(
   ctx: PluginHookAgentContext | undefined,
   pluginConfig?: PluginConfig
@@ -1581,7 +1592,7 @@ export function getIdentitySkipReason(
   const allowOperationalSessions = pluginConfig?.skipOperationalSessions === false;
 
   if (typeof sessionKey === "string") {
-    if (!allowOperationalSessions && /^agent:[^:]+:(cron|heartbeat|subagent):/.test(sessionKey)) {
+    if (!allowOperationalSessions && isOperationalSessionKey(sessionKey)) {
       return { resolvedCtx, reason: finalSkipReason(`operational session ${sessionKey}`) };
     }
     if (!allowCliSessions && /^agent:[^:]+:main$/.test(sessionKey)) {
@@ -2251,6 +2262,7 @@ export function getPluginConfig(api: MoltbotPluginAPI): PluginConfig {
     recallTypes: Array.isArray(config.recallTypes) ? config.recallTypes : ["observation"],
     preferObservations: config.preferObservations === true, // Default: false — backward compatible
     recallMinScores: config.recallMinScores,
+    recallIncludeChunks: config.recallIncludeChunks === true,
     recallRoles: Array.isArray(config.recallRoles) ? config.recallRoles : ["user", "assistant"],
     retainEveryNTurns:
       typeof config.retainEveryNTurns === "number" && config.retainEveryNTurns >= 1

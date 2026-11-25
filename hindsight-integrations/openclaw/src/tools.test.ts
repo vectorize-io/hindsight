@@ -194,6 +194,57 @@ describe("Hermes's tools in OpenClaw (#5635)", () => {
     expect(result.content[0].text).toBe("No relevant memories found.");
   });
 
+  it("returns each memory's source text when recallIncludeChunks is on (#6879)", async () => {
+    const recall = vi.spyOn(HindsightClient.prototype, "recall").mockResolvedValue({
+      results: [
+        // An observation: its text comes from two facts in two chunks.
+        { id: "o1", text: "Loves persimmons", type: "observation", source_fact_ids: ["f1", "f2"] },
+        // A raw fact sharing the first chunk.
+        { id: "f3", text: "Buys them in autumn", chunk_id: "c1", document_id: "doc-a" },
+        { id: "f4", text: "Lives in Rome" },
+      ],
+      source_facts: {
+        f1: { id: "f1", text: "Prefers persimmons", chunk_id: "c1", document_id: "doc-a" },
+        f2: { id: "f2", text: "Ate persimmons again", chunk_id: "c2", document_id: "doc-b" },
+      },
+      chunks: {
+        c1: { id: "c1", text: "I love persimmons, I buy them every autumn.", chunk_index: 0 },
+        c2: { id: "c2", text: "Had persimmons again today.", chunk_index: 0, truncated: true },
+      },
+    } as never);
+    const { factory } = await load({
+      bankId: "b",
+      dynamicBankId: false,
+      recallIncludeChunks: true,
+    });
+    const tools = factory({ agentId: "main", sessionKey: "agent:main:main" });
+    const result = await tool(tools, "hindsight_recall").execute("c1", { query: "fruit" });
+
+    expect(recall.mock.calls[0][2]).toMatchObject({
+      includeChunks: true,
+      includeSourceFacts: true,
+    });
+    expect(result.content[0].text).toBe(
+      [
+        "1. Loves persimmons [S1, S2]",
+        "2. Buys them in autumn [S1]",
+        "3. Lives in Rome",
+        "",
+        "Sources:",
+        "[S1] (document doc-a): I love persimmons, I buy them every autumn.",
+        "[S2] (document doc-b) [truncated]: Had persimmons again today.",
+      ].join("\n")
+    );
+  });
+
+  it("asks for no chunks by default", async () => {
+    const client = mockClient();
+    const { factory } = await load({ bankId: "b", dynamicBankId: false });
+    const tools = factory({ agentId: "main", sessionKey: "agent:main:main" });
+    await tool(tools, "hindsight_recall").execute("c1", { query: "fruit" });
+    expect(client.recall.mock.calls[0][2]).toMatchObject({ includeChunks: false });
+  });
+
   it("offers no tools in memoryMode 'context'", async () => {
     const { factory } = await load({ memoryMode: "context" });
     expect(factory({ agentId: "main", sessionKey: "agent:main:main" })).toBeNull();
