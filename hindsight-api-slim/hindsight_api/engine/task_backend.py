@@ -74,6 +74,10 @@ class TaskBackend(ABC):
         """
         pass
 
+    #: Whether a task may put itself back in the queue for later (``DeferOperation``). A backend that
+    #: runs tasks inline has no queue to put it back in, so the task must do its work now.
+    can_defer: bool = True
+
     async def _execute_task(self, task_dict: dict[str, Any]):
         """
         Execute a task through the registered executor.
@@ -99,6 +103,8 @@ class SyncTaskBackend(TaskBackend):
     This is useful for tests and embedded/CLI usage where we don't want
     background workers. Tasks are executed inline rather than being queued.
     """
+
+    can_defer = False
 
     async def initialize(self):
         """No-op for sync backend."""

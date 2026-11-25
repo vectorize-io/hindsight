@@ -12,5 +12,6 @@ pub mod memory;
 pub mod mental_model;
 pub mod operation;
 pub mod pages;
+pub mod session;
 pub mod tag;
 pub mod webhook;

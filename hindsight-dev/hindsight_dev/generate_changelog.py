@@ -65,6 +65,8 @@ TABLE_VOLUME: dict[str, VolumeTier] = {
     "observation_history": HIGH_VOLUME,
     "llm_requests": HIGH_VOLUME,
     "audit_log": HIGH_VOLUME,
+    # A live session logs every message, tool call and check it runs.
+    "session_events": HIGH_VOLUME,
     # Grows with documents, operations and consolidated knowledge.
     "documents": MEDIUM_VOLUME,
     "mental_models": MEDIUM_VOLUME,
@@ -72,6 +74,8 @@ TABLE_VOLUME: dict[str, VolumeTier] = {
     "mental_model_versions": MEDIUM_VOLUME,
     "observation_sources": MEDIUM_VOLUME,
     "async_operations": MEDIUM_VOLUME,
+    # One row per live conversation.
+    "sessions": MEDIUM_VOLUME,
     "knowledge_pages": MEDIUM_VOLUME,
     "learnings": MEDIUM_VOLUME,
     "directives": MEDIUM_VOLUME,

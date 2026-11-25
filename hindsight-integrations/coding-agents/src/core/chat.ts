@@ -256,6 +256,40 @@ export const DEFAULT_RETAIN_CONTEXT =
   'works, record it as the agent\'s claim ("the agent reported X fixed"), not as an established fact.';
 
 /**
+ * How a live conversation is filed, whoever writes it — this write-back or a Hindsight session
+ * (core/session-sync.ts) — so a bank reads the same either way. Configured tags first, built-ins
+ * last and deduped: `source:chat` and `harness:<id>` are what the documents list filters and draws
+ * its agent logo from, so a template cannot displace them. Configured metadata likewise loses to
+ * the built-ins on any key collision. The configured context wins: extraction reads it to decide
+ * whose claim a sentence is, and the default names both speakers.
+ */
+export function conversationDocument(
+  sessionId: string,
+  harness: string | undefined,
+  stamp: RetainStamp | undefined
+): { documentId: string; tags: string[]; metadata: Record<string, string>; context: string } {
+  const documentId = `conversation:${sessionId}`;
+  return {
+    documentId,
+    tags: [
+      ...new Set([
+        ...(stamp?.tags ?? []),
+        "source:chat",
+        ...(harness ? [`harness:${harness}`] : []),
+      ]),
+    ],
+    metadata: {
+      ...stamp?.metadata,
+      source: "chat",
+      session_id: sessionId,
+      ref_id: documentId,
+      ...(harness ? { harness } : {}),
+    },
+    context: stamp?.context ?? DEFAULT_RETAIN_CONTEXT,
+  };
+}
+
+/**
  * Live write-back: upsert a running session under a stable document_id, sending only what is new.
  *
  * Given a cursor store, a session that has already been written APPENDS the turns added since the
@@ -326,7 +360,8 @@ async function writeSession(
   transcriptPath?: string
 ): Promise<void> {
   if (!turns.length) return;
-  const refId = `conversation:${sessionId}`;
+  const doc = conversationDocument(sessionId, harness, stamp);
+  const refId = doc.documentId;
   let cursor = cursors?.read(sessionId);
   // A "yes" is remembered on the cursor: hook harnesses run a fresh process per Stop, so without it
   // every turn re-asked, and one slow or failed probe turned that turn's append into a full replace
@@ -379,36 +414,12 @@ async function writeSession(
   const opId = (mode: string, content: string) =>
     uuidV5(`${client.bank}\n${refId}\n${mode}\n${content}`);
   const submit = (content: string, operationId: string, append: boolean) =>
-    client.retain(
-      content,
-      // Configured context wins. Extraction reads this to decide whose claim a sentence is, so the
-      // default names both speakers: the previous "coding agent session" said nothing about
-      // authorship and let an assistant's proposal be recorded as the user's decision.
-      stamp?.context ?? DEFAULT_RETAIN_CONTEXT,
-      refId,
-      // Configured tags first, built-ins last and deduped: `source:chat` and `harness:<id>` are what
-      // the documents list filters and draws its agent logo from, so a template cannot displace them.
-      [
-        ...new Set([
-          ...(stamp?.tags ?? []),
-          "source:chat",
-          ...(harness ? [`harness:${harness}`] : []),
-        ]),
-      ],
-      "conversation",
-      {
-        timestamp: startTs,
-        updateMode: append ? "append" : undefined,
-        operationId,
-        metadata: {
-          ...stamp?.metadata, // configured first: the built-ins below win on any key collision
-          source: "chat",
-          session_id: sessionId,
-          ref_id: refId,
-          ...(harness ? { harness } : {}),
-        },
-      }
-    );
+    client.retain(content, doc.context, refId, doc.tags, "conversation", {
+      timestamp: startTs,
+      updateMode: append ? "append" : undefined,
+      operationId,
+      metadata: doc.metadata,
+    });
 
   // The position the cursor reaches once everything below has been applied. On a "skip" this is
   // exactly where the cursor already is: skip means the transcript ends at cursor.turns.

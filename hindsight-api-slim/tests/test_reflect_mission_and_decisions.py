@@ -109,3 +109,49 @@ async def test_a_later_cleanup_does_not_replace_a_decision(llm_config):
         ),
         context="Commit e4a4097 decided 7 with a measured reason; a later 'perf: simplify retry' commit set 10.",
     )
+
+
+@pytest.mark.asyncio
+async def test_what_the_code_does_now_does_not_replace_a_decision(llm_config):
+    """sdebench dedupe-amended (2026-11-23): the newest record was a description of the code holding
+    the bug, and a rule page answered it as "the most recent decision, superseding" the chat's rule."""
+    decision = {
+        "id": "mem-chat",
+        "content": (
+            "Developer chat (2026-11-18): amended rule for crmsync/dedupe.py merge_records: the duplicate key "
+            "is (email lowercased, same calendar day); on collision the most-filled record wins."
+        ),
+        "tags": ["source:chat"],
+        "mentioned_at": "2026-11-18T10:00:00Z",
+    }
+    code = {
+        "id": "mem-code",
+        "content": (
+            "The merge_records(primary, incoming) function in crmsync/dedupe.py uses a composite key of "
+            '(rec["email"], rec["updated"]) to drop duplicates.'
+        ),
+        "tags": ["source:git"],
+        "mentioned_at": "2026-11-23T09:00:00Z",
+    }
+    functions = _functions([], [decision, code])
+
+    result = await run_reflect_agent(
+        llm_config=llm_config,
+        bank_id="test-bank",
+        query="What key must merge_records use to identify duplicate records?",
+        bank_profile={"name": "Test", "mission": ""},
+        has_mental_models=False,
+        budget="low",
+        max_iterations=6,
+        **functions,
+    )
+
+    await assert_meets_criteria(
+        response=result.text,
+        criteria=(
+            "The answer gives (email lowercased, same calendar day) as the key merge_records must use. It may "
+            'mention that the code uses (rec["email"], rec["updated"]), but not as the rule or as a decision '
+            "that replaced the chat's rule."
+        ),
+        context="A developer chat decided the key; a later record only describes what the code does.",
+    )

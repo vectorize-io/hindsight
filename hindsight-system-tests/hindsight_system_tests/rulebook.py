@@ -524,6 +524,10 @@ class RerankStub:
     #: keep more. Ignored by the Cohere-shaped /rerank endpoint, which has no cut.
     cut_level: int = 0
 
+    #: What a choice offering a "none" option answers for it (reflect's ``abstain`` pick): the
+    #: other options share the rest by lexical score. None scores "none" lexically like any option.
+    pick_none: float | None = None
+
     #: What a decision model's per-memory question answers, keyed by text the memory
     #: contains. Memories matching none are scored lexically, where ties fall back to
     #: retrieval order, which is not stable enough to pin.
@@ -654,6 +658,7 @@ class Stubs:
         self.embeddings.fail_with_status = None
         self.embeddings.calls.clear()
         self.rerank.cut_level = RerankStub.cut_level
+        self.rerank.pick_none = RerankStub.pick_none
         self.rerank.verdicts = {}
         self.rerank.rerank_scores = {}
         self.rerank.states = []

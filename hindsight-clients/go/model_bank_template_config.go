@@ -45,6 +45,7 @@ type BankTemplateConfig struct {
 	RetainMaxAttachmentsPerChunk NullableInt32 `json:"retain_max_attachments_per_chunk,omitempty"`
 	McpEnabledTools []string `json:"mcp_enabled_tools,omitempty"`
 	McpServerInstructions NullableString `json:"mcp_server_instructions,omitempty"`
+	SessionLearnRules NullableBool `json:"session_learn_rules,omitempty"`
 	KnowledgeBanks []string `json:"knowledge_banks,omitempty"`
 	ReflectKbSearchMediaTypes []string `json:"reflect_kb_search_media_types,omitempty"`
 	ReflectKbSearchApplyTags NullableBool `json:"reflect_kb_search_apply_tags,omitempty"`
@@ -1166,6 +1167,48 @@ func (o *BankTemplateConfig) SetMcpServerInstructionsNil() {
 // UnsetMcpServerInstructions ensures that no value is present for McpServerInstructions, not even an explicit nil
 func (o *BankTemplateConfig) UnsetMcpServerInstructions() {
 	o.McpServerInstructions.Unset()
+}
+
+// GetSessionLearnRules returns the SessionLearnRules field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *BankTemplateConfig) GetSessionLearnRules() bool {
+	if o == nil || IsNil(o.SessionLearnRules.Get()) {
+		var ret bool
+		return ret
+	}
+	return *o.SessionLearnRules.Get()
+}
+
+// GetSessionLearnRulesOk returns a tuple with the SessionLearnRules field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *BankTemplateConfig) GetSessionLearnRulesOk() (*bool, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.SessionLearnRules.Get(), o.SessionLearnRules.IsSet()
+}
+
+// HasSessionLearnRules returns a boolean if a field has been set.
+func (o *BankTemplateConfig) HasSessionLearnRules() bool {
+	if o != nil && o.SessionLearnRules.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetSessionLearnRules gets a reference to the given NullableBool and assigns it to the SessionLearnRules field.
+func (o *BankTemplateConfig) SetSessionLearnRules(v bool) {
+	o.SessionLearnRules.Set(&v)
+}
+// SetSessionLearnRulesNil sets the value for SessionLearnRules to be an explicit nil
+func (o *BankTemplateConfig) SetSessionLearnRulesNil() {
+	o.SessionLearnRules.Set(nil)
+}
+
+// UnsetSessionLearnRules ensures that no value is present for SessionLearnRules, not even an explicit nil
+func (o *BankTemplateConfig) UnsetSessionLearnRules() {
+	o.SessionLearnRules.Unset()
 }
 
 // GetKnowledgeBanks returns the KnowledgeBanks field value if set, zero value otherwise (both if not set or set to explicit null).
@@ -2812,6 +2855,9 @@ func (o BankTemplateConfig) ToMap() (map[string]interface{}, error) {
 	}
 	if o.McpServerInstructions.IsSet() {
 		toSerialize["mcp_server_instructions"] = o.McpServerInstructions.Get()
+	}
+	if o.SessionLearnRules.IsSet() {
+		toSerialize["session_learn_rules"] = o.SessionLearnRules.Get()
 	}
 	if o.KnowledgeBanks != nil {
 		toSerialize["knowledge_banks"] = o.KnowledgeBanks

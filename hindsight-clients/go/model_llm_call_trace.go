@@ -27,6 +27,7 @@ type LLMCallTrace struct {
 	DurationMs int32 `json:"duration_ms"`
 	// When the call started, in Unix epoch milliseconds
 	StartedAtMs *int64 `json:"started_at_ms,omitempty"`
+	Detail NullableString `json:"detail,omitempty"`
 }
 
 type _LLMCallTrace LLMCallTrace
@@ -134,6 +135,48 @@ func (o *LLMCallTrace) SetStartedAtMs(v int64) {
 	o.StartedAtMs = &v
 }
 
+// GetDetail returns the Detail field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *LLMCallTrace) GetDetail() string {
+	if o == nil || IsNil(o.Detail.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.Detail.Get()
+}
+
+// GetDetailOk returns a tuple with the Detail field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *LLMCallTrace) GetDetailOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.Detail.Get(), o.Detail.IsSet()
+}
+
+// HasDetail returns a boolean if a field has been set.
+func (o *LLMCallTrace) HasDetail() bool {
+	if o != nil && o.Detail.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetDetail gets a reference to the given NullableString and assigns it to the Detail field.
+func (o *LLMCallTrace) SetDetail(v string) {
+	o.Detail.Set(&v)
+}
+// SetDetailNil sets the value for Detail to be an explicit nil
+func (o *LLMCallTrace) SetDetailNil() {
+	o.Detail.Set(nil)
+}
+
+// UnsetDetail ensures that no value is present for Detail, not even an explicit nil
+func (o *LLMCallTrace) UnsetDetail() {
+	o.Detail.Unset()
+}
+
 func (o LLMCallTrace) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -148,6 +191,9 @@ func (o LLMCallTrace) ToMap() (map[string]interface{}, error) {
 	toSerialize["duration_ms"] = o.DurationMs
 	if !IsNil(o.StartedAtMs) {
 		toSerialize["started_at_ms"] = o.StartedAtMs
+	}
+	if o.Detail.IsSet() {
+		toSerialize["detail"] = o.Detail.Get()
 	}
 	return toSerialize, nil
 }

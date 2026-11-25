@@ -1,0 +1,91 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  NOTE_CREDIT,
+  NOTE_DISMISS,
+  NOTE_LEAD,
+  LIVE_DECLARATION,
+  renderNote,
+  sourceDiff,
+  noteCredit,
+  noteDismiss,
+} from "./live";
+
+const where = (document_id: string, mentioned_at?: string) =>
+  renderNote({ seq: 1, text: "K.", source: { document_id, mentioned_at } }).split("Source: ")[1];
+
+describe("the note's source", () => {
+  it("names the note by its number in the bank, not its place in the session log", () => {
+    const text = renderNote({ seq: 7, number: 123, text: "K is 1024." });
+    expect(text).toContain("thought #123:");
+    expect(text).toContain(noteCredit(123));
+    expect(text).not.toContain("#7");
+  });
+
+  it("renders the note, where to read it, and the quote", () => {
+    expect(
+      renderNote({
+        seq: 1,
+        text: "K is 1024.",
+        source: { document_id: "git:abc", quote: "memory as 1024" },
+      })
+    ).toBe(
+      `${NOTE_LEAD.replace("thought:", "thought #1:")} K is 1024. Source: git show abc — "memory as 1024". Share it with the user: "${noteCredit(1)} …" if you did something differently because of it, else "${noteDismiss(1)} …; no change: …" (or "…; wrong: …" if it is wrong)`
+    );
+    expect(renderNote({ seq: 1, text: "K is 1024." })).toBe(
+      `${NOTE_LEAD.replace("thought:", "thought #1:")} K is 1024. Source: project memory. Share it with the user: "${noteCredit(1)} …" if you did something differently because of it, else "${noteDismiss(1)} …; no change: …" (or "…; wrong: …" if it is wrong)`
+    );
+  });
+
+  it("asks the agent to mention every note: credit one it used, name one it did not need", () => {
+    // The server counts these exact lines (engine/sessions/service.py CREDIT_RE / DISMISS_RE).
+    expect(noteCredit(8)).toContain("**Thanks to Hindsight thought #8**");
+    expect(noteDismiss(8)).toBe("> 🧠 Hindsight thought #8 —");
+    expect(LIVE_DECLARATION).toContain(NOTE_CREDIT);
+    expect(LIVE_DECLARATION).toContain(NOTE_DISMISS);
+  });
+
+  it("names where the agent can read each kind of document", () => {
+    expect(where("git:0123456789abcdef")).toMatch(/^git show 0123456789ab\./);
+    expect(where("gitlog:main")).toMatch(/^git log\./);
+    expect(where("conversation:s1", "2026-10-01T10:00:00Z")).toMatch(
+      /^a past session \(2026-10-01\)\./
+    );
+    expect(where("survey:x")).toMatch(/^project memory\./);
+  });
+});
+
+describe("sourceDiff", () => {
+  it("includes new files, not only edits to tracked ones", () => {
+    const repo = mkdtempSync(join(tmpdir(), "live-diff-"));
+    execFileSync("git", ["init", "-q", repo]);
+    writeFileSync(join(repo, "units.py"), "K = 1024\n");
+    expect(sourceDiff(repo)).toContain("+K = 1024");
+  });
+});
+
+describe("a commit source this checkout does not have", () => {
+  it("is named as gone, not sent to git show", () => {
+    const repo = mkdtempSync(join(tmpdir(), "live-src-"));
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"],
+      {
+        cwd: repo,
+      }
+    );
+    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo }).toString().trim();
+    const at = (sha: string) =>
+      renderNote({ seq: 1, text: "K.", source: { document_id: `git:${sha}` } }, repo).split(
+        "Source: "
+      )[1];
+    expect(at(head)).toMatch(/^git show [0-9a-f]{12}\./);
+    expect(at("51781bfca1b875de0ef6c2001299263fea63cec2")).toMatch(
+      /^a past commit no longer in this checkout/
+    );
+  });
+});

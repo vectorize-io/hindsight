@@ -681,6 +681,10 @@ export class HindsightClient {
       reflectSearchObservationsMaxTokens?: number;
       /** Whether search_observations attaches resolved entity names, which can be over half the tool payload. Omit to use the bank default (enabled). */
       reflectSearchObservationsIncludeEntities?: boolean;
+      /** Allow an empty answer: when memory holds nothing that answers the query, the response has an empty `text` and `abstained: true` instead of reflect searching on or failing. */
+      abstain?: boolean;
+      /** What the first retrieval round searches, each query through every layer, instead of an LLM rewriting the query into one search. Applies on a server with a decision model. */
+      searchQueries?: string[];
       /** Token budget for the mental models the agent's search_mental_models calls return in full (the best-ranked one is always in full; the rest that do not fit come back as a snippet). Omit to use the bank's reflect_default_options, then the shipped default. */
       reflectSearchMentalModelsMaxTokens?: number;
       /** If true, the response includes a 'based_on' field listing the memories, mental models, and directives used. */
@@ -721,6 +725,8 @@ export class HindsightClient {
             reflect_search_observations_max_tokens: options?.reflectSearchObservationsMaxTokens,
             reflect_search_observations_include_entities:
               options?.reflectSearchObservationsIncludeEntities,
+            abstain: options?.abstain,
+            search_queries: options?.searchQueries,
             reflect_search_mental_models_max_tokens: options?.reflectSearchMentalModelsMaxTokens,
             include,
           },
@@ -1000,6 +1006,8 @@ export class HindsightClient {
       consolidationLlmParallelism?: number;
       /** Memories consolidated per round. */
       consolidationMaxMemoriesPerRound?: number;
+      /** Turn what agents say about live-session notes into rules that later sessions read. */
+      sessionLearnRules?: boolean;
       /** Max tokens for source facts across all observations in a pass. */
       consolidationSourceFactsMaxTokens?: number;
       /** Max tokens of source facts per observation in the prompt. */
@@ -1130,6 +1138,8 @@ export class HindsightClient {
       updates.consolidation_llm_parallelism = options.consolidationLlmParallelism;
     if (options.consolidationMaxMemoriesPerRound !== undefined)
       updates.consolidation_max_memories_per_round = options.consolidationMaxMemoriesPerRound;
+    if (options.sessionLearnRules !== undefined)
+      updates.session_learn_rules = options.sessionLearnRules;
     if (options.consolidationSourceFactsMaxTokens !== undefined)
       updates.consolidation_source_facts_max_tokens = options.consolidationSourceFactsMaxTokens;
     if (options.consolidationSourceFactsMaxTokensPerObservation !== undefined)

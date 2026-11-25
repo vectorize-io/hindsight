@@ -106,6 +106,21 @@ if (structuredResponse.structuredOutput) {
 // [/docs:reflect-structured-output]
 
 
+// [docs:reflect-abstain]
+// Ask a question that may need no answer: an empty text means memory has nothing to say.
+const watchResponse = await client.reflect(
+    'my-bank',
+    "Does my change go against a recorded decision about Alice's role? If so, say which, briefly.",
+    {
+        context: 'I am updating the team page to list Alice as a junior engineer.',
+        abstain: true,
+        searchQueries: ['Alice role', 'Alice promotion'],
+    }
+);
+console.log(watchResponse.abstained ? 'nothing to say' : watchResponse.text);
+// [/docs:reflect-abstain]
+
+
 // =============================================================================
 // Cleanup (not shown in docs)
 // =============================================================================

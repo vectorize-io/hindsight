@@ -354,6 +354,19 @@
           "description": "Instructions sent to MCP clients in the initialize response when they connect to this bank",
           "title": "Mcp Server Instructions"
         },
+        "session_learn_rules": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Learn rules (mental models) from the verdicts on a session's notes",
+          "title": "Session Learn Rules"
+        },
         "knowledge_banks": {
           "anyOf": [
             {

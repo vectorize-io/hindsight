@@ -163,9 +163,10 @@ async def test_hierarchical_fields_categorization():
     assert "knowledge_banks" in configurable
     assert "reflect_kb_search_media_types" in configurable
     assert "reflect_kb_search_apply_tags" in configurable
+    assert "session_learn_rules" in configurable
 
     # Verify count is correct
-    assert len(configurable) == 64
+    assert len(configurable) == 65
 
     # Verify credential fields (NEVER exposed)
     assert "llm_api_key" in credentials
