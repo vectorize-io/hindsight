@@ -672,7 +672,8 @@ CASES: tuple[Case, ...] = (
         must=("A fact records that the user asked to edit the CSS without starting a dev server.",),
         traps=(
             "A fact states the instruction with nothing tying it to the one task it was given for (no 'for this "
-            "task/change' or the work it was for; a date alone does not count), so it reads as a general rule or preference about dev servers.",
+            "task/change' or the work it was for; a date alone does not count), so it reads as a general rule "
+            "or preference about dev servers.",
         ),
     ),
     Case(

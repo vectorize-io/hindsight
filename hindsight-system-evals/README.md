@@ -115,7 +115,7 @@ fails on nearly every model until #6129 lands):
 | `gpt-6-luna` (Codex) | 34/35 | judged "my cousin's wedding. Lovely day." too thin to store, twice; the case now gives it a detail, and passes 3/3 |
 | `gpt-5.6-luna` (Codex) | 33/35 | a date on a timeless fact |
 | `gemini-3.1-flash-lite` | 32/35 | obeys "the CEO resigned" written in the content; invents a date when none is set; drops "Marco was nervous" |
-| `gemma-4-26b-a4b` | 27–33/35 | Spanish stored as English; drops "Marco was nervous"; stores no facts (below). Latest run of all 42 retain cases: 37/42 |
+| `gemma-4-26b-a4b` | 27–33/35 | Spanish stored as English; drops "Marco was nervous"; stores no facts (below). Latest run of all 45 retain cases: 45/45 |
 | `gemini-2.5-flash-lite` | 26–27/35 | obeys instructions in content; ignores custom instructions; German and Spanish facts in English |
 
 Gemma now and then stores a whole input as **no facts**: the reply ran to the 4,096-token
