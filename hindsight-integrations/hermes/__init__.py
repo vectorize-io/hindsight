@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import queue
+import re
 import sys
 import threading
 import time
@@ -427,6 +428,93 @@ REFLECT_SCHEMA = {
         "properties": {"query": {"type": "string", "description": "The question to reflect on."}},
     },
 }
+
+
+SEARCH_PAGES_SCHEMA = {
+    "name": "hindsight_search_pages",
+    "description": (
+        "Search the user's pages: documents Hindsight writes from memory and keeps up to date, "
+        "each answering one question (a project, a person, a long-running topic). Use it when "
+        "the user asks where something stands or what was decided. Returns one line per page: "
+        "name, id and its opening text. Read a page in full with hindsight_read_page."
+    ),
+    "parameters": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+            "query": {"type": "string", "description": "What to look for."},
+            "limit": {"type": "integer", "description": "How many pages to return (1-20, default 5)."},
+        },
+    },
+}
+
+READ_PAGE_SCHEMA = {
+    "name": "hindsight_read_page",
+    "description": "Read one page in full, as markdown. Pass an id returned by hindsight_search_pages or hindsight_list_pages.",
+    "parameters": {
+        "type": "object",
+        "required": ["page_id"],
+        "properties": {"page_id": {"type": "string", "description": "The page id."}},
+    },
+}
+
+LIST_PAGES_SCHEMA = {
+    "name": "hindsight_list_pages",
+    "description": (
+        "List every page and folder by name and id, without their text. Prefer "
+        "hindsight_search_pages to find pages about a topic; use this when the user asks what pages exist."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
+CREATE_PAGE_SCHEMA = {
+    "name": "hindsight_create_page",
+    "description": (
+        "Create a page that Hindsight writes from memory and keeps up to date on its own. Every "
+        "page costs model calls each time it refreshes, so create one ONLY when the user explicitly "
+        'asks for a page ("keep a page on X"), never on your own initiative. The page is built in '
+        "the background, so it is empty for a short while."
+    ),
+    "parameters": {
+        "type": "object",
+        "required": ["name", "question"],
+        "properties": {
+            "name": {"type": "string", "description": "Short page title, e.g. 'House renovation'."},
+            "question": {
+                "type": "string",
+                "description": (
+                    "The question the page answers, re-asked on every refresh, e.g. "
+                    "'What is the current state of the house renovation, and what is still open?'"
+                ),
+            },
+        },
+    },
+}
+
+_PAGE_GUIDANCE = (
+    " Use hindsight_search_pages for where something stands or what was decided: pages are "
+    "organized, kept-current summaries."
+)
+_PAGE_SNIPPET_CHARS = 200
+_PAGE_LIST_MAX_LINES = 100
+
+
+def _pages_method(client: Any, name: str, legacy: str) -> Callable[..., Any]:
+    """The client's page method, or its pre-1.2.1 "knowledge" name (the client floor is 0.10.1)."""
+    return getattr(client, name, None) or getattr(client, legacy)
+
+
+def _api_error_detail(exc: Exception) -> str:
+    """The server's ``detail`` message for a failed API call; the client exception's own text
+    carries the HTTP response headers, which is noise in a tool result."""
+    with contextlib.suppress(Exception):
+        detail = json.loads(getattr(exc, "body", None) or "").get("detail")
+        if isinstance(detail, list):  # a 422 lists one entry per invalid field
+            detail = "; ".join(str(d.get("msg", d)) if isinstance(d, dict) else str(d) for d in detail)
+        if isinstance(detail, str) and detail:
+            return detail
+    status = getattr(exc, "status", None)
+    return f"HTTP {status}" if status else (str(exc) or type(exc).__name__)
 
 
 def _bank_not_written_yet(exc: Exception) -> bool:
@@ -952,6 +1040,16 @@ class HindsightMemoryProvider(MemoryProvider):
                 "key": "session_context",
                 "description": "Mental models and pages to put in the system prompt at session start, in order (comma-separated mental_model:<id> or page:<id>; a bare id is a mental model)",
                 "default": "",
+            },
+            {
+                "key": "page_tools",
+                "description": "Give the agent tools to search, read and list pages (pages Hindsight writes from memory)",
+                "default": True,
+            },
+            {
+                "key": "page_create_tool",
+                "description": "Also let the agent create pages when the user asks; off by default because every page costs model calls on each refresh",
+                "default": False,
             },
             {"key": "timeout", "description": "API request timeout in seconds", "default": _DEFAULT_TIMEOUT},
             {
@@ -1678,6 +1776,10 @@ class HindsightMemoryProvider(MemoryProvider):
         self._recall_max_input_chars = _parse_int_setting(cfg.get("recall_max_input_chars"), 800)
         self._recall_query_strip_patterns = _compile_line_patterns(cfg.get("recall_query_strip_patterns"))
         self._session_context_refs = _parse_session_context(cfg.get("session_context"))
+        self._page_tools = bool(cfg.get("page_tools", True))
+        # Off by default: each page costs model calls on every refresh, so an agent that creates pages
+        # on its own initiative runs up the user's bill.
+        self._page_create_tool = bool(cfg.get("page_create_tool", False))
         self._session_context_block: str | None = None  # read once, on the first system prompt
         # None -> observation-only (Hindsight's consolidated, deduplicated layer; raw
         # world/experience facts re-ship the evidence they summarize and burn the
@@ -1774,6 +1876,8 @@ class HindsightMemoryProvider(MemoryProvider):
         label = "" if mode == "hybrid" else f" ({mode} mode)"
         # With auto_recall off nothing is injected, so hybrid must not promise injected context.
         tail = _TOOL_GUIDANCE if mode == "hybrid" and not self._auto_recall else _SYSTEM_PROMPT_TAILS[mode]
+        if mode != "context" and self._page_tools:
+            tail += _PAGE_GUIDANCE
         if self._writes_disabled:  # the retain tool is not offered to a read-only kanban worker
             tail = tail.replace(" Use hindsight_retain to store facts.", "")
         block = f"# Hindsight Memory\nActive{label}. Bank: {self._bank_id}, budget: {self._budget}.\n{tail}"
@@ -1799,8 +1903,7 @@ class HindsightMemoryProvider(MemoryProvider):
             try:
                 client = self._get_client()
                 if entry.kind == "page":
-                    # Pages were "knowledge pages" before hindsight-client 1.2.1 (the floor is 0.10.1).
-                    get_page = getattr(client, "aget_page", None) or client.aget_knowledge_page
+                    get_page = _pages_method(client, "aget_page", "aget_knowledge_page")
                     doc = _run_sync(get_page(bank_id=self._bank_id, page_id=entry.ref), _SESSION_CONTEXT_TIMEOUT)
                     content = getattr(doc, "body", None)
                 else:
@@ -2319,16 +2422,22 @@ class HindsightMemoryProvider(MemoryProvider):
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         if self._memory_mode == "context":
             return []
-        return (
+        schemas = (
             [RECALL_SCHEMA, REFLECT_SCHEMA] if self._writes_disabled else [RETAIN_SCHEMA, RECALL_SCHEMA, REFLECT_SCHEMA]
         )
+        if self._page_tools:
+            schemas += [SEARCH_PAGES_SCHEMA, READ_PAGE_SCHEMA, LIST_PAGES_SCHEMA]
+        if self._page_create_tool and not self._writes_disabled:
+            schemas.append(CREATE_PAGE_SCHEMA)
+        return schemas
 
     def read_only_tool_names(self) -> List[str]:
         """Tools a read-only delegated child may use (Hermes ``delegation.memory_read``, #6601).
 
-        Only recall: retain writes to the bank, and reflect may consolidate server-side. Hermes
-        intersects this with :meth:`get_tool_schemas`, so ``context`` mode exposes none."""
-        return ["hindsight_recall"]
+        Recall and the page reads: retain and page creation write to the bank, and reflect may
+        consolidate server-side. Hermes intersects this with :meth:`get_tool_schemas`, so ``context``
+        mode exposes none."""
+        return ["hindsight_recall", "hindsight_search_pages", "hindsight_read_page", "hindsight_list_pages"]
 
     def _tool_retain(self, args: dict) -> str:
         if self._writes_disabled:
@@ -2374,25 +2483,91 @@ class HindsightMemoryProvider(MemoryProvider):
         logger.debug("Tool hindsight_reflect: response_len=%d", len(text))
         return text or "No relevant memories found."
 
-    # tool name -> (required arg, handler, user-facing failure prefix)
+    def _tool_search_pages(self, args: dict) -> str:
+        try:
+            limit = min(max(int(args.get("limit") or 5), 1), 20)
+        except (TypeError, ValueError):
+            limit = 5
+        resp = self._run_hindsight_operation(
+            lambda c: _pages_method(c, "asearch_pages", "asearch_knowledge_base")(
+                bank_id=self._bank_id, q=args["query"], limit=limit
+            )
+        )
+        lines = []
+        for hit in resp.results or []:
+            # The snippet is the page's opening markdown; heading marks are noise on one line.
+            snippet = " ".join(re.sub(r"(?m)^\s*#+\s*", "", hit.snippet or "").split())
+            if len(snippet) > _PAGE_SNIPPET_CHARS:
+                snippet = snippet[:_PAGE_SNIPPET_CHARS].rstrip() + "…"
+            lines.append(f"- {hit.name} ({hit.id}){f': {snippet}' if snippet else ''}")
+        return "\n".join(lines) or "No pages match."
+
+    def _tool_read_page(self, args: dict) -> str:
+        page = self._run_hindsight_operation(
+            lambda c: _pages_method(c, "aget_page", "aget_knowledge_page")(
+                bank_id=self._bank_id, page_id=args["page_id"]
+            )
+        )
+        # The body opens with its own title, so it goes out as-is (a "# name" line doubled it).
+        return (page.body or "").strip() or f"Page {page.name} is not built yet."
+
+    def _tool_list_pages(self, args: dict) -> str:
+        # The pre-1.2.1 tree method takes no tag filters, so pass the bank only.
+        tree = self._run_hindsight_operation(
+            lambda c: _pages_method(c, "aget_page_tree", "aget_knowledge_base_tree")(bank_id=self._bank_id)
+        )
+        lines: list[str] = []
+
+        def _walk(nodes: list, depth: int) -> None:
+            for node in nodes or []:
+                label = f"{node.name}/" if node.kind == "folder" else f"{node.name} ({node.id})"
+                lines.append(f"{'  ' * depth}- {label}")
+                _walk(getattr(node, "children", None), depth + 1)
+
+        _walk(tree.roots, 0)
+        if not lines:
+            return "No pages yet."
+        if len(lines) > _PAGE_LIST_MAX_LINES:
+            more = len(lines) - _PAGE_LIST_MAX_LINES
+            lines = [*lines[:_PAGE_LIST_MAX_LINES], f"… {more} more; use hindsight_search_pages to find one."]
+        return "\n".join(lines)
+
+    def _tool_create_page(self, args: dict) -> str:
+        if not self._page_create_tool or self._writes_disabled:
+            return "hindsight_create_page is disabled; set page_create_tool to allow it."
+        name = args["name"]
+        resp = self._run_hindsight_operation(
+            lambda c: _pages_method(c, "acreate_page", "acreate_knowledge_page")(
+                bank_id=self._bank_id, name=name, source_query=args["question"]
+            ),
+            repeatable=False,  # a retried create would make a second page
+        )
+        return f"Created page {name} ({resp.page_id}). Hindsight builds it in the background and keeps it up to date."
+
+    # tool name -> (required args, handler, user-facing failure prefix)
     _TOOL_HANDLERS = {
-        "hindsight_retain": ("content", _tool_retain, "Failed to store memory"),
-        "hindsight_recall": ("query", _tool_recall, "Failed to search memory"),
-        "hindsight_reflect": ("query", _tool_reflect, "Failed to reflect"),
+        "hindsight_retain": (("content",), _tool_retain, "Failed to store memory"),
+        "hindsight_recall": (("query",), _tool_recall, "Failed to search memory"),
+        "hindsight_reflect": (("query",), _tool_reflect, "Failed to reflect"),
+        "hindsight_search_pages": (("query",), _tool_search_pages, "Failed to search pages"),
+        "hindsight_read_page": (("page_id",), _tool_read_page, "Failed to read page"),
+        "hindsight_list_pages": ((), _tool_list_pages, "Failed to list pages"),
+        "hindsight_create_page": (("name", "question"), _tool_create_page, "Failed to create page"),
     }
 
     def handle_tool_call(self, tool_name: str, args: dict, **kwargs) -> str:
         if tool_name not in self._TOOL_HANDLERS:
             return tool_error(f"Unknown tool: {tool_name}")
         required, handler, failure = self._TOOL_HANDLERS[tool_name]
-        if not args.get(required, ""):
-            return tool_error(f"Missing required parameter: {required}")
+        for name in required:
+            if not args.get(name, ""):
+                return tool_error(f"Missing required parameter: {name}")
         try:
             # ensure_ascii=False: escaped CJK costs ~3x the tokens in the tool result (#6561).
             return json.dumps({"result": handler(self, args)}, ensure_ascii=False)
         except Exception as e:
             logger.warning("%s failed: %s", tool_name, e, exc_info=True)
-            return tool_error(f"{failure}: {str(e) or type(e).__name__}")
+            return tool_error(f"{failure}: {_api_error_detail(e)}")
 
     # -- session lifecycle -------------------------------------------------------
 
