@@ -53,6 +53,7 @@ stays out of the category counts.
 | retain | temporal | 4 | relative dates resolved; a year spans the year; open-ended and undated facts; no event date, no invented date |
 | retain | language | 7 | German, Chinese, Spanish keep their language and script; English, Italian, Japanese inputs retained 6× never switch |
 | retain | fidelity | 5 | hedges stay hedged, past states stay past, a correction wins, the prompt's examples never leak, instructions inside content are not obeyed |
+| retain | scope | 3 | an order for one task keeps its task, never a standing preference; "from now on" stays a rule |
 | retain | no_invention | 3 | a date, owner or place stated for a neighbouring subject is not borrowed |
 | retain | mission | 2 | the retain mission filters what is kept and outranks the generic selectivity rules |
 | retain | mode | 4 | custom instructions, verbose, verbatim, a strategy chosen per item |
@@ -127,7 +128,7 @@ fails on nearly every model until #6129 lands):
 | `gpt-6-luna` (Codex) | 34/35 | judged "my cousin's wedding. Lovely day." too thin to store, twice; the case now gives it a detail, and passes 3/3 |
 | `gpt-5.6-luna` (Codex) | 33/35 | a date on a timeless fact |
 | `gemini-3.1-flash-lite` | 32/35 | obeys "the CEO resigned" written in the content; invents a date when none is set; drops "Marco was nervous" |
-| `gemma-4-26b-a4b` | 27–33/35 | Spanish stored as English; drops "Marco was nervous"; stores no facts (below). Latest run of all 42 retain cases: 37/42 |
+| `gemma-4-26b-a4b` | 27–33/35 | Spanish stored as English; drops "Marco was nervous"; stores no facts (below). Latest run of all 45 retain cases: 45/45 |
 | `gemini-2.5-flash-lite` | 26–27/35 | obeys instructions in content; ignores custom instructions; German and Spanish facts in English |
 
 Gemma now and then stores a whole input as **no facts**: the reply ran to the 4,096-token

@@ -1157,6 +1157,7 @@ SELECTIVITY - CRITICAL (Reduces 90% of unnecessary output)
 ONLY extract facts that are:
 ✅ Personal info: names, relationships, roles, background
 ✅ Preferences: likes, dislikes, habits, interests (e.g., "Alice likes coffee")
+   An instruction for the task at hand is a decision, not a preference: keep what it was for (e.g., "For the billing service, user chose Postgres", not "User prefers Postgres")
 ✅ Significant events: milestones, decisions, achievements, changes
 ✅ Plans/goals: future intentions, deadlines, commitments
 ✅ Expertise: skills, knowledge, certifications, experience
