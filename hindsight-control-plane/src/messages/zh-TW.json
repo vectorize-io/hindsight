@@ -1180,7 +1180,11 @@
     "nextRefreshPaused": "重新整理失敗後暫停",
     "nextRefreshRetrying": "重試中，下次嘗試{time}",
     "nextRefreshRunning": "正在重新整理",
-    "hidePages": "隱藏頁面"
+    "hidePages": "隱藏頁面",
+    "nextRefreshQueued": "排隊中，{time}開始",
+    "nextRefreshQueuedSoon": "排隊中，即將開始",
+    "nextRefreshRetryingSoon": "即將重試",
+    "nextRefreshRetryingNow": "正在重試"
   },
   "cronPreview": {
     "invalid": "無效的 cron 運算式",
@@ -2399,7 +2403,11 @@
     "paused": "已暫停",
     "pausedTitle": "上次重新整理失敗，此模型不再自動更新——手動重新整理即可恢復",
     "retrying": "重試中",
-    "retryingTitle": "上次嘗試失敗，已排入下一次嘗試——只有這次也失敗才會停止自動重新整理"
+    "retryingTitle": "上次嘗試失敗，已排入下一次嘗試——只有這次也失敗才會停止自動重新整理",
+    "queued": "排隊中",
+    "queuedTitle": "重新整理已排入佇列，將在「下次重新整理」所示時間執行——沒有任何失敗",
+    "refreshing": "重新整理中",
+    "refreshingTitle": "正在執行重新整理"
   },
   "documentHistory": {
     "explainer": "每次變更對此文件的事實和觀察做了什麼。觀察會被重建而非保留版本：變更刪除的觀察，這裡的 ID 是唯一痕跡。歷史由銀行的操作重建，因此同步保留和關閉自動整合時的變更不會列出。展開一列查看 ID；將滑鼠停在 ID 上可在其他列中找到它。",

@@ -1180,7 +1180,11 @@
     "nextRefreshPaused": "更新失敗により一時停止中",
     "nextRefreshRetrying": "再試行中、次は{time}",
     "nextRefreshRunning": "更新中",
-    "hidePages": "ページを非表示"
+    "hidePages": "ページを非表示",
+    "nextRefreshQueued": "待機中、{time}に開始",
+    "nextRefreshQueuedSoon": "待機中、まもなく開始",
+    "nextRefreshRetryingSoon": "まもなく再試行",
+    "nextRefreshRetryingNow": "再試行中"
   },
   "cronPreview": {
     "invalid": "無効な cron 式",
@@ -2399,7 +2403,11 @@
     "paused": "一時停止",
     "pausedTitle": "前回の更新が失敗したため、このモデルは自動更新されません。更新すると再開します",
     "retrying": "再試行中",
-    "retryingTitle": "前回の試行は失敗し、次の試行が待機中です。これも失敗した場合にのみ自動更新が停止します"
+    "retryingTitle": "前回の試行は失敗し、次の試行が待機中です。これも失敗した場合にのみ自動更新が停止します",
+    "queued": "待機中",
+    "queuedTitle": "更新は待機中で、「次回の更新」に表示された時刻に実行されます。失敗はしていません",
+    "refreshing": "更新中",
+    "refreshingTitle": "現在更新を実行中です"
   },
   "documentHistory": {
     "explainer": "各変更がこのドキュメントのファクトと観察に与えた影響です。観察はバージョン管理されず再構築されます。変更で削除された観察は、ここにあるIDだけが痕跡です。バンクのオペレーションから再構築するため、同期の保持や自動統合オフ時の変更は表示されません。行を展開するとIDが表示され、IDにカーソルを合わせると他の行で探せます。",

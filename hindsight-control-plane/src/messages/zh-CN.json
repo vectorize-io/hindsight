@@ -1180,7 +1180,11 @@
     "nextRefreshPaused": "刷新失败后已暂停",
     "nextRefreshRetrying": "重试中，下次尝试{time}",
     "nextRefreshRunning": "正在刷新",
-    "hidePages": "隐藏页面"
+    "hidePages": "隐藏页面",
+    "nextRefreshQueued": "排队中，{time}开始",
+    "nextRefreshQueuedSoon": "排队中，即将开始",
+    "nextRefreshRetryingSoon": "即将重试",
+    "nextRefreshRetryingNow": "正在重试"
   },
   "cronPreview": {
     "invalid": "无效的 cron 表达式",
@@ -2399,7 +2403,11 @@
     "paused": "已暂停",
     "pausedTitle": "上次刷新失败，该模型不再自动刷新——手动刷新可恢复",
     "retrying": "重试中",
-    "retryingTitle": "上次尝试失败，已排队下一次尝试——只有这次也失败才会停止自动刷新"
+    "retryingTitle": "上次尝试失败，已排队下一次尝试——只有这次也失败才会停止自动刷新",
+    "queued": "排队中",
+    "queuedTitle": "刷新已排队，将在“下次刷新”所示时间运行——没有任何失败",
+    "refreshing": "刷新中",
+    "refreshingTitle": "正在运行刷新"
   },
   "documentHistory": {
     "explainer": "每次变更对此文档的事实和观察做了什么。观察会被重建而非保留版本：变更删除的观察，这里的 ID 是唯一痕迹。历史由银行的操作重建，因此同步保留和关闭自动整合时的变更不会列出。展开一行查看 ID；将鼠标悬停在 ID 上可在其他行中找到它。",

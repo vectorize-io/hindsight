@@ -1180,7 +1180,11 @@
     "nextRefreshPaused": "重新整理失敗後暫停",
     "nextRefreshRetrying": "重試緊，下次嘗試{time}",
     "nextRefreshRunning": "更新緊",
-    "hidePages": "隱藏頁面"
+    "hidePages": "隱藏頁面",
+    "nextRefreshQueued": "排緊隊，{time}開始",
+    "nextRefreshQueuedSoon": "排緊隊，好快開始",
+    "nextRefreshRetryingSoon": "好快重試",
+    "nextRefreshRetryingNow": "而家重試緊"
   },
   "cronPreview": {
     "invalid": "無效嘅 cron 運算式",
@@ -2399,7 +2403,11 @@
     "paused": "已暫停",
     "pausedTitle": "上次重新整理失敗，呢個模型唔會再自動更新——手動重新整理就會恢復",
     "retrying": "重試緊",
-    "retryingTitle": "上次嘗試失敗咗，下一次已經排緊隊——今次再失敗先會停止自動更新"
+    "retryingTitle": "上次嘗試失敗咗，下一次已經排緊隊——今次再失敗先會停止自動更新",
+    "queued": "排緊隊",
+    "queuedTitle": "更新排緊隊，會喺「下次更新」顯示嘅時間行——冇嘢失敗過",
+    "refreshing": "更新緊",
+    "refreshingTitle": "而家更新緊"
   },
   "documentHistory": {
     "explainer": "每次變更對呢份文件嘅事實同觀察做咗乜。觀察會重建而唔會保留版本：變更刪除咗嘅觀察，呢度嘅 ID 就係唯一痕跡。歷史由銀行嘅操作重建，所以同步保留同埋關咗自動整合時嘅變更唔會列出。展開一行睇 ID；將滑鼠停喺 ID 上面就可以喺其他行搵到佢。",

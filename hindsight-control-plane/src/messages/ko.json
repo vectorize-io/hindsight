@@ -1180,7 +1180,11 @@
     "nextRefreshPaused": "새로 고침 실패로 일시 중지됨",
     "nextRefreshRetrying": "재시도 중, 다음 시도 {time}",
     "nextRefreshRunning": "새로 고치는 중",
-    "hidePages": "페이지 숨기기"
+    "hidePages": "페이지 숨기기",
+    "nextRefreshQueued": "대기 중, {time} 시작",
+    "nextRefreshQueuedSoon": "대기 중, 곧 시작",
+    "nextRefreshRetryingSoon": "곧 재시도",
+    "nextRefreshRetryingNow": "지금 재시도 중"
   },
   "cronPreview": {
     "invalid": "잘못된 cron 표현식",
@@ -2399,7 +2403,11 @@
     "paused": "일시 중지",
     "pausedTitle": "마지막 새로 고침이 실패하여 이 모델은 더 이상 자동으로 새로 고쳐지지 않습니다. 새로 고치면 다시 시작됩니다",
     "retrying": "재시도 중",
-    "retryingTitle": "마지막 시도가 실패했고 다음 시도가 대기 중입니다. 이번에도 실패하면 자동 새로 고침이 중지됩니다"
+    "retryingTitle": "마지막 시도가 실패했고 다음 시도가 대기 중입니다. 이번에도 실패하면 자동 새로 고침이 중지됩니다",
+    "queued": "대기 중",
+    "queuedTitle": "새로 고침이 대기 중이며 '다음 새로 고침'에 표시된 시간에 실행됩니다. 실패한 것은 없습니다",
+    "refreshing": "새로 고치는 중",
+    "refreshingTitle": "지금 새로 고침이 실행 중입니다"
   },
   "documentHistory": {
     "explainer": "각 변경이 이 문서의 사실과 관찰에 한 일입니다. 관찰은 버전 관리되지 않고 다시 만들어집니다. 변경으로 삭제된 관찰은 여기의 ID가 유일한 흔적입니다. 뱅크의 작업에서 다시 구성하므로 동기 보존과 자동 통합이 꺼진 상태의 변경은 나오지 않습니다. 행을 펼치면 ID가 보이고, ID에 마우스를 올리면 다른 행에서 찾을 수 있습니다.",

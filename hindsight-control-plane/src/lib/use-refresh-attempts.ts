@@ -3,9 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { client } from "./api";
 
-/** A refresh attempt that has not finished: running now, or waiting out its retry gap. */
+/** A refresh that has not finished: waiting for its turn, or running now. */
 export type RefreshAttempt = {
-  /** When the worker will pick it up again, or null when it is running now. */
+  /** True while the worker runs it; false while it waits in the queue. */
+  running: boolean;
+  /**
+   * True once an earlier attempt of this refresh failed. A refresh waiting out
+   * its minimum interval, or on its first attempt, is not a retry (#6864).
+   */
+  retry: boolean;
+  /** When a waiting refresh is due to start, or null when unknown or running. */
   nextAttemptAt: string | null;
 };
 
@@ -40,7 +47,16 @@ export function useRefreshAttempts(bankId: string | null, pollMs?: number) {
       const next = new Map<string, RefreshAttempt>();
       for (const op of result.operations) {
         if (!op.mental_model_id || !IN_FLIGHT.has(op.status)) continue;
-        next.set(op.mental_model_id, { nextAttemptAt: op.next_retry_at ?? null });
+        const running = op.status === "processing";
+        next.set(op.mental_model_id, {
+          running,
+          // Either signal alone misses a case: a task put back after a worker
+          // restart has a count but no error text.
+          retry: Boolean(op.retry_count) || Boolean(op.error_message),
+          // next_retry_at is not cleared when the task starts, so it is only a
+          // schedule while the task still waits.
+          nextAttemptAt: running ? null : (op.next_retry_at ?? null),
+        });
       }
       setAttempts(next);
     } catch {
