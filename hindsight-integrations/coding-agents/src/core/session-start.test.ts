@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -64,6 +64,37 @@ describe("buildSessionStartContext", () => {
       detectLegacyPlugin: () => undefined,
     });
     expect(out.systemMessage).not.toContain("plugin uninstall");
+  });
+
+  it('autoInject "tree" writes the observation tree to the memory folder and points at it', async () => {
+    const home = mkdtempSync(join(tmpdir(), "home-"));
+    vi.stubEnv("HOME", home);
+    try {
+      const client = {
+        listDocumentIds: async () => new Set(["git:a"]),
+        listPages: listPagesOk,
+        observationTree: async () => ({
+          path: "",
+          folders: [],
+          files: [
+            { path: "index.md", kind: "index" as const, content: "- prices.md: prc is cents" },
+          ],
+        }),
+      };
+      const out = await buildSessionStartContext({
+        cwd: "/repo/dir",
+        bankId: "bank-1",
+        client,
+        cfg: resolveConfig({ autoSeed: false, autoInject: "tree" }),
+        detectLegacyPlugin: () => undefined,
+      });
+      const dir = join(home, ".hindsight", "memory-tree", "bank-1", "memory");
+      expect(readFileSync(join(dir, "index.md"), "utf8")).toBe("- prices.md: prc is cents");
+      expect(out.additionalContext).toContain(dir);
+      expect(out.additionalContext).toContain("prc is cents");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("configures the bank itself only when the deepen engine is not started", async () => {
