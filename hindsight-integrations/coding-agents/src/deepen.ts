@@ -52,7 +52,12 @@ function arg(name: string, def?: string): string | undefined {
 }
 
 const REPO = arg("repo");
-const cfg0 = loadConfig({ harness: arg("harness") ?? undefined, path: arg("config") });
+// The flags fold in BEFORE bank resolution so the keyless-Cloud gate sees the server actually used.
+const cfg0 = {
+  ...loadConfig({ harness: arg("harness") ?? undefined, path: arg("config") }),
+  ...(arg("api-url") ? { apiUrl: arg("api-url")! } : {}),
+  ...(arg("api-token") ? { apiToken: arg("api-token")! } : {}),
+};
 const BANK =
   arg("bank") ??
   (REPO ? deriveBankIdOrSkip(cfg0, REPO, arg("harness") ?? cfg0.harness) : cfg0.bankId) ??

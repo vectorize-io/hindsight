@@ -296,6 +296,7 @@ describe("defaultBankConfig (#4725)", () => {
 describe("banks.<bankId> overrides (per-repo opt-in/out, applied AFTER bank resolution)", () => {
   it("overrides behavioral fields for the matching bank only; others untouched", () => {
     const cfg = resolveConfig({
+      apiToken: "test-key",
       gitIngest: "message",
       banks: {
         "coding-agent::secret": { disabled: true },
@@ -345,6 +346,7 @@ describe("banks.<id>.bank — rename inside the banks tree", () => {
 
   it("single hop: the rename target's own section is NOT consulted (no chaining)", () => {
     const cfg = resolveConfig({
+      apiToken: "test-key",
       banks: {
         a: { bank: "b" },
         b: { bank: "c", disabled: true }, // must not apply to the a->b hop
@@ -632,5 +634,26 @@ describe("observationScopes", () => {
       "per_tag"
     );
     expect(readEnvConfig({}).observationScopes).toBeUndefined();
+  });
+});
+
+describe("keyless Hindsight Cloud", () => {
+  // Cloud refuses every keyless request; sending them anyway gives the user no memory and costs
+  // both sides for data that is thrown away.
+  it("turns memory off when the default Cloud URL has no key", () => {
+    expect(applyBankConfig(resolveConfig({}), "b").cfg.disabled).toBe(true);
+  });
+
+  it("stays on with a key, or with any other server", () => {
+    expect(applyBankConfig(resolveConfig({ apiToken: "k" }), "b").cfg.disabled).toBe(false);
+    const local = resolveConfig({ apiUrl: "http://localhost:8888" });
+    expect(applyBankConfig(local, "b").cfg.disabled).toBe(false);
+    expect(applyBankConfig(resolveConfig({ serverMode: "daemon" }), "b").cfg.disabled).toBe(false);
+  });
+
+  it("counts a key that only a per-bank section supplies", () => {
+    const cfg = resolveConfig({ banks: { b: { apiToken: "k" } } });
+    expect(applyBankConfig(cfg, "b").cfg.disabled).toBe(false);
+    expect(applyBankConfig(cfg, "other").cfg.disabled).toBe(true);
   });
 });

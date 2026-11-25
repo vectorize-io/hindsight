@@ -238,7 +238,7 @@ describe("optInOnly", () => {
   });
 
   it("renders an unlisted project inert through the gate every entry point already checks", () => {
-    const cfg = resolveConfig({ optInOnly: true, optInPaths: [approved] });
+    const cfg = resolveConfig({ optInOnly: true, optInPaths: [approved], apiToken: "test-key" });
     const inert = applyBankConfig(cfg, deriveBankId(cfg, other, "codex"), other);
     expect(inert.cfg.disabled).toBe(true);
 
@@ -248,7 +248,7 @@ describe("optInOnly", () => {
   });
 
   it("stays inert when no directory is known and the switch is on", () => {
-    const cfg = resolveConfig({ optInOnly: true, optInPaths: [approved] });
+    const cfg = resolveConfig({ optInOnly: true, optInPaths: [approved], apiToken: "test-key" });
     expect(isOptedIn(cfg, "")).toBe(false);
   });
 

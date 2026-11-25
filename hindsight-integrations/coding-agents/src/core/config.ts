@@ -586,6 +586,8 @@ function resolveAutoInject(raw: RawConfig): AutoInject {
   return raw.autoReflect === false ? "none" : "reflect";
 }
 
+export const CLOUD_URL = "https://api.hindsight.vectorize.io";
+
 export function resolveConfig(raw: RawConfig = {}): Config {
   const serverMode = ["cloud", "self-hosted", "daemon"].includes(raw.serverMode as string)
     ? (raw.serverMode as "cloud" | "self-hosted" | "daemon")
@@ -597,10 +599,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     // Daemon mode resolves the URL HERE rather than at each call site: every entry point already
     // builds its client from cfg.apiUrl, so collapsing the mode into that one field means the
     // daemon needs no plumbing through eight separate constructors.
-    apiUrl:
-      serverMode === "daemon"
-        ? `http://127.0.0.1:${apiPort}`
-        : (raw.apiUrl ?? "https://api.hindsight.vectorize.io"),
+    apiUrl: serverMode === "daemon" ? `http://127.0.0.1:${apiPort}` : (raw.apiUrl ?? CLOUD_URL),
     apiToken: raw.apiToken || undefined,
     apiPort,
     daemonIdleTimeout: raw.daemonIdleTimeout,
@@ -899,6 +898,26 @@ export function applyBankConfig(
   resolvedId: string,
   /** The directory the bank was resolved FROM. Supplying it enforces `optInOnly`; every entry
    *  point already has it to hand, having just passed it to bank resolution. */
+  directory?: string
+): { cfg: Config; bankId: string } {
+  const out = applyOverrides(cfg, resolvedId, directory);
+  // Cloud refuses every request without a key, so a keyless Cloud config (the default, when the
+  // plugin was added without running the installer) would ship each session only to be thrown
+  // away. Checked AFTER the overrides: a `paths`/`banks` entry may be what supplies the key.
+  if (!out.cfg.disabled && !out.cfg.apiToken && out.cfg.apiUrl.replace(/\/+$/, "") === CLOUD_URL) {
+    log.warn(
+      "config",
+      "Hindsight Cloud needs an API key and none is set — memory is off. Set apiToken in " +
+        "~/.hindsight/coding-agent.json (or HINDSIGHT_API_TOKEN), or point apiUrl at your own server."
+    );
+    return { cfg: { ...out.cfg, disabled: true }, bankId: out.bankId };
+  }
+  return out;
+}
+
+function applyOverrides(
+  cfg: Config,
+  resolvedId: string,
   directory?: string
 ): { cfg: Config; bankId: string } {
   // Rides the `disabled` gate every entry point already checks after bank resolution, rather than
