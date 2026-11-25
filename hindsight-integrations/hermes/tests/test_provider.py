@@ -211,6 +211,16 @@ def test_builtin_memory_adds_and_replaces_are_retained(provider):
     assert second["tags"] == ["base", "builtin-memory", "builtin-target:user", "builtin-action:replace"]
 
 
+def test_mirror_builtin_memory_off_keeps_builtin_writes_out_of_the_bank(provider):
+    """#6725: a curated bank must not get MEMORY.md/USER.md notes; the retain tool still writes."""
+    instance, fake = provider({"mirror_builtin_memory": False})
+    instance.on_memory_write("add", "memory", "Deploys go through Fly.io")
+    instance.on_memory_write("replace", "user", "Ada prefers tea")
+    instance.handle_tool_call("hindsight_retain", {"content": "Ada likes tea"})
+    instance.shutdown()
+    assert [_retain_item(fake, i)["content"] for i in range(len(fake.retains))] == ["Ada likes tea"]
+
+
 def test_tool_call_errors_are_reported_not_raised(provider):
     instance, _ = provider({})
     assert instance.handle_tool_call("hindsight_recall", {}).startswith("ERROR:")

@@ -298,6 +298,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `auto_retain` | `true` | Automatically retain conversation turns. Sub-agent (`delegate_task`) runs are never auto-retained, and kanban workers only with `retain_kanban`; their parent session keeps its own turns. |
 | `retain_cron` | `false` | Also auto-retain scheduled (cron) runs. Off by default, so job output stays out of the user's memory; the `hindsight_retain` tool still works in cron runs. |
 | `retain_kanban` | `false` | Let kanban workers write to memory: auto-retain of their turns, the `hindsight_retain` tool and the copy of built-in memory writes. Off by default, so a worker recalls and reflects on its profile's bank but never writes to it. Turn it on when the workers' runs are the only record of their work. |
+| `mirror_builtin_memory` | `true` | Copy built-in memory writes (`MEMORY.md`, `USER.md` adds and replaces) into the bank, tagged `builtin-memory`. Turn it off to keep those notes out of a curated bank; the `hindsight_retain` tool and auto-retain are not affected. |
 | `retain_async` | `true` | Process retain asynchronously on the Hindsight server |
 | `retain_every_n_turns` | `1` | Retain every N turns (1 = every turn) |
 | `retain_context` | `conversation between Hermes Agent and the User` | Context label for retained memories |

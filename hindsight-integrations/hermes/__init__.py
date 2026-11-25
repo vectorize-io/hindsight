@@ -878,6 +878,11 @@ class HindsightMemoryProvider(MemoryProvider):
                 "default": False,
             },
             {
+                "key": "mirror_builtin_memory",
+                "description": "Copy built-in memory writes (MEMORY.md, USER.md adds and replaces) into the bank; turn off to keep those notes out of a curated bank",
+                "default": True,
+            },
+            {
                 "key": "recall_cron",
                 "description": "Also auto-recall in scheduled (cron) runs; off by default because the query would be Hermes' fixed cron notice, not the job",
                 "default": False,
@@ -1606,6 +1611,7 @@ class HindsightMemoryProvider(MemoryProvider):
         # retain tool and the built-in memory mirror write task chatter into it, mostly duplicate reports
         # the parent already retains (#6124). Unless retain_kanban opts it in (#6419), it writes nothing.
         self._writes_disabled = context == "kanban" and not retain_kanban
+        self._mirror_builtin_memory = bool(cfg.get("mirror_builtin_memory", True))  # #6725
         self._retain_every_n_turns = max(1, _parse_int_setting(cfg.get("retain_every_n_turns"), 1))
         self._retain_context = cfg.get("retain_context", _RETAIN_CONTEXT_DEFAULT)
         self._retain_async = cfg.get("retain_async", True)
@@ -2155,7 +2161,13 @@ class HindsightMemoryProvider(MemoryProvider):
         """Retain built-in memory adds and replaces (``target``: memory | user) on the writer
         thread, so an entry the agent later prunes from the size-capped file stays in the bank.
         Removals are not retained."""
-        if action not in ("add", "replace") or not content or self._shutting_down.is_set() or self._writes_disabled:
+        if (
+            action not in ("add", "replace")
+            or not content
+            or self._shutting_down.is_set()
+            or self._writes_disabled
+            or not self._mirror_builtin_memory
+        ):
             return
         item = self._build_retain_kwargs(
             content,
