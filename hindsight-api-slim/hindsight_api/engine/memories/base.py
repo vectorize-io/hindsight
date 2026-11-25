@@ -1771,6 +1771,12 @@ class MemoriesExtension(Extension, ABC):
         caller passes in. An id from outside the tenant has no row in that tenant's ``banks``
         table, so it consumes a slot of the page and hands the caller a short one.
 
+        **May name banks of any kind.** A store orders every bank it holds, and knowledge banks
+        share the ``banks`` table and this id space, so an id here is not necessarily a memory
+        bank. A caller that needs memory banks only filters on ``banks.kind = 'memory'``, as the
+        memory-bank list does in ``_store_write_stream``; one that walks the whole ordering (a
+        tenant-wide maintenance pass, say) otherwise visits knowledge banks too.
+
         An empty ``page_token`` starts at the most recently written bank; the returned
         ``next_page_token`` is empty exactly when the walk is exhausted.
 
