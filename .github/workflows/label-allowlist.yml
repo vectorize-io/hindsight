@@ -1,0 +1,30 @@
+name: Label allowlist
+
+# GitHub can't restrict label creation, and adding a missing label through the
+# API creates it. So any label created outside this list is deleted right away.
+# To add a label for real: add it here first, then create it.
+on:
+  label:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  enforce:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          LABEL: ${{ github.event.label.name }}
+        run: |
+          allowed=(
+            waiting-for-external
+            core integration integration:hermes integration:openclaw integration:coding-agents
+            security p0 p1 p2 p3
+            oracle-tests
+          )
+          for a in "${allowed[@]}"; do [ "$a" = "$LABEL" ] && exit 0; done
+          echo "Deleting label '$LABEL': not in the allowlist (.github/workflows/label-allowlist.yml)"
+          gh label delete "$LABEL" --yes
