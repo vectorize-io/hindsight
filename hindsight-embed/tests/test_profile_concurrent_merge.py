@@ -114,3 +114,30 @@ def test_a_refused_swap_keeps_the_old_profile_and_no_temp_file(tmp_path: Path, m
 
     assert env_path.read_text(encoding="utf-8") == before
     assert not list(env_path.parent.glob("*.tmp"))
+
+
+def test_replace_waits_out_a_windows_access_denied(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows refuses the swap while a reader has the file open (#6875); it must retry, not fail."""
+    from hindsight_embed import profile_manager
+
+    src, dst = tmp_path / "a.tmp", tmp_path / "a.env"
+    src.write_text("new", encoding="utf-8")
+    dst.write_text("old", encoding="utf-8")
+    real_replace = Path.replace
+    denials = iter([True, True])
+
+    def flaky_replace(self: Path, target: Path) -> Path:
+        if next(denials, False):
+            raise PermissionError(5, "Access is denied")
+        return real_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+    profile_manager.replace_file(src, dst)
+    assert dst.read_text(encoding="utf-8") == "new"
+
+    monkeypatch.setattr(profile_manager, "_REPLACE_RETRY_BUDGET", 0.0)
+    denials = iter([True])
+    src.write_text("newer", encoding="utf-8")
+    with pytest.raises(PermissionError):
+        profile_manager.replace_file(src, dst)
+    assert dst.read_text(encoding="utf-8") == "new"

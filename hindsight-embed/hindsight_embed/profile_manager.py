@@ -182,6 +182,28 @@ def unlock_file(file_obj: IO[str]) -> None:
     _release_lock(file_obj)
 
 
+_REPLACE_RETRY_BUDGET = 2.0
+
+
+def replace_file(src: Path, dst: Path) -> None:
+    """`src.replace(dst)`, retrying briefly while Windows refuses it.
+
+    Windows denies the swap (WinError 5) while any other process has `dst` open,
+    even just to read it. Readers hold it for milliseconds, so wait them out (#6875).
+    """
+    deadline = time.monotonic() + _REPLACE_RETRY_BUDGET
+    delay = _LOCK_RETRY_INITIAL
+    while True:
+        try:
+            src.replace(dst)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, _LOCK_RETRY_MAX)
+
+
 from ._http_probe import probe_get
 
 # Configuration paths
@@ -445,12 +467,13 @@ class ProfileManager:
         # mid-rewrite saw it empty and wrote it back without the user's
         # DATABASE_URL, so the next daemon start fell back to a new, empty pg0
         # (#6485). The temp name is per-process so two writers never share one.
-        # On Windows the swap fails while another process has the .env open; the
-        # old file then stays intact, so drop the temp file and let it raise.
+        # On Windows the swap is refused while another process has the .env open;
+        # replace_file waits that out, and if it still fails the old file stays
+        # intact, so drop the temp file and let it raise.
         temp_path = config_path.with_name(f"{config_path.name}.{os.getpid()}.tmp")
         try:
             temp_path.write_text(render_config(config), encoding="utf-8")
-            temp_path.replace(config_path)
+            replace_file(temp_path, config_path)
         except OSError:
             temp_path.unlink(missing_ok=True)
             raise
@@ -749,7 +772,7 @@ class ProfileManager:
         # Atomic replace. `.rename()` fails on Windows when the destination
         # exists (WinError 183); `.replace()` is the cross-platform atomic
         # rename added in Python 3.3 exactly for this pattern.
-        temp_file.replace(metadata_file)
+        replace_file(temp_file, metadata_file)
 
 
 # The --profile flag value, set by cli.main(). It lives here, not in cli.py, on
