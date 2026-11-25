@@ -11,7 +11,9 @@ type TriggerLike = {
 };
 
 /**
- * Inline "next refresh" value derived from a mental model's trigger:
+ * Inline "next refresh" value. A refresh in flight wins: queued (with its start
+ * time), refreshing now, or retrying — the last only after a failed attempt.
+ * Otherwise it is derived from the mental model's trigger:
  * - cron schedule -> relative time of the next UTC run (absolute UTC on hover)
  * - after consolidation -> "after consolidation"
  * - otherwise (manual) -> "on demand"

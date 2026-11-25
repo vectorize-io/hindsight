@@ -21,11 +21,12 @@ type TriggerLike = {
  * whether a scheduled refresh does any work, so a flagged model is one a refresh
  * would actually rewrite (#3291).
  *
- * Two states, two colours. An earlier revision split "stale" into two colours —
- * one for models that refresh themselves and one for manual ones — but every
- * surface that shows this badge already shows "Next refresh: …" beside it, so the
- * colour restated a fact that was on screen anyway and could only be decoded by
- * hovering. The distinction lives in the tooltip instead.
+ * Staleness is two states, two colours. An earlier revision split "stale" into two
+ * colours — one for models that refresh themselves and one for manual ones — but
+ * every surface that shows this badge already shows "Next refresh: …" beside it,
+ * so the colour restated a fact that was on screen anyway and could only be
+ * decoded by hovering. The distinction lives in the tooltip instead. A refresh in
+ * flight that never failed is blue, so it cannot be read as a warning.
  *
  * `variant` picks the presentation, not the meaning: compact rows (the pages tree,
  * the mental-model list) have no room for a label and use the dot; headers and
@@ -110,9 +111,25 @@ export function StalenessBadge({
   const selfHealing = Boolean(
     trigger?.refresh_cron?.trim() || trigger?.refresh_after_consolidation
   );
-  const title =
-    state === "stale" ? t(selfHealing ? "staleAutoTitle" : "staleManualTitle") : t(`${state}Title`);
-  const label = t(state);
+  // Literal keys, not `${state}Title`: the used-keys test can only check those.
+  const titles: Record<State, string> = {
+    queued: t("queuedTitle"),
+    refreshing: t("refreshingTitle"),
+    retrying: t("retryingTitle"),
+    paused: t("pausedTitle"),
+    stale: selfHealing ? t("staleAutoTitle") : t("staleManualTitle"),
+    inSync: t("inSyncTitle"),
+  };
+  const labels: Record<State, string> = {
+    queued: t("queued"),
+    refreshing: t("refreshing"),
+    retrying: t("retrying"),
+    paused: t("paused"),
+    stale: t("stale"),
+    inSync: t("inSync"),
+  };
+  const title = titles[state];
+  const label = labels[state];
 
   if (variant === "inline") {
     // Dot + label with no chip around it, for the freshness line: there the status
