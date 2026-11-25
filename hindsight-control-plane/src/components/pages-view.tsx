@@ -1105,9 +1105,7 @@ export function TreeRow({
                 isStale={node.is_stale}
                 trigger={node.trigger}
                 refreshFailedAt={node.last_refresh_failed_at}
-                retrying={Boolean(
-                  node.mental_model_id && refreshAttempts.has(node.mental_model_id)
-                )}
+                attempt={node.mental_model_id ? refreshAttempts.get(node.mental_model_id) : null}
                 variant="dot"
               />
             )}

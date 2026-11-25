@@ -1180,7 +1180,11 @@
     "nextRefreshPaused": "en pause après un échec",
     "nextRefreshRetrying": "nouvel essai, prochaine tentative {time}",
     "nextRefreshRunning": "actualisation en cours",
-    "hidePages": "Masquer les pages"
+    "hidePages": "Masquer les pages",
+    "nextRefreshQueued": "en file, démarre {time}",
+    "nextRefreshQueuedSoon": "en file, démarre bientôt",
+    "nextRefreshRetryingSoon": "nouvel essai bientôt",
+    "nextRefreshRetryingNow": "nouvel essai en cours"
   },
   "cronPreview": {
     "invalid": "Expression cron non valide",
@@ -2399,7 +2403,11 @@
     "paused": "En pause",
     "pausedTitle": "La dernière actualisation a échoué : ce modèle ne s'actualise plus tout seul — actualisez-le pour reprendre",
     "retrying": "Nouvel essai",
-    "retryingTitle": "La dernière tentative a échoué et une autre est en file — les actualisations automatiques ne s'arrêtent que si celle-ci échoue aussi"
+    "retryingTitle": "La dernière tentative a échoué et une autre est en file — les actualisations automatiques ne s'arrêtent que si celle-ci échoue aussi",
+    "queued": "En file",
+    "queuedTitle": "Une actualisation est en file et s'exécutera à l'heure indiquée sous Prochaine actualisation — rien n'a échoué",
+    "refreshing": "Actualisation",
+    "refreshingTitle": "Une actualisation est en cours"
   },
   "documentHistory": {
     "explainer": "Ce que chaque changement a fait aux faits et observations de ce document. Les observations sont reconstruites, pas versionnées : quand un changement en supprime une, son id ici est la seule trace. Reconstruit à partir des opérations de la banque : les retains synchrones et les changements faits avec la consolidation automatique désactivée n'y figurent pas. Dépliez une ligne pour voir les ids ; survolez un id pour le retrouver dans d'autres lignes.",

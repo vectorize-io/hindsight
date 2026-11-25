@@ -1153,7 +1153,7 @@ function FilesView({
                         isStale={m.is_stale}
                         trigger={m.trigger}
                         refreshFailedAt={m.last_refresh_failed_at}
-                        retrying={refreshAttempts.has(m.id)}
+                        attempt={refreshAttempts.get(m.id)}
                         variant="dot"
                         className="ml-auto"
                       />

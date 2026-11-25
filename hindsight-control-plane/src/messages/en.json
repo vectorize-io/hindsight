@@ -1180,7 +1180,11 @@
     "nextRefreshPaused": "paused after a failed refresh",
     "nextRefreshRetrying": "retrying, next attempt {time}",
     "nextRefreshRunning": "refreshing now",
-    "hidePages": "Hide pages"
+    "hidePages": "Hide pages",
+    "nextRefreshQueued": "queued, starts {time}",
+    "nextRefreshQueuedSoon": "queued, starts shortly",
+    "nextRefreshRetryingSoon": "retrying shortly",
+    "nextRefreshRetryingNow": "retrying now"
   },
   "cronPreview": {
     "invalid": "Invalid cron expression",
@@ -2399,7 +2403,11 @@
     "paused": "Paused",
     "pausedTitle": "The last refresh failed, so this model does not refresh itself any more — refresh it to resume",
     "retrying": "Retrying",
-    "retryingTitle": "The last attempt failed and another is queued — automatic refreshes stop only if this one fails too"
+    "retryingTitle": "The last attempt failed and another is queued — automatic refreshes stop only if this one fails too",
+    "queued": "Queued",
+    "queuedTitle": "A refresh is queued and runs at the time shown under Next refresh — nothing has failed",
+    "refreshing": "Refreshing",
+    "refreshingTitle": "A refresh is running now"
   },
   "documentHistory": {
     "explainer": "What each change did to this document's facts and observations. Observations are rebuilt, not versioned: when a change removes one, its id here is the only trace left. Rebuilt from the bank's operations, so synchronous retains and changes made with auto-consolidation off are not listed. Expand a row to see the ids; hover an id to find it in other rows.",

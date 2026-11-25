@@ -1180,7 +1180,11 @@
     "nextRefreshPaused": "em pausa após uma atualização falhada",
     "nextRefreshRetrying": "a repetir, próxima tentativa {time}",
     "nextRefreshRunning": "a atualizar agora",
-    "hidePages": "Ocultar páginas"
+    "hidePages": "Ocultar páginas",
+    "nextRefreshQueued": "em fila, começa {time}",
+    "nextRefreshQueuedSoon": "em fila, começa em breve",
+    "nextRefreshRetryingSoon": "a repetir em breve",
+    "nextRefreshRetryingNow": "a repetir agora"
   },
   "cronPreview": {
     "invalid": "Expressão cron inválida",
@@ -2399,7 +2403,11 @@
     "paused": "Em pausa",
     "pausedTitle": "A última atualização falhou, por isso este modelo já não se atualiza sozinho — atualize-o para retomar",
     "retrying": "A repetir",
-    "retryingTitle": "A última tentativa falhou e há outra em fila — as atualizações automáticas só param se esta também falhar"
+    "retryingTitle": "A última tentativa falhou e há outra em fila — as atualizações automáticas só param se esta também falhar",
+    "queued": "Em fila",
+    "queuedTitle": "Há uma atualização em fila que corre à hora indicada em Próxima atualização — nada falhou",
+    "refreshing": "A atualizar",
+    "refreshingTitle": "Uma atualização está a correr agora"
   },
   "documentHistory": {
     "explainer": "O que cada alteração fez aos fatos e observações deste documento. Observações são reconstruídas, não versionadas: quando uma alteração remove uma, o id aqui é o único rastro. Reconstruído a partir das operações do banco, então retenções síncronas e alterações feitas com a consolidação automática desligada não aparecem. Expanda uma linha para ver os ids; passe o mouse sobre um id para encontrá-lo em outras linhas.",

@@ -46,9 +46,39 @@ describe("StalenessBadge", () => {
   it("says retrying, not paused, while an attempt is still queued", () => {
     // The failure is stamped on the first failed attempt, while the worker still
     // has retries left — calling that paused is wrong for those few minutes.
-    render(<StalenessBadge isStale={true} refreshFailedAt="2026-09-23T08:02:02Z" retrying />);
+    render(
+      <StalenessBadge
+        isStale={true}
+        refreshFailedAt="2026-09-23T08:02:02Z"
+        attempt={{ running: false, retry: true, nextAttemptAt: "2026-09-23T08:03:02Z" }}
+      />
+    );
     expect(screen.queryByText("paused")).toBeNull();
     expect(screen.getByText("retrying")).toBeTruthy();
+  });
+
+  // The three rows of #6864: only a refresh that already failed is a retry.
+  it.each([
+    [{ running: false, retry: false, nextAttemptAt: "2030-01-01T10:00:00Z" }, "queued"],
+    [{ running: true, retry: false, nextAttemptAt: null }, "refreshing"],
+    [{ running: false, retry: true, nextAttemptAt: "2030-01-01T10:00:00Z" }, "retrying"],
+    [{ running: true, retry: true, nextAttemptAt: null }, "retrying"],
+  ])("labels the in-flight refresh %o as %s", (attempt, label) => {
+    render(<StalenessBadge isStale={true} attempt={attempt} />);
+    expect(screen.getByText(label)).toBeTruthy();
+    expect(screen.getByTitle(`${label}Title`)).toBeTruthy();
+  });
+
+  it("does not call a fresh attempt on a paused model a retry", () => {
+    // A manual refresh after a pause starts a new operation with no retries.
+    render(
+      <StalenessBadge
+        isStale={true}
+        refreshFailedAt="2026-09-23T08:02:02Z"
+        attempt={{ running: true, retry: false, nextAttemptAt: null }}
+      />
+    );
+    expect(screen.getByText("refreshing")).toBeTruthy();
   });
 
   it("renders nothing when staleness is unknown and nothing failed", () => {

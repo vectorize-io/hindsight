@@ -914,6 +914,8 @@ export class ControlPlaneClient {
         updated_at?: string | null;
         status: string;
         error_message: string | null;
+        /** How many times the worker retried this operation after a failure. */
+        retry_count?: number | null;
         /** For a pending operation, a value in the future means the worker is
          *  holding it back until then — a mental-model refresh waiting out
          *  min_refresh_interval_seconds, or an extension deferring the task. */

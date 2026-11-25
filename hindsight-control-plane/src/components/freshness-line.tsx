@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { formatAbsoluteDateTime, formatRelativeTime, formatWatermark } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
+import type { RefreshAttempt } from "@/lib/use-refresh-attempts";
 import { NextRefresh } from "./next-refresh";
 import { StalenessBadge } from "./staleness-badge";
 
@@ -58,7 +59,7 @@ export function FreshnessLine({
   /** ISO time of the last failed refresh, or null when the last one succeeded. */
   refreshFailedAt?: string | null;
   /** A refresh that is queued or running for this model, if any. */
-  attempt?: { nextAttemptAt: string | null } | null;
+  attempt?: RefreshAttempt | null;
   className?: string;
 }) {
   const t = useTranslations("mentalModels");
@@ -76,7 +77,7 @@ export function FreshnessLine({
         isStale={isStale}
         trigger={trigger}
         refreshFailedAt={refreshFailedAt}
-        retrying={Boolean(attempt)}
+        attempt={attempt}
         variant="inline"
       />
       {lastRefreshedAt && (

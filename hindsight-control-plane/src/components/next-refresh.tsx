@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 import { nextCronRun } from "@/lib/cron";
 import { formatRelativeTime } from "@/lib/relative-time";
+import type { RefreshAttempt } from "@/lib/use-refresh-attempts";
 
 type TriggerLike = {
   refresh_after_consolidation?: boolean;
@@ -27,23 +28,32 @@ export function NextRefresh({
   /** ISO time of the last failed refresh, or null when the last one succeeded. */
   refreshFailedAt?: string | null;
   /** A refresh that is queued or running for this model, if any. */
-  attempt?: { nextAttemptAt: string | null } | null;
+  attempt?: RefreshAttempt | null;
   className?: string;
 }) {
   const t = useTranslations("mentalModels");
   const cron = trigger?.refresh_cron?.trim();
 
-  // An attempt that has not finished outranks everything else: the failure stamp
-  // is written on the first failed attempt, while the worker still has retries
-  // left, so the next thing to happen is that retry — and its time is known.
+  // A refresh in flight outranks everything else: it is the next thing that will
+  // happen, and its time is known. Only one that already failed is a retry
+  // (#6864) — a refresh held back by its minimum interval is merely scheduled.
   if (attempt) {
-    return (
-      <span className={className}>
-        {attempt.nextAttemptAt
-          ? t("nextRefreshRetrying", { time: formatRelativeTime(attempt.nextAttemptAt) })
-          : t("nextRefreshRunning")}
-      </span>
-    );
+    const due =
+      attempt.nextAttemptAt && new Date(attempt.nextAttemptAt).getTime() > Date.now()
+        ? formatRelativeTime(attempt.nextAttemptAt)
+        : null;
+    const text = attempt.running
+      ? attempt.retry
+        ? t("nextRefreshRetryingNow")
+        : t("nextRefreshRunning")
+      : due
+        ? attempt.retry
+          ? t("nextRefreshRetrying", { time: due })
+          : t("nextRefreshQueued", { time: due })
+        : attempt.retry
+          ? t("nextRefreshRetryingSoon")
+          : t("nextRefreshQueuedSoon");
+    return <span className={className}>{text}</span>;
   }
   // A failed refresh pauses the automatic triggers until one succeeds (#4532), so
   // naming the next scheduled run here would promise something nothing will do.
