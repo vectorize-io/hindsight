@@ -500,6 +500,8 @@ def _api_error_detail(exc: Exception) -> str:
     carries the HTTP response headers, which is noise in a tool result."""
     with contextlib.suppress(Exception):
         detail = json.loads(getattr(exc, "body", None) or "").get("detail")
+        if isinstance(detail, list):  # a 422 lists one entry per invalid field
+            detail = "; ".join(str(d.get("msg", d)) if isinstance(d, dict) else str(d) for d in detail)
         if isinstance(detail, str) and detail:
             return detail
     status = getattr(exc, "status", None)

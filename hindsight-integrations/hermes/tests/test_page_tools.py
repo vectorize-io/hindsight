@@ -93,6 +93,18 @@ def test_page_tools_off_removes_tools_and_guidance(provider):
     assert "hindsight_search_pages" not in instance.system_prompt_block()
 
 
+def test_context_mode_has_no_page_tools_or_guidance(provider):
+    instance, _ = provider({"memory_mode": "context"})
+    assert instance.get_tool_schemas() == []
+    assert "hindsight_search_pages" not in instance.system_prompt_block()
+
+
+def test_validation_errors_are_joined():
+    exc = plugin_api_error(422, '{"detail": [{"msg": "Field required", "loc": ["q"]}, {"msg": "Too long"}]}')
+    assert plugin._api_error_detail(exc) == "Field required; Too long"
+    assert plugin._api_error_detail(plugin_api_error(500, "not json")) == "HTTP 500"
+
+
 def test_create_tool_only_when_enabled_and_writes_allowed(provider, monkeypatch):
     instance, _ = provider({"page_create_tool": True})
     assert "hindsight_create_page" in _tool_names(instance)
