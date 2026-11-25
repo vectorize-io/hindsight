@@ -59,7 +59,10 @@ from hindsight_api.engine.llm_transport import (
 )
 from hindsight_api.engine.llm_wrapper import parse_llm_json
 from hindsight_api.engine.providers.llm_debug import dump_request_on_4xx
-from hindsight_api.engine.providers.openai_compatible_headers import with_openai_compatible_user_agent
+from hindsight_api.engine.providers.openai_compatible_headers import (
+    with_openai_compatible_user_agent,
+    with_openrouter_attribution,
+)
 from hindsight_api.engine.providers.tools_via_schema import native_call_reply
 from hindsight_api.engine.remote_retry import jittered_backoff
 from hindsight_api.engine.response_models import (
@@ -1061,6 +1064,9 @@ class OpenAICompatibleLLM(LLMInterface):
         self._cache_affinity: CacheAffinityMode = resolve_cache_affinity(
             parse_cache_affinity(cache_affinity), self.provider, self.base_url
         )
+
+        if self.provider == "openrouter":
+            default_headers = with_openrouter_attribution(default_headers)
 
         # Create OpenAI client — extract query params from base_url (e.g. Azure api-version)
         client_kwargs: dict[str, Any] = {
