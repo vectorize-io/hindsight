@@ -39,6 +39,26 @@ def test_sync_turn_retains_the_turn(provider):
     assert _messages_of(fake) == ["User: what is my name?", "Assistant: Ada."]
 
 
+def test_a_turn_written_by_another_agent_is_labelled_with_that_agent(provider):
+    """#5374: Hermes says a bot wrote the user side; it must not be saved as the User's words."""
+    instance, fake = provider({"retain_every_n_turns": 3})
+    instance.sync_turn("deploy is done", "Thanks.", turn_author={"id": "b1", "name": "CI Agent", "is_bot": True})
+    instance.sync_turn("ping", "pong", turn_author={"id": "b2", "name": "", "is_bot": True})
+    instance.sync_turn("hi", "Hello.", turn_author={"id": "u1", "name": "Ada", "is_bot": False})
+    instance.shutdown()
+
+    roles = [m["role"] for m in json.loads(_retain_item(fake)["content"])]
+    assert roles == ["CI Agent", "assistant", "Bot", "assistant", "user", "assistant"]
+    assert _messages_of(fake) == [
+        "CI Agent: deploy is done",
+        "Assistant: Thanks.",
+        "Bot: ping",
+        "Assistant: pong",
+        "User: hi",
+        "Assistant: Hello.",
+    ]
+
+
 def test_retain_every_n_turns_buffers_then_ships_the_batch(provider):
     instance, fake = provider({"retain_every_n_turns": 2})
     instance.sync_turn("one", "1")
@@ -724,6 +744,37 @@ def test_a_slow_prefetch_never_overwrites_a_newer_one(provider):
 
     assert "fresh memory" in instance.prefetch("next")
     instance.shutdown()
+
+
+def test_recall_exclude_tags_send_a_not_group_and_keep_untagged_memories(provider):
+    """#5375: excluded tags go out as a strict NOT group, on both recall paths."""
+    instance, fake = provider({"recall_exclude_tags": "source:bot, cron"})
+    instance.handle_tool_call("hindsight_recall", {"query": "q"})
+    instance._do_recall("q")
+    assert len(fake.recalls) == 2
+    for call in fake.recalls:
+        assert call["tag_groups"] == [{"not": {"tags": ["source:bot", "cron"], "match": "any_strict"}}]
+        assert "tags" not in call and "tags_match" not in call
+
+
+def test_recall_exclude_tags_combine_with_recall_tags(provider):
+    """tags and tag_groups are exclusive on the wire, so the include filter joins the groups."""
+    instance, fake = provider(
+        {"recall_tags": ["team"], "recall_tags_match": "all", "recall_exclude_tags": ["source:bot"]}
+    )
+    instance.handle_tool_call("hindsight_recall", {"query": "q"})
+    assert fake.recalls[0]["tag_groups"] == [
+        {"tags": ["team"], "match": "all"},
+        {"not": {"tags": ["source:bot"], "match": "any_strict"}},
+    ]
+    assert "tags" not in fake.recalls[0]
+
+
+def test_empty_recall_exclude_tags_leave_the_request_unchanged(provider):
+    instance, fake = provider({"recall_tags": "team", "recall_exclude_tags": ""})
+    instance.handle_tool_call("hindsight_recall", {"query": "q"})
+    assert fake.recalls[0]["tags"] == ["team"]
+    assert "tag_groups" not in fake.recalls[0]
 
 
 def test_recall_tags_accept_the_documented_comma_separated_form(provider):

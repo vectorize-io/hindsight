@@ -278,6 +278,7 @@ The lookup stops at the repository root. Only `bank_id` is read.
 | `session_context` | — | Mental models and pages to add to the system prompt when a session starts, in the order listed: a JSON list or comma-separated text of `mental_model:<id>` or `page:<id>` (a bare id is a mental model). Each is read once per session (no LLM call, 5 s limit) and stays the same for the whole session, so prompt caching keeps working; an update shows up in the next session. One that cannot be read is skipped with a warning. In `local_embedded` mode it is skipped when the local daemon is not running yet. |
 | `recall_tags` | — | Tags to filter when searching memories: a JSON list (e.g. `["project-x", "team"]`) or comma-separated text (`"project-x, team"`) |
 | `recall_tags_match` | `any` | Tag matching mode: `any` / `all` / `any_strict` / `all_strict` |
+| `recall_exclude_tags` | — | Tags to keep out of recall (auto-recall and the `hindsight_recall` tool), as a JSON list or comma-separated text (e.g. `"draft, scratch"`). A memory carrying any of them is skipped but stays in the bank; untagged memories and other tags are unaffected. Combines with `recall_tags`; does not apply to reflect. |
 | `reflect_tags` | — | Tags that scope what reflect reasons over (the `hindsight_reflect` tool and `recall_prefetch_method: reflect`), as a JSON list or comma-separated text. Unset, reflect uses the whole bank; `recall_tags` does not apply to reflect. |
 | `reflect_tags_match` | `any` | Tag matching mode for `reflect_tags` |
 | `recall_types` | `observation` | Fact types surfaced by recall (both auto-recall and the `hindsight_recall` tool). Comma-separated string or JSON list. **Default narrowed to `observation` only** (see "Behavior change" below). Set to `observation,world,experience` to also include raw facts. |
@@ -324,7 +325,7 @@ Each recalled memory, in auto-recall and in the `hindsight_recall` tool, carries
 | `retain_source` | — | Opt-in `metadata.source` attached to retained memories (identifies the storing client, e.g. `hermes`). Empty by default — no attribution tag ships unless you set it. |
 | `retain_strategy` | — | Named retain strategy sent with every stored item (`HINDSIGHT_RETAIN_STRATEGY`). The bank must define it under `retain_strategies`; an unknown name is ignored by the server. Empty lets the bank decide. |
 | `retain_indicator` | `true` | Show a `💭 Hindsight — saving to memory…` status line when a turn is saved (or that earlier saves failed, so a broken save path is not silent). Turn off for customer-facing agents. |
-| `retain_user_prefix` | `User` | Label used before user turns in auto-retained transcripts |
+| `retain_user_prefix` | `User` | Label used before user turns in auto-retained transcripts. A turn Hermes marks as written by another agent gets that agent's name as its role and label instead (`Bot` when it has none) |
 | `retain_assistant_prefix` | `Assistant` | Label used before assistant turns in auto-retained transcripts |
 | `prefetch_waits_for_retain` | `true` | Before the background recall for the next turn, wait until the turn just saved can be found, so recall includes it. Runs off the reply path and adds no response time. |
 | `prefetch_retain_drain_timeout` | `10` | Most seconds that background recall waits for the save above before recalling anyway |

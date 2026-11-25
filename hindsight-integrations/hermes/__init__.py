@@ -95,6 +95,15 @@ _EXTRA_BANK_TIMEOUT_SHARE = 0.8
 _EXTRA_BANK_COOLDOWN = 300.0
 _RETAIN_CONTEXT_DEFAULT = "conversation between Hermes Agent and the User"
 
+
+def _bot_label(turn_author: Dict[str, Any] | None) -> str | None:
+    """The label for a turn another agent wrote, from Hermes' ``turn_author`` ({"id", "name",
+    "is_bot"}); None when a human wrote it or Hermes sent nothing. "Bot" when it has no name."""
+    if not (isinstance(turn_author, dict) and turn_author.get("is_bot")):
+        return None
+    return str(turn_author.get("name") or "").strip() or "Bot"
+
+
 # Injected instead of nothing when recall raises, so the agent can tell "memory is down" from
 # "nothing found" (#6482). Fixed text, never the exception: errors can carry hosts and URLs. It is
 # worded so a customer-facing agent need not announce an outage, only not read the gap as fact.
@@ -836,6 +845,11 @@ class HindsightMemoryProvider(MemoryProvider):
                 "description": "Tag matching mode for recall",
                 "default": "any",
                 "choices": ["any", "all", "any_strict", "all_strict"],
+            },
+            {
+                "key": "recall_exclude_tags",
+                "description": "Tags to keep out of recall (comma-separated or a list): a memory carrying any of them is skipped by auto-recall and the hindsight_recall tool but stays in the bank; untagged memories are unaffected",
+                "default": "",
             },
             {
                 "key": "reflect_tags",
@@ -1648,6 +1662,7 @@ class HindsightMemoryProvider(MemoryProvider):
         # Documented as comma-separated; the client wants a list (a raw string is a 422).
         self._recall_tags = _normalize_string_list(cfg.get("recall_tags")) or None
         self._recall_tags_match = cfg.get("recall_tags_match", "any")
+        self._recall_exclude_tags = _normalize_string_list(cfg.get("recall_exclude_tags")) or None
         # Reflect's own scope, opt-in: reflect searched the whole bank before recall_tags existed,
         # so inheriting them would quietly narrow it for every install that sets them (#5170).
         self._reflect_tags = _normalize_string_list(cfg.get("reflect_tags")) or None
@@ -1845,7 +1860,15 @@ class HindsightMemoryProvider(MemoryProvider):
         if self._recall_split_tokens:
             max_tokens = max(1, max_tokens // len(bank_ids))
         kwargs: dict = {"query": query, "budget": self._budget, "max_tokens": max_tokens}
-        if self._recall_tags:
+        if self._recall_exclude_tags:
+            # The server takes tags or tag_groups, not both, and ANDs top-level groups: the include
+            # filter moves into the groups. any_strict in the NOT skips only memories that carry an
+            # excluded tag, so untagged history stays recallable (#5375).
+            groups: list = [{"not": {"tags": self._recall_exclude_tags, "match": "any_strict"}}]
+            if self._recall_tags:
+                groups.insert(0, {"tags": self._recall_tags, "match": self._recall_tags_match})
+            kwargs["tag_groups"] = groups
+        elif self._recall_tags:
             kwargs.update(tags=self._recall_tags, tags_match=self._recall_tags_match)
         if self._recall_types:
             kwargs["types"] = self._recall_types
@@ -2000,12 +2023,18 @@ class HindsightMemoryProvider(MemoryProvider):
 
     # -- retain ------------------------------------------------------------------
 
-    def _build_turn_messages(self, user_content: str, assistant_content: str) -> List[Dict[str, str]]:
+    def _build_turn_messages(
+        self, user_content: str, assistant_content: str, bot_label: str | None = None
+    ) -> List[Dict[str, str]]:
+        """*bot_label* names the agent that wrote the user side (None: a human did). It becomes
+        that message's role and label, so extraction doesn't read a bot's words as the User's
+        (#5374). The server reads role as plain text, so any name is accepted."""
         now = _event_timestamp()  # one turn -> both messages share the event timestamp
+        user_role, user_label = ("user", self._retain_user_prefix) if bot_label is None else (bot_label, bot_label)
         return [
             {"role": role, "content": f"{prefix}: {content}", "timestamp": now}
             for role, prefix, content in (
-                ("user", self._retain_user_prefix, user_content),
+                (user_role, user_label, user_content),
                 ("assistant", self._retain_assistant_prefix, assistant_content),
             )
         ]
@@ -2159,9 +2188,18 @@ class HindsightMemoryProvider(MemoryProvider):
 
         return _job
 
-    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
+    def sync_turn(
+        self,
+        user_content: str,
+        assistant_content: str,
+        *,
+        session_id: str = "",
+        turn_author: Dict[str, Any] | None = None,
+    ) -> None:
         """Enqueue a retain for the current turn (non-blocking; writer thread). Dropped
-        once shutdown() fired so post-exit retains never reach aiohttp during teardown."""
+        once shutdown() fired so post-exit retains never reach aiohttp during teardown.
+        *turn_author* (``{"id", "name", "is_bot"}``) is who wrote the user side; Hermes sends
+        it only to a signature that names it."""
         why = (
             "auto_retain disabled"
             if not self._auto_retain
@@ -2176,7 +2214,10 @@ class HindsightMemoryProvider(MemoryProvider):
             self._session_id = str(session_id).strip()
 
         self._session_turns.append(
-            json.dumps(self._build_turn_messages(user_content, assistant_content), ensure_ascii=False)
+            json.dumps(
+                self._build_turn_messages(user_content, assistant_content, _bot_label(turn_author)),
+                ensure_ascii=False,
+            )
         )
         self._turn_counter = self._turn_index = self._turn_counter + 1
         if remainder := self._turn_counter % self._retain_every_n_turns:
