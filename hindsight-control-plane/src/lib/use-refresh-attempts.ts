@@ -50,6 +50,8 @@ export function useRefreshAttempts(bankId: string | null, pollMs?: number) {
         const running = op.status === "processing";
         next.set(op.mental_model_id, {
           running,
+          // Either signal alone misses a case: a task put back after a worker
+          // restart has a count but no error text.
           retry: Boolean(op.retry_count) || Boolean(op.error_message),
           // next_retry_at is not cleared when the task starts, so it is only a
           // schedule while the task still waits.
