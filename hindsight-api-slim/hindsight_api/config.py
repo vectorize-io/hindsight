@@ -5018,7 +5018,7 @@ class HindsightConfig:
                     "  1. Install local ML deps: pip install hindsight-api[local-ml]\n"
                     "  2. Use a remote provider instead:\n"
                     "     HINDSIGHT_API_EMBEDDINGS_PROVIDER=openai (or gemini, tei)\n"
-                    "     HINDSIGHT_API_RERANKER_PROVIDER=none (or tei)",
+                    "     HINDSIGHT_API_RERANKER_PROVIDER=rrf (or tei)",
                     " and ".join(missing),
                 )
 
