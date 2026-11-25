@@ -12,7 +12,14 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.0",
+      "minGatewayVersion": "2026.7.0"
+    },
+    "build": {
+      "openclawVersion": "2026.11.8"
+    }
   },
   "keywords": [
     "openclaw",

@@ -6,7 +6,7 @@ Biomimetic long-term memory for [OpenClaw](https://openclaw.ai) using [Hindsight
 
 ```bash
 # 1. Install the plugin
-openclaw plugins install @vectorize-io/hindsight-openclaw
+openclaw plugins install npm:@vectorize-io/hindsight-openclaw --force
 
 # 2. Run the interactive setup wizard
 npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup
@@ -14,6 +14,8 @@ npx --package @vectorize-io/hindsight-openclaw hindsight-openclaw-setup
 # 3. Start OpenClaw
 openclaw gateway
 ```
+
+The `npm:` prefix matters on OpenClaw 2026.11+, where a bare name is looked up on ClawHub: the official plugin is not there, and the `hindsight` packages ClawHub does list are third-party. OpenClaw asks for `--force` because npm packages skip ClawHub's review. On older OpenClaw, use `openclaw plugins install @vectorize-io/hindsight-openclaw`.
 
 `hindsight-openclaw-setup` walks you through picking one of three modes:
 
@@ -28,6 +30,9 @@ The interactive wizard stores credentials **inline** in `openclaw.json` for simp
 The wizard is a convenience wrapper — all of the same fields can be set directly with `openclaw config set`:
 
 ```bash
+# Hindsight must hold the memory slot, or OpenClaw keeps it disabled
+openclaw config set plugins.slots.memory hindsight-openclaw
+
 # Embedded daemon with OpenAI
 openclaw config set plugins.entries.hindsight-openclaw.config.llmProvider openai
 openclaw config set plugins.entries.hindsight-openclaw.config.llmApiKey \

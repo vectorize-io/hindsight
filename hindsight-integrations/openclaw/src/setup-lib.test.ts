@@ -100,6 +100,18 @@ describe("ensurePluginConfig", () => {
 
   // Regression: openclaw 2026.4.24+ silently drops conversation hooks
   // (e.g. agent_end → retain) for non-bundled plugins unless this flag is set.
+  it("gives Hindsight the memory slot, or OpenClaw keeps it disabled", () => {
+    const fresh: OpenClawConfigShape = {};
+    ensurePluginConfig(fresh);
+    expect(fresh.plugins?.slots?.memory).toBe(PLUGIN_ID);
+
+    const onMemoryCore: OpenClawConfigShape = {
+      plugins: { slots: { memory: "memory-core", other: "kept" } },
+    };
+    ensurePluginConfig(onMemoryCore);
+    expect(onMemoryCore.plugins?.slots).toEqual({ memory: PLUGIN_ID, other: "kept" });
+  });
+
   describe("hooks.allowConversationAccess", () => {
     it("sets allowConversationAccess=true on a fresh config", () => {
       const cfg: OpenClawConfigShape = {};

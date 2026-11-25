@@ -17,8 +17,10 @@ This plugin integrates [hindsight-embed](https://vectorize.io/hindsight/cli), a 
 **Step 1: Install the plugin**
 
 ```bash
-openclaw plugins install @vectorize-io/hindsight-openclaw
+openclaw plugins install npm:@vectorize-io/hindsight-openclaw --force
 ```
+
+The `npm:` prefix matters on OpenClaw 2026.11+, where a bare name is looked up on ClawHub: the official plugin is not there, and the `hindsight` packages ClawHub does list are third-party. OpenClaw asks for `--force` because npm packages skip ClawHub's review. On older OpenClaw, use `openclaw plugins install @vectorize-io/hindsight-openclaw`.
 
 **Step 2: Run the setup wizard**
 
@@ -35,6 +37,8 @@ The wizard walks you through picking one of three install modes:
 - **Cloud** — managed Hindsight at `https://api.hindsight.vectorize.io`. Paste your cloud API token when prompted (masked input). No local setup needed.
 - **External API** — your own running Hindsight deployment. Prompts for the URL and, optionally, the token value (masked).
 - **Embedded daemon** — spawns a local `hindsight-embed` daemon on this machine. Prompts for the LLM provider (OpenAI / Anthropic / Gemini / Groq / Claude Code / OpenAI Codex / Ollama) and the API key (masked).
+
+The wizard also gives Hindsight OpenClaw's memory slot (`plugins.slots.memory`). OpenClaw keeps a memory plugin disabled until it holds that slot, so if you configure the plugin by hand, set it too: `openclaw config set plugins.slots.memory hindsight-openclaw`.
 
 The interactive wizard stores credentials **inline** in `openclaw.json` for simplicity. For CI / production you can store credentials as a [`SecretRef`](#llm-configuration) (resolved from an env var, file, or exec source at startup, never saved on disk) by either passing `--token-env` / `--api-key-env` to the non-interactive wizard or switching an existing field afterwards via `openclaw config set ... --ref-source env|file|exec`.
 
@@ -479,8 +483,12 @@ it is fixed in 0.12.0 — retry the install with the new version.
 openclaw plugins list | grep hindsight
 # Should show: ✓ enabled │ Hindsight Memory │ ...
 
+# Hindsight must hold the memory slot, or OpenClaw keeps it disabled
+# ("plugin disabled (memory slot set to "memory-core")"). The setup wizard sets it.
+openclaw config set plugins.slots.memory hindsight-openclaw
+
 # Reinstall if needed
-openclaw plugins install @vectorize-io/hindsight-openclaw
+openclaw plugins install npm:@vectorize-io/hindsight-openclaw --force
 ```
 
 ### Daemon not starting

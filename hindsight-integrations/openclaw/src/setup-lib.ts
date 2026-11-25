@@ -40,6 +40,7 @@ export interface OpenClawConfigShape {
   plugins?: {
     entries?: Record<string, PluginEntry>;
     allow?: unknown;
+    slots?: Record<string, unknown>;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -108,6 +109,12 @@ export function ensurePluginConfig(cfg: OpenClawConfigShape): Record<string, unk
   } else if (Array.isArray(plugins.allow) && !plugins.allow.includes(PLUGIN_ID)) {
     plugins.allow = [...plugins.allow, PLUGIN_ID];
   }
+  // A memory plugin only runs while it holds the memory slot. Without this the
+  // wizard left a fresh install on `memory-core`: OpenClaw disables Hindsight
+  // ("plugin disabled (memory slot set to "memory-core") but config is
+  // present") and nothing is recalled or saved. Running this wizard is the
+  // choice of Hindsight as memory, so it takes the slot.
+  (plugins.slots ??= {}).memory = PLUGIN_ID;
   return (entry.config ??= {});
 }
 
