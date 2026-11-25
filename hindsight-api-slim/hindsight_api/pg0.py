@@ -108,9 +108,13 @@ class EmbeddedPostgres:
                 # The API and the worker of one deployment share an instance, and each starts it: the
                 # second one used to fail all five attempts on "Instance already running" and exit
                 # (seen 2026-11-06 on the worker, 2026-11-09 on the API). Running means started: use it.
+                # A failing status check falls through to the normal retry.
                 if "already running" in last_error.lower():
-                    running = await loop.run_in_executor(None, pg0.info)
-                    if running.running and running.uri:
+                    try:
+                        running = await loop.run_in_executor(None, pg0.info)
+                    except Exception:
+                        running = None
+                    if running is not None and running.running and running.uri:
                         logger.info(f"PostgreSQL already running: {running.uri}")
                         return running.uri
                 if attempt < max_retries:
