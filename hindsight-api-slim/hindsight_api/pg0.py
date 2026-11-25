@@ -113,6 +113,7 @@ class EmbeddedPostgres:
                     try:
                         running = await loop.run_in_executor(None, pg0.info)
                     except Exception:
+                        logger.debug("Could not check pg0 instance %s status", self.name, exc_info=True)
                         running = None
                     if running is not None and running.running and running.uri:
                         logger.info(f"PostgreSQL already running: {running.uri}")
