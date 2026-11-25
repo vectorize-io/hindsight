@@ -315,6 +315,17 @@ Each recalled memory, in auto-recall and in the `hindsight_recall` tool, carries
 > multilingual embedding model, `{"semantic": 0.5}` separated relevant from unrelated queries better than the
 > reranker did. Unset by default, so nothing changes unless you opt in.
 
+### Pages
+
+Pages are documents Hindsight writes from the bank's memories and keeps up to date, each answering one question. The agent reaches them through tools only; nothing is injected automatically. To put a page in every session's system prompt, use `session_context`.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `page_tools` | `true` | Give the agent `hindsight_search_pages` (find pages about a topic: name, id and opening text), `hindsight_read_page` (one page in full) and `hindsight_list_pages` (every page and folder by name). |
+| `page_create_tool` | `false` | Also give the agent `hindsight_create_page` (a name and the question the page answers). Off by default: every page costs model calls each time it refreshes, and the tool tells the agent to create one only when the user asks. Kanban workers that cannot write never get it. |
+
+Renaming, moving and deleting pages are left to the Hindsight UI.
+
 ### Retain
 
 | Key | Default | Description |
@@ -389,6 +400,10 @@ Available in `hybrid` and `tools` memory modes:
 | `hindsight_retain` | Store information with auto entity extraction; supports optional per-call `tags` |
 | `hindsight_recall` | Multi-strategy search (semantic + entity graph) |
 | `hindsight_reflect` | Cross-memory synthesis (LLM-powered) |
+| `hindsight_search_pages` | Find pages about a topic: one line per page with name, id and opening text (`page_tools`) |
+| `hindsight_read_page` | Read one page in full (`page_tools`) |
+| `hindsight_list_pages` | Every page and folder by name and id (`page_tools`) |
+| `hindsight_create_page` | Create a page from a name and a question, only when the user asks (`page_create_tool`, off by default) |
 
 ## Environment Variables
 
