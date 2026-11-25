@@ -1767,7 +1767,7 @@ class HindsightMemoryProvider(MemoryProvider):
         a stored-document read (no LLM call), bounded to a few seconds; one that fails is skipped
         with a warning. In local_embedded mode a daemon that is not up yet is not started for this:
         the session goes without and the next one picks it up."""
-        if not self._session_context_refs or self._mode == "disabled":
+        if not self._session_context_refs:
             return ""
         if self._mode == "local_embedded" and not _daemon_is_running(self._config.get("profile", "hermes")):
             logger.info("Hindsight session_context skipped: the local daemon is not running yet")
@@ -1777,7 +1777,7 @@ class HindsightMemoryProvider(MemoryProvider):
             try:
                 client = self._get_client()
                 if entry.kind == "page":
-                    # Pages were "knowledge pages" before hindsight-client 1.3.
+                    # Pages were "knowledge pages" before hindsight-client 1.2.1 (the floor is 0.10.1).
                     get_page = getattr(client, "aget_page", None) or client.aget_knowledge_page
                     doc = _run_sync(get_page(bank_id=self._bank_id, page_id=entry.ref), _SESSION_CONTEXT_TIMEOUT)
                     content = getattr(doc, "body", None)
@@ -2398,6 +2398,9 @@ class HindsightMemoryProvider(MemoryProvider):
             self._write_bank_ids = self._build_write_bank_ids()
         self._session_turns = []
         self._turn_counter = self._turn_index = self._last_retained_turn_count = 0
+        # The new session reads session_context afresh: the bank may have changed above, and a
+        # mental model refreshed since the last session is picked up here, as the docs promise.
+        self._session_context_block = None
         logger.debug(
             "Hindsight on_session_switch: new_session=%s parent=%s reset=%s doc=%s",
             self._session_id,

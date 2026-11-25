@@ -1223,3 +1223,21 @@ def test_session_context_unset_makes_no_request(provider):
 def test_session_context_rejects_unknown_kinds():
     refs = plugin._parse_session_context(["page:a", "bogus:b", "plain", "page:"])
     assert [(r.kind, r.ref) for r in refs] == [("page", "a"), ("mental_model", "plain")]
+
+
+def test_session_context_is_read_again_after_a_session_switch(provider):
+    client = _ContextClient()
+    instance, _ = provider({"session_context": "m1"}, client=client)
+    instance.system_prompt_block()
+    instance.on_session_switch("session-2")
+    instance.system_prompt_block()
+    assert client.reads == ["mm:m1", "mm:m1"]
+
+
+def test_session_context_skipped_while_the_embedded_daemon_is_down(provider, monkeypatch):
+    client = _ContextClient()
+    instance, _ = provider({"session_context": "m1"}, client=client)
+    monkeypatch.setattr(instance, "_mode", "local_embedded")
+    monkeypatch.setattr(plugin, "_daemon_is_running", lambda profile: False)
+    assert "Session Context" not in instance.system_prompt_block()
+    assert client.reads == []
