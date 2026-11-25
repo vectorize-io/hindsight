@@ -43,16 +43,6 @@ class MemoryItem(BaseModel):
     update_mode: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["content", "timestamp", "context", "metadata", "document_id", "entities", "resolve_entities", "tags", "observation_scopes", "strategy", "update_mode"]
 
-    @field_validator('update_mode')
-    def update_mode_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['replace', 'append']):
-            raise ValueError("must be one of enum values ('replace', 'append')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

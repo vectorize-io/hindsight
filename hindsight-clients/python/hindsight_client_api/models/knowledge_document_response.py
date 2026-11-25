@@ -42,20 +42,6 @@ class KnowledgeDocumentResponse(BaseModel):
     source_document_id: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["document_id", "filename", "content_type", "media_type", "size_bytes", "status", "error", "passage_count", "tags", "created_at", "updated_at", "document_url", "source_document_id"]
 
-    @field_validator('media_type')
-    def media_type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['document', 'image', 'audio', 'video', 'text']):
-            raise ValueError("must be one of enum values ('document', 'image', 'audio', 'video', 'text')")
-        return value
-
-    @field_validator('status')
-    def status_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['pending', 'processing', 'ready', 'failed']):
-            raise ValueError("must be one of enum values ('pending', 'processing', 'ready', 'failed')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

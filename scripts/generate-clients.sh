@@ -466,6 +466,55 @@ for old, (new, new_mod, old_mod) in renamed.items():
 print("  ✓ aliases added")
 PATCH_ALIASES_SCRIPT
 
+# The server only ever adds enum values, so an older client must accept ones it
+# doesn't know (#6862). Drop the generated "must be one of enum values" validators
+# (the field stays a str), and let the named str Enums take an unknown value too.
+echo "Opening enums in Python client..."
+python3 - "$PYTHON_CLIENT_DIR/hindsight_client_api/models" << 'PATCH_ENUMS_SCRIPT'
+import re
+import sys
+from pathlib import Path
+
+validator = re.compile(
+    r"    @field_validator\('[^']+'\)\n    def \w+_validate_enum\(cls, value\):\n.*?\n        return value\n\n",
+    re.S,
+)
+missing = '''
+    @classmethod
+    def _missing_(cls, value):
+        """Accept a value added on the server after this client was built."""
+        if not isinstance(value, str):
+            return None
+        member = str.__new__(cls, value)
+        member._name_ = value.upper()
+        member._value_ = value
+        return member
+'''
+# Same for a union (e.g. a tag group) whose shape is newer than the client: keep
+# the raw JSON as actual_instance instead of failing the whole response. Set it
+# in __dict__ so the "must be one of the known types" assignment check is skipped.
+no_match = re.compile(
+    r'            # no match\n            raise ValueError\("No match found when deserializing the JSON string into \w+ with (?:any|one)Of[^\n]*\n'
+)
+keep_raw = (
+    "            # no match: a shape added after this client was built, keep it as raw JSON\n"
+    '            instance.__dict__["actual_instance"] = json.loads(json_str)\n'
+    "            return instance\n"
+)
+for f in Path(sys.argv[1]).glob("*.py"):
+    src = f.read_text()
+    new = no_match.sub(keep_raw, validator.sub("", src))
+    if "No match found when deserializing" in new:
+        raise SystemExit(f"union no-match left in {f.name}: generator template changed")
+    if "(str, Enum):" in new and "_missing_" not in new:
+        new = new.replace("\n    @classmethod\n    def from_json", missing + "\n    @classmethod\n    def from_json", 1)
+    if "must be one of enum values" in new:
+        raise SystemExit(f"enum validator left in {f.name}: generator template changed")
+    if new != src:
+        f.write_text(new)
+print("  ✓ enums and unions opened")
+PATCH_ENUMS_SCRIPT
+
 echo "✓ Python client generated at $PYTHON_CLIENT_DIR"
 echo ""
 
@@ -553,6 +602,7 @@ else
     [ -f "null_test.go" ] && cp null_test.go "$TEMP_DIR/"
     [ -f "trace_test.go" ] && cp trace_test.go "$TEMP_DIR/"
     [ -f "content_marshal_test.go" ] && cp content_marshal_test.go "$TEMP_DIR/"
+    [ -f "unknown_values_test.go" ] && cp unknown_values_test.go "$TEMP_DIR/"
     [ -f "hindsight_client.go" ] && cp hindsight_client.go "$TEMP_DIR/"
     # go.mod/go.sum are maintained, not regenerated: a fresh `go mod tidy`
     # resolves unpinned deps (e.g. testify, pulled in by the maintained tests)
@@ -595,6 +645,7 @@ else
     [ -f "$TEMP_DIR/null_test.go" ] && mv "$TEMP_DIR/null_test.go" .
     [ -f "$TEMP_DIR/trace_test.go" ] && mv "$TEMP_DIR/trace_test.go" .
     [ -f "$TEMP_DIR/content_marshal_test.go" ] && mv "$TEMP_DIR/content_marshal_test.go" .
+    [ -f "$TEMP_DIR/unknown_values_test.go" ] && mv "$TEMP_DIR/unknown_values_test.go" .
     [ -f "$TEMP_DIR/hindsight_client.go" ] && mv "$TEMP_DIR/hindsight_client.go" .
     # Overwrites the generator-emitted go.mod/go.sum with the maintained ones.
     [ -f "$TEMP_DIR/go.mod" ] && mv "$TEMP_DIR/go.mod" .
@@ -635,6 +686,35 @@ else
             rm -f "$f.bak"
         fi
     done
+
+    # Same reason for enum values (#6862): a named enum's UnmarshalJSON rejects a
+    # value the server added after this client was built. Keep it instead;
+    # IsValid() still tells a caller whether the value is one it knows.
+    for f in model_*.go; do
+        [ -e "$f" ] || continue
+        perl -0pi -e 's/return fmt\.Errorf\("%\+v is not a valid \w+", value\)/*v = enumTypeValue\n\treturn nil/g' "$f"
+    done
+
+    # And for a union (e.g. a tag group) whose shape is newer than the client:
+    # instead of failing the whole response, keep the JSON in a new Raw field and
+    # write it back out unchanged, so a read-modify-write doesn't drop it. Raw is a
+    # pointer so the struct stays comparable with ==, as callers may rely on.
+    for f in model_*.go; do
+        [ -e "$f" ] || continue
+        perl -0pi -e '
+            if (/data failed to match schemas in (?:any|one)Of\((\w+)\)/) {
+                my $n = $1;
+                s/(type \Q$n\E struct \{\n(?:\t[^\n]*\n)*?)\}/$1\t\/\/ Raw holds a shape added on the server after this client was built.\n\tRaw *json.RawMessage\n}/;
+                s/^(\t+)return fmt\.Errorf\("data failed to match schemas in (?:any|one)Of\(\w+\)"\)/$1raw := append(json.RawMessage(nil), data...)\n$1dst.Raw = &raw\n$1return nil/m;
+                s/^\treturn nil, nil \/\/ no data in ((?:any|one)Of) schemas/\tif src.Raw != nil {\n\t\treturn *src.Raw, nil\n\t}\n\n\treturn nil, nil \/\/ no data in $1 schemas/m;
+                s/\t"fmt"\n// unless /fmt\./;
+            }' "$f"
+    done
+    # Fail loudly if a generator upgrade changed the code these patterns expect.
+    if grep -lE 'is not a valid \w+", value\)|data failed to match schemas' model_*.go; then
+        echo "❌ Error: Go enum/union patch no longer matches the generated code (see files above)"
+        exit 1
+    fi
 
     # Fix known generator issue: an API with file uploads uses os.File but the generator omits the "os" import
     for f in api_*.go; do

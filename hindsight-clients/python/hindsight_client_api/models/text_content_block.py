@@ -30,13 +30,6 @@ class TextContentBlock(BaseModel):
     text: StrictStr
     __properties: ClassVar[List[str]] = ["type", "text"]
 
-    @field_validator('type')
-    def type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['text']):
-            raise ValueError("must be one of enum values ('text')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

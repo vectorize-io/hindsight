@@ -35,13 +35,6 @@ class KnowledgePassageResponse(BaseModel):
     passage_url: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["index", "media_type", "text", "page", "start_ms", "end_ms", "passage_url"]
 
-    @field_validator('media_type')
-    def media_type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['document', 'image', 'audio', 'video', 'text']):
-            raise ValueError("must be one of enum values ('document', 'image', 'audio', 'video', 'text')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

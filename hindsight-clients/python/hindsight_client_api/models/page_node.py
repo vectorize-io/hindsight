@@ -42,13 +42,6 @@ class PageNode(BaseModel):
     children: Optional[List[PageNode]] = None
     __properties: ClassVar[List[str]] = ["id", "kind", "name", "parent_id", "mental_model_id", "managed", "description", "tags", "timestamp", "is_stale", "last_refresh_failed_at", "trigger", "children"]
 
-    @field_validator('kind')
-    def kind_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['folder', 'page']):
-            raise ValueError("must be one of enum values ('folder', 'page')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

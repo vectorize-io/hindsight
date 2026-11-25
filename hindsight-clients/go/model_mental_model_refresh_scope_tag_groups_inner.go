@@ -12,7 +12,6 @@ package hindsight
 
 import (
 	"encoding/json"
-	"fmt"
 )
 
 
@@ -22,6 +21,8 @@ type MentalModelRefreshScopeTagGroupsInner struct {
 	TagGroupLeaf *TagGroupLeaf
 	TagGroupNotOutput *TagGroupNotOutput
 	TagGroupOrOutput *TagGroupOrOutput
+	// Raw holds a shape added on the server after this client was built.
+	Raw *json.RawMessage
 }
 
 // Unmarshal JSON data into any of the pointers in the struct
@@ -79,7 +80,9 @@ func (dst *MentalModelRefreshScopeTagGroupsInner) UnmarshalJSON(data []byte) err
 		dst.TagGroupOrOutput = nil
 	}
 
-	return fmt.Errorf("data failed to match schemas in anyOf(MentalModelRefreshScopeTagGroupsInner)")
+	raw := append(json.RawMessage(nil), data...)
+	dst.Raw = &raw
+	return nil
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
@@ -98,6 +101,10 @@ func (src MentalModelRefreshScopeTagGroupsInner) MarshalJSON() ([]byte, error) {
 
 	if src.TagGroupOrOutput != nil {
 		return json.Marshal(&src.TagGroupOrOutput)
+	}
+
+	if src.Raw != nil {
+		return *src.Raw, nil
 	}
 
 	return nil, nil // no data in anyOf schemas

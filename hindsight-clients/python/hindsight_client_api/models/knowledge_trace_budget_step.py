@@ -36,13 +36,6 @@ class KnowledgeTraceBudgetStep(BaseModel):
     into_rank: Optional[StrictInt] = None
     __properties: ClassVar[List[str]] = ["action", "rank", "document_id", "first", "last", "tokens", "total", "into_rank"]
 
-    @field_validator('action')
-    def action_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['window', 'alone', 'media', 'merged', 'widened', 'skipped']):
-            raise ValueError("must be one of enum values ('window', 'alone', 'media', 'merged', 'widened', 'skipped')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

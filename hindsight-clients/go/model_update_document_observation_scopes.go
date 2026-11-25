@@ -12,7 +12,6 @@ package hindsight
 
 import (
 	"encoding/json"
-	"fmt"
 )
 
 
@@ -20,6 +19,8 @@ import (
 type UpdateDocumentObservationScopes struct {
 	ArrayOfArrayOfString *[][]string
 	String *string
+	// Raw holds a shape added on the server after this client was built.
+	Raw *json.RawMessage
 }
 
 // Unmarshal JSON data into any of the pointers in the struct
@@ -56,7 +57,9 @@ func (dst *UpdateDocumentObservationScopes) UnmarshalJSON(data []byte) error {
 		dst.String = nil
 	}
 
-	return fmt.Errorf("data failed to match schemas in anyOf(UpdateDocumentObservationScopes)")
+	raw := append(json.RawMessage(nil), data...)
+	dst.Raw = &raw
+	return nil
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
@@ -67,6 +70,10 @@ func (src UpdateDocumentObservationScopes) MarshalJSON() ([]byte, error) {
 
 	if src.String != nil {
 		return json.Marshal(&src.String)
+	}
+
+	if src.Raw != nil {
+		return *src.Raw, nil
 	}
 
 	return nil, nil // no data in anyOf schemas

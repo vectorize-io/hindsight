@@ -32,20 +32,6 @@ class LlmOperationHealth(BaseModel):
     latency_ms: Optional[Union[StrictFloat, StrictInt]] = None
     __properties: ClassVar[List[str]] = ["operation", "ok", "status", "latency_ms"]
 
-    @field_validator('operation')
-    def operation_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['retain', 'consolidation', 'reflect']):
-            raise ValueError("must be one of enum values ('retain', 'consolidation', 'reflect')")
-        return value
-
-    @field_validator('status')
-    def status_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['connected', 'not_configured', 'auth_failed', 'unreachable', 'timeout']):
-            raise ValueError("must be one of enum values ('connected', 'not_configured', 'auth_failed', 'unreachable', 'timeout')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

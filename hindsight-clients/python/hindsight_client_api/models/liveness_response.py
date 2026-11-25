@@ -31,13 +31,6 @@ class LivenessResponse(BaseModel):
     uptime_seconds: Union[StrictFloat, StrictInt] = Field(description="Seconds since the process started")
     __properties: ClassVar[List[str]] = ["status", "version", "uptime_seconds"]
 
-    @field_validator('status')
-    def status_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['alive']):
-            raise ValueError("must be one of enum values ('alive')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

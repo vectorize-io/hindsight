@@ -30,16 +30,6 @@ class PromptPreviewRequest(BaseModel):
     strategy: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["operation", "strategy"]
 
-    @field_validator('operation')
-    def operation_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['retain', 'consolidation', 'reflect']):
-            raise ValueError("must be one of enum values ('retain', 'consolidation', 'reflect')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

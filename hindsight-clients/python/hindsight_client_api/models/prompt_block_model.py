@@ -38,20 +38,6 @@ class PromptBlockModel(BaseModel):
     editable: Optional[StrictBool] = Field(default=False, description="Whether this bank may override the field via the bank config API. Server-level fields shape the prompt but cannot be set per bank, and offering to edit one would only collect a 400.")
     __properties: ClassVar[List[str]] = ["text", "source", "field", "section", "heading", "active", "value", "kind", "choices", "editable"]
 
-    @field_validator('source')
-    def source_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['config', 'builtin']):
-            raise ValueError("must be one of enum values ('config', 'builtin')")
-        return value
-
-    @field_validator('kind')
-    def kind_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['text', 'boolean', 'choice', 'complex']):
-            raise ValueError("must be one of enum values ('text', 'boolean', 'choice', 'complex')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

@@ -12,7 +12,6 @@ package hindsight
 
 import (
 	"encoding/json"
-	"fmt"
 )
 
 
@@ -22,6 +21,8 @@ type KnowledgeSearchRequestTagGroupsInner struct {
 	TagGroupLeaf *TagGroupLeaf
 	TagGroupNotInput *TagGroupNotInput
 	TagGroupOrInput *TagGroupOrInput
+	// Raw holds a shape added on the server after this client was built.
+	Raw *json.RawMessage
 }
 
 // Unmarshal JSON data into any of the pointers in the struct
@@ -79,7 +80,9 @@ func (dst *KnowledgeSearchRequestTagGroupsInner) UnmarshalJSON(data []byte) erro
 		dst.TagGroupOrInput = nil
 	}
 
-	return fmt.Errorf("data failed to match schemas in anyOf(KnowledgeSearchRequestTagGroupsInner)")
+	raw := append(json.RawMessage(nil), data...)
+	dst.Raw = &raw
+	return nil
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
@@ -98,6 +101,10 @@ func (src KnowledgeSearchRequestTagGroupsInner) MarshalJSON() ([]byte, error) {
 
 	if src.TagGroupOrInput != nil {
 		return json.Marshal(&src.TagGroupOrInput)
+	}
+
+	if src.Raw != nil {
+		return *src.Raw, nil
 	}
 
 	return nil, nil // no data in anyOf schemas

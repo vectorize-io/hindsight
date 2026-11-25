@@ -48,16 +48,6 @@ class RecallRequest(BaseModel):
     temporal_window: Optional[TemporalWindow] = None
     __properties: ClassVar[List[str]] = ["query", "types", "prefer_observations", "rerank", "budget", "max_tokens", "trace", "query_timestamp", "include", "tags", "tags_match", "tag_groups", "min_scores", "temporal_window"]
 
-    @field_validator('tags_match')
-    def tags_match_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
-            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

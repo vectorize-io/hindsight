@@ -32,13 +32,6 @@ class FileContentBlock(BaseModel):
     filename: Optional[StrictStr] = None
     __properties: ClassVar[List[str]] = ["type", "source", "filename"]
 
-    @field_validator('type')
-    def type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['file']):
-            raise ValueError("must be one of enum values ('file')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

@@ -42,13 +42,6 @@ class KnowledgeSearchTrace(BaseModel):
     budget_steps: List[KnowledgeTraceBudgetStep] = Field(description="Step 4: how max_tokens was filled, in order")
     __properties: ClassVar[List[str]] = ["budget", "depth", "max_tokens", "tokens_used", "candidates", "keyword_weight", "keyword_terms", "timings_ms", "candidate_searches", "hits", "budget_steps"]
 
-    @field_validator('budget')
-    def budget_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['low', 'mid', 'high']):
-            raise ValueError("must be one of enum values ('low', 'mid', 'high')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

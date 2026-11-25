@@ -48,27 +48,6 @@ class ReflectRequest(BaseModel):
     exclude_mental_model_ids: Optional[List[StrictStr]] = None
     __properties: ClassVar[List[str]] = ["reflect_search_observations_max_tokens", "reflect_search_observations_include_entities", "reflect_search_mental_models_max_tokens", "query", "budget", "context", "max_tokens", "include", "response_schema", "tags", "tags_match", "tag_groups", "apply_all_directives", "fact_types", "exclude_mental_models", "exclude_mental_model_ids"]
 
-    @field_validator('tags_match')
-    def tags_match_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        if value not in set(['any', 'all', 'any_strict', 'all_strict', 'exact']):
-            raise ValueError("must be one of enum values ('any', 'all', 'any_strict', 'all_strict', 'exact')")
-        return value
-
-    @field_validator('fact_types')
-    def fact_types_validate_enum(cls, value):
-        """Validates the enum"""
-        if value is None:
-            return value
-
-        for i in value:
-            if i not in set(['world', 'experience', 'observation']):
-                raise ValueError("each list item must be one of ('world', 'experience', 'observation')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

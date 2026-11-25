@@ -47,20 +47,6 @@ class KnowledgeSearchTraceHit(BaseModel):
     keyword: Union[StrictFloat, StrictInt] = Field(description="Keyword score: the summed IDF of the query words it contains")
     __properties: ClassVar[List[str]] = ["rank", "outcome", "result_rank", "merged_into_rank", "document_id", "filename", "index", "media_type", "page", "start_ms", "end_ms", "snippet", "score", "found_by", "similarity", "roles", "passage_score", "with_document", "keyword"]
 
-    @field_validator('outcome')
-    def outcome_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['returned', 'merged', 'over_budget', 'below_depth']):
-            raise ValueError("must be one of enum values ('returned', 'merged', 'over_budget', 'below_depth')")
-        return value
-
-    @field_validator('media_type')
-    def media_type_validate_enum(cls, value):
-        """Validates the enum"""
-        if value not in set(['document', 'image', 'audio', 'video', 'text']):
-            raise ValueError("must be one of enum values ('document', 'image', 'audio', 'video', 'text')")
-        return value
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_assignment=True,

@@ -12,7 +12,6 @@ package hindsight
 
 import (
 	"encoding/json"
-	"fmt"
 )
 
 
@@ -22,6 +21,8 @@ type Not1 struct {
 	TagGroupLeaf *TagGroupLeaf
 	TagGroupNotOutput *TagGroupNotOutput
 	TagGroupOrOutput *TagGroupOrOutput
+	// Raw holds a shape added on the server after this client was built.
+	Raw *json.RawMessage
 }
 
 // Unmarshal JSON data into any of the pointers in the struct
@@ -79,7 +80,9 @@ func (dst *Not1) UnmarshalJSON(data []byte) error {
 		dst.TagGroupOrOutput = nil
 	}
 
-	return fmt.Errorf("data failed to match schemas in anyOf(Not1)")
+	raw := append(json.RawMessage(nil), data...)
+	dst.Raw = &raw
+	return nil
 }
 
 // Marshal data from the first non-nil pointers in the struct to JSON
@@ -98,6 +101,10 @@ func (src *Not1) MarshalJSON() ([]byte, error) {
 
 	if src.TagGroupOrOutput != nil {
 		return json.Marshal(&src.TagGroupOrOutput)
+	}
+
+	if src.Raw != nil {
+		return *src.Raw, nil
 	}
 
 	return nil, nil // no data in anyOf schemas
