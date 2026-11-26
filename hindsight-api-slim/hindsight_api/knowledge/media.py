@@ -242,9 +242,7 @@ def _first_frame(data: Source, max_megapixels: int) -> Any:
     """The first picture ffmpeg decodes from ``data`` as a Pillow image, or None if it decodes none.
     Raises MediaError for one over ``max_megapixels``: this is not a way around the limit."""
     try:
-        import av
-
-        with av.open(_readable(data), metadata_errors="replace") as container:
+        with _av_open(data) as container:
             stream = container.streams.video[0]
             _check_pixels(stream.codec_context.width, stream.codec_context.height, max_megapixels)
             return next(container.decode(stream)).to_image()
@@ -957,13 +955,25 @@ def split_text(text: str, *, tokens: int) -> list[PassageDraft]:
 # nothing is needed on the system.
 
 
+def _av_open(data: Source) -> Any:
+    """Opens ``data`` for reading, whatever bytes its tags (title, artist...) hold.
+    PyAV 18 raises UnicodeDecodeError on a tag that is not UTF-8 unless told to replace the bad bytes;
+    PyAV 19 dropped that argument (passing it is a TypeError) and never raises. Python 3.11 only gets
+    PyAV 18 (19 needs 3.12), so both are installed in the wild: drop the branch with Python 3.11."""
+    import av
+
+    if int(av.__version__.split(".")[0]) < 19:
+        return av.open(_readable(data), metadata_errors="replace")
+    return av.open(_readable(data))
+
+
 def _open(data: Source) -> Any:
     try:
         import av
     except ImportError as exc:
         raise MediaError("audio and video need the local-ml extra (PyAV)") from exc
     try:
-        return av.open(_readable(data), metadata_errors="replace")
+        return _av_open(data)
     except av.FFmpegError as exc:
         raise MediaError(f"unreadable media: {exc}") from exc
 
