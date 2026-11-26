@@ -12,6 +12,19 @@ Version 2.0.0 of the Hindsight memory provider for [Hermes Agent](https://github
 
 <!-- truncate -->
 
+{/* Launch video: replace VIDEO_ID with the YouTube id once it is uploaded. */}
+
+<div style={{position: "relative", paddingBottom: "56.25%", height: 0, margin: "1rem 0 2rem", borderRadius: "8px", overflow: "hidden"}}>
+  <iframe
+    style={{position: "absolute", top: 0, left: 0, width: "100%", height: "100%"}}
+    src="https://www.youtube.com/embed/VIDEO_ID"
+    title="What's new in the Hindsight Hermes plugin 2.0.0"
+    frameBorder="0"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    allowFullScreen
+  ></iframe>
+</div>
+
 - [**Per-chat settings**](#per-chat-settings): Change any setting for one platform, chat or forum topic.
 - [**Page tools**](#page-tools): The agent can search, read and list pages, and create one when you ask.
 - [**Dates on recalled memories**](#dates-on-recalled-memories): The model can tell an old fact from a fresh one.
@@ -108,13 +121,31 @@ With Hermes' `compression.checkpoint_required: true`, Hermes only compresses a c
 
 ## Updating
 
-The Hermes plugin catalog pins a reviewed version of the plugin. Once the pin moves to 2.0.0, run:
+Nothing updates the plugin on its own, and `hermes update` doesn't move it either. Pick the case that matches how you installed it.
+
+**You follow the plugin catalog** (you ran `hermes plugins install hindsight`). The catalog pins a version Nous reviewed. Once that pin moves to 2.0.0, run:
 
 ```bash
 hermes plugins update hindsight
 ```
 
-To run it before the pin moves, see [Updating](/sdks/integrations/hermes#updating) for how to pin a specific release. The full list of settings is in the [Hermes integration reference](/sdks/integrations/hermes).
+Hermes re-reads the catalog at most every 6 hours, so `hermes plugins list` can take that long to show `update_available`.
+
+**You want 2.0.0 now, before the catalog pin moves.** Install it pinned to the release's commit. `--ref` takes a full commit SHA, not a tag name, so look the SHA up first:
+
+```bash
+git ls-remote https://github.com/vectorize-io/hindsight 'refs/tags/integrations/hermes/v2.0.0^{}'
+```
+
+The first column is the SHA. Put it in place of `SHA`:
+
+```bash
+hermes plugins install vectorize-io/hindsight/hindsight-integrations/hermes --force --ref SHA
+```
+
+A pinned install stays on 2.0.0: `hermes plugins update hindsight` won't move it, even when the catalog moves. To change version, install again with a new `--ref`.
+
+See [Updating](/sdks/integrations/hermes#updating) for every option, and the [Hermes integration reference](/sdks/integrations/hermes) for the full list of settings.
 
 <details>
 <summary>Every change in this release</summary>
