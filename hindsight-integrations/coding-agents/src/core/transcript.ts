@@ -6,7 +6,8 @@
  * no arguments, no outputs. That keeps WHICH files/commands the session touched without burying the
  * decisions in mechanical noise; `tool_result` blocks are dropped, except AskUserQuestion's,
  * which carries the user's answers. A message the human typed while a turn was running (stored only
- * as a `queued_command` attachment) is kept as a user turn at its position.
+ * as a `queued_command` attachment) is kept as a user turn at its position. A forked session's copy
+ * of its parent's history is skipped: the parent's document already holds it.
  *
  * Drops non-message lines (`last-prompt`, `mode`, `summary`, …), `isMeta` lines, compaction
  * summaries (`isCompactSummary`), `isSidechain`
@@ -36,6 +37,8 @@ interface TranscriptLine {
   isSidechain?: boolean;
   isCompactSummary?: boolean;
   timestamp?: string;
+  sessionId?: string;
+  requestSessionId?: string;
   attachment?: {
     type?: string;
     prompt?: unknown;
@@ -103,6 +106,7 @@ function renderLine(
 export function readClaudeTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
   const questionIds = new Set<string>(); // AskUserQuestion calls whose result is the user's answer
+  const lines: TranscriptLine[] = [];
   for (const rawLine of readJsonl(path)) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
@@ -116,8 +120,20 @@ export function readClaudeTranscript(path: string): TransportTurn[] {
     // JSON.parse accepts non-object top-level values (`null`, numbers, booleans, arrays);
     // guard here so a corrupt/truncated line can't reach a property access below and throw.
     if (typeof parsed !== "object" || parsed === null) continue;
-    const line = parsed as TranscriptLine;
+    lines.push(parsed as TranscriptLine);
+  }
 
+  // A forked session (`/fork`, `--fork-session`) starts with a copy of its parent's history, under
+  // the fork's own sessionId. That history is already in the parent's document, so saving it again
+  // stored and extracted every inherited turn twice (#6642). Claude Code stamps each copied
+  // assistant line with the session that produced it (`requestSessionId`); the last line naming
+  // another session marks the end of the inherited part, and only what follows is the fork's own.
+  let start = 0;
+  lines.forEach((l, i) => {
+    if (l.requestSessionId && l.sessionId && l.requestSessionId !== l.sessionId) start = i + 1;
+  });
+
+  for (const line of lines.slice(start)) {
     // A message the human typed while a turn was still running is NOT a type:"user" line: Claude
     // Code stores it only as a `queued_command` attachment. Keep the human ones as user turns at
     // their position; other origins (e.g. `task-notification`) are not the human speaking (#6480).
