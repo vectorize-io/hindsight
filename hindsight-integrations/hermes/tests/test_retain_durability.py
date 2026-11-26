@@ -4,6 +4,7 @@ bank that keeps no document text (#5599)."""
 
 import json
 import types
+from pathlib import Path
 
 import pytest
 from hindsight_client_api.exceptions import ApiException
@@ -271,6 +272,7 @@ def test_retains_unsent_at_exit_are_sent_by_the_next_session(provider, monkeypat
     nxt = FlakyClient()
     second, _ = provider({"prefetch_waits_for_retain": False}, client=nxt)
     second.shutdown()
+    # A set: the retain in flight at exit may land in both sessions, a replay by design.
     sent = {c[0] for c in _contents(slow.retains + nxt.retains)}
     assert sent == {"User: turn 0", "User: turn 1", "User: turn 2"}
 
@@ -293,7 +295,7 @@ def test_a_backlog_left_by_a_down_server_survives_exit(provider):
     assert down.attempts[0]["operation_id"] == up.retains[0]["operation_id"]
 
 
-def _spool_one(provider, hermes_env) -> list:
+def _spool_one(provider, hermes_env) -> list[Path]:
     """Leave one unsent retain on disk, as a session that quit with the server down would."""
     instance, _ = provider({"prefetch_waits_for_retain": False}, client=FlakyClient(failures=10_000))
     instance.sync_turn("left over", "reply")
@@ -302,9 +304,10 @@ def _spool_one(provider, hermes_env) -> list:
     return list((hermes_env / "hindsight" / "unsent-retains").glob("*.json"))
 
 
-def test_an_unreadable_spool_file_is_skipped(provider, hermes_env):
+@pytest.mark.parametrize("garbage", ["not json", "5", '[{"item": 1}]'])
+def test_an_unreadable_spool_file_is_skipped(provider, hermes_env, garbage):
     (spooled,) = _spool_one(provider, hermes_env)
-    spooled.write_text("not json")
+    spooled.write_text(garbage)
     up = FlakyClient()
     second, _ = provider({}, client=up)
     second.shutdown()

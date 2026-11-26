@@ -1358,8 +1358,8 @@ class HindsightMemoryProvider(MemoryProvider):
             finally:
                 self._retain_queue.task_done()
 
-    def _run_retains(self, jobs: list[_PendingRetain]) -> None:
-        """Run the backlog of failed retains, then *jobs*, in order (writer thread).
+    def _run_retains(self, retains: list[_PendingRetain]) -> None:
+        """Run the backlog of failed retains, then *retains*, in order (writer thread).
 
         A transient failure (unreachable server, timeout, 5xx) keeps that retain and every
         one after it for the next call, so turns are not lost when a write fails after the
@@ -1369,7 +1369,7 @@ class HindsightMemoryProvider(MemoryProvider):
         retain whose reply was lost may be stored twice; that beats losing it."""
         self._settle_retain_ops()
         with self._retain_backlog_lock:
-            self._retain_backlog.extend(_QueuedRetain(job) for job in jobs)
+            self._retain_backlog.extend(_QueuedRetain(retain) for retain in retains)
             if (excess := len(self._retain_backlog) - _RETAIN_BACKLOG_LIMIT) > 0:
                 logger.warning("Hindsight retain backlog full; dropping the %d oldest unsent retain(s)", excess)
                 del self._retain_backlog[:excess]
@@ -1689,6 +1689,7 @@ class HindsightMemoryProvider(MemoryProvider):
                     cfg.get("profile", "hermes"),
                 )
             self._start_embedded_daemon()
+        # Also with auto_retain off: these saves were made while it was on, and the user saw them done.
         if not self._writes_disabled:
             self._resend_unsent_retains()
 
@@ -2536,7 +2537,7 @@ class HindsightMemoryProvider(MemoryProvider):
         # doesn't re-ship turns already handed to the writer.
         if update_mode == "append":
             # Every buffered turn has now been shipped (the retain content was
-            # snapshotted into the closure above). Append retains only ever read
+            # snapshotted into the queued retain above). Append retains only ever read
             # the un-retained tail — sync_turn slices from the watermark and
             # flush-on-switch flushes what's left — so drop the retained turns
             # instead of letting the buffer grow for the whole session. Overwrite
@@ -2588,11 +2589,11 @@ class HindsightMemoryProvider(MemoryProvider):
             return f"couldn't save to memory yet, will retry ({waiting} waiting)"
         return "saving to memory…"
 
-    def _enqueue_retain(self, job: _PendingRetain) -> None:
-        """Hand *job* to the (lazily started) writer and arm the atexit drain."""
+    def _enqueue_retain(self, retain: _PendingRetain) -> None:
+        """Hand *retain* to the (lazily started) writer and arm the atexit drain."""
         self._ensure_writer()
         self._register_atexit()
-        self._retain_queue.put(job)
+        self._retain_queue.put(retain)
 
     # -- tools -------------------------------------------------------------------
 
@@ -2869,6 +2870,7 @@ class HindsightMemoryProvider(MemoryProvider):
                 job = self._retain_queue.get_nowait()
             except queue.Empty:
                 break
+            self._retain_queue.task_done()  # taken here instead of by the writer
             if job is not _WRITER_SENTINEL:
                 unsent.append(job)
         if not unsent:
@@ -2903,7 +2905,9 @@ class HindsightMemoryProvider(MemoryProvider):
                 retains = [
                     _PendingRetain.model_validate(raw) for raw in json.loads(claimed.read_text(encoding="utf-8"))
                 ]
-            except (OSError, ValueError) as exc:  # pydantic's ValidationError is a ValueError
+            # ValueError covers bad JSON and pydantic's ValidationError; TypeError, JSON that is no list.
+            except (OSError, ValueError, TypeError) as exc:
+                # Left in place under its claimed name: never retried, but there to inspect.
                 logger.warning("Hindsight could not read unsent retains in %s, skipping them: %s", claimed, exc)
                 continue
             logger.info("Hindsight: sending %d memory save(s) left over from an earlier session", len(retains))
