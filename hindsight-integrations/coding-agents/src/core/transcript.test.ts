@@ -452,4 +452,69 @@ describe("readClaudeTranscript", () => {
       },
     ]);
   });
+
+  it("drops the history a forked session copied from its parent, keeping only the turns the fork added (#6642)", () => {
+    // Shape of a real `--fork-session` / `/fork` transcript: Claude Code copies the parent's lines
+    // under the fork's own sessionId and stamps each copied assistant line with the PARENT's id
+    // as `requestSessionId`. The fork's own lines carry no foreign requestSessionId.
+    const parent = "d6c488dd-parent";
+    const fork = "1491489b-fork";
+    const line = (type: string, content: string, extra: Record<string, unknown> = {}) =>
+      JSON.stringify({ type, sessionId: fork, message: { role: type, content }, ...extra });
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "derived-from",
+          sessionId: fork,
+          sessions: [{ id: parent, via: "fork" }],
+        }),
+        line("user", "Reply with just: one"),
+        line("assistant", "one", { requestSessionId: parent }),
+        // a message the human queued mid-turn in the PARENT is inherited too: skipped with the rest
+        JSON.stringify({
+          type: "attachment",
+          sessionId: fork,
+          attachment: {
+            type: "queued_command",
+            prompt: "keep it short",
+            origin: { kind: "human" },
+          },
+        }),
+        JSON.stringify({ type: "system", subtype: "stop_hook_summary", sessionId: fork }),
+        line("user", "Reply with just: two"),
+        line("assistant", "two", { requestSessionId: parent }),
+        JSON.stringify({ type: "system", subtype: "stop_hook_summary", sessionId: fork }),
+        // the fork's own turns
+        line("user", "Reply with just: three"),
+        line("assistant", "three"),
+      ].join("\n")
+    );
+
+    expect(readClaudeTranscript(file)).toEqual([
+      { role: "user", content: "Reply with just: three" },
+      { role: "assistant", content: "three" },
+    ]);
+  });
+
+  it("keeps every turn of a session that is not a fork, including one stamped with its own id", () => {
+    const sid = "own-session";
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({ type: "user", sessionId: sid, message: { content: "hi" } }),
+        JSON.stringify({
+          type: "assistant",
+          sessionId: sid,
+          requestSessionId: sid,
+          message: { content: "hello" },
+        }),
+      ].join("\n")
+    );
+
+    expect(readClaudeTranscript(file)).toEqual([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "hello" },
+    ]);
+  });
 });
