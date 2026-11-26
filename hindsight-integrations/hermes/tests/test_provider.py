@@ -5,6 +5,7 @@ import asyncio
 import json
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -322,6 +323,51 @@ def test_prefetch_injects_recalled_memories(provider):
     assert "- fact one" in block
     status = instance.recall_status()
     assert status.count == 1 and status.provider_label == "Hindsight"
+    instance.shutdown()
+
+
+def test_the_first_turn_of_a_session_recalls_its_own_message_by_default(provider):
+    """With recall_sync off, nothing primes the first turn, so it starts a recall for its own message.
+    Later turns take the background result; a new session's first turn recalls again."""
+    instance, fake = provider(
+        {"prefetch_waits_for_retain": False}, client=FakeClient(recall_texts=["allergic to penicillin"])
+    )
+    assert "- allergic to penicillin" in instance.prefetch("my doctor wants me on amoxicillin")
+    assert [call["query"] for call in fake.recalls] == ["my doctor wants me on amoxicillin"]
+
+    instance.queue_prefetch("my doctor wants me on amoxicillin")
+    instance._prefetch_thread.join(5)
+    assert "- allergic to penicillin" in instance.prefetch("thanks")
+    assert len(fake.recalls) == 2  # the background one: "thanks" was not recalled
+
+    instance.on_session_switch("another-session")
+    instance.prefetch("hello again")
+    assert fake.recalls[-1]["query"] == "hello again"
+
+    instance.initialize("a-third-session")  # Hermes may reuse a provider for a new session
+    instance.prefetch("what's new?")
+    assert fake.recalls[-1]["query"] == "what's new?"
+    instance.shutdown()
+
+
+def test_a_slow_first_recall_costs_the_turn_its_memory_not_its_latency(provider, monkeypatch):
+    """A server slower than the wait: the first turn goes ahead without memory, the next one gets it."""
+    monkeypatch.setattr(plugin, "_PREFETCH_JOIN_SECONDS", 0.05)
+    release = threading.Event()
+
+    class Slow(FakeClient):
+        async def arecall(self, **kwargs):
+            while not release.is_set():
+                await asyncio.sleep(0.01)
+            return FakeRecallResponse(["allergic to penicillin"])
+
+    instance, _ = provider({"prefetch_waits_for_retain": False}, client=Slow())
+    started = time.monotonic()
+    assert instance.prefetch("my doctor wants me on amoxicillin") == ""
+    assert time.monotonic() - started < 2
+    release.set()
+    instance._prefetch_thread.join(5)
+    assert "- allergic to penicillin" in instance.prefetch("ok, and?")
     instance.shutdown()
 
 

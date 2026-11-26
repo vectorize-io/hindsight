@@ -182,6 +182,10 @@ def _bot_label(turn_author: Dict[str, Any] | None) -> str | None:
     return str(turn_author.get("name") or "").strip() or "Bot"
 
 
+# How long a turn waits for the background recall before it goes ahead without memory.
+# Also the whole budget of a session's first recall, which starts on that turn.
+_PREFETCH_JOIN_SECONDS = 3.0
+
 # Injected instead of nothing when recall raises, so the agent can tell "memory is down" from
 # "nothing found" (#6482). Fixed text, never the exception: errors can carry hosts and URLs. It is
 # worded so a customer-facing agent need not announce an outage, only not read the gap as fact.
@@ -824,6 +828,9 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_result, self._prefetch_count = "", 0
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread = None
+        # Whether a background recall was queued in this session. Until one is, prefetch() queues
+        # one for its own message: the first turn of a session has no previous turn to warm it.
+        self._prefetch_queued = False
         # Bumped by every new prefetch, session switch and shutdown: a worker writes its result
         # only if no newer one started since, so a slow recall can't overwrite a fresher one or
         # land in the next session.
@@ -1075,7 +1082,7 @@ class HindsightMemoryProvider(MemoryProvider):
             {"key": "auto_recall", "description": "Automatically recall memories before each turn", "default": True},
             {
                 "key": "recall_sync",
-                "description": "Recall synchronously against the current message before each turn (higher relevance, adds recall latency to the turn). Default off: recall runs in the background and is injected on the next turn.",
+                "description": "Recall synchronously against the current message before each turn (higher relevance, adds recall latency to the turn). Default off: recall runs in the background and is injected on the next turn; the first message of a session starts its own recall and waits up to 3s for it.",
                 "default": False,
             },
             {
@@ -1585,6 +1592,7 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = str(session_id or "").strip()
+        self._prefetch_queued = False  # a new session: its first turn queues its own recall
         self._parent_session_id = str(kwargs.get("parent_session_id", "") or "").strip()
         # "primary" | "subagent" | "cron" | "flush" from Hermes, plus our own "kanban" below;
         # read by _apply_retain_policy (#4945).
@@ -2250,8 +2258,16 @@ class HindsightMemoryProvider(MemoryProvider):
         # See NousResearch/hermes-agent#5820.
         if self._recall_sync:
             return self._finish_prefetch(*(("", 0) if self._recall_disabled() else self._do_recall(query)))
-        # Default: the background worker's result for the previous turn (capped join).
-        self._join_prefetch(3.0, log=True)
+        # The first turn of a session has no previous turn to have warmed a result, so it would
+        # inject nothing — and a new device's first question ("my doctor wants me on amoxicillin")
+        # is where a forgotten allergy costs most. Start the background recall for this message
+        # now; the capped join below is its time budget. A slower server costs this turn its
+        # memory, not its latency: the late result is injected on the next turn instead.
+        # recall_sync stays opt-in because it has no such cap (only Hermes' own, 8s) on every turn.
+        if not self._prefetch_queued:
+            self.queue_prefetch(query, session_id=session_id)
+        # The background worker's result: the previous turn's, or this one's on a first turn.
+        self._join_prefetch(_PREFETCH_JOIN_SECONDS, log=True)
         with self._prefetch_lock:
             result, count = self._prefetch_result, self._prefetch_count
             self._prefetch_result, self._prefetch_count = "", 0
@@ -2274,6 +2290,7 @@ class HindsightMemoryProvider(MemoryProvider):
         with self._prefetch_lock:
             self._prefetch_generation += 1
             generation = self._prefetch_generation
+        self._prefetch_queued = True
 
         def _run():
             # Wait (bounded, off the reply path) for the just-completed turn's
@@ -2790,10 +2807,11 @@ class HindsightMemoryProvider(MemoryProvider):
         self._flush_buffered_turns("flush-on-switch")
 
         # 2. Drain the old session's in-flight prefetch and drop its result.
-        self._join_prefetch(3.0)
+        self._join_prefetch(_PREFETCH_JOIN_SECONDS)
         with self._prefetch_lock:
             self._prefetch_generation += 1  # a worker still running past the join must not land here
             self._prefetch_result = ""
+        self._prefetch_queued = False  # the new session's first turn queues its own recall
 
         # 3. Rotate to the new session.
         if parent_session_id:
