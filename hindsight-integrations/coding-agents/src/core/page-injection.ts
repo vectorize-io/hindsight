@@ -1,3 +1,5 @@
+import type { Config } from "./config";
+
 export interface PageRef {
   id: string;
   title: string;
@@ -50,8 +52,11 @@ function indexLine(pages: PageRef[]): string {
  * periodic refresh so the agent is told — repeatedly — not just that the tools exist but the moment
  * to reach for each one. Registering the tools isn't enough; the trigger for each has to be in
  * context. (Omits hindsight_diagnose — pure troubleshooting, no workflow trigger.)
+ *
+ * In three parts, because two of them do not always apply: the page tools are left out while the
+ * bank has no pages (they would point at nothing), the write tools with `writeTools: false`.
  */
-const TOOL_GUIDE =
+const PAGE_TOOLS_GUIDE =
   "- hindsight_search_pages(query) — FIRST STOP, and the way IN to everything below. The code " +
   "shows what is true today but not what was decided or why; memory shows what was decided or said " +
   "back then but not whether it still holds. Work built from either alone goes wrong: from code alone " +
@@ -74,14 +79,20 @@ const TOOL_GUIDE =
   "returned reached your reply — quoted, paraphrased, or merely confirming what you were about to " +
   "say — open that part with a markdown blockquote, exactly: " +
   '"> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Rewriting a ' +
-  "snippet in your own words does not make it yours. A search that turned up nothing useful needs " +
+  "snippet in your own words does not make it yours. The one exception: a page whose snippet is " +
+  '"No content yet." has nothing in it to credit. A search that turned up nothing useful needs ' +
   "no mention at all — just carry on.\n" +
   "- hindsight_list_pages / hindsight_read_page — BEFORE substantial work, list the pages and " +
   "read the relevant ones to ground yourself in this repo's architecture, conventions, and past decisions instead " +
-  "of re-deriving them from the code; follow any [[page:<id>]] links you see.\n" +
+  "of re-deriving them from the code; follow any [[page:<id>]] links you see.\n";
+
+const REFLECT_GUIDE =
   "- hindsight_reflect(query) — when pages are too shallow and you need the WHY: deep reasoning over the " +
   "repo's full memory for the past decision and exact values that explain a behavior or bug (slower — " +
-  'use deliberately, and credit results with a blockquote header "> 🧠 **From Hindsight memory** — <summary>").\n' +
+  'use deliberately, and credit results with a blockquote header "> 🧠 **From Hindsight memory** — <summary>").\n';
+
+/** The two tools that WRITE to the bank: the host may deny them (#6487). */
+const WRITE_TOOLS_GUIDE =
   "- hindsight_capture_initiative(title, summary) — right after the user approves a plan or finishes brainstorming a " +
   "new feature/capability and you are about to start implementing (BEFORE you write any code), call this to " +
   "record it as a tracked page; then call it AGAIN with relates_to_page_id set to that page whenever the goal, " +
@@ -107,13 +118,28 @@ export interface ToolGuideOpts {
   reflectOnNewGoals?: boolean;
   /** cfg.toolGuideExtra: the team's own guidance, added after ours rather than replacing it. */
   extra?: string;
+  /** cfg.writeTools: false leaves out every instruction to call a write tool (#6487). */
+  writeTools?: boolean;
 }
 
-function toolGuide(opts?: ToolGuideOpts): string {
+/** The guide options a config implies — one place, so every block a session sees agrees. */
+export function toolGuideOpts(cfg: Config): ToolGuideOpts {
+  return {
+    reflectOnNewGoals: cfg.autoInject !== "reflect",
+    extra: cfg.toolGuideExtra,
+    writeTools: cfg.writeTools,
+  };
+}
+
+function toolGuide(pages: PageRef[], opts?: ToolGuideOpts): string {
   const extra = opts?.extra?.trim();
-  return (
-    (opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") + TOOL_GUIDE + (extra ? `\n${extra}` : "")
-  );
+  const has = pages.length > 0;
+  const guide =
+    (has && opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") +
+    (has ? PAGE_TOOLS_GUIDE : "") +
+    REFLECT_GUIDE +
+    (opts?.writeTools === false ? "" : WRITE_TOOLS_GUIDE);
+  return guide.trimEnd() + (extra ? `\n${extra}` : "");
 }
 
 /** SessionStart: teach the whole tool suite + when to use each, and list what pages exist. Empty-state aware. */
@@ -123,29 +149,43 @@ export function buildPagesPreamble(pages: PageRef[], opts?: ToolGuideOpts): stri
     "<hindsight_pages>\n" +
     "This repository has a Hindsight memory + pages (curated, continuously-updated pages plus the raw " +
     "memory behind them). The tools below are registered, but you must actually CALL them at the right moments:\n" +
-    `${toolGuide(opts)}\n` +
-    "ALSO your correction tool: when you verify a Hindsight memory is wrong or stale, ingest a " +
-    '"Correction: <topic>" doc stating what memory claimed, what is true now, and the evidence — ' +
-    "newer facts supersede older ones.\n" +
+    `${toolGuide(pages, opts)}\n` +
+    (opts?.writeTools === false
+      ? ""
+      : "ALSO your correction tool: when you verify a Hindsight memory is wrong or stale, ingest a " +
+        '"Correction: <topic>" doc stating what memory claimed, what is true now, and the evidence — ' +
+        "newer facts supersede older ones.\n") +
     `${body}\n` +
-    "This tool guide and the page list are re-injected for you periodically as things change.\n" +
+    "A short reminder of these tools is re-injected for you periodically as things change.\n" +
     "</hindsight_pages>"
   );
 }
 
 /**
- * Periodic UserPromptSubmit refresh. ALWAYS emits (never undefined) so the full tool guide keeps
- * re-appearing in context even on a fresh repo with no pages yet — precisely when the agent is
- * building its first features. The page roster is included only when pages exist; the reminder of
- * which tools exist and WHEN to call each is unconditional.
+ * Periodic UserPromptSubmit refresh. ALWAYS emits (never undefined), keeping the tools in front of
+ * the agent even on a fresh repo with no pages yet. The full guide goes out once per session (the
+ * caller decides when); every other refresh is `short`: one line, since the model already has the
+ * guide and the tool descriptions carry it too — re-sending it every turn was ~5 KB, 90% of every
+ * block (#6597). The tag stays the same so hosts that look for it still find it.
  */
-export function buildRosterRefresh(pages: PageRef[], opts?: ToolGuideOpts): string {
+export function buildRosterRefresh(
+  pages: PageRef[],
+  opts?: ToolGuideOpts & { short?: boolean }
+): string {
+  if (opts?.short) {
+    const line = pages.length
+      ? `${pages.length === 1 ? "1 Hindsight page covers" : `${pages.length} Hindsight pages cover`} ` +
+        "this repo: search them (hindsight_search_pages) before bugs, tests, new work and commits, " +
+        "and credit any hit you use."
+      : "No Hindsight pages yet; hindsight_reflect answers from this repo's raw memory.";
+    return `<hindsight_page_refresh>\n${line}\n</hindsight_page_refresh>`;
+  }
   const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
   return (
     "<hindsight_page_refresh>\n" +
     rosterBlock +
     "Reminder — this repo's Hindsight tools are available; call them at the right moments:\n" +
-    `${toolGuide(opts)}\n` +
+    `${toolGuide(pages, opts)}\n` +
     "</hindsight_page_refresh>"
   );
 }

@@ -192,9 +192,11 @@ describe("buildPageTools", () => {
       "hindsight_search_pages"
     );
     const { crediting } = JSON.parse((await tool.handler({ query: "q" })).content[0].text);
-    // Added, not replacing: the crediting rule is still there, and the team's text follows it.
+    // Added, not replacing: the crediting rule is still there, and the team's text follows it in
+    // the description. Results carry the rule alone, not the team's text again (#6597).
     expect(crediting).toContain("From Hindsight memory");
-    expect(crediting.endsWith(extra)).toBe(true);
+    expect(crediting).not.toContain(extra);
+    expect(tool.description).toContain("From Hindsight memory");
     expect(tool.description.endsWith(extra)).toBe(true);
   });
 
@@ -479,4 +481,25 @@ describe("buildPageTools", () => {
       expect(JSON.parse(result.content[0].text)).toEqual({ error: "boom: not found" });
     });
   }
+});
+
+describe("writeTools: false (#6487)", () => {
+  const WRITES = ["hindsight_capture_initiative", "hindsight_ingest_document"];
+  const names = (writeTools?: boolean) =>
+    buildPageTools(stubClient(), "repo-a", { writeTools }).map((t) => t.name);
+
+  it("registers no write tool", () => {
+    for (const w of WRITES) expect(names(false)).not.toContain(w);
+    expect(names(false)).toContain("hindsight_search_pages");
+    for (const w of WRITES) expect(names()).toContain(w);
+  });
+
+  it("keeps them for the codebase survey, whose job is to write", () => {
+    vi.stubEnv("HINDSIGHT_DISABLE_HOOKS", "1");
+    try {
+      for (const w of WRITES) expect(names(false)).toContain(w);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

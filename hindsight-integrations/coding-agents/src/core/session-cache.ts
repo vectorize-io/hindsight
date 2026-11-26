@@ -24,6 +24,8 @@ export interface SessionCache {
    *  HOOK_INJECT_ATTEMPTS). Named for reflect like `reflectAnswer` above, whose name also predates
    *  the other two sources. */
   reflectAttempts?: number;
+  /** The user turn the auto-inject source last ran on; `autoInjectEveryTurns` counts from here. */
+  injectedAtTurn?: number;
   /** SessionStart saw a new/empty bank; consume this on prompt one, then allow reflect. */
   deferInitialReflect?: boolean;
   pages?: { atTurn: number; list: PageRef[] };

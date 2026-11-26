@@ -46,6 +46,7 @@ export function selectTools(
         reflectTimeoutMs: cfg.reflectToolTimeoutMs,
         reflectBudget: cfg.reflectBudget,
         toolGuideExtra: cfg.toolGuideExtra,
+        writeTools: cfg.writeTools,
         stampFor: () => buildRetainStamp(cfg, { directory: cwd, harness, bankId }),
       });
 }

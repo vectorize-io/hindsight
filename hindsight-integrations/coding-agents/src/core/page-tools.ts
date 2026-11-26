@@ -67,9 +67,12 @@ const CREDIT_REMINDER =
   "Crediting is mandatory, not a judgement call: if anything these results contribute reaches your " +
   "reply — quoted, paraphrased, or merely confirming what you were going to say — open that part " +
   'with "> 🧠 **From Hindsight memory (<page>)** — <the specific facts you drew on>". Rewriting a ' +
-  "snippet in your own words does not make it yours. If none of them bear on the turn, ignore them " +
+  "snippet in your own words does not make it yours. The one exception: a page whose snippet is " +
+  '"No content yet." has nothing in it to credit. If none of them bear on the turn, ignore them ' +
   "silently — an unhelpful search needs no mention. These are past records: check a claim that " +
   "something was fixed or works against the code before relying on it.";
+
+const WRITE_TOOL_NAMES = new Set(["hindsight_capture_initiative", "hindsight_ingest_document"]);
 
 export interface ToolSpec {
   name: string;
@@ -125,13 +128,15 @@ export function buildPageTools(
     reflectTimeoutMs?: number;
     /** Reflect budget for `hindsight_reflect` (cfg.reflectBudget, default "high"). */
     reflectBudget?: "low" | "mid" | "high";
-    /** cfg.toolGuideExtra, added after the crediting note so it lands with the results too. */
+    /** cfg.toolGuideExtra, added after the crediting note in the search tool's description. */
     toolGuideExtra?: string;
+    /** cfg.writeTools: false leaves out the two tools that write to the bank (#6487). */
+    writeTools?: boolean;
   } = {}
 ): ToolSpec[] {
   const extra = opts.toolGuideExtra?.trim();
   const crediting = extra ? `${CREDIT_REMINDER} ${extra}` : CREDIT_REMINDER;
-  return [
+  const tools: ToolSpec[] = [
     {
       name: "hindsight_sync_status",
       description:
@@ -239,7 +244,9 @@ export function buildPageTools(
               ...(h.source_query ? { description: h.source_query } : {}),
               snippet: h.snippet,
             })),
-            crediting,
+            // The reminder only: toolGuideExtra already rides the tool description, and repeating
+            // it in every result was most of the result's size (#6597).
+            crediting: CREDIT_REMINDER,
           });
         } catch (e) {
           return err(e);
@@ -377,4 +384,8 @@ export function buildPageTools(
       }),
     },
   ];
+  // The codebase survey (HINDSIGHT_DISABLE_HOOKS) is the plugin's own run, and saving what it
+  // learned with hindsight_ingest_document is its whole job, so it keeps the write tools.
+  if (opts.writeTools !== false || process.env.HINDSIGHT_DISABLE_HOOKS) return tools;
+  return tools.filter((t) => !WRITE_TOOL_NAMES.has(t.name));
 }

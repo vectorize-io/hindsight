@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
-import { buildSessionStartContext, runSessionStartHook } from "./session-start";
+import { buildSeedBanner, buildSessionStartContext, runSessionStartHook } from "./session-start";
 import { startCodebaseSurvey, SURVEY_MAX_ATTEMPTS } from "./survey";
 import { releaseLease, SURVEY_SPEC_ENV } from "./survey-lease";
 import { resolveConfig } from "./config";
@@ -870,4 +870,11 @@ describe("survey launch admission", () => {
       expect(retain).not.toHaveBeenCalled();
     }
   );
+});
+
+describe("buildSeedBanner color (#6502)", () => {
+  it("is plain text unless the host paints color", () => {
+    expect(buildSeedBanner("b", false)).toMatch(/^Hindsight is tracking/);
+    expect(buildSeedBanner("b", false, undefined, true)).toContain("\x1b[38;2;");
+  });
 });

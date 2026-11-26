@@ -71,7 +71,9 @@ export function formatRecallFallback(observations: string[], lead = RECALL_FALLB
   return `${lead}\n` + observations.map((o) => `- ${o.replace(/\s+/g, " ").trim()}`).join("\n");
 }
 
-export function buildSystemInjection(memory: string): string {
+/** `writeTools: false` (cfg.writeTools) leaves out the correction step: it calls a write tool the
+ *  host may have denied (#6487). */
+export function buildSystemInjection(memory: string, opts?: { writeTools?: boolean }): string {
   // The <hindsight_memory> wrapper is LOAD-BEARING: the transcript readers strip this exact tag
   // (transcript-util MEMORY_TAG_RE) so the session write-back never re-ingests the injected
   // synthesis back into the bank (a retain→reflect feedback loop).
@@ -102,10 +104,12 @@ export function buildSystemInjection(memory: string): string {
     "your answer, attribute that part visibly, starting with:\n" +
     "> 🧠 **From Hindsight memory** — <the specific facts you drew on>\n" +
     "Never attribute memory that did not contribute.\n" +
-    "If you VERIFY this memory is wrong or outdated (the code or facts contradict it), CORRECT " +
-    "the record: call hindsight_ingest_document with a short correction titled " +
-    '"Correction: <topic>" stating (1) what memory claimed, (2) what is actually true now, and ' +
-    "(3) the evidence you verified — the newer fact supersedes the stale one in future retrieval.\n\n" +
+    (opts?.writeTools === false
+      ? "\n"
+      : "If you VERIFY this memory is wrong or outdated (the code or facts contradict it), CORRECT " +
+        "the record: call hindsight_ingest_document with a short correction titled " +
+        '"Correction: <topic>" stating (1) what memory claimed, (2) what is actually true now, and ' +
+        "(3) the evidence you verified — the newer fact supersedes the stale one in future retrieval.\n\n") +
     memory +
     "\n</hindsight_memory>"
   );

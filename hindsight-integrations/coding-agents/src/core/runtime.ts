@@ -22,7 +22,7 @@ import { DAEMON_WAIT_RETAIN_MS, DAEMON_WAIT_SESSION_START_MS, ensureDaemon } fro
 import { diag } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import type { HindsightClient } from "./hindsight";
-import { buildPagesPreamble } from "./page-injection";
+import { buildPagesPreamble, toolGuideOpts } from "./page-injection";
 import { buildPageTools, type ToolSpec } from "./page-tools";
 import { buildPageTrigger } from "./missions";
 import { retainLiveSession, type TransportTurn } from "./chat";
@@ -94,6 +94,7 @@ export class RuntimeCore {
       reflectTimeoutMs: this.cfg.reflectToolTimeoutMs,
       reflectBudget: this.cfg.reflectBudget,
       toolGuideExtra: this.cfg.toolGuideExtra,
+      writeTools: this.cfg.writeTools,
       stampFor: () =>
         buildRetainStamp(this.cfg, {
           directory: this.projectDir,
@@ -150,7 +151,7 @@ export class RuntimeCore {
       // on stderr (shows in the plugin log / console) rather than dropping it.
       // Banner: via the host's toast API when available (stderr corrupts the TUI); always logged.
       if (out.systemMessage) {
-        const plain = out.systemMessage.replace(/\x1b\[[0-9;]*m/g, "");
+        const plain = out.systemMessage; // no `color`: plain text, a toast shows codes as text
         log.info(this.harness, plain);
         this.notify?.("Hindsight", plain.replace(/^Hindsight is /, "Is "));
       }
@@ -203,23 +204,14 @@ export class RuntimeCore {
     // existed told every later session "No pages yet" while the same turn's memory block
     // listed pages by id (#4607).
     if (turns === 1) {
-      blocks.push(
-        buildPagesPreamble(output.pages, {
-          reflectOnNewGoals: this.cfg.autoInject !== "reflect",
-          extra: this.cfg.toolGuideExtra,
-        })
-      );
+      blocks.push(buildPagesPreamble(output.pages, toolGuideOpts(this.cfg)));
     }
     if (output.context) blocks.push(output.context);
     // OpenCode has no user-message hook channel; use its native toast instead of stderr, which
     // renders inside the TUI input line. The shared output owns when a notice exists.
     if (output.notice) {
-      // The notice is painted for a terminal; a toast shows the escapes as text (#6257).
-      const preview = output.notice
-        .replace(/\x1b\[[0-9;]*m/g, "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 140);
+      // Plain text: buildHookOutput only paints the notice when asked to (#6257, #6502).
+      const preview = output.notice.replace(/\s+/g, " ").trim().slice(0, 140);
       log.info(this.harness, "reflect goal", { preview });
       this.notify?.("Hindsight · recalled past decisions", preview);
     }

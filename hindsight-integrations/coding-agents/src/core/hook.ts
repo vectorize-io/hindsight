@@ -2,7 +2,8 @@
  * Shared runtime for HOOK-based harnesses (Claude Code, Codex, Cursor CLI, ...).
  *
  * The ONE runtime path (see docs/superpowers/specs/2026-07-27-reflect-pages-runtime.md):
- *   - AUTO-INJECT once per session, on the first prompt, from the source `cfg.autoInject` names:
+ *   - AUTO-INJECT on the first prompt (and every `autoInjectEveryTurns` turns, for recall and
+ *     pages), from the source `cfg.autoInject` names:
  *     "reflect" (default) is an agentic synthesis over the bank returning the root-cause decision
  *     with exact values; "pages" is a page search and "recall" a raw memory recall, both
  *     retrieval-only and far cheaper; "none" injects nothing and leaves it to the tools. Cached
@@ -11,7 +12,8 @@
  *   - PAGES every turn: the page set is fetched on a cadence and matched LOCALLY against
  *     the prompt (section-level lexical scoring — no server/LLM call); the top sections are
  *     injected with provenance. Fast like recall, organized like reflect.
- *   - The tool-guide/page-roster block re-injects on the same cadence.
+ *   - The tool-guide/page-roster block re-injects on the same cadence: the full guide once, then a
+ *     one-line reminder.
  *
  * Every outcome is recorded in the diagnostics file — a memory-less session can't masquerade as a
  * memory session. A failure never breaks the agent.
@@ -41,7 +43,7 @@ import {
   RECALL_INJECT_LEAD,
 } from "./inject";
 import type { PageRef } from "./page-injection";
-import { buildRosterRefresh, parsePageList } from "./page-injection";
+import { buildRosterRefresh, parsePageList, toolGuideOpts } from "./page-injection";
 import {
   readSessionCache,
   sessionCacheFile,
@@ -77,6 +79,9 @@ export interface HookSpec {
   /** Wrap injected context (and an optional user-facing notice) in the harness's native
    *  hook-output schema. Harnesses whose schema has no user-visible channel ignore `notice`. */
   emit(context: string, notice?: string, event?: Record<string, unknown>): unknown;
+  /** The host paints terminal color codes in `notice` (Claude Code does). Left unset, the notice
+   *  is plain text: a host that does not paint them shows the raw codes as text (#6502). */
+  color?: boolean;
   /** For a host that only hands a TOOL hook's context to the model (Grok Build, #5467): the
    *  turn's context is stashed for the session instead of emitted, and the next event this
    *  accepts (a tool hook routed to the same entry) delivers it once through `emit`. */
@@ -241,6 +246,8 @@ export async function buildHookOutput(args: {
    *  harnesses leave it off: some (Grok) never hand the SessionStart text to the model, so the
    *  turn-1 refresh is their only copy of the guide. */
   preambleOnFirstTurn?: boolean;
+  /** Paint the brand word in the notice — HookSpec.color. */
+  color?: boolean;
 }): Promise<HookOutput> {
   const { harness, prompt, cfg, client, cacheFile } = args;
 
@@ -254,6 +261,19 @@ export async function buildHookOutput(args: {
   // cached as `reflectAnswer` (the field name predates the other sources).
   let reflectAnswer = cached.reflectAnswer;
   let reflectAttempts = cached.reflectAttempts ?? 0;
+  // autoInjectEveryTurns (#5713): once due, the cached answer is dropped and the source runs again
+  // on THIS prompt with a fresh attempt budget, so a long session's memory follows its topic.
+  // Not for reflect: a synthesis every few turns would put an LLM call in front of those prompts.
+  const every = cfg.autoInject === "reflect" ? 0 : cfg.autoInjectEveryTurns;
+  const refreshing =
+    every > 0 &&
+    reflectAnswer !== undefined &&
+    cached.injectedAtTurn !== undefined &&
+    turns - cached.injectedAtTurn >= every;
+  if (refreshing) {
+    reflectAnswer = undefined;
+    reflectAttempts = 0;
+  }
   let reflectRanThisTurn = false;
   // Set by whichever source actually FAILED — reflect's catch, or a pages/recall helper returning
   // undefined. An empty answer is not a failure: a source can legitimately have nothing to say on a
@@ -372,6 +392,7 @@ export async function buildHookOutput(args: {
     turns,
     reflectAnswer,
     reflectAttempts,
+    injectedAtTurn: reflectRanThisTurn ? turns : cached.injectedAtTurn,
     pages: { atTurn: stale ? turns : (cached.pages?.atTurn ?? turns), list: pages },
   } satisfies SessionCache);
 
@@ -381,18 +402,18 @@ export async function buildHookOutput(args: {
   // ran. No cadence re-injection: replaying the turn-1 synthesis at arbitrary later turns reads
   // as random noise once the session drifts, and the agent holds hindsight_reflect for a FRESH
   // pass if compaction or drift makes it need memory again.
-  if (reflectAnswer && reflectRanThisTurn) blocks.push(buildSystemInjection(reflectAnswer));
+  if (reflectAnswer && reflectRanThisTurn)
+    blocks.push(buildSystemInjection(reflectAnswer, { writeTools: cfg.writeTools }));
   // Pages are NOT auto-injected: the agent pulls them through
   // hindsight_search_pages when a question warrants it — an unprompted injection on
   // every turn (even a plain "yes") read as phantom research. The roster below keeps the tool
   // and the page names in front of the agent.
   if (cadence > 0 && turns % cadence === 0 && !(turns === 1 && args.preambleOnFirstTurn)) {
-    blocks.push(
-      buildRosterRefresh(pages, {
-        reflectOnNewGoals: cfg.autoInject !== "reflect",
-        extra: cfg.toolGuideExtra,
-      })
-    );
+    // The full guide goes out once per session: in the turn-1 preamble on plugin hosts, else in the
+    // FIRST refresh — hook hosts' copy, since some never show SessionStart text to the model. Later
+    // refreshes are one line: re-sending ~5 KB the model already has was 90% of each block (#6597).
+    const short = args.preambleOnFirstTurn === true || turns > cadence;
+    blocks.push(buildRosterRefresh(pages, { ...toolGuideOpts(cfg), short }));
   }
   const kept = blocks.filter(Boolean);
 
@@ -404,7 +425,8 @@ export async function buildHookOutput(args: {
     // Silent: the session still got memory, just not a synthesis. The notice used to say which
     // source answered and point at the diag file, but that read as an error on a turn that
     // worked; reflect_failed + reflect_fallback_* in the diag trail carry the details.
-  } else if (reflectRanThisTurn && reflectAnswer) {
+  } else if (reflectRanThisTurn && reflectAnswer && !refreshing) {
+    // A refresh (autoInjectEveryTurns) stays silent: a notice every few turns is noise, not news.
     const q = prompt.replace(/\s+/g, " ").trim();
     const excerpt = q.length > 48 ? `${q.slice(0, 48)}…` : q;
     // Page/recall bodies open with a fixed lead line; preview what came back, not that.
@@ -412,7 +434,7 @@ export async function buildHookOutput(args: {
       cfg.autoInject === "reflect" ? reflectAnswer : reflectAnswer.split("\n").slice(1).join("\n");
     const preview = body.replace(/\s+/g, " ").trim();
     notice =
-      `${brandWord()} · goal: recall this repo's past decisions about “${excerpt}”\n` +
+      `${brandWord(args.color === true)} · goal: recall this repo's past decisions about “${excerpt}”\n` +
       `↳ ${preview.length > 140 ? `${preview.slice(0, 140)}…` : preview}`;
   } else if (reflectFailed) {
     // The failure is already in the diag trail and plugin.log, but both are files nobody is
@@ -420,7 +442,7 @@ export async function buildHookOutput(args: {
     // One terse line pointing at the trail — not an explanation, and not advice to the agent:
     // this fires only on a turn that actually attempted a source, so at most
     // HOOK_INJECT_ATTEMPTS times per session.
-    notice = `${brandWord()} · no memory this turn — see ${diagFilePath()}`;
+    notice = `${brandWord(args.color === true)} · no memory this turn — see ${diagFilePath()}`;
   }
 
   return { context: kept.length ? kept.join("\n\n") : undefined, notice, pages };
@@ -499,7 +521,14 @@ export async function runHook(
     startBackgroundSeed(cwd, { limit: cfg.seedLimit, harness: spec.harness });
   }
 
-  const output = await buildHookOutput({ harness: spec.harness, prompt, cfg, client, cacheFile });
+  const output = await buildHookOutput({
+    harness: spec.harness,
+    prompt,
+    cfg,
+    client,
+    cacheFile,
+    color: spec.color,
+  });
   // Mid-session heal: a bank with ZERO pages means the engine never built it (e.g. the session
   // predates the install, so no SessionStart and the first-prompt net already passed). Fire the
   // idempotent engine — the per-bank lock makes repeats free while it builds.

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parsePageList, buildPagesPreamble, buildRosterRefresh } from "./page-injection";
+import { resolveConfig } from "./config";
+import {
+  parsePageList,
+  buildPagesPreamble,
+  buildRosterRefresh,
+  toolGuideOpts,
+} from "./page-injection";
 
 describe("parsePageList", () => {
   it("extracts {id,title} from the page list shape, tolerating junk", () => {
@@ -122,5 +128,60 @@ describe("toolGuideExtra (#4791)", () => {
 
   it("adds nothing when unset or blank", () => {
     expect(buildPagesPreamble(pages, { extra: "  " })).toBe(buildPagesPreamble(pages));
+  });
+});
+
+describe("writeTools: false (#6487)", () => {
+  const pages = [{ id: "p1", title: "Component map" }];
+
+  it("leaves out every instruction to call a write tool", () => {
+    for (const out of [
+      buildPagesPreamble(pages, { writeTools: false }),
+      buildPagesPreamble([], { writeTools: false }),
+      buildRosterRefresh(pages, { writeTools: false }),
+    ]) {
+      expect(out).not.toContain("hindsight_capture_initiative");
+      expect(out).not.toContain("hindsight_ingest_document");
+      expect(out).not.toContain("Correction: <topic>");
+      // The read tools stay.
+      expect(out).toContain("hindsight_reflect");
+    }
+  });
+
+  it("follows the config through toolGuideOpts", () => {
+    const opts = toolGuideOpts(resolveConfig({ writeTools: false, autoInject: "none" }));
+    expect(opts).toMatchObject({ writeTools: false, reflectOnNewGoals: true });
+    expect(toolGuideOpts(resolveConfig({})).writeTools).toBe(true);
+  });
+});
+
+describe("no pages yet", () => {
+  it("leaves out the page tools, which would point at nothing", () => {
+    const out = buildPagesPreamble([], { reflectOnNewGoals: true });
+    expect(out).not.toContain("hindsight_search_pages(query) — FIRST STOP");
+    expect(out).not.toContain("NEW task or goal");
+    expect(out).toContain("hindsight_reflect");
+    expect(out).toContain("hindsight_capture_initiative");
+  });
+});
+
+describe("short refresh (#6597)", () => {
+  it("is one line naming the search tool, not the guide", () => {
+    const extra = "Team rule.";
+    const out = buildRosterRefresh([{ id: "p1", title: "Component map" }], { extra, short: true });
+    expect(out).toMatch(/^<hindsight_page_refresh>\n.*\n<\/hindsight_page_refresh>$/);
+    expect(out).toContain("1 Hindsight page covers this repo");
+    expect(out).toContain("hindsight_search_pages");
+    expect(out).not.toContain(extra);
+    expect(out.length).toBeLessThan(300);
+    expect(buildRosterRefresh([], { short: true })).toContain("No Hindsight pages yet");
+  });
+});
+
+describe("crediting (#6320)", () => {
+  it("exempts a page with no content yet", () => {
+    expect(buildPagesPreamble([{ id: "p1", title: "x" }])).toContain(
+      '"No content yet." has nothing in it to credit'
+    );
   });
 });
