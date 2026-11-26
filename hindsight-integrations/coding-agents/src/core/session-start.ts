@@ -35,7 +35,7 @@ import { diag, readHookEvent } from "./diag";
 import { setLogLevel } from "./log";
 import { parsePageList, buildPagesPreamble, type PageRef } from "./page-injection";
 import type { ClientOpts, RetainOpts } from "./hindsight";
-import type { RetainExtractionMode } from "./missions";
+import { buildPageTrigger, type PageTrigger, type RetainExtractionMode } from "./missions";
 import { buildRetainStamp } from "./retain-stamp";
 import { detectLegacyClaudePlugin, legacyClaudePluginWarning } from "./legacy";
 import { HindsightClient } from "./hindsight";
@@ -64,6 +64,12 @@ interface SeedContextClient {
     extractionMode?: RetainExtractionMode;
     defaults?: Record<string, unknown>;
   }): Promise<void>;
+  // Optional: seeds the pages when the deepen engine (which otherwise does it) is not started.
+  seedPages?(
+    pageTrigger?: PageTrigger,
+    pages?: Config["pages"],
+    customPages?: Config["customPages"]
+  ): Promise<void>;
   // Optional: used to write the survey-baseline marker (Option A). HindsightClient has it; the
   // minimal test clients omit it, and the baseline write guards on its presence.
   retain?(
@@ -356,13 +362,25 @@ export async function buildSessionStartContext(args: {
     // The deepen engine is what configures the bank; without it a session write-back would name a
     // `conversation` strategy the bank does not have, and the server would extract it with its
     // generic rules (CL-Bench: "The user is working on Question 11", "The agent ran a query").
-    await client
+    // Best-effort: an unreachable server is retried next session.
+    const configured = await client
       .configureBankSettings?.({
         manage: cfg.manageBankConfig,
         extractionMode: cfg.retainExtractionMode,
         defaults: cfg.defaultBankConfig,
       })
-      .catch(() => {}); // best-effort: an unreachable server is retried next session
+      .then(
+        () => true,
+        () => false
+      );
+    // A directory with no git history gets its pages here too (#5982): they are written from the
+    // bank's memories, not from git, so only `autoSeed: false` (which also stops deepen) skips them.
+    // Only once the settings went through: a server that just timed out on them would otherwise
+    // make the session start wait out a second timeout for nothing.
+    if (configured && cfg.autoSeed !== false) {
+      // Best-effort, like the settings above.
+      await client.seedPages?.(buildPageTrigger(cfg), cfg.pages, cfg.customPages).catch(() => {});
+    }
   }
 
   let pages: PageRef[] = [];

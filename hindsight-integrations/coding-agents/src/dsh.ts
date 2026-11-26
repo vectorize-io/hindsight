@@ -23,6 +23,8 @@
  * and no version to keep in step — any dsh whose event names still match can load this file.
  */
 import { randomUUID } from "node:crypto";
+import { configuredDir } from "./core/bank";
+import { loadConfig } from "./core/config";
 import { resolveHostMemory } from "./core/host-client";
 import { diag } from "./core/diag";
 import type { ToolSpec } from "./core/page-tools";
@@ -386,6 +388,24 @@ async function runSpec(spec: ToolSpec, args: Record<string, unknown>): Promise<s
 }
 
 /**
+ * The workspace the tool registry is built from at plugin load, before any session exists.
+ *
+ * Only the names and schemas come from it; each call rebinds to its own caller's bank. The
+ * Desktop/Web host is launched from `$DSH_HOME/profiles/<name>`, which `optInOnly` leaves
+ * disabled, so trying only the launch directory registered no tools at all (#5817). Try every
+ * directory the config names, and still register nothing when memory is on for none of them.
+ */
+export function toolTemplate(launchDir: string): Workspace | undefined {
+  const cfg = loadConfig({ harness: HARNESS });
+  const candidates = [launchDir, ...cfg.optInPaths, ...Object.keys(cfg.mapPathToBank ?? {})];
+  for (const dir of new Set(candidates.map(configuredDir))) {
+    const workspace = workspaceFor(dir);
+    if (workspace) return workspace;
+  }
+  return undefined;
+}
+
+/**
  * Register the hindsight_* suite on `ctx.tools`.
  *
  * The dsh tools registry is host+per-scope layered, so a host-plane registration is visible to
@@ -393,12 +413,17 @@ async function runSpec(spec: ToolSpec, args: Record<string, unknown>): Promise<s
  * from the CALLING agent's workspace, because one process serves many repositories.
  */
 function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
-  // The registry is populated at plugin load, before any session exists, so the NAMES and schemas
-  // come from the launch directory's workspace and each call rebinds to its own caller's bank. The
-  // one consequence: if memory is off for the launch directory specifically (a `banks.<id>`
-  // opt-out) the tools are absent even for other repositories this process later serves.
-  const template = workspaceFor(fallbackRoot);
-  if (!template) return; // memory disabled where this process was launched
+  const template = toolTemplate(fallbackRoot);
+  if (!template) {
+    log.info(
+      HARNESS,
+      "no hindsight tools registered: memory is off for every configured directory",
+      {
+        launchDir: fallbackRoot,
+      }
+    );
+    return;
+  }
   for (const spec of specsOf(template)) {
     toolCtx.tools.register({
       name: spec.name,
