@@ -102,16 +102,15 @@ describe("getHarness", () => {
     expect(() => adapter.createRuntime({} as never)).toThrow(/src\/cline\.ts/);
   });
 
-  it("resolves pi and its Prime Agent fork as separate extension harnesses", async () => {
+  it("resolves pi and Prime Agent to their own runtimes", async () => {
+    // pi is an extension (src/pi.ts); Prime Agent 0.10's runtime runs inside the MCP server
+    // (src/prime-agent.ts). Swapping them would retain one host's sessions under the other's bank.
     for (const [name, entry] of [
       ["pi", /src\/pi\.ts/],
       ["prime-agent", /src\/prime-agent\.ts/],
     ] as const) {
       const adapter = await getHarness(name);
       expect(adapter.name).toBe(name);
-      // Both drive the same shared adapter (harness/pi-extension.ts) but are wired by their own
-      // entrypoint, so each must resolve to its own dist bundle — swapping them would silently
-      // retain one host's sessions under the other's bank.
       expect(() => adapter.createRuntime({} as never)).toThrow(entry);
     }
   });

@@ -22,6 +22,8 @@ import { HindsightClient } from "./core/hindsight";
 import { buildPageTools, type ToolSpec } from "./core/page-tools";
 import { buildPageTrigger } from "./core/missions";
 import { buildRetainStamp } from "./core/retain-stamp";
+import { RuntimeCore } from "./core/runtime";
+import { PRIME_AGENT_HARNESS, primeSession, startPrimeWriteBack } from "./prime-agent";
 
 /**
  * Which tools this server should expose for a given config. Pure + SDK-free so the
@@ -60,8 +62,14 @@ export function selectTools(
  * `harness:claude-code`, indistinguishable from Claude Code's own, and resolved Claude Code's bank
  * (#3603). A wrong answer here corrupts stored data; refusing to start is recoverable.
  */
-export function resolveHarness(env: NodeJS.ProcessEnv = process.env): string {
-  const harness = env.HINDSIGHT_MCP_HARNESS;
+export function resolveHarness(
+  env: NodeJS.ProcessEnv = process.env,
+  argv: readonly string[] = process.argv
+): string {
+  // `--harness <id>` is for hosts whose registration cannot set a literal env value: Prime Agent
+  // 0.10 only lets an MCP entry REFERENCE the kernel's variables.
+  const flag = argv.indexOf("--harness");
+  const harness = env.HINDSIGHT_MCP_HARNESS || (flag > 1 ? argv[flag + 1] : undefined);
   if (!harness) {
     throw new Error(
       "HINDSIGHT_MCP_HARNESS is not set. Every coding agent launches this same mcp-server.js, so " +
@@ -137,6 +145,19 @@ async function main() {
   const server = buildMcpServer(selectTools(cfg, client, bankId, { cwd, harness }));
 
   await server.connect(new StdioServerTransport());
+
+  // Prime Agent 0.10 has no hooks: this server is its only runtime (see src/prime-agent.ts).
+  const session = harness === PRIME_AGENT_HARNESS && !cfg.disabled ? primeSession() : undefined;
+  if (session) {
+    const core = new RuntimeCore(client, bankId, cfg, harness, cwd);
+    void core.seedIfCold(cwd);
+    const stop = startPrimeWriteBack(core, session);
+    // The kernel closes our stdin when the session ends; a signal is the harder way out.
+    let stopping: Promise<void> | undefined;
+    const exit = () => void (stopping ??= stop().finally(() => process.exit(0)));
+    process.stdin.once("end", exit);
+    process.once("SIGTERM", exit);
+  }
 }
 
 // Only auto-run when this file is executed directly (e.g. `node dist/mcp-server.js`) — importing

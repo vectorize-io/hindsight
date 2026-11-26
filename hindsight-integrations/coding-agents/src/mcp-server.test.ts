@@ -85,12 +85,17 @@ describe("resolveHarness", () => {
     expect(resolveHarness({ HINDSIGHT_MCP_HARNESS: "codex" })).toBe("codex");
   });
 
+  it("takes --harness when the host cannot set a literal env value (Prime Agent 0.10)", () => {
+    const argv = ["node", "/x/dist/mcp-server.js", "--harness", "prime-agent"];
+    expect(resolveHarness({}, argv)).toBe("prime-agent");
+  });
+
   it.each([{}, { HINDSIGHT_MCP_HARNESS: "" }])(
     "refuses to start on %j rather than guessing",
     (env) => {
-      expect(() => resolveHarness(env)).toThrow(/HINDSIGHT_MCP_HARNESS is not set/);
+      expect(() => resolveHarness(env, [])).toThrow(/HINDSIGHT_MCP_HARNESS is not set/);
       // The message has to name the way out — the fix is a re-install, not editing a config by hand.
-      expect(() => resolveHarness(env)).toThrow(/install <harness>/);
+      expect(() => resolveHarness(env, [])).toThrow(/install <harness>/);
     }
   );
 });

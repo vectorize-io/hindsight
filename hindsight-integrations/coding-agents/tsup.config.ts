@@ -25,12 +25,10 @@ export default defineConfig({
     cline: "src/cline.ts",
     // DeepSeek Harness loads this as a native Cordis plugin — see src/dsh.ts.
     dsh: "src/dsh.ts",
-    // pi and its fork Prime Agent each load their own module as an extension (default export) by
-    // absolute path from their settings.json `extensions` array, so both must be self-contained
-    // like the hook bins. They share src/harness/pi-extension.ts, which `splitting: false` inlines
-    // into each bundle rather than a shared chunk.
+    // pi loads its module as an extension (default export) by absolute path from its settings.json
+    // `extensions` array, so it must be self-contained like the hook bins. Prime Agent 0.10 has no
+    // extension host: its runtime (src/prime-agent.ts) runs inside mcp-server.js.
     pi: "src/pi.ts",
-    "prime-agent": "src/prime-agent.ts",
     "kimi-hook": "src/kimi-hook.ts",
     "kimi-sessionstart-hook": "src/kimi-sessionstart-hook.ts",
     "kimi-stop-hook": "src/kimi-stop-hook.ts",

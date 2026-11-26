@@ -290,7 +290,8 @@ export const piDockerSetup: HarnessDockerSetup = {
 };
 
 /**
- * Prime Agent — extension host. `-p` runs one prompt non-interactively and prints the reply.
+ * Prime Agent 0.10+ — no extensions or hooks: wired as an MCP server plus a global AGENTS.md block
+ * (see src/prime-agent.ts). `-p` runs one prompt non-interactively and prints the reply.
  * Auth is the whole `~/.prime/agent` directory (auth.json plus the kernel venv it provisions on
  * first login), so the mount is the directory rather than a single credential file.
  */
