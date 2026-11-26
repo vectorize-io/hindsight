@@ -35,6 +35,11 @@ interface TranscriptLine {
   isSidechain?: boolean;
   isCompactSummary?: boolean;
   timestamp?: string;
+  attachment?: {
+    type?: string;
+    prompt?: unknown;
+    origin?: { kind?: string };
+  };
   message?: {
     content?: string | ContentBlock[];
   };
@@ -110,6 +115,21 @@ export function readClaudeTranscript(path: string): TransportTurn[] {
     // guard here so a corrupt/truncated line can't reach a property access below and throw.
     if (typeof parsed !== "object" || parsed === null) continue;
     const line = parsed as TranscriptLine;
+
+    // A message the human typed while a turn was still running is NOT a type:"user" line: Claude
+    // Code stores it only as a `queued_command` attachment. Keep the human ones as user turns at
+    // their position; other origins (e.g. `task-notification`) are not the human speaking (#6480).
+    const queued = line.type === "attachment" ? line.attachment : undefined;
+    if (queued?.type === "queued_command" && queued.origin?.kind === "human") {
+      const text =
+        typeof queued.prompt === "string" ? stripInjectedMemory(queued.prompt).trim() : "";
+      if (text) {
+        const turn: TransportTurn = { role: "user", content: text };
+        if (typeof line.timestamp === "string") turn.timestamp = line.timestamp;
+        turns.push(turn);
+      }
+      continue;
+    }
 
     if (line.type !== "user" && line.type !== "assistant") continue;
     if (line.isMeta === true) continue;
