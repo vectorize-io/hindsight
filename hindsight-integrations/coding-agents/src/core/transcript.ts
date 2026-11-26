@@ -5,7 +5,8 @@
  * `role:"action"` turn naming the tool and its primary target (e.g. `Edit boltons/strutils.py`) —
  * no arguments, no outputs. That keeps WHICH files/commands the session touched without burying the
  * decisions in mechanical noise; `tool_result` blocks are dropped, except AskUserQuestion's,
- * which carries the user's answers.
+ * which carries the user's answers. A message the human typed while a turn was running (stored only
+ * as a `queued_command` attachment) is kept as a user turn at its position.
  *
  * Drops non-message lines (`last-prompt`, `mode`, `summary`, …), `isMeta` lines, compaction
  * summaries (`isCompactSummary`), `isSidechain`
@@ -35,6 +36,11 @@ interface TranscriptLine {
   isSidechain?: boolean;
   isCompactSummary?: boolean;
   timestamp?: string;
+  attachment?: {
+    type?: string;
+    prompt?: unknown;
+    origin?: { kind?: string };
+  };
   message?: {
     content?: string | ContentBlock[];
   };
@@ -90,8 +96,9 @@ function renderLine(
   return out;
 }
 
-/** Parse a Claude Code transcript JSONL into normalized markdown turns (text + tool calls/results).
- *  Drops thinking blocks, isMeta/isSidechain lines, injected memory, and empty turns.
+/** Parse a Claude Code transcript JSONL into normalized markdown turns (text + tool calls/results,
+ *  plus human messages queued mid-turn). Drops thinking blocks, isMeta/isSidechain lines, injected
+ *  memory, and empty turns.
  *  Never throws on bad lines. */
 export function readClaudeTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
@@ -110,6 +117,21 @@ export function readClaudeTranscript(path: string): TransportTurn[] {
     // guard here so a corrupt/truncated line can't reach a property access below and throw.
     if (typeof parsed !== "object" || parsed === null) continue;
     const line = parsed as TranscriptLine;
+
+    // A message the human typed while a turn was still running is NOT a type:"user" line: Claude
+    // Code stores it only as a `queued_command` attachment. Keep the human ones as user turns at
+    // their position; other origins (e.g. `task-notification`) are not the human speaking (#6480).
+    const queued = line.type === "attachment" ? line.attachment : undefined;
+    if (queued?.type === "queued_command" && queued.origin?.kind === "human") {
+      const text =
+        typeof queued.prompt === "string" ? stripInjectedMemory(queued.prompt).trim() : "";
+      if (text) {
+        const turn: TransportTurn = { role: "user", content: text };
+        if (typeof line.timestamp === "string") turn.timestamp = line.timestamp;
+        turns.push(turn);
+      }
+      continue;
+    }
 
     if (line.type !== "user" && line.type !== "assistant") continue;
     if (line.isMeta === true) continue;

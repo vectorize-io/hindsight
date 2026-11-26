@@ -397,4 +397,59 @@ describe("readClaudeTranscript", () => {
 
     expect(result).toEqual([{ role: "assistant", content: "First paragraph.\nSecond paragraph." }]);
   });
+
+  it("keeps a message the human sent mid-turn (a queued_command attachment), in place; drops non-human queued commands (#6480)", () => {
+    const queued = (prompt: unknown, origin: unknown, timestamp = "2026-01-01T00:00:02Z") =>
+      JSON.stringify({
+        type: "attachment",
+        timestamp,
+        attachment: { type: "queued_command", prompt, commandMode: "prompt", origin },
+      });
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-01-01T00:00:00Z",
+          message: { role: "user", content: "run the slow migration" },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-01-01T00:00:01Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "tool_use", name: "Bash", input: { command: "sleep 60" } }],
+          },
+        }),
+        // the human typed this while the tool ran: kept as a user turn, injected memory stripped
+        queued("must be idempotent\n<hindsight_memories>old</hindsight_memories>", {
+          kind: "human",
+        }),
+        // a background task report, not the human: dropped
+        queued("<task-notification>done</task-notification>", { kind: "task-notification" }),
+        // malformed / empty / no origin: dropped
+        queued(42, { kind: "human" }),
+        queued("   ", { kind: "human" }),
+        queued("no origin", undefined),
+        // another attachment type: dropped
+        JSON.stringify({ type: "attachment", attachment: { type: "file", prompt: "x" } }),
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-01-01T00:00:03Z",
+          message: { role: "assistant", content: "Done, and the migration is idempotent." },
+        }),
+      ].join("\n")
+    );
+
+    expect(readClaudeTranscript(file)).toEqual([
+      { role: "user", content: "run the slow migration", timestamp: "2026-01-01T00:00:00Z" },
+      { role: "action", content: "Bash sleep 60", timestamp: "2026-01-01T00:00:01Z" },
+      { role: "user", content: "must be idempotent", timestamp: "2026-01-01T00:00:02Z" },
+      {
+        role: "assistant",
+        content: "Done, and the migration is idempotent.",
+        timestamp: "2026-01-01T00:00:03Z",
+      },
+    ]);
+  });
 });
