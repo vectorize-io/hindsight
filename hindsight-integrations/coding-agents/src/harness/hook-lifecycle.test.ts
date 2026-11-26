@@ -134,7 +134,7 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
       stop: { event: "Stop", entry: "antigravity-stop-hook.js", timeout: 30 },
     });
     expect(antigravity.prompt.emit("context")).toEqual({
-      injectSteps: [{ ephemeralMessage: "context" }],
+      injectSteps: [{ systemMessage: { systemMessage: "context" } }],
     });
 
     const copilot = HOOK_HARNESSES["copilot-cli"];
