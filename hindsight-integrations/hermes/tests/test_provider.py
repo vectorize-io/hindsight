@@ -342,6 +342,10 @@ def test_the_first_turn_of_a_session_recalls_its_own_message_by_default(provider
     instance.on_session_switch("another-session")
     instance.prefetch("hello again")
     assert fake.recalls[-1]["query"] == "hello again"
+
+    instance.initialize("a-third-session")  # Hermes may reuse a provider for a new session
+    instance.prefetch("what's new?")
+    assert fake.recalls[-1]["query"] == "what's new?"
     instance.shutdown()
 
 

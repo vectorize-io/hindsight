@@ -182,13 +182,13 @@ def _bot_label(turn_author: Dict[str, Any] | None) -> str | None:
     return str(turn_author.get("name") or "").strip() or "Bot"
 
 
+# How long a turn waits for the background recall before it goes ahead without memory.
+# Also the whole budget of a session's first recall, which starts on that turn.
+_PREFETCH_JOIN_SECONDS = 3.0
+
 # Injected instead of nothing when recall raises, so the agent can tell "memory is down" from
 # "nothing found" (#6482). Fixed text, never the exception: errors can carry hosts and URLs. It is
 # worded so a customer-facing agent need not announce an outage, only not read the gap as fact.
-#: How long a turn waits for the background recall before it goes ahead without memory.
-#: Also the whole budget of a session's first recall, which starts on that turn.
-_PREFETCH_JOIN_SECONDS = 3.0
-
 _RECALL_FAILED_NOTE = (
     "# Hindsight Memory\n"
     "Memory lookup failed this turn, so context from earlier sessions is missing. Don't conclude "
@@ -803,8 +803,8 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_result, self._prefetch_count = "", 0
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread = None
-        # Whether a background recall was queued in this session. Until one is, the next turn
-        # recalls live: the first message of a session has no previous turn to warm it.
+        # Whether a background recall was queued in this session. Until one is, prefetch() queues
+        # one for its own message: the first turn of a session has no previous turn to warm it.
         self._prefetch_queued = False
         # Bumped by every new prefetch, session switch and shutdown: a worker writes its result
         # only if no newer one started since, so a slow recall can't overwrite a fresher one or
@@ -1563,6 +1563,7 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = str(session_id or "").strip()
+        self._prefetch_queued = False  # a new session: its first turn queues its own recall
         self._parent_session_id = str(kwargs.get("parent_session_id", "") or "").strip()
         # "primary" | "subagent" | "cron" | "flush" from Hermes, plus our own "kanban" below;
         # read by _apply_retain_policy (#4945).
@@ -2775,7 +2776,7 @@ class HindsightMemoryProvider(MemoryProvider):
         with self._prefetch_lock:
             self._prefetch_generation += 1  # a worker still running past the join must not land here
             self._prefetch_result = ""
-        self._prefetch_queued = False  # the new session's first turn recalls live
+        self._prefetch_queued = False  # the new session's first turn queues its own recall
 
         # 3. Rotate to the new session.
         if parent_session_id:
