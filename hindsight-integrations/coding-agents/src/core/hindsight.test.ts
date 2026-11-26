@@ -657,6 +657,18 @@ describe("HindsightClient.reflect failures", () => {
     expect(fetchMock.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("leaves fetch's own timeout alone outside Bun (#6431)", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { text: "answer" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({ apiUrl: "http://x", bank: "b" });
+
+    await expect(client.reflect("why?", { timeoutMs: 900_000 })).resolves.toBe("answer");
+
+    expect(fetchMock.mock.calls[0][1]).not.toHaveProperty("timeout");
+  });
+
   it("keeps the server's error body, not just the status", async () => {
     vi.stubGlobal(
       "fetch",

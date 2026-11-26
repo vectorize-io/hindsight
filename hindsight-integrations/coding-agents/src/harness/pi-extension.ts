@@ -215,7 +215,7 @@ const MAX_HELD_NOTICES = 8;
  * A host without a UI (print or json mode) gets none. Every call is fail-open: a notice never breaks
  * a turn.
  */
-export function piNotices() {
+function piNotices() {
   let ui: PiNoticeLine | undefined;
   let attached = false;
   const held: string[] = [];
@@ -282,7 +282,11 @@ export function createPiExtension(
         // Fire-and-forget cold seed (bank check + background git seed); the workspace's first
         // before_agent_start awaits it via createPiHooks.
         const sessionStart = core.seedIfCold(dir);
-        ws = { hooks: createPiHooks(core, harness, sessionStart), tools: core.toolSpecs(), notices };
+        ws = {
+          hooks: createPiHooks(core, harness, sessionStart),
+          tools: core.toolSpecs(),
+          notices,
+        };
       }
       workspaces.set(dir, ws);
       return ws ?? undefined;
