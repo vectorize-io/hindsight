@@ -195,7 +195,11 @@ describe("pi extension adapter", () => {
 describe("pi extension factory", () => {
   /** A fake RuntimeCore per repository; its one tool answers with the repository it is bound to. */
   function fakeCore(repo: string) {
+    let notify: ((title: string, message: string) => void) | undefined;
     return {
+      /** Raise a notice the way RuntimeCore does: through whatever notifier the adapter set. */
+      raise: (title: string, message: string) => notify?.(title, message),
+      setNotifier: vi.fn((n: (title: string, message: string) => void) => (notify = n)),
       seedIfCold: vi.fn(async () => {}),
       onPrompt: vi.fn(async () => {}),
       getInjection: vi.fn(() => undefined),
@@ -230,9 +234,10 @@ describe("pi extension factory", () => {
     return { handlers, tools, api };
   }
 
-  const ctx = (cwd: string, session: string) => ({
+  const ctx = (cwd: string, session: string, extra: Record<string, unknown> = {}) => ({
     cwd,
     sessionManager: { getSessionId: () => session },
+    ...extra,
   });
 
   // #5039: pi's web UI serves every session from one process launched elsewhere, so the launch
@@ -275,5 +280,113 @@ describe("pi extension factory", () => {
     const pi = fakePi();
     createPiExtension("pi", (_h, dir) => fakeCore(dir) as never)(pi.api as never);
     expect(pi.tools.map((t) => t.name)).toEqual(["hindsight_reflect"]);
+  });
+
+  /**
+   * #5557: the core raises notices (the session-start status, the per-turn recall preview) through
+   * `setNotifier`, and this adapter never set one, so pi users saw none of them.
+   */
+  describe("notices", () => {
+    /** One extension per test, with every repository's fake core reachable by directory. */
+    function setup() {
+      const cores = new Map<string, ReturnType<typeof fakeCore>>();
+      const pi = fakePi();
+      createPiExtension("pi", (_h, dir) => {
+        const core = fakeCore(dir);
+        // Like RuntimeCore.seedIfCold: the status notice is raised as the workspace is resolved,
+        // which for the launch directory is extension load, before any event carries a ctx.
+        core.seedIfCold.mockImplementation(async () => core.raise("Hindsight", `Is on in ${dir}`));
+        cores.set(dir, core);
+        return core as never;
+      })(pi.api as never);
+      const ui = () => ({ notify: vi.fn() });
+      return { cores, pi, ui, launch: process.cwd() };
+    }
+
+    it("holds the notice raised at load and shows it on the first event with a UI", async () => {
+      const { pi, ui, launch } = setup();
+      const shown = ui();
+      pi.handlers.session_start({}, ctx(launch, "s", { hasUI: true, ui: shown }));
+      expect(shown.notify).toHaveBeenCalledExactlyOnceWith(`Hindsight: Is on in ${launch}`, "info");
+    });
+
+    it("shows a notice raised during a turn right away, on that turn's UI", async () => {
+      const { cores, pi, ui, launch } = setup();
+      const shown = ui();
+      cores
+        .get(launch)!
+        .onPrompt.mockImplementation(async () =>
+          cores.get(launch)!.raise("Hindsight · recalled past decisions", "we round half up")
+        );
+      await pi.handlers.before_agent_start(
+        { prompt: "how do we round?" },
+        ctx(launch, "s", { hasUI: true, ui: shown })
+      );
+      expect(shown.notify.mock.calls).toEqual([
+        [`Hindsight: Is on in ${launch}`, "info"],
+        ["Hindsight · recalled past decisions: we round half up", "info"],
+      ]);
+    });
+
+    it("shows nothing in print or json mode, and holds nothing back for later", async () => {
+      const { cores, pi, ui, launch } = setup();
+      const silent = ui();
+      pi.handlers.session_start({}, ctx(launch, "s", { hasUI: false, ui: silent }));
+      cores.get(launch)!.raise("Hindsight · recalled past decisions", "later");
+      expect(silent.notify).not.toHaveBeenCalled();
+      // A UI that shows up afterwards (pi's web UI serves sessions from one process) gets only what
+      // is raised from then on, not a backlog from the headless run.
+      const shown = ui();
+      pi.handlers.session_start({}, ctx(launch, "s2", { hasUI: true, ui: shown }));
+      expect(shown.notify).not.toHaveBeenCalled();
+      cores.get(launch)!.raise("Hindsight", "now");
+      expect(shown.notify).toHaveBeenCalledExactlyOnceWith("Hindsight: now", "info");
+    });
+
+    it("works with a host that passes no UI at all", async () => {
+      const { cores, pi, launch } = setup();
+      pi.handlers.session_start({}, ctx(launch, "s")); // an older pi-family host: no ui, no hasUI
+      expect(() => cores.get(launch)!.raise("Hindsight", "x")).not.toThrow();
+      await expect(
+        pi.handlers.before_agent_start({ prompt: "hi" }, ctx(launch, "s"))
+      ).resolves.toBeUndefined();
+    });
+
+    it("never lets a broken notice line break the turn", async () => {
+      const { cores, pi, launch } = setup();
+      const broken = {
+        notify: vi.fn(() => {
+          throw new Error("ui gone");
+        }),
+      };
+      cores
+        .get(launch)!
+        .onPrompt.mockImplementation(async () => cores.get(launch)!.raise("Hindsight", "x"));
+      await expect(
+        pi.handlers.before_agent_start({ prompt: "hi" }, ctx(launch, "s", { ui: broken }))
+      ).resolves.toBeUndefined();
+      expect(broken.notify).toHaveBeenCalledTimes(2); // the held status, then the turn's notice
+    });
+
+    it("holds at most 8 notices while no event has arrived", async () => {
+      const { cores, pi, ui, launch } = setup();
+      for (let i = 0; i < 20; i++) cores.get(launch)!.raise("Hindsight", `n${i}`);
+      const shown = ui();
+      pi.handlers.session_start({}, ctx(launch, "s", { ui: shown }));
+      expect(shown.notify).toHaveBeenCalledTimes(8); // the load-time status plus n0..n6
+      expect(shown.notify.mock.calls.at(-1)).toEqual(["Hindsight: n6", "info"]);
+    });
+
+    it("shows each repository's notices in that repository's session only", async () => {
+      const { cores, pi, ui, launch } = setup();
+      const inA = ui();
+      const inB = ui();
+      pi.handlers.session_start({}, ctx(launch, "s-a", { ui: inA }));
+      pi.handlers.session_start({}, ctx("/repo-b", "s-b", { ui: inB }));
+      expect(inB.notify).toHaveBeenCalledExactlyOnceWith("Hindsight: Is on in /repo-b", "info");
+      cores.get(launch)!.raise("Hindsight", "for a");
+      expect(inA.notify.mock.calls.at(-1)).toEqual(["Hindsight: for a", "info"]);
+      expect(inB.notify).toHaveBeenCalledOnce();
+    });
   });
 });

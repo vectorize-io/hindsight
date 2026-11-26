@@ -51,14 +51,20 @@ interface SessionManagerLike {
   getBranch?(): readonly PiEntry[];
 }
 
-/** Only what this adapter reads. Both hosts also expose a UI notifier, but the seed banner it would
- *  carry is raised inside seedIfCold, which runs when a workspace is first resolved (at extension
- *  load for the launch directory) rather than inside a handler holding a `ctx` to notify through —
- *  so it is logged rather than toasted here, and the field is not declared. */
+/** pi's notice line: one message shown to the user, outside the conversation. */
+interface PiNoticeLine {
+  notify(message: string, type?: "info" | "warning" | "error"): void;
+}
+
+/** Only what this adapter reads. */
 interface ExtensionContext {
   /** The session's working directory. Optional so a host without it falls back to the process cwd. */
   cwd?: string;
   sessionManager: SessionManagerLike;
+  /** False in print and json modes, where there is no one to show a notice to. */
+  hasUI?: boolean;
+  /** The host's notice line. Optional: an older pi-family host may not pass one. */
+  ui?: Partial<PiNoticeLine>;
 }
 
 /** A JSON-Schema-shaped parameters object. The host forwards it to the model provider verbatim. */
@@ -194,6 +200,50 @@ function createRuntime(harness: string, repoPath: string): RuntimeCore | undefin
 interface PiWorkspace {
   hooks: ReturnType<typeof createPiHooks>;
   tools: ToolSpec[];
+  notices: ReturnType<typeof piNotices>;
+}
+
+/** Notices raised before the first event, held for it. Bounded: a host that never sends one must not
+ *  grow this forever. */
+const MAX_HELD_NOTICES = 8;
+
+/**
+ * Shows a workspace's notices — the session-start status and the per-turn "recalled past decisions"
+ * preview — on pi's notice line (#5557). They are raised by RuntimeCore, which holds no `ctx`, so
+ * they go to the UI of the latest event for this workspace. The launch directory's seed status can
+ * be raised at extension load, before any event exists, so notices are held until the first one.
+ * A host without a UI (print or json mode) gets none. Every call is fail-open: a notice never breaks
+ * a turn.
+ */
+function piNotices() {
+  let ui: PiNoticeLine | undefined;
+  let attached = false;
+  const held: string[] = [];
+  const show = (text: string) => {
+    try {
+      ui?.notify(text, "info");
+    } catch {
+      /* a broken notice line must not break the turn that raised the notice */
+    }
+  };
+  return {
+    notify(title: string, message: string): void {
+      const text = `${title}: ${message}`;
+      if (ui) show(text);
+      else if (!attached && held.length < MAX_HELD_NOTICES) held.push(text);
+    },
+    /** Called with every event's ctx, so notices follow the session that last spoke. */
+    attach(ctx: ExtensionContext | undefined): void {
+      if (!ctx) return;
+      attached = true;
+      ui =
+        ctx.hasUI !== false && typeof ctx.ui?.notify === "function"
+          ? (ctx.ui as PiNoticeLine)
+          : undefined;
+      const pending = held.splice(0);
+      for (const text of pending) show(text);
+    },
+  };
 }
 
 /**
@@ -224,11 +274,20 @@ export function createPiExtension(
       const cached = workspaces.get(dir);
       if (cached !== undefined) return cached ?? undefined;
       const core = makeRuntime(harness, dir);
-      // Fire-and-forget cold seed (bank check + background git seed); the workspace's first
-      // before_agent_start awaits it via createPiHooks.
-      const ws = core
-        ? { hooks: createPiHooks(core, harness, core.seedIfCold(dir)), tools: core.toolSpecs() }
-        : null;
+      let ws: PiWorkspace | null = null;
+      if (core) {
+        // Wired before the seed, which is what raises the first notice.
+        const notices = piNotices();
+        core.setNotifier(notices.notify);
+        // Fire-and-forget cold seed (bank check + background git seed); the workspace's first
+        // before_agent_start awaits it via createPiHooks.
+        const sessionStart = core.seedIfCold(dir);
+        ws = {
+          hooks: createPiHooks(core, harness, sessionStart),
+          tools: core.toolSpecs(),
+          notices,
+        };
+      }
       workspaces.set(dir, ws);
       return ws ?? undefined;
     };
@@ -236,6 +295,7 @@ export function createPiExtension(
     let toolsRegistered = false;
     const at = (ctx: ExtensionContext | undefined): PiWorkspace | undefined => {
       const ws = workspaceFor(dirOf(ctx));
+      ws?.notices.attach(ctx);
       if (ws && !toolsRegistered) {
         toolsRegistered = true;
         for (const spec of ws.tools)

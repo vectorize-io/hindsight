@@ -268,3 +268,62 @@ describe("opencode2 adapter", () => {
     expect(fake.subscribeSignal?.aborted).toBe(true);
   });
 });
+
+/**
+ * #6314 end to end: the real RuntimeCore behind the adapter, fed the transcript shape opencode2's
+ * `session.context` returns. After a compaction that route starts at the `compaction` record, so the
+ * session's transcript comes back far shorter than what was already written. Write-back used to stop
+ * there for the life of the plugin, silently, while recall kept working.
+ */
+describe("opencode2 write-back across a compaction (#6314)", () => {
+  it("keeps writing back every turn after the transcript shrinks", async () => {
+    const { RuntimeCore } = await import("../core/runtime");
+    const { resolveConfig } = await import("../core/config");
+    const sent: { mode: string; content: string }[] = [];
+    const client = {
+      bank: "bank-1",
+      supportsAppendRetain: async () => true,
+      listDocumentIds: async () => new Set(["git:seeded"]),
+      listPages: async () => ({ items: [] }),
+      reflect: async () => "",
+      retain: vi.fn(async (content: string, ...rest: unknown[]) => {
+        sent.push({ mode: (rest[4] as { updateMode?: string }).updateMode ?? "replace", content });
+      }),
+    };
+    const core = new RuntimeCore(client as never, "bank-1", resolveConfig({}), "opencode2");
+
+    const user = (text: string) => ({ type: "user", text });
+    const assistant = (text: string) => ({ type: "assistant", content: [{ type: "text", text }] });
+    const long = Array.from({ length: 12 }, (_, i) => (i % 2 ? assistant : user)(`old ${i}`));
+    let messages: unknown[] = long;
+
+    const fake = fakeContext();
+    (fake.ctx as unknown as { session: { context: unknown } }).session.context = async () =>
+      messages;
+    await wireOpencode2Runtime(core, fake.ctx);
+    await fake.prompt()({ sessionID: "ses_long", prompt: { text: "old 0" } });
+    const idle = async () => {
+      await fake.emit({ type: "session.idle", data: { sessionID: "ses_long" } });
+      await core.flush();
+    };
+
+    await idle();
+    expect(sent.map((s) => s.mode)).toEqual(["replace"]);
+
+    // The compaction: the summary record (which the reader drops) and a short tail.
+    messages = [
+      { type: "compaction", summary: "what happened before" },
+      user("old 10"),
+      assistant("old 11"),
+    ];
+    await idle();
+    await idle(); // a repeat idle on the same compacted transcript writes nothing
+    expect(sent.map((s) => s.mode)).toEqual(["replace", "replace"]);
+
+    messages = [...messages, user("after compaction"), assistant("still remembered")];
+    await idle();
+    expect(sent.map((s) => s.mode)).toEqual(["replace", "replace", "append"]);
+    expect(sent[2].content).toContain("after compaction");
+    expect(sent[2].content).toContain("still remembered");
+  });
+});

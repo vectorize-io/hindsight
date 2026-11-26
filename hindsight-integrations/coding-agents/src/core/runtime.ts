@@ -26,7 +26,7 @@ import { buildPagesPreamble } from "./page-injection";
 import { buildPageTools, type ToolSpec } from "./page-tools";
 import { buildPageTrigger } from "./missions";
 import { retainLiveSession, type TransportTurn } from "./chat";
-import { memoryCursorStore } from "./retain-cursor";
+import { fingerprintTurns, memoryCursorStore } from "./retain-cursor";
 import { memoryUsageCursorStore, recordUsage } from "./usage";
 import { buildRetainStamp } from "./retain-stamp";
 import { buildSessionStartContext } from "./session-start";
@@ -39,10 +39,18 @@ const HARNESS = "opencode";
 /** How long `flush` holds a host's exit for in-flight write-backs: room for one retain request. */
 const FLUSH_TIMEOUT_MS = 10_000;
 
+/** What session-idle last wrote for one session, so a repeated idle does not write it again. */
+interface SessionState {
+  startTs: string;
+  retainedTurns: number;
+  /** Fingerprint of the whole transcript idle last retained; undefined until it retains one. */
+  retainedFingerprint?: string;
+}
+
 export class RuntimeCore {
   private readonly injection = new Map<string, string>(); // sessionId -> this turn's injection block
   private readonly turnCount = new Map<string, number>(); // sessionId -> user-turn counter (cadence)
-  private readonly sessionState = new Map<string, { startTs: string; retainedTurns: number }>();
+  private readonly sessionState = new Map<string, SessionState>();
   /** Live write-back cursors. In memory, unlike the hook harnesses': this host outlives the session. */
   private readonly cursors = memoryCursorStore();
   /** Turns already written to the usage log (core/usage.ts), per session. */
@@ -301,10 +309,21 @@ export class RuntimeCore {
     this.recordUsage(sessionId, turns, true); // idle: the reply is in
     if (!this.writeBackEnabled) return; // usage above is local and recorded regardless (#5391)
     const st = this.stateFor(sessionId);
-    // idle can fire more than once for one exchange (and again on a session with no new activity);
-    // only retain when this transcript actually grew past what we last wrote.
-    if (turns.length <= st.retainedTurns) return;
+    // idle can fire more than once for one exchange (and again on a session with no new activity),
+    // so skip a transcript identical to the one idle last wrote. Only IDENTICAL: a growth-only count
+    // stalled write-back for good once a compaction shortened the transcript (#6314) — the count
+    // never climbed back past the old high-water mark. A shorter or rewritten transcript is retained
+    // and planRetain turns it into a replace.
+    const fingerprint = fingerprintTurns(turns, turns.length);
+    if (fingerprint === st.retainedFingerprint) return;
+    if (turns.length < st.retainedTurns)
+      diag(this.harness, "retain_after_shrink", {
+        from: st.retainedTurns,
+        to: turns.length,
+        session: sessionId,
+      });
     st.retainedTurns = turns.length;
+    st.retainedFingerprint = fingerprint;
     this.retain(sessionId, turns, st.startTs, "idle");
   }
 
@@ -323,10 +342,7 @@ export class RuntimeCore {
     });
   }
 
-  private stateFor(sessionId: string): {
-    startTs: string;
-    retainedTurns: number;
-  } {
+  private stateFor(sessionId: string): SessionState {
     let st = this.sessionState.get(sessionId);
     if (!st) {
       st = { startTs: new Date().toISOString(), retainedTurns: 0 };
