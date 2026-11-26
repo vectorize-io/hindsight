@@ -388,13 +388,6 @@ async function runSpec(spec: ToolSpec, args: Record<string, unknown>): Promise<s
 }
 
 /**
- * Register the hindsight_* suite on `ctx.tools`.
- *
- * The dsh tools registry is host+per-scope layered, so a host-plane registration is visible to
- * every agent — including the Web surface's per-session agent presets. Each call resolves the bank
- * from the CALLING agent's workspace, because one process serves many repositories.
- */
-/**
  * The workspace the tool registry is built from at plugin load, before any session exists.
  *
  * Only the names and schemas come from it; each call rebinds to its own caller's bank. The
@@ -412,6 +405,13 @@ export function toolTemplate(launchDir: string): Workspace | undefined {
   return undefined;
 }
 
+/**
+ * Register the hindsight_* suite on `ctx.tools`.
+ *
+ * The dsh tools registry is host+per-scope layered, so a host-plane registration is visible to
+ * every agent — including the Web surface's per-session agent presets. Each call resolves the bank
+ * from the CALLING agent's workspace, because one process serves many repositories.
+ */
 function registerTools(toolCtx: DshToolContext, fallbackRoot: string): void {
   const template = toolTemplate(fallbackRoot);
   if (!template) {

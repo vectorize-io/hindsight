@@ -362,17 +362,24 @@ export async function buildSessionStartContext(args: {
     // The deepen engine is what configures the bank; without it a session write-back would name a
     // `conversation` strategy the bank does not have, and the server would extract it with its
     // generic rules (CL-Bench: "The user is working on Question 11", "The agent ran a query").
-    await client
+    // Best-effort: an unreachable server is retried next session.
+    const configured = await client
       .configureBankSettings?.({
         manage: cfg.manageBankConfig,
         extractionMode: cfg.retainExtractionMode,
         defaults: cfg.defaultBankConfig,
       })
-      .catch(() => {}); // best-effort: an unreachable server is retried next session
+      .then(
+        () => true,
+        () => false
+      );
     // A directory with no git history gets its pages here too (#5982): they are written from the
     // bank's memories, not from git, so only `autoSeed: false` (which also stops deepen) skips them.
-    if (cfg.autoSeed !== false) {
-      await client.seedPages?.(buildPageTrigger(cfg), cfg.pages, cfg.customPages).catch(() => {}); // best-effort, like the settings above
+    // Only once the settings went through: a server that just timed out on them would otherwise
+    // make the session start wait out a second timeout for nothing.
+    if (configured && cfg.autoSeed !== false) {
+      // Best-effort, like the settings above.
+      await client.seedPages?.(buildPageTrigger(cfg), cfg.pages, cfg.customPages).catch(() => {});
     }
   }
 

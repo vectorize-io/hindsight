@@ -123,6 +123,12 @@ describe("buildSessionStartContext", () => {
     await buildSessionStartContext({ ...base, cfg: resolveConfig({ autoSeed: false }) });
     expect(seedPages).not.toHaveBeenCalled();
 
+    // Settings that failed (slow or unreachable server) skip the pages: no second timeout.
+    seedPages.mockClear();
+    client.configureBankSettings.mockRejectedValueOnce(new Error("timeout"));
+    await buildSessionStartContext({ ...base, cfg: resolveConfig(), hasGit: () => false });
+    expect(seedPages).not.toHaveBeenCalled();
+
     // In a git repo the deepen engine seeds them, so session start does not.
     seedPages.mockClear();
     await buildSessionStartContext({
