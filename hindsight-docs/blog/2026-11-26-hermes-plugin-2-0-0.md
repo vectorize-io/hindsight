@@ -2,7 +2,7 @@
 title: "What's new in the Hindsight Hermes plugin 2.0.0"
 description: Per-chat settings, page tools, dates on every recalled memory, a mental model in the system prompt, saves before compression, quieter cron and kanban runs, and a long round of fixes for the Hindsight memory provider in Hermes Agent
 authors: [nicoloboschi]
-date: 2026-11-25
+date: 2026-11-26
 hide_table_of_contents: true
 tags: [release, hermes]
 image: /img/blog/hermes-agent-memory.png
