@@ -174,7 +174,11 @@ const antigravityPrompt: HookSpec = {
     cwd: antigravityCwd(ev),
     sessionId: ev.conversationId as string | undefined,
   }),
-  emit: (context) => ({ injectSteps: context ? [{ ephemeralMessage: context }] : [] }),
+  // `systemMessage` stays in the trajectory, so recall survives the turn's tool calls. agy
+  // deprecated `ephemeralMessage`; on agy 1.5.4–1.5.9 it reached only the first model call (#6632).
+  emit: (context) => ({
+    injectSteps: context ? [{ systemMessage: { systemMessage: context } }] : [],
+  }),
 };
 
 const cursorPrompt: HookSpec = {
