@@ -108,6 +108,41 @@ mod tests {
         assert_eq!(block.kind.to_string(), "text");
     }
 
+    /// A value or shape the server added after this client was built parses
+    /// instead of failing the whole response (#6912), and writes back unchanged.
+    #[test]
+    fn test_unknown_enum_value_parses_and_round_trips() {
+        let budget: types::Budget = serde_json::from_value(serde_json::json!("low")).unwrap();
+        assert_eq!(budget, types::Budget::Low);
+
+        let budget: types::Budget = serde_json::from_value(serde_json::json!("a_budget_added_later")).unwrap();
+        assert_eq!(budget, types::Budget::Unknown("a_budget_added_later".to_string()));
+        assert_eq!(budget.to_string(), "a_budget_added_later");
+        assert_eq!(serde_json::to_value(&budget).unwrap(), serde_json::json!("a_budget_added_later"));
+
+        // Input typed by a user is still checked.
+        assert!("a_budget_added_later".parse::<types::Budget>().is_err());
+
+        let details: types::RefreshMentalModelOperationDetails = serde_json::from_value(serde_json::json!({
+            "operation_type": "refresh_mental_model",
+            "outcome": "an_outcome_added_later",
+            "failure_reason": "a_reason_added_later",
+        }))
+        .expect("unknown enum values must not fail the response");
+        assert_eq!(details.outcome.to_string(), "an_outcome_added_later");
+    }
+
+    #[test]
+    fn test_unknown_union_shape_parses_and_round_trips() {
+        let leaf: types::TagGroupsItem = serde_json::from_value(serde_json::json!({"tags": ["a"]})).unwrap();
+        assert!(matches!(leaf, types::TagGroupsItem::Leaf(_)));
+
+        let shape = serde_json::json!({"xor": [{"tags": ["b"]}]});
+        let unknown: types::TagGroupsItem = serde_json::from_value(shape.clone()).unwrap();
+        assert!(matches!(unknown, types::TagGroupsItem::Unknown(_)));
+        assert_eq!(serde_json::to_value(&unknown).unwrap(), shape);
+    }
+
     #[tokio::test]
     async fn test_memory_lifecycle() {
         let api_url = std::env::var("HINDSIGHT_API_URL")

@@ -97,7 +97,7 @@ fn stored_trigger_as_input(
     stored: &types::MentalModelTriggerOutput,
 ) -> types::MentalModelTriggerInput {
     types::MentalModelTriggerInput {
-        mode: stored.mode,
+        mode: stored.mode.clone(),
         refresh_after_consolidation: stored.refresh_after_consolidation,
         refresh_cron: stored.refresh_cron.clone(),
         full_refresh_cron: stored.full_refresh_cron.clone(),
@@ -106,14 +106,14 @@ fn stored_trigger_as_input(
         exclude_mental_model_ids: stored.exclude_mental_model_ids.clone(),
         fact_types: stored.fact_types.clone(),
         tag_groups: stored.tag_groups.clone(),
-        tags_match: stored.tags_match,
+        tags_match: stored.tags_match.clone(),
         include_chunks: stored.include_chunks,
         recall_max_tokens: stored.recall_max_tokens,
         recall_chunks_max_tokens: stored.recall_chunks_max_tokens,
         reflect_search_observations_max_tokens: stored.reflect_search_observations_max_tokens,
         reflect_search_observations_include_entities: stored
             .reflect_search_observations_include_entities,
-        budget: stored.budget,
+        budget: stored.budget.clone(),
         response_schema: stored.response_schema.clone(),
         keep_trace: stored.keep_trace,
     }
