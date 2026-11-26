@@ -403,12 +403,34 @@ _SERVER_RETRY_LIMIT = 3
 _UNSETTLED_OPS_LIMIT = 200
 
 
+class _PendingRetain(BaseModel):
+    """One automatic retain as plain data, so what is still unsent when Hermes exits can be
+    written to disk and sent by the next session (#6915); it was a closure before, which could
+    not outlive the process. Every input is fixed when it is queued: the writer runs after later
+    turns move the session state on. ``item`` is the aretain_batch item, open-ended by design."""
+
+    item: Dict[str, Any]
+    bank_ids: List[str]
+    retain_async: bool
+    # Fixed per bank, so a resend the server already got is a replay, not a second copy (#5218).
+    operation_ids: Dict[str, str]
+    label: str = "retain"
+    document_id: str | None = None
+    # Where turns go when the bank refuses append (#5599); fixed so a resend reuses it.
+    own_document_id: str | None = None
+    track_ops: bool = True
+
+
 @dataclass
 class _QueuedRetain:
-    """A writer job and how many times it has failed."""
+    """A queued retain and how many times it has failed."""
 
-    job: Callable[[], None]
+    retain: _PendingRetain
     failures: int = 0
+
+
+# Retains still unsent when a provider shut down, one JSON file per shutdown, sent by the next initialize().
+_UNSENT_RETAINS_DIR = ("hindsight", "unsent-retains")
 
 
 def _retain_error_is_permanent(exc: BaseException) -> bool:
@@ -785,8 +807,11 @@ class HindsightMemoryProvider(MemoryProvider):
         # wait, dropped at its deadline), this is about durability: a failed op is re-queued
         # (#5591). Guarded by _pending_retain_ops_lock; insertion order = age.
         self._unsettled_retain_ops: dict[tuple[str, str], int] = {}
-        # Writer-thread only: retains that failed on a transient error, oldest first (#5218).
+        # Retains the writer is working through: failed ones (#5218) then the one in flight, oldest
+        # first. Guarded by _retain_backlog_lock: shutdown() takes what is left to disk (#6915).
         self._retain_backlog: list[_QueuedRetain] = []
+        self._retain_backlog_lock = threading.Lock()
+        self._unsent_spooled = threading.Event()  # set by shutdown(): the writer sends nothing more
         # Retains given up on (writer thread increments), and how many the status line has
         # already reported (turn path). Lets the indicator tell the truth instead of "saving…" (#6819).
         self._retains_dropped = 0
@@ -1301,6 +1326,7 @@ class HindsightMemoryProvider(MemoryProvider):
             return
         # A previous writer may have exited after shutdown(); allow the fresh one to drain.
         self._shutting_down.clear()
+        self._unsent_spooled.clear()
         thread = spawn_context_thread(self._writer_loop, name="hindsight-writer")
         self._writer_thread = self._sync_thread = thread
         thread.start()
@@ -1332,7 +1358,7 @@ class HindsightMemoryProvider(MemoryProvider):
             finally:
                 self._retain_queue.task_done()
 
-    def _run_retains(self, jobs: list[Callable[[], None]]) -> None:
+    def _run_retains(self, jobs: list[_PendingRetain]) -> None:
         """Run the backlog of failed retains, then *jobs*, in order (writer thread).
 
         A transient failure (unreachable server, timeout, 5xx) keeps that retain and every
@@ -1342,33 +1368,36 @@ class HindsightMemoryProvider(MemoryProvider):
         own operation_id, which the server answers as a replay rather than new work. A sync
         retain whose reply was lost may be stored twice; that beats losing it."""
         self._settle_retain_ops()
-        queued = self._retain_backlog + [_QueuedRetain(job) for job in jobs]
-        self._retain_backlog = []
-        for index, entry in enumerate(queued):
+        with self._retain_backlog_lock:
+            self._retain_backlog.extend(_QueuedRetain(job) for job in jobs)
+            if (excess := len(self._retain_backlog) - _RETAIN_BACKLOG_LIMIT) > 0:
+                logger.warning("Hindsight retain backlog full; dropping the %d oldest unsent retain(s)", excess)
+                del self._retain_backlog[:excess]
+                self._retains_dropped += excess
+        while True:
+            with self._retain_backlog_lock:
+                # Once shutdown() took the backlog to disk, the next session sends it instead.
+                if not self._retain_backlog or self._unsent_spooled.is_set():
+                    return
+                entry = self._retain_backlog[0]
             try:
-                entry.job()
+                self._send_retain(entry.retain)
             except Exception as exc:
                 entry.failures += 1
-                if _retain_error_is_permanent(exc) or entry.failures >= _RETAIN_MAX_ATTEMPTS:
+                if not (_retain_error_is_permanent(exc) or entry.failures >= _RETAIN_MAX_ATTEMPTS):
                     logger.warning(
-                        "Hindsight retain failed after %d attempt(s), dropping it: %s",
+                        "Hindsight retain failed (attempt %d), will resend it with the next retain: %s",
                         entry.failures,
                         exc,
-                        exc_info=True,
                     )
-                    self._retains_dropped += 1
-                    continue
+                    return
                 logger.warning(
-                    "Hindsight retain failed (attempt %d), will resend it with the next retain: %s",
-                    entry.failures,
-                    exc,
+                    "Hindsight retain failed after %d attempt(s), dropping it: %s", entry.failures, exc, exc_info=True
                 )
-                self._retain_backlog = queued[index:]
-                break
-        if (excess := len(self._retain_backlog) - _RETAIN_BACKLOG_LIMIT) > 0:
-            logger.warning("Hindsight retain backlog full; dropping the %d oldest unsent retain(s)", excess)
-            del self._retain_backlog[:excess]
-            self._retains_dropped += excess
+                self._retains_dropped += 1
+            with self._retain_backlog_lock:
+                if self._retain_backlog and self._retain_backlog[0] is entry:
+                    self._retain_backlog.pop(0)
 
     def _atexit_shutdown(self) -> None:
         try:
@@ -1660,6 +1689,8 @@ class HindsightMemoryProvider(MemoryProvider):
                     cfg.get("profile", "hermes"),
                 )
             self._start_embedded_daemon()
+        if not self._writes_disabled:
+            self._resend_unsent_retains()
 
     def _build_write_bank_ids(self) -> list[str]:
         """The deduped, ordered set of banks this provider writes to (and
@@ -2346,8 +2377,8 @@ class HindsightMemoryProvider(MemoryProvider):
 
     def _make_turn_retain_job(
         self, turns: list[str], *, document_id: str, update_mode: str | None, label: str, track_ops: bool = True
-    ) -> Callable[[], None]:
-        """Writer job shipping *turns* as one document. Inputs are snapshotted NOW: the
+    ) -> _PendingRetain:
+        """The retain shipping *turns* as one document. Inputs are snapshotted NOW: the
         writer runs after later sync_turn() calls mutate _session_turns/_turn_index/_session_id."""
         # One flat message array: the server only chunks by turn (and merges appends)
         # when the document is a list of messages, not a list of per-turn lists.
@@ -2358,77 +2389,78 @@ class HindsightMemoryProvider(MemoryProvider):
             # An append sets the document's metadata on every memory the session already has, so a
             # value that changes per call would rewrite all of them on each turn (#6241).
             metadata = {k: v for k, v in metadata.items() if k not in _PER_CALL_METADATA}
-        occurred_at = _event_timestamp()
         # A session named as its own parent (in-place compaction) is no lineage; tagging it
         # would flip the document's tag set and re-consolidate it from scratch.
         parent = self._parent_session_id if self._parent_session_id != self._session_id else ""
         lineage = (("session", self._session_id), ("parent", parent))
-        tags = [f"{kind}:{sid}" for kind, sid in lineage if sid] or None
         bank_ids = list(self._write_bank_ids)
-        retain_async, retain_context = self._retain_async, _with_relayed_note(self._retain_context)
-        # Fixed per job and bank, so a resend after a failure the server did receive is a
-        # replay, not a second copy (#5218). One id can't serve two banks: the server answers 409.
-        operation_ids = {bank_id: str(uuid.uuid4()) for bank_id in bank_ids}
-        # Where these turns go when the bank refuses append (#5599); fixed so a resend reuses it.
-        own_document_id = f"{document_id}-{uuid.uuid4().hex[:12]}"
-
-        def _job() -> None:
-            item = self._build_retain_kwargs(
+        return _PendingRetain(
+            item=self._build_retain_kwargs(
                 content,
-                context=retain_context,
+                context=_with_relayed_note(self._retain_context),
                 metadata=metadata,
-                tags=tags,
-                occurred_at=occurred_at,
+                tags=[f"{kind}:{sid}" for kind, sid in lineage if sid] or None,
+                occurred_at=_event_timestamp(),
                 update_mode=update_mode,
+            ),
+            bank_ids=bank_ids,
+            retain_async=self._retain_async,
+            # One id can't serve two banks: the server answers 409.
+            operation_ids={bank_id: str(uuid.uuid4()) for bank_id in bank_ids},
+            label=label,
+            document_id=document_id,
+            own_document_id=f"{document_id}-{uuid.uuid4().hex[:12]}",
+            track_ops=track_ops,
+        )
+
+    def _send_retain(self, retain: _PendingRetain) -> None:
+        """Send one queued retain to each of its banks (writer thread)."""
+        item, update_mode = retain.item, retain.item.get("update_mode")
+
+        def _write(bank_id: str) -> None:
+            logger.debug(
+                "Hindsight %s: bank=%s, doc=%s, mode=%s, async=%s, content_len=%d",
+                retain.label,
+                bank_id,
+                retain.document_id,
+                update_mode,
+                retain.retain_async,
+                len(item["content"]),
             )
 
-            def _write(bank_id: str) -> None:
-                logger.debug(
-                    "Hindsight %s: bank=%s, doc=%s, mode=%s, async=%s, content_len=%d, num_turns=%d",
-                    label,
-                    bank_id,
-                    document_id,
-                    update_mode,
-                    retain_async,
-                    len(content),
-                    len(turns),
+            def _send(payload: dict, target_document_id: str | None):
+                return self._retain_batch(
+                    payload,
+                    bank_id=bank_id,
+                    document_id=target_document_id,
+                    retain_async=retain.retain_async,
+                    operation_id=retain.operation_ids[bank_id],
                 )
 
-                def _send(payload: dict, target_document_id: str):
-                    return self._retain_batch(
-                        payload,
-                        bank_id=bank_id,
-                        document_id=target_document_id,
-                        retain_async=retain_async,
-                        operation_id=operation_ids[bank_id],
+            try:
+                resp = _send(item, retain.document_id)
+            except Exception as exc:
+                # A bank with store_document_text off accepts a session's first append (it
+                # creates the document) and refuses every later one. Stop appending, and
+                # send these turns as their own document so they are not lost.
+                if update_mode != "append" or not _is_append_without_document_text(exc):
+                    raise
+                if not self._append_unsupported:
+                    logger.warning(
+                        "Hindsight bank %s keeps no document text, so it cannot append to a "
+                        "session document; retaining each batch of turns as its own document",
+                        bank_id,
                     )
+                    self._append_unsupported = True
+                # Same operation_id: the refused append was never queued, so the id is unused.
+                resp = _send({k: v for k, v in item.items() if k != "update_mode"}, retain.own_document_id)
+            # Async retains are only *accepted* here; track the op id(s) so the
+            # next-turn prefetch can wait for true server-side completion.
+            if retain.retain_async:
+                self._track_retain_ops(resp, bank_id, wait=retain.track_ops and self._prefetch_waits_for_retain)
 
-                try:
-                    resp = _send(item, document_id)
-                except Exception as exc:
-                    # A bank with store_document_text off accepts a session's first append (it
-                    # creates the document) and refuses every later one. Stop appending, and
-                    # send these turns as their own document so they are not lost.
-                    if update_mode != "append" or not _is_append_without_document_text(exc):
-                        raise
-                    if not self._append_unsupported:
-                        logger.warning(
-                            "Hindsight bank %s keeps no document text, so it cannot append to a "
-                            "session document; retaining each batch of turns as its own document",
-                            bank_id,
-                        )
-                        self._append_unsupported = True
-                    # Same operation_id: the refused append was never queued, so the id is unused.
-                    resp = _send({k: v for k, v in item.items() if k != "update_mode"}, own_document_id)
-                # Async retains are only *accepted* here; track the op id(s) so the
-                # next-turn prefetch can wait for true server-side completion.
-                if retain_async:
-                    self._track_retain_ops(resp, bank_id, wait=track_ops and self._prefetch_waits_for_retain)
-
-            self._write_to_banks(bank_ids, _write)
-            logger.debug("Hindsight %s succeeded", label)
-
-        return _job
+        self._write_to_banks(retain.bank_ids, _write)
+        logger.debug("Hindsight %s succeeded", retain.label)
 
     def sync_turn(
         self,
@@ -2530,17 +2562,17 @@ class HindsightMemoryProvider(MemoryProvider):
             context=f"Hermes built-in {target} memory entry",
             tags=["builtin-memory", f"builtin-target:{target}", f"builtin-action:{action}"],
         )
-        bank_ids, retain_async = list(self._write_bank_ids), self._retain_async
-        operation_ids = {bank_id: str(uuid.uuid4()) for bank_id in bank_ids}  # replay-safe resend (#5218)
-
-        def _write(bank_id: str) -> None:
-            resp = self._retain_batch(
-                item, bank_id=bank_id, retain_async=retain_async, operation_id=operation_ids[bank_id]
+        bank_ids = list(self._write_bank_ids)
+        self._enqueue_retain(
+            _PendingRetain(
+                item=item,
+                bank_ids=bank_ids,
+                retain_async=self._retain_async,
+                operation_ids={bank_id: str(uuid.uuid4()) for bank_id in bank_ids},  # replay-safe resend (#5218)
+                label="builtin-memory",
+                track_ops=False,
             )
-            if retain_async:
-                self._track_retain_ops(resp, bank_id, wait=False)
-
-        self._enqueue_retain(lambda: self._write_to_banks(bank_ids, _write))
+        )
 
     def _retain_status(self) -> str:
         """The retain indicator's text: says so when earlier saves failed, not just "saving…".
@@ -2550,11 +2582,13 @@ class HindsightMemoryProvider(MemoryProvider):
         if (dropped := self._retains_dropped - self._retains_dropped_shown) > 0:
             self._retains_dropped_shown += dropped
             return f"{dropped} earlier save(s) to memory failed and were dropped (see the Hermes log)"
-        if waiting := len(self._retain_backlog):
+        with self._retain_backlog_lock:  # the writer pops from it
+            waiting = sum(1 for entry in self._retain_backlog if entry.failures)
+        if waiting:
             return f"couldn't save to memory yet, will retry ({waiting} waiting)"
         return "saving to memory…"
 
-    def _enqueue_retain(self, job: Callable[[], None]) -> None:
+    def _enqueue_retain(self, job: _PendingRetain) -> None:
         """Hand *job* to the (lazily started) writer and arm the atexit drain."""
         self._ensure_writer()
         self._register_atexit()
@@ -2822,6 +2856,61 @@ class HindsightMemoryProvider(MemoryProvider):
         """
         self._run_sync(self._client.aclose())
 
+    def _spool_unsent_retains(self) -> None:
+        """Write the retains not sent yet (failed, in flight, or still queued) to disk for the
+        next session, and say so once (#6915). The one in flight may still land; resending it
+        is a replay for an async retain, and a possible second copy beats a lost turn."""
+        with self._retain_backlog_lock:
+            self._unsent_spooled.set()
+            unsent = [entry.retain for entry in self._retain_backlog]
+            self._retain_backlog = []
+        while True:
+            try:
+                job = self._retain_queue.get_nowait()
+            except queue.Empty:
+                break
+            if job is not _WRITER_SENTINEL:
+                unsent.append(job)
+        if not unsent:
+            return
+        folder = get_hermes_home().joinpath(*_UNSENT_RETAINS_DIR)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"{time.time_ns()}-{uuid.uuid4().hex[:8]}.json"
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps([r.model_dump() for r in unsent], ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)  # a half-written file is never picked up
+        except OSError as exc:
+            logger.warning("Hindsight could not save %d unsent retain(s), they are lost: %s", len(unsent), exc)
+            return
+        msg = f"Hindsight: {len(unsent)} memory save(s) not sent yet, will send them next time."
+        logger.warning("%s (%s)", msg, path)
+        if self._warning_callback is not None:
+            with contextlib.suppress(Exception):
+                self._warning_callback(msg)
+
+    def _resend_unsent_retains(self) -> None:
+        """Queue the retains an earlier session could not send before it exited (#6915). Each
+        file is claimed by renaming it first, so two sessions starting together never both send it."""
+        folder = get_hermes_home().joinpath(*_UNSENT_RETAINS_DIR)
+        for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+            claimed = path.with_suffix(f".claimed-{os.getpid()}-{uuid.uuid4().hex[:8]}")
+            try:
+                path.rename(claimed)
+            except OSError:
+                continue  # another session took it
+            try:
+                retains = [
+                    _PendingRetain.model_validate(raw) for raw in json.loads(claimed.read_text(encoding="utf-8"))
+                ]
+            except (OSError, ValueError) as exc:  # pydantic's ValidationError is a ValueError
+                logger.warning("Hindsight could not read unsent retains in %s, skipping them: %s", claimed, exc)
+                continue
+            logger.info("Hindsight: sending %d memory save(s) left over from an earlier session", len(retains))
+            for retain in retains:
+                self._enqueue_retain(retain)
+            claimed.unlink(missing_ok=True)  # queued now; a new shutdown spools them again if needed
+
     def shutdown(self) -> None:
         logger.debug("Hindsight shutdown: stopping writer + waiting for background threads")
         # Ship turns still waiting for the retain_every_n_turns cadence. Skipped on a
@@ -2836,10 +2925,8 @@ class HindsightMemoryProvider(MemoryProvider):
             self._retain_queue.put(_WRITER_SENTINEL)
             writer.join(timeout=10.0)
             if writer.is_alive():
-                logger.warning(
-                    "Hindsight writer did not stop within 10s; abandoning %d pending retain(s)",
-                    self._retain_queue.qsize(),
-                )
+                logger.warning("Hindsight writer did not stop within 10s")
+        self._spool_unsent_retains()
         self._join_prefetch(5.0)
         with self._prefetch_lock:
             self._prefetch_generation += 1

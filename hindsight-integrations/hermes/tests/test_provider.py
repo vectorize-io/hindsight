@@ -161,7 +161,8 @@ def test_turn_timestamp_is_taken_when_queued_not_when_written(provider, monkeypa
     """#5189: a busy writer must not move the turn's event time to when it finally ran."""
     instance, fake = provider({})
     release = threading.Event()
-    instance._enqueue_retain(release.wait)  # hold the writer until the clock has moved on
+    send = instance._send_retain
+    monkeypatch.setattr(instance, "_send_retain", lambda r: (release.wait(), send(r)))  # hold the writer
     monkeypatch.setattr(plugin, "_event_timestamp", lambda: "2026-01-01T00:00:00Z")
     instance.sync_turn("one", "1")
     monkeypatch.setattr(plugin, "_event_timestamp", lambda: "2026-01-01T00:05:00Z")
