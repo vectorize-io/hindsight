@@ -5,7 +5,8 @@
  * `role:"action"` turn naming the tool and its primary target (e.g. `Edit boltons/strutils.py`) —
  * no arguments, no outputs. That keeps WHICH files/commands the session touched without burying the
  * decisions in mechanical noise; `tool_result` blocks are dropped, except AskUserQuestion's,
- * which carries the user's answers.
+ * which carries the user's answers. A message the human typed while a turn was running (stored only
+ * as a `queued_command` attachment) is kept as a user turn at its position.
  *
  * Drops non-message lines (`last-prompt`, `mode`, `summary`, …), `isMeta` lines, compaction
  * summaries (`isCompactSummary`), `isSidechain`
@@ -95,8 +96,9 @@ function renderLine(
   return out;
 }
 
-/** Parse a Claude Code transcript JSONL into normalized markdown turns (text + tool calls/results).
- *  Drops thinking blocks, isMeta/isSidechain lines, injected memory, and empty turns.
+/** Parse a Claude Code transcript JSONL into normalized markdown turns (text + tool calls/results,
+ *  plus human messages queued mid-turn). Drops thinking blocks, isMeta/isSidechain lines, injected
+ *  memory, and empty turns.
  *  Never throws on bad lines. */
 export function readClaudeTranscript(path: string): TransportTurn[] {
   const turns: TransportTurn[] = [];
