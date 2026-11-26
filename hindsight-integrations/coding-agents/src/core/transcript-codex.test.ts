@@ -1,6 +1,16 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  closeSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildSync } from "esbuild";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readCodexTranscript } from "./transcript-codex";
 import { memoryUsageCursorStore, recordUsage, summarizeTurns } from "./usage";
@@ -610,4 +620,53 @@ describe("Codex provenance and assistant channels", () => {
     writeFileSync(file, [annotated({}, {}), userItem("valid")].join("\n"));
     expect(readCodexTranscript(file)).toEqual([{ role: "user", content: "valid" }]);
   });
+});
+
+describe("readCodexTranscript memory", () => {
+  // #6556: the reader held every parsed record — tool output included — until the end, so a 2GB
+  // rollout ran the Stop hook out of heap. Read a rollout three times larger than a capped heap in a
+  // child process: holding the discarded output aborts it, keeping only the turns does not.
+  it("reads a rollout of discarded tool output larger than the heap", () => {
+    const bundle = join(root, "codex.cjs");
+    buildSync({
+      entryPoints: [join(__dirname, "transcript-codex.ts")],
+      bundle: true,
+      platform: "node",
+      format: "cjs",
+      outfile: bundle,
+      logLevel: "silent",
+    });
+    const fd = openSync(file, "w");
+    writeSync(fd, `${userEvent(text("hello big session"))}\n`);
+    const output = "x".repeat(1_000_000);
+    for (let i = 0; i < 200; i++) {
+      writeSync(
+        fd,
+        `${item({ type: "function_call_output", call_id: `c${i}`, output: `${output}${i}` })}\n`
+      );
+    }
+    writeSync(
+      fd,
+      item({ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] })
+    );
+    closeSync(fd);
+
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--max-old-space-size=64",
+        "-e",
+        "process.stdout.write(JSON.stringify(require(process.argv[1]).readCodexTranscript(process.argv[2])))",
+        bundle,
+        file,
+      ],
+      { encoding: "utf8" }
+    );
+    expect(child.stderr).not.toMatch(/heap out of memory/);
+    expect(child.status).toBe(0);
+    expect(JSON.parse(child.stdout)).toEqual([
+      { role: "user", content: "hello big session" },
+      { role: "assistant", content: "done" },
+    ]);
+  }, 30_000);
 });

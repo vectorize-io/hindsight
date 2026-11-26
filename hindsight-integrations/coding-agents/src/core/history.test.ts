@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import * as zlib from "node:zlib";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -495,5 +496,79 @@ describe("importLocalHistory — dcode", () => {
       throw new Error("must not be called — there is no transcripts dir to attribute");
     });
     expect(r).toEqual({ supported: true, sessions: [] });
+  });
+});
+
+describe("importLocalHistory — dsh", () => {
+  const header = (id: string, cwd: string) =>
+    JSON.stringify({ type: "session", version: 4, id, cwd });
+  const prompt = (text: string) =>
+    JSON.stringify({
+      type: "user/message",
+      time: Date.parse("2026-11-01T10:00:00Z"),
+      data: { id: "m1", role: "user", content: [{ type: "text", text }], source: { kind: "user" } },
+    });
+  const sessionDir = (h: string, id: string) => {
+    const dir = join(h, "sessions", "--repo-mine--", id);
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+  // A dsh .zstd log is concatenated frames, one per write batch.
+  const zstdLog = (...lines: string[]) =>
+    Buffer.concat(lines.map((line) => zlib.zstdCompressSync(Buffer.from(`${line}\n`))));
+
+  beforeEach(() => vi.stubEnv("DSH_HOME", newHome()));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.skipIf(typeof zlib.zstdCompressSync !== "function")(
+    "reads the session.v4.jsonl.zstd logs current dsh writes (#5981)",
+    () => {
+      const dir = sessionDir(home, "session-a");
+      writeFileSync(
+        join(dir, "session.v4.jsonl.zstd"),
+        zstdLog(header("a", "/repo/mine"), prompt("v4 prompt"))
+      );
+      const r = importLocalHistory("dsh", "/repo/mine", home);
+      expect(r.supported).toBe(true);
+      expect(r.sessions).toHaveLength(1);
+      expect(JSON.stringify(r.sessions)).toContain("v4 prompt");
+    }
+  );
+
+  it.skipIf(typeof zlib.zstdCompressSync !== "function")(
+    "reads only the newest generation when a migrated session keeps its older logs",
+    () => {
+      const dir = sessionDir(home, "session-b");
+      writeFileSync(
+        join(dir, "session.jsonl"),
+        `${header("b", "/repo/mine")}\n${prompt("v0 copy")}\n`
+      );
+      writeFileSync(
+        join(dir, "session.v2.jsonl"),
+        `${header("b", "/repo/mine")}\n${prompt("v2 copy")}\n`
+      );
+      writeFileSync(
+        join(dir, "session.v4.jsonl.zstd"),
+        zstdLog(header("b", "/repo/mine"), prompt("v4 copy"))
+      );
+      writeFileSync(join(dir, "notes.jsonl"), "unrelated");
+      const r = importLocalHistory("dsh", "/repo/mine", home);
+      expect(r.sessions).toHaveLength(1);
+      const text = JSON.stringify(r.sessions);
+      expect(text).toContain("v4 copy");
+      expect(text).not.toContain("v0 copy");
+      expect(text).not.toContain("v2 copy");
+    }
+  );
+
+  it("still reads a legacy plain session.jsonl", () => {
+    const dir = sessionDir(home, "session-c");
+    writeFileSync(
+      join(dir, "session.jsonl"),
+      `${header("c", "/repo/mine")}\n${prompt("legacy")}\n`
+    );
+    expect(JSON.stringify(importLocalHistory("dsh", "/repo/mine", home).sessions)).toContain(
+      "legacy"
+    );
   });
 });

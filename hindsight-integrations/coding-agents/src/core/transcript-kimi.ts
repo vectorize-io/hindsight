@@ -58,6 +58,7 @@ import { actionLine, stripInjectedMemory } from "./transcript-util";
 const HARNESS = "kimi-code";
 const SESSIONS_DIR = "sessions";
 const AGENTS_DIR = "agents";
+const SESSION_INDEX = "session_index.jsonl";
 const WIRE_LOG = "wire.jsonl";
 /** The session directory's prefix. Kimi 2.1.1's hook payloads already carry it
  *  (`session_id: "session_<uuid>"`); a bare uuid is accepted too. */
@@ -109,7 +110,9 @@ export interface KimiWireEvent {
  * The `wd_<basename>_<hash>` workspace component cannot be derived from `cwd`: this machine has
  * `wd_example-project_9f27d1b6c845` (~/example-project) and `wd_example-project_4b1c9e07a2f3`
  * (/repos/example-project), two different repos whose directories differ only by the hash.
- * So scan for the session instead of composing a path out of the working directory.
+ * Kimi records every session's directory in the append-only `session_index.jsonl`, so look it up
+ * there first (the last entry for an id wins; a `deleted` one names no directory) and only scan
+ * the workspaces when the index is missing or stale (#6457).
  */
 export function kimiSessionDir(
   sessionId: string,
@@ -117,6 +120,8 @@ export function kimiSessionDir(
 ): string | undefined {
   const name = sessionId.startsWith(SESSION_PREFIX) ? sessionId : `${SESSION_PREFIX}${sessionId}`;
   const sessions = join(kimiHome, SESSIONS_DIR);
+  const indexed = indexedSessionDir(name, kimiHome);
+  if (indexed && existsSync(join(indexed, AGENTS_DIR))) return indexed;
   try {
     for (const workspace of readdirSync(sessions, { withFileTypes: true })) {
       if (!workspace.isDirectory()) continue;
@@ -130,6 +135,23 @@ export function kimiSessionDir(
   // unless it is recorded (the Devin lesson, #3125).
   diag(HARNESS, "session_dir_missing", { sessions, session: name });
   return undefined;
+}
+
+/** The directory `session_index.jsonl` records for a session, or undefined. Fail-open. */
+function indexedSessionDir(name: string, kimiHome: string): string | undefined {
+  let dir: string | undefined;
+  for (const raw of readJsonl(join(kimiHome, SESSION_INDEX))) {
+    let entry: { sessionId?: unknown; sessionDir?: unknown; deleted?: unknown };
+    try {
+      entry = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (typeof entry !== "object" || entry === null || entry.sessionId !== name) continue;
+    dir =
+      entry.deleted !== true && typeof entry.sessionDir === "string" ? entry.sessionDir : undefined;
+  }
+  return dir;
 }
 
 /** Kimi stamps epoch milliseconds on the OUTER record; the nested loop event carries no clock. */

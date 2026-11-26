@@ -322,7 +322,11 @@ function dcodeHistory(
 }
 
 /**
- * DeepSeek Harness: `$DSH_HOME/sessions/<project>/<encoded-id>/session.jsonl(.zstd)`.
+ * DeepSeek Harness: `$DSH_HOME/sessions/<project>/<encoded-id>/session[.v<N>].jsonl[.zstd]`.
+ *
+ * Each session format generation has its own file name (`session.jsonl` is v0, current dsh writes
+ * `session.v4.jsonl.zstd`), and a migrated session keeps its older generations beside the new one,
+ * so the newest generation in the directory is the session (#5981).
  *
  * The project directory is a lossy, truncated rendering of the session's cwd, so it is used only to
  * narrow the walk — attribution still comes from the `cwd` in each log's header line, exactly like
@@ -353,9 +357,7 @@ function dshHistory(repoDir: string, home: string): HistoryImport {
       continue; // a stray file where a project directory was expected
     }
     for (const sessionDir of sessionDirs) {
-      const file = ["session.jsonl.zstd", "session.jsonl"]
-        .map((name) => join(sessionDir, name))
-        .find((candidate) => existsSync(candidate));
+      const file = newestDshLog(sessionDir);
       if (!file) continue;
       try {
         const lines = readDshLog(file);
@@ -380,6 +382,26 @@ function dshHistory(repoDir: string, home: string): HistoryImport {
     }
   }
   return { supported: true, sessions, unattributed };
+}
+
+const DSH_LOG = /^session(?:\.v(\d+))?\.jsonl(\.zstd)?$/;
+
+/** The newest-generation log in a dsh session directory (zstd before plain on a tie), or undefined. */
+function newestDshLog(sessionDir: string): string | undefined {
+  let names: string[];
+  try {
+    names = readdirSync(sessionDir);
+  } catch {
+    return undefined; // a stray file where a session directory was expected
+  }
+  let best: { name: string; rank: number } | undefined;
+  for (const name of names) {
+    const match = DSH_LOG.exec(name);
+    if (!match) continue;
+    const rank = Number(match[1] ?? 0) * 2 + (match[2] ? 1 : 0);
+    if (!best || rank > best.rank) best = { name, rank };
+  }
+  return best && join(sessionDir, best.name);
 }
 
 /** The logical JSONL lines of one dsh session log, decompressing when the artifact is zstd. */
