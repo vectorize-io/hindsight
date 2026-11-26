@@ -340,12 +340,10 @@ npx @vectorize-io/hindsight-coding-agents install pi
 An extension entry in `~/.pi/agent/settings.json`, plus the companion skill in
 `~/.pi/agent/skills` — native tools, no MCP needed.
 
-This command is the only supported route, for pi and for Prime Agent below. Installing us as a pi
-package (`pi install npm:@vectorize-io/hindsight-coding-agents`) is deliberately not wired: both
-hosts read the same `pi` key of a package's `package.json`, and that key can only name one entry —
-whichever host it did not name would load the other's bundle and report itself as the wrong agent,
-taking that harness's config section and stamping every document it retains with it. So the package
-carries no `pi` key at all, and each host is pointed at its own bundle by the install command above.
+This command is the only supported route. Installing us as a pi package (`pi install
+npm:@vectorize-io/hindsight-coding-agents`) is deliberately not wired: Prime Agent 0.9 read the same
+`pi` key of a package's `package.json`, and a key that names one entry for two hosts makes one of
+them report itself as the wrong agent. So the package carries no `pi` key at all.
 
 #### <img src="/img/harness/prime-agent.svg" alt="" width="20" height="20" /> Prime Agent
 
@@ -353,13 +351,25 @@ carries no `pi` key at all, and each host is pointed at its own bundle by the in
 npx @vectorize-io/hindsight-coding-agents install prime-agent
 ```
 
-Prime Agent is a fork of pi, so it is wired the same way: an extension entry, here in
-`~/.prime/agent/settings.json`, plus the companion skill in `~/.prime/agent/skills` — native tools,
-no MCP needed. Installing both is fine and expected:
-each host loads its own entry from its own settings file, and like every other pair of agents they
-**share one bank per repo** (the default `coding-agent::{gitProject}`), so what you tell pi is there
-when you open Prime Agent. Separate entries are what keeps each side attributable — its own
-`harnesses.<name>` config section, and its own agent stamped on every document it retains.
+Needs Prime Agent **0.10 or later** (the Rust rewrite); 0.9 and earlier are no longer supported.
+0.10 removed the extension system and has no hooks, so the install writes the three things it does
+load:
+
+- an MCP server, `hindsight`, in `~/.prime/agent/settings.json`. Prime's agent calls MCP tools from
+  Python (`await mcp.call_tool("hindsight", "hindsight_reflect", {...})`), and starts the server
+  on the first call. While it runs, the server also saves the session's transcript to memory.
+- a short block in `~/.prime/agent/AGENTS.md` (or your existing global `CLAUDE.md`) asking the agent
+  to ask memory (`hindsight_reflect`) at the start of every task. Without a hook this is the only
+  way to bring recall in, so it is up to the model to follow it.
+- the companion skill in `~/.prime/agent/skills`.
+
+A session where the agent never calls a Hindsight tool is not saved, because the server never
+started. `install prime-agent --import-conversations`, run in the repo, backfills those from
+Prime's session files. Re-running the install on a machine wired for 0.9 removes the old
+`extensions` entry, which 0.10 ignores. Uninstall removes all three.
+
+pi and Prime Agent **share one bank per repo** (the default `coding-agent::{gitProject}`), like any
+other pair of agents, and each stamps its own agent on the documents it retains.
 
 #### <img src="/img/harness/dsh.svg" alt="" width="20" height="20" /> DeepSeek Harness
 
@@ -596,7 +606,7 @@ what reads it:
 | host                                                                                                        | reads the file                                                      | an edit applies            |
 | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------- |
 | hook harnesses (Claude Code, Codex CLI, Cursor CLI, GitHub Copilot CLI, Grok Build, Antigravity CLI, Devin) | once per hook invocation — each hook is its own short-lived process | on your next prompt        |
-| persistent plugins (opencode, opencode 2, Kilo CLI, Cline CLI, pi, Prime Agent, DeepSeek Harness)           | once per workspace, when the host loads the plugin                  | after restarting the agent |
+| persistent plugins (opencode, opencode 2, Kilo CLI, Cline CLI, pi, DeepSeek Harness)                        | once per workspace, when the host loads the plugin                  | after restarting the agent |
 | the MCP server behind the `hindsight_*` tools                                                               | once at startup                                                     | in your next session       |
 
 `apiToken` is the exception. Every host re-reads it when the server rejects a request, so enabling

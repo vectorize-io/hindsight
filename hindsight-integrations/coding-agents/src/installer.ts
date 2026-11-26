@@ -43,6 +43,7 @@ import { applyEdits, modify } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
+import { PRIME_AGENT_DIR_ENV, PRIME_SESSION_ID_ENV } from "./prime-agent";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
 import { readLegacyEndpoint } from "./core/legacy";
 import { hookNode, hookNodeShell, isOurMcpEntry, nodeBinary } from "./core/util";
@@ -476,7 +477,8 @@ const opencode2: HarnessInstaller = {
 };
 
 /**
- * The pi-family extension hosts: pi and its fork Prime Agent (PrimeIntellect). Both load a
+ * The pi-family extension hosts: pi and, before its 0.10 Rust rewrite, its fork Prime Agent
+ * (PrimeIntellect, now wired by `primeAgent` below). Both load a
  * persistent extension by absolute path from the `extensions` array of their own `settings.json`,
  * calling that file's default export at session start — they differ only in the config directory
  * (`~/.pi/agent` vs `~/.prime/agent`), the executable name, and which dist bundle reports which
@@ -530,7 +532,123 @@ function piFamilyInstaller(harness: string, configDir: string[]): HarnessInstall
 }
 
 const pi = piFamilyInstaller("pi", [".pi", "agent"]);
-const primeAgent = piFamilyInstaller("prime-agent", [".prime", "agent"]);
+
+const PRIME_CONTEXT_BEGIN = "<!-- hindsight-coding-agents:begin -->";
+const PRIME_CONTEXT_END = "<!-- hindsight-coding-agents:end -->";
+/** What makes the agent reach for memory at all: Prime 0.10 has no hook to inject recall with, and
+ *  our MCP server (which also writes the session back) only starts on the first call. */
+const PRIME_CONTEXT = `${PRIME_CONTEXT_BEGIN}
+## Project memory (Hindsight): required first step
+
+At the start of every task or question in a repository, before you answer or call any other
+tool, run this in Python (\`mcp\` is pre-imported):
+
+    print(await mcp.call_tool("hindsight", "hindsight_reflect", {"query": "<the user's request>"}))
+
+Do it even when the task looks simple or needs no other tools. It answers from past sessions,
+decisions and conventions the code does not show, and it is also what saves this conversation to
+memory for later sessions. Later in the task, \`hindsight_search_pages\` (\`{"query": ...}\`)
+is the fast lookup. The \`hindsight-coding-agent\` skill lists every tool.
+${PRIME_CONTEXT_END}`;
+
+/** The global context file Prime loads: the first that exists, in its own priority order (pa-core
+ *  CONTEXT_FILE_CANDIDATES), so an existing CLAUDE.md is extended rather than shadowed. */
+function primeContextFile(c: InstallCtx): string {
+  const dir = join(c.home, ".prime", "agent");
+  const found = ["AGENTS.md", "CLAUDE.md"].find((f) => existsSync(join(dir, f)));
+  return join(dir, found ?? "AGENTS.md");
+}
+
+function stripPrimeContext(text: string): string {
+  const start = text.indexOf(PRIME_CONTEXT_BEGIN);
+  const end = text.indexOf(PRIME_CONTEXT_END);
+  if (start < 0 || end < start) return text;
+  return (text.slice(0, start) + text.slice(end + PRIME_CONTEXT_END.length)).replace(
+    /\n{3,}/g,
+    "\n\n"
+  );
+}
+
+/**
+ * Prime Agent 0.10+ (the Rust rewrite). It dropped the JS extension host the 0.9 integration used
+ * and has no hooks, so this wires the three things it does load (see src/prime-agent.ts):
+ *
+ * - `settings.json` `mcpServers.hindsight` — our stdio MCP server, which serves the tools and writes
+ *   the session back while it runs. Prime only forwards env vars by reference, so the harness goes
+ *   in as `--harness` and the session id / agent dir as references to the kernel's own variables.
+ *   The 0.9 `extensions` entry is removed: 0.10 ignores it and 0.9 is no longer supported.
+ * - the companion skill in `~/.prime/agent/skills`.
+ * - a marked block in the global context file asking the agent to search memory first.
+ *
+ * A same-named foreign MCP server blocks install instead of being overwritten.
+ */
+const primeAgent: HarnessInstaller = {
+  name: "prime-agent",
+  detect: (c) => onPath("prime-agent") || existsSync(join(c.home, ".prime", "agent")),
+  preflight(c) {
+    const path = join(c.home, ".prime", "agent", "settings.json");
+    const existing = readJson(path).mcpServers?.hindsight;
+    if (existing && !isOurMcpEntry(existing)) {
+      return (
+        `${path} already contains a user-managed MCP server named "hindsight". ` +
+        "Rename or remove that entry, then re-run install."
+      );
+    }
+  },
+  install(c) {
+    const path = join(c.home, ".prime", "agent", "settings.json");
+    const cfg = readJson(path);
+    if (Array.isArray(cfg.extensions)) {
+      cfg.extensions = cfg.extensions.filter((p: string) => !String(p).includes(MARKER));
+      if (!cfg.extensions.length) delete cfg.extensions;
+    }
+    cfg.mcpServers = cfg.mcpServers ?? {};
+    cfg.mcpServers.hindsight = {
+      type: "stdio",
+      command: "node",
+      args: [join(c.dist, "mcp-server.js"), "--harness", "prime-agent"],
+      env: {
+        [PRIME_SESSION_ID_ENV]: { env: "RLM_SESSION_ID" },
+        [PRIME_AGENT_DIR_ENV]: { env: "PRIME_AGENT_CODING_AGENT_DIR" },
+      },
+    };
+    writeJson(path, cfg);
+    c.log?.(`prime-agent: MCP server registered in ${path}`);
+    installSkill(c, "prime-agent");
+    const ctxFile = primeContextFile(c);
+    const prior = existsSync(ctxFile)
+      ? stripPrimeContext(readFileSync(ctxFile, "utf8")).trimEnd()
+      : "";
+    writeFileSync(ctxFile, `${prior ? `${prior}\n\n` : ""}${PRIME_CONTEXT}\n`);
+    c.log?.(`prime-agent: memory instructions added to ${ctxFile}`);
+  },
+  uninstall(c) {
+    uninstallSkill(c, "prime-agent");
+    const path = join(c.home, ".prime", "agent", "settings.json");
+    if (existsSync(path)) {
+      const cfg = readJson(path);
+      if (isOurMcpEntry(cfg.mcpServers?.hindsight)) {
+        delete cfg.mcpServers.hindsight;
+        if (!Object.keys(cfg.mcpServers).length) delete cfg.mcpServers;
+      }
+      if (Array.isArray(cfg.extensions)) {
+        cfg.extensions = cfg.extensions.filter((p: string) => !String(p).includes(MARKER));
+        if (!cfg.extensions.length) delete cfg.extensions;
+      }
+      writeJson(path, cfg);
+    }
+    const ctxFile = primeContextFile(c);
+    if (existsSync(ctxFile)) {
+      const text = readFileSync(ctxFile, "utf8");
+      const kept = stripPrimeContext(text).trim();
+      if (kept !== text.trim()) {
+        if (kept) writeFileSync(ctxFile, `${kept}\n`);
+        else rmSync(ctxFile);
+      }
+    }
+    c.log?.("prime-agent: MCP server, memory instructions and skill removed");
+  },
+};
 
 /**
  * Kilo Code CLI — an opencode fork, so registration is opencode's: append our entry to the config's

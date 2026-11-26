@@ -1878,42 +1878,126 @@ describe("opencode installer", () => {
   });
 });
 
-// pi and Prime Agent share one installer factory but must stay independently wired: each writes
-// only its own settings.json, and each registers the bundle that reports its own harness.
-describe.each([
-  { harness: "pi", dir: [".pi", "agent"] },
-  { harness: "prime-agent", dir: [".prime", "agent"] },
-])("$harness installer", ({ harness, dir }) => {
-  const cfgPath = (ctx: InstallCtx) => join(ctx.home, ...dir, "settings.json");
-  const entry = (ctx: InstallCtx) => join(ctx.pkgRoot, "dist", `${harness}.js`);
+describe.each([{ harness: "pi", dir: [".pi", "agent"] }])(
+  "$harness installer",
+  ({ harness, dir }) => {
+    const cfgPath = (ctx: InstallCtx) => join(ctx.home, ...dir, "settings.json");
+    const entry = (ctx: InstallCtx) => join(ctx.pkgRoot, "dist", `${harness}.js`);
 
-  it("install adds the built extension to the extensions array exactly once, even across reinstalls", () => {
+    it("install adds the built extension to the extensions array exactly once, even across reinstalls", () => {
+      const ctx = makeCtx();
+      expect(run(["install", harness], ctx)).toBe(0);
+      run(["install", harness], ctx);
+      expect(readJson(cfgPath(ctx)).extensions).toEqual([entry(ctx)]);
+    });
+
+    it("preserves other extension entries", () => {
+      const ctx = makeCtx();
+      writeJsonAt(cfgPath(ctx), { extensions: ["/some/other/ext.js"] });
+      run(["install", harness], ctx);
+      expect(readJson(cfgPath(ctx)).extensions).toEqual(["/some/other/ext.js", entry(ctx)]);
+    });
+
+    it("uninstall removes our entry and deletes the extensions key when empty", () => {
+      const ctx = makeCtx();
+      run(["install", harness], ctx);
+      run(["uninstall", harness], ctx);
+      expect(readJson(cfgPath(ctx)).extensions).toBeUndefined();
+    });
+
+    it("uninstall keeps the extensions key when other entries remain", () => {
+      const ctx = makeCtx();
+      writeJsonAt(cfgPath(ctx), { extensions: ["/some/other/ext.js"] });
+      run(["install", harness], ctx);
+      run(["uninstall", harness], ctx);
+      expect(readJson(cfgPath(ctx)).extensions).toEqual(["/some/other/ext.js"]);
+    });
+  }
+);
+
+// Prime Agent 0.10 (Rust) loads no extensions and has no hooks: it is wired as an MCP server plus
+// a global context block, and the 0.9 extension entry is cleaned up.
+describe("prime-agent installer", () => {
+  const dir = (ctx: InstallCtx) => join(ctx.home, ".prime", "agent");
+  const cfgPath = (ctx: InstallCtx) => join(dir(ctx), "settings.json");
+  const agentsMd = (ctx: InstallCtx) => join(dir(ctx), "AGENTS.md");
+
+  it("registers the MCP server with the harness as an argument and the session as env references", () => {
     const ctx = makeCtx();
-    expect(run(["install", harness], ctx)).toBe(0);
-    run(["install", harness], ctx);
-    expect(readJson(cfgPath(ctx)).extensions).toEqual([entry(ctx)]);
+    expect(run(["install", "prime-agent"], ctx)).toBe(0);
+    expect(readJson(cfgPath(ctx)).mcpServers.hindsight).toEqual({
+      type: "stdio",
+      command: "node",
+      args: [join(ctx.dist, "mcp-server.js"), "--harness", "prime-agent"],
+      env: {
+        HINDSIGHT_PRIME_SESSION_ID: { env: "RLM_SESSION_ID" },
+        HINDSIGHT_PRIME_AGENT_DIR: { env: "PRIME_AGENT_CODING_AGENT_DIR" },
+      },
+    });
   });
 
-  it("preserves other extension entries", () => {
+  it("drops the 0.9 extension entry and keeps everyone else's", () => {
     const ctx = makeCtx();
-    writeJsonAt(cfgPath(ctx), { extensions: ["/some/other/ext.js"] });
-    run(["install", harness], ctx);
-    expect(readJson(cfgPath(ctx)).extensions).toEqual(["/some/other/ext.js", entry(ctx)]);
+    writeJsonAt(cfgPath(ctx), {
+      extensions: [
+        "/x/node_modules/@vectorize-io/hindsight-coding-agents/dist/prime-agent.js",
+        "/other.js",
+      ],
+      mcpServers: { linear: { type: "http", url: "https://mcp.linear.app/mcp" } },
+    });
+    run(["install", "prime-agent"], ctx);
+    const cfg = readJson(cfgPath(ctx));
+    expect(cfg.extensions).toEqual(["/other.js"]);
+    expect(Object.keys(cfg.mcpServers).sort()).toEqual(["hindsight", "linear"]);
   });
 
-  it("uninstall removes our entry and deletes the extensions key when empty", () => {
+  it("refuses to overwrite a user-managed server named hindsight", () => {
     const ctx = makeCtx();
-    run(["install", harness], ctx);
-    run(["uninstall", harness], ctx);
-    expect(readJson(cfgPath(ctx)).extensions).toBeUndefined();
+    const foreign = { type: "http", url: "https://example.com/mcp" };
+    writeJsonAt(cfgPath(ctx), { mcpServers: { hindsight: foreign } });
+    expect(run(["install", "prime-agent"], ctx)).not.toBe(0);
+    expect(readJson(cfgPath(ctx)).mcpServers.hindsight).toEqual(foreign);
   });
 
-  it("uninstall keeps the extensions key when other entries remain", () => {
+  it("writes the context block once across reinstalls, after the user's own text", () => {
     const ctx = makeCtx();
-    writeJsonAt(cfgPath(ctx), { extensions: ["/some/other/ext.js"] });
-    run(["install", harness], ctx);
-    run(["uninstall", harness], ctx);
-    expect(readJson(cfgPath(ctx)).extensions).toEqual(["/some/other/ext.js"]);
+    mkdirSync(dir(ctx), { recursive: true });
+    writeFileSync(agentsMd(ctx), "# Mine\n\nBe terse.\n");
+    run(["install", "prime-agent"], ctx);
+    run(["install", "prime-agent"], ctx);
+    const text = readFileSync(agentsMd(ctx), "utf8");
+    expect(text.startsWith("# Mine\n\nBe terse.\n\n")).toBe(true);
+    expect(text.split("hindsight-coding-agents:begin").length).toBe(2);
+    expect(text).toContain('mcp.call_tool("hindsight", "hindsight_reflect"');
+  });
+
+  it("extends an existing CLAUDE.md instead of shadowing it with a new AGENTS.md", () => {
+    const ctx = makeCtx();
+    mkdirSync(dir(ctx), { recursive: true });
+    writeFileSync(join(dir(ctx), "CLAUDE.md"), "rules\n");
+    run(["install", "prime-agent"], ctx);
+    expect(existsSync(agentsMd(ctx))).toBe(false);
+    expect(readFileSync(join(dir(ctx), "CLAUDE.md"), "utf8")).toContain(
+      "hindsight-coding-agents:begin"
+    );
+  });
+
+  it("uninstall removes only what install added", () => {
+    const ctx = makeCtx();
+    mkdirSync(dir(ctx), { recursive: true });
+    writeFileSync(agentsMd(ctx), "# Mine\n");
+    writeJsonAt(cfgPath(ctx), { theme: "dark" });
+    run(["install", "prime-agent"], ctx);
+    run(["uninstall", "prime-agent"], ctx);
+    expect(readJson(cfgPath(ctx))).toEqual({ theme: "dark" });
+    expect(readFileSync(agentsMd(ctx), "utf8")).toBe("# Mine\n");
+  });
+
+  it("uninstall deletes an AGENTS.md that only held our block", () => {
+    const ctx = makeCtx();
+    run(["install", "prime-agent"], ctx);
+    run(["uninstall", "prime-agent"], ctx);
+    expect(existsSync(agentsMd(ctx))).toBe(false);
   });
 });
 
@@ -2007,16 +2091,15 @@ describe("pi and prime-agent do not disturb each other", () => {
   const piCfg = (ctx: InstallCtx) => join(ctx.home, ".pi", "agent", "settings.json");
   const primeCfg = (ctx: InstallCtx) => join(ctx.home, ".prime", "agent", "settings.json");
 
-  it("wires each host to its own bundle and leaves the other config untouched", () => {
+  it("wires each host its own way and leaves the other config untouched", () => {
     const ctx = makeCtx();
     run(["install", "pi"], ctx);
     expect(existsSync(primeCfg(ctx))).toBe(false);
 
     run(["install", "prime-agent"], ctx);
     expect(readJson(piCfg(ctx)).extensions).toEqual([join(ctx.pkgRoot, "dist", "pi.js")]);
-    expect(readJson(primeCfg(ctx)).extensions).toEqual([
-      join(ctx.pkgRoot, "dist", "prime-agent.js"),
-    ]);
+    expect(readJson(piCfg(ctx)).mcpServers).toBeUndefined();
+    expect(readJson(primeCfg(ctx)).extensions).toBeUndefined();
   });
 
   it("uninstalling one leaves the other wired", () => {
