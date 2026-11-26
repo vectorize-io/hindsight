@@ -27,7 +27,7 @@ signal to re-run, not proof of a regression.
 ## What it evaluates
 
 One test file per operation, `evals/<operation>/test_<operation>.py`: `retain`,
-`recall`, `consolidation`, `reflect`, `refresh-pages`, `knowledge` (odd and big files) and `misc/` for the
+`recall`, `consolidation`, `reflect`, `refresh-pages`, `knowledge` (odd and big files), `hermes` (the Hermes Agent plugin, end to end) and `misc/` for the
 coding-agents metric. Knowledge-bank benchmarks live in AMB (see Benchmarks below). Run one operation with `uv run pytest evals/recall`.
 
 **Every case has a category**, and its test id is `<category>/<case id>`
@@ -92,6 +92,10 @@ stays out of the category counts.
 | refresh_pages | no_overreach | 2 | a year the bank does not cover; a rule true in one region only |
 | refresh_pages | stability | 3 | a wave with nothing for the page leaves it intact; no page collapses across waves; a history re-recorded every wave is not re-added |
 | refresh_pages | consistency | 2 | a changed value changes everywhere the page restates it (English, Chinese) |
+| hermes | cross_session | 2 | a real Hermes, told things in passing in earlier sessions, uses them on a new machine |
+| hermes | update | 2 | a correction or a newer state wins over the old one |
+| hermes | pages | 2 | a question about what was decided is answered from a page |
+| hermes | builtin_memory | 2 | what Hermes saves to its built-in memory also reaches the bank |
 
 The page and reflect evals share one corpus and grade twice per question: **correct** (meets
 its criteria — can fail on an incomplete answer) and **trap** (asserts the
@@ -665,6 +669,135 @@ A new failure becomes a case: fix it, add the smallest file that shows it to `br
 hindsight-datasets with its manifest entry (where it came from, what broke, its sha256), try it with
 `HINDSIGHT_EVAL_BROKEN_MEDIA` pointing at that checkout, and once it lands move `BROKEN_MEDIA_REV` to the
 new commit.
+
+### Hermes — `evals/hermes/test_hermes.py`
+
+The Hermes plugin's own tests run against a stubbed Hermes and check which calls the plugin
+makes. This runs the real thing: a real Hermes Agent and its model, the plugin copied from this
+checkout, and a real server. It grades what Hermes tells the user.
+
+**Every setting is the default**, Hermes' and the plugin's, because the point is what a user gets.
+The only changes are the connection (`local_external` to the eval's server, one bank per test) and
+where Hermes' tools run (below).
+
+A scenario goes like this:
+
+1. Earlier sessions, where the user mentions things in passing.
+2. The gateway stops, so the plugin sends what it still holds, and the bank settles. A scenario
+   with a page creates it now and refreshes it.
+3. A **fresh Hermes profile on the same bank**: the user on a new machine. Hermes' own memory
+   files and its past-chat search start empty, so only Hindsight can carry anything across.
+4. One question, judged twice: the trap first (the answer ignores or contradicts what the user
+   said), then the criteria.
+
+| category | scenario | what it checks |
+|---|---|---|
+| cross_session | `remembers-me-next-time` | vegetarian, a partner with a nut allergy, a move to Lisbon; then "what could I cook tonight?" |
+| cross_session | `remembers-across-two-sessions` | sqlx in one session, Rust and Postgres in another; then "how do I add an invites table?" |
+| update | `a-correction-wins` | the user corrects "my sister lives in Turin" to Milan (#6901); the trip is planned in Milan |
+| update | `a-new-job-supersedes-the-old` | Acme, then Globex; the LinkedIn headline is the new job (#6886, dated recall lines) |
+| pages | `renovation-decisions-from-the-page` | a page built from the chat (#6897); "what's decided?" must call a page tool |
+| pages | `training-plan-from-the-page` | the same, for a training plan's constraints |
+| builtin_memory | `an-allergy-told-to-remember` | "remember I'm allergic to penicillin" lands in Hermes' built-in memory **and** the bank (#6889) |
+| builtin_memory | `a-birthday-told-to-remember` | the same, for a birthday and a hobby |
+
+```bash
+uv run pytest evals/hermes            # skips without `hermes` on PATH or Docker running
+uv run pytest evals/hermes -k "pages/"
+# an arm: plugin settings merged over its defaults
+HINDSIGHT_EVAL_HERMES_PLUGIN_CONFIG='{"recall_sync": true}' uv run pytest evals/hermes
+# another Hermes model: any provider/model pair `hermes chat --provider ... -m ...` accepts (only gemini is tried)
+HINDSIGHT_EVAL_HERMES_PROVIDER=openai-codex HINDSIGHT_EVAL_HERMES_MODEL=gpt-5.6-luna uv run pytest evals/hermes
+```
+
+It needs `hermes` installed and logged in to a provider, and Docker running. The sandbox copies
+`~/.hermes/auth.json` and passes through `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`OPENROUTER_API_KEY` and the like. The default is `gemini` / `gemini-3-flash-preview`: the model
+Hermes answers with, not the server's model.
+
+Things that will surprise you (`hindsight_system_evals/hermes.py` has the detail):
+
+- **Hermes' tools run in Docker** (`terminal.backend: docker`, Hermes' own
+  `nousresearch/hermes-sandbox:desktop` image, 3 GB on first pull). With the default host backend,
+  the coding scenario sent Hermes through the developer's real `~/dev` with `find`, `grep` and file
+  reads for ten minutes. That was read-only, but the contents went to the model, and `--yolo`
+  would not have stopped a write. In Docker the same tools see none of it.
+- **The first run takes ~7 minutes.** A new `HERMES_HOME` makes Hermes build its own ~420 MB
+  environment. The home is therefore cached at `~/.cache/hindsight-system-evals/hermes-home`
+  (`HINDSIGHT_EVAL_HERMES_HOME`). Everything but `installs/` is wiped for every profile. After that,
+  a scenario takes 1.5–2 minutes, or much longer if Hermes uses its terminal on a busy machine
+  (see below). Runs share the home, so don't run two at once.
+- **The agent runs in a background gateway**, not in the `hermes` process. Hermes allows one
+  gateway per OS user and attaches every home to it, so the sandbox gets its own
+  `HERMES_GATEWAY_LOCK_DIR`. Without it, a run would talk to your own Hermes, with your config and
+  your memory. Each profile's gateway is stopped when done, matched by PID and `HERMES_HOME`, and
+  the Docker sandbox containers it leaves running are removed (matched by a mount under the home).
+- **The first message of a session needs its own recall.** Auto-recall runs in the background
+  after a turn and is injected on the next one, so until #6931 the first message of a session got
+  nothing, and Hermes knew the user only if it called a memory tool itself. The plugin now starts a
+  recall for the first message and waits up to 3s for it. Every scenario's question is a first
+  message on a new device, so a run on a plugin without that fix fails here.
+- **Keep a scenario's timeline consistent with today.** The first scenario once said the move was
+  "in March". Hermes recalled it correctly, saw that today is November, and asked which city they
+  had landed in: the right answer to a contradictory question.
+
+Measured on 2026-11-26, with the first-message recall of #6931. Every setting was the default and
+Hermes' tools ran in Docker. Hermes used `gemini-3-flash-preview`, the server `gemini-3.1-flash-lite`.
+8 of 8 passed:
+
+| scenario | result | time | what Hermes did on the new device |
+|---|---|---|---|
+| `remembers-me-next-time` | pass | 12 min | no memory tool: vegetarian, nut-free and Lisbon were injected with the first message |
+| `remembers-across-two-sessions` | pass | 21 min | Rust, sqlx, plain SQL; most of the time went to Docker (below) |
+| `a-correction-wins` | pass | 6 min | the trip is planned in Milan |
+| `a-new-job-supersedes-the-old` | pass | 2 min | the headline uses Globex |
+| `renovation-decisions-from-the-page` | pass | 1.6 min | read the page |
+| `training-plan-from-the-page` | pass | 2.3 min | read the page |
+| `an-allergy-told-to-remember` | pass | 1.6 min | "Amoxicillin is a type of penicillin. Since you are allergic to penicillin, you should not take it." |
+| `a-birthday-told-to-remember` | pass | 1.6 min | dinosaurs, June 3 |
+
+The day before, without #6931, the allergy scenario failed: nothing was injected on the first
+message, Hermes looked nothing up, and it told a user it knew was allergic to penicillin to
+"discuss allergies with your doctor".
+
+Two things the first versions got wrong, kept here so they are not repeated:
+
+- **Told "remember this", Hermes calls `hindsight_retain`, not its own memory tool**, so a mirror
+  scenario that only said "remember" never wrote USER.md and tested nothing. The scenarios now ask
+  for "your notes about me, your user profile". The copy-to-bank check also runs in every scenario
+  where Hermes happens to write its memory.
+- **An answer can pass on general knowledge.** The allergy question first asked about "antibiotics".
+  Penicillin is the usual first choice, so "mention any allergies, especially penicillin" passed
+  with no memory at all. Ask something only the memory can answer (amoxicillin *is* a penicillin),
+  and write the trap so a generic reminder does not count.
+
+An earlier run, before #6931 and before the tools moved to Docker, measured the first-message gap
+on its own (same scenario, `remembers-me-next-time`):
+
+| tools | plugin config | passed | what happened |
+|---|---|---|---|
+| Hermes' defaults, on the host | defaults | 1/3 | it called `hindsight_recall` once. The other two times it called nothing and offered steak, shrimp and salami to a vegetarian |
+| Hermes' defaults, on the host | `{"recall_sync": true}` | 2/2 | the memory was in context on the first message; it needed no tool |
+
+**Docker is what makes a scenario slow**, and only when Hermes uses its terminal or file tools. The
+five scenarios that didn't took under 2.5 minutes. The first such tool call in each session runs
+Hermes' Docker limit check, then starts its sandbox container. On a quiet machine the check takes
+~9s. On a loaded one (load average 20–60 during these runs) it timed out at 60s, and starting the
+container took minutes more, in every session.
+
+Each scenario writes `transcript.txt` to its tmp dir, to read in order:
+- the earlier sessions, with every tool call and its arguments (what Hermes retained, for instance)
+- what Hermes wrote to its own memory files
+- every memory the bank held before the question
+- the page
+- the new-device question and answer
+- the judges' verdicts and reasons
+
+It is written as the test goes, so a failed run keeps everything up to the failure. The raw
+stream-json is in `hermes-sessions.log`, and Hermes' own logs are in `hermes-logs-earlier/` and
+`hermes-logs-fresh/`. The bank itself is gone with the eval's database at the end of the run.
+To keep it, point the run at your own server with `--api-url ... --keep-banks`.
+Results are not in `--output` yet.
 
 ## The corpus
 
