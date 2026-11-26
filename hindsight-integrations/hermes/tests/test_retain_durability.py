@@ -4,6 +4,7 @@ bank that keeps no document text (#5599)."""
 
 import json
 import types
+from pathlib import Path
 
 import pytest
 from hindsight_client_api.exceptions import ApiException
@@ -238,3 +239,90 @@ def test_a_run_that_cannot_write_refuses_a_required_checkpoint(provider):
     with pytest.raises(RuntimeError):
         instance.on_pre_compress([{"role": "user", "content": "x"}], require_checkpoint=True)
     assert client.retains == []
+
+
+class HangingClient(FlakyClient):
+    """Each retain takes longer than shutdown waits, like a slow LLM extraction (#6915)."""
+
+    def __init__(self, hang: float):
+        super().__init__()
+        self.hang = hang
+
+    async def aretain_batch(self, **kwargs):
+        import asyncio
+
+        await asyncio.sleep(self.hang)
+        return await super().aretain_batch(**kwargs)
+
+
+def test_retains_unsent_at_exit_are_sent_by_the_next_session(provider, monkeypatch):
+    """#6915: shutdown waited 10s, then dropped whatever was still queued."""
+    import hindsight_hermes as plugin
+
+    warnings: list[str] = []
+    slow = HangingClient(hang=0.5)
+    instance, _ = provider({"prefetch_waits_for_retain": False}, client=slow, warning_callback=warnings.append)
+    for n in range(3):
+        instance.sync_turn(f"turn {n}", "reply")
+    with monkeypatch.context() as patch:
+        patch.setattr(plugin.threading.Thread, "join", lambda self, timeout=None: None)  # shutdown gives up at once
+        instance.shutdown()
+
+    assert warnings and "will send them next time" in warnings[0]
+    nxt = FlakyClient()
+    second, _ = provider({"prefetch_waits_for_retain": False}, client=nxt)
+    second.shutdown()
+    # A set: the retain in flight at exit may land in both sessions, a replay by design.
+    sent = {c[0] for c in _contents(slow.retains + nxt.retains)}
+    assert sent == {"User: turn 0", "User: turn 1", "User: turn 2"}
+
+
+def test_a_backlog_left_by_a_down_server_survives_exit(provider):
+    """The comment on #6915: an hour of turns failed while the server was down, then Hermes quit."""
+    down = FlakyClient(failures=10_000)
+    instance, _ = provider({"prefetch_waits_for_retain": False}, client=down)
+    for n in range(3):
+        instance.sync_turn(f"turn {n}", "reply")
+        instance._retain_queue.join()
+    instance.shutdown()
+    assert down.retains == []
+
+    up = FlakyClient()
+    second, _ = provider({"prefetch_waits_for_retain": False}, client=up)
+    second.shutdown()
+    assert [c[0] for c in _contents(up.retains)] == ["User: turn 0", "User: turn 1", "User: turn 2"]
+    # The resend keeps each retain's operation_id, so one the server did get is a replay.
+    assert down.attempts[0]["operation_id"] == up.retains[0]["operation_id"]
+
+
+def _spool_one(provider, hermes_env) -> list[Path]:
+    """Leave one unsent retain on disk, as a session that quit with the server down would."""
+    instance, _ = provider({"prefetch_waits_for_retain": False}, client=FlakyClient(failures=10_000))
+    instance.sync_turn("left over", "reply")
+    instance._retain_queue.join()
+    instance.shutdown()
+    return list((hermes_env / "hindsight" / "unsent-retains").glob("*.json"))
+
+
+@pytest.mark.parametrize("garbage", ["not json", "5", '[{"item": 1}]'])
+def test_an_unreadable_spool_file_is_skipped(provider, hermes_env, garbage):
+    (spooled,) = _spool_one(provider, hermes_env)
+    spooled.write_text(garbage)
+    up = FlakyClient()
+    second, _ = provider({}, client=up)
+    second.shutdown()
+
+    assert up.retains == []  # skipped, and the session still started
+
+
+def test_a_spool_file_is_sent_by_one_session_only(provider, hermes_env):
+    """The gateway starts one provider per chat: only the first to claim a file sends it."""
+    _spool_one(provider, hermes_env)
+    first, second = FlakyClient(), FlakyClient()
+    a, _ = provider({}, client=first)
+    b, _ = provider({}, client=second)
+    a.shutdown()
+    b.shutdown()
+
+    assert [c[0] for c in _contents(first.retains + second.retains)] == ["User: left over"]
+    assert not list((hermes_env / "hindsight" / "unsent-retains").iterdir())

@@ -186,7 +186,7 @@ def test_provider_sync_turn_retains_to_all_write_banks():
 
     # Drain queue
     job = provider._retain_queue.get_nowait()
-    job()
+    provider._send_retain(job)
 
     assert retained_banks == ["b1", "b2"]
     assert provider._pending_retain_ops == {("b1", "op-b1"), ("b2", "op-b2")}
@@ -257,7 +257,7 @@ def test_sync_turn_never_retains_to_recall_only_banks():
     provider._register_atexit = MagicMock()
 
     provider.sync_turn("User message", "Assistant reply", session_id="s1")
-    provider._retain_queue.get_nowait()()
+    provider._send_retain(provider._retain_queue.get_nowait())
 
     assert retained_banks == ["primary", "shared"]
 
@@ -335,7 +335,7 @@ def test_turn_retain_continues_past_a_failing_extra_bank(caplog):
 
     provider.sync_turn("User message", "Assistant reply", session_id="s1")
     with caplog.at_level(logging.WARNING):
-        provider._retain_queue.get_nowait()()
+        provider._send_retain(provider._retain_queue.get_nowait())
 
     assert written == ["primary", "broken", "shared"]
     assert "skipping bank broken" in caplog.text
@@ -347,7 +347,7 @@ def test_turn_retain_raises_when_the_primary_fails_before_touching_extra_banks()
 
     provider.sync_turn("User message", "Assistant reply", session_id="s1")
     with pytest.raises(RuntimeError, match="primary unavailable"):
-        provider._retain_queue.get_nowait()()
+        provider._send_retain(provider._retain_queue.get_nowait())
     assert written == ["primary"]
 
 
@@ -611,7 +611,7 @@ def test_builtin_memory_writes_reach_every_write_bank():
     written = _fake_retain(provider, failing=set())
 
     provider.on_memory_write("add", "memory", "Deploys go through Fly.io")
-    provider._retain_queue.get_nowait()()
+    provider._send_retain(provider._retain_queue.get_nowait())
 
     assert written == ["primary", "shared"]
 
