@@ -12,12 +12,10 @@ Version 2.0.0 of the Hindsight memory provider for [Hermes Agent](https://github
 
 <!-- truncate -->
 
-{/* Launch video: replace VIDEO_ID with the YouTube id once it is uploaded. */}
-
 <div style={{position: "relative", paddingBottom: "56.25%", height: 0, margin: "1rem 0 2rem", borderRadius: "8px", overflow: "hidden"}}>
   <iframe
     style={{position: "absolute", top: 0, left: 0, width: "100%", height: "100%"}}
-    src="https://www.youtube.com/embed/VIDEO_ID"
+    src="https://www.youtube.com/embed/6xqiECfcUUM"
     title="What's new in the Hindsight Hermes plugin 2.0.0"
     frameBorder="0"
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
