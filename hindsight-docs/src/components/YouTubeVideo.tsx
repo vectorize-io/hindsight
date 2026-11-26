@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import useBaseUrl from "@docusaurus/useBaseUrl";
 import styles from "./YouTubeVideo.module.css";
 
 /**
@@ -18,6 +19,7 @@ export default function YouTubeVideo({
   duration?: string;
 }) {
   const [playing, setPlaying] = useState(false);
+  const posterUrl = useBaseUrl(poster);
 
   return (
     <div className={styles.frame}>
@@ -36,7 +38,7 @@ export default function YouTubeVideo({
           onClick={() => setPlaying(true)}
           aria-label={`Play video: ${title}`}
         >
-          <img className={styles.fill} src={poster} alt="" loading="lazy" />
+          <img className={styles.fill} src={posterUrl} alt="" loading="lazy" />
           <span className={styles.play} aria-hidden="true">
             <svg viewBox="0 0 24 24" width="28" height="28">
               <path d="M8 5.5v13l11-6.5z" fill="currentColor" />

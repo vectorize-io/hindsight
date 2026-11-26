@@ -1,5 +1,6 @@
 import React, {type ReactNode} from 'react';
 import Link from '@docusaurus/Link';
+import {useBaseUrlUtils} from '@docusaurus/useBaseUrl';
 import clsx from 'clsx';
 import {LuArrowUpRight} from 'react-icons/lu';
 import styles from './CodingAgentsChart.module.css';
@@ -90,6 +91,7 @@ export default function CodingAgentsChart({
       rendered inside a card that is itself a link, and a nested <a> is invalid. */
   variant?: keyof typeof GEOMETRY;
 }): ReactNode {
+  const {withBaseUrl} = useBaseUrlUtils();
   const {W, H, PLOT} = GEOMETRY[variant];
   const compact = variant === 'card';
 
@@ -192,7 +194,7 @@ export default function CodingAgentsChart({
             rx={7}
           />
           <image
-            href={a.icon}
+            href={withBaseUrl(a.icon)}
             x={lx(a.to.cost) - 9}
             y={ly(a.to.fixes) - 9}
             width={18}

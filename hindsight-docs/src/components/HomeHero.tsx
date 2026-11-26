@@ -5,8 +5,8 @@ import {LuArrowRight, LuArrowUpRight, LuStar} from 'react-icons/lu';
 import MemoryConstellation from './MemoryConstellation';
 import {useGitHubStars} from './useGitHubStars';
 import styles from './HomeHero.module.css';
+import {useSignupUrl} from './useSignupUrl';
 
-const SIGNUP = 'https://ui.hindsight.vectorize.io/signup';
 const REPO = 'https://github.com/vectorize-io/hindsight';
 
 /**
@@ -36,6 +36,7 @@ const REPO = 'https://github.com/vectorize-io/hindsight';
  * A component keeps each version's include to one line.
  */
 export default function HomeHero(): ReactNode {
+  const SIGNUP = useSignupUrl();
   const stars = useGitHubStars();
   const band = useRef<HTMLDivElement>(null);
 

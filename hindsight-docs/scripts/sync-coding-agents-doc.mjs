@@ -111,12 +111,18 @@ function build() {
     // cannot do with an absolute URL). The README keeps them absolute because it also renders
     // on GitHub, where site-relative would 404.
     .replace(/https:\/\/hindsight\.vectorize\.io\/([^\s"')]+)/g, '/$1')
+    // Raw HTML attributes are not rewritten by Docusaurus the way Markdown links and images are,
+    // so a site-relative `src` would ignore the site's baseUrl when it is served under a path
+    // prefix. Resolve those through useBaseUrl, like any other JSX on the site.
+    .replace(/\bsrc="(\/[^"]*)"/g, 'src={useBaseUrl("$1")}')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-  const imports = Object.values(FIGURES)
-    .filter((f) => body.includes(f.jsx))
-    .flatMap((f) => f.imports)
-    .join('\n');
+  const imports = [
+    ...(body.includes('useBaseUrl(') ? ["import useBaseUrl from '@docusaurus/useBaseUrl';"] : []),
+    ...Object.values(FIGURES)
+      .filter((f) => body.includes(f.jsx))
+      .flatMap((f) => f.imports),
+  ].join('\n');
   return `${FRONTMATTER}\n${imports ? `${imports}\n\n` : ''}${body}\n`;
 }
 

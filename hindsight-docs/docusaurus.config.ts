@@ -12,7 +12,35 @@ const umamiWebsiteId = process.env.UMAMI_WEBSITE_ID;
 // points at the thing we want people to do, not off-site. The paper used to live
 // here and now sits in the homepage hero, which is where a visitor who wants
 // evidence is already looking.
-const ANNOUNCEMENT_BAR = 'New: <strong>Introducing Hindsight Models</strong>: memory 2.5x cheaper and 2x faster, with better answers. <a href="/blog/2026/11/03/hindsight-models">Read the post →</a>';
+// Path prefix the site is served under (see `baseUrl` below). Raw HTML strings
+// in this file are not rewritten by Docusaurus, so internal links in them are
+// built with this prefix.
+const BASE_URL = (process.env.DOCS_BASE_URL || '/').replace(/\/?$/, '/');
+
+// Where the site is published (see `url` below).
+const SITE_URL = (process.env.DOCS_SITE_URL || 'https://hindsight.vectorize.io').replace(/\/$/, '');
+const LEGACY_SITE_URL = 'https://hindsight.vectorize.io';
+// The site's own pages, as an absolute URL prefix.
+const SITE_ROOT = `${SITE_URL}${BASE_URL.replace(/\/$/, '')}`;
+// Served under a path prefix, the site is a section of the main website at
+// SITE_URL, so the header and footer link back to it. Served at the root, it
+// is its own site and the main website is the company's.
+const EMBEDDED = BASE_URL !== '/';
+const MAIN_SITE_URL = EMBEDDED ? SITE_URL : 'https://vectorize.io';
+// The hosted app: "Start free" and the sign-up buttons.
+const APP_URL = (process.env.DOCS_APP_URL || 'https://ui.hindsight.vectorize.io').replace(/\/$/, '');
+
+// Markdown links written as absolute URLs to this site point at wherever it is
+// published now, so a build for another host or prefix doesn't send readers to
+// the old one. Only link targets change; URLs in code blocks and prose stay.
+function rewriteSelfLinks(content: string): string {
+  if (SITE_ROOT === LEGACY_SITE_URL) return content;
+  return content
+    .replace(/\]\(https:\/\/hindsight\.vectorize\.io(?=[/)#?\s])/g, `](${SITE_ROOT}`)
+    .replace(/href="https:\/\/hindsight\.vectorize\.io(?=[/"#?])/g, `href="${SITE_ROOT}`);
+}
+
+const ANNOUNCEMENT_BAR = `New: <strong>Introducing Hindsight Models</strong>: memory 2.5x cheaper and 2x faster, with better answers. <a href="${BASE_URL}blog/2026/11/03/hindsight-models">Read the post →</a>`;
 
 const config: Config = {
   title: 'Hindsight',
@@ -42,10 +70,19 @@ const config: Config = {
 
   markdown: {
     mermaid: true,
+    preprocessor: ({fileContent}) => rewriteSelfLinks(fileContent),
   },
 
-  url: 'https://hindsight.vectorize.io',
-  baseUrl: '/',
+  // Where the site is published. Overridable so the same source can be built
+  // for another host or under a path prefix (e.g. DOCS_BASE_URL=/oss/); the
+  // defaults are the current site.
+  url: SITE_URL,
+  baseUrl: BASE_URL,
+
+  customFields: {
+    appUrl: APP_URL,
+    mainSiteUrl: MAIN_SITE_URL,
+  },
 
   organizationName: 'vectorize-io',
   projectName: 'hindsight',
@@ -282,6 +319,8 @@ const config: Config = {
         alt: 'Hindsight Logo',
         src: 'img/logo.png',
         style: { height: '32px' },
+        // Under a prefix the logo is the main site's, so it goes to its home.
+        ...(EMBEDDED ? {href: MAIN_SITE_URL, target: '_self'} : {}),
       },
       items: [
         {
@@ -374,6 +413,16 @@ const config: Config = {
             },
           ],
         },
+        ...(EMBEDDED
+          ? [
+              {
+                href: `${MAIN_SITE_URL}/pricing`,
+                target: '_self',
+                position: 'left' as const,
+                label: 'Pricing',
+              },
+            ]
+          : []),
         {
           href: 'https://github.com/vectorize-io/hindsight',
           position: 'right',
@@ -383,7 +432,7 @@ const config: Config = {
         // Rendered last on the right (after the color-mode toggle) by
         // src/theme/Navbar/Content — the only call to action up there.
         {
-          href: 'https://ui.hindsight.vectorize.io',
+          href: APP_URL,
           position: 'right',
           // "Sign up" names a cost; "Start free" names what you get. Same link.
           label: 'Start free',
@@ -440,7 +489,7 @@ const config: Config = {
             },
             {
               label: 'Hindsight Cloud',
-              href: 'https://ui.hindsight.vectorize.io',
+              href: APP_URL,
             },
           ],
         },
@@ -453,11 +502,12 @@ const config: Config = {
             },
             {
               label: 'Slack',
-              href: 'https://vectorize.io/slack',
+              href: `${MAIN_SITE_URL}/slack`,
             },
             {
-              label: 'Vectorize',
-              href: 'https://vectorize.io',
+              label: EMBEDDED ? 'Hindsight' : 'Vectorize',
+              href: MAIN_SITE_URL,
+              ...(EMBEDDED ? {target: '_self'} : {}),
             },
           ],
         },

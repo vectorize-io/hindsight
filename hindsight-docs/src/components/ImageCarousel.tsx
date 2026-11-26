@@ -1,4 +1,5 @@
 import React, { useState, type ReactNode } from 'react';
+import { useBaseUrlUtils } from '@docusaurus/useBaseUrl';
 
 interface ImageCarouselProps {
   images: { src: string; alt: string; caption?: string }[];
@@ -6,6 +7,7 @@ interface ImageCarouselProps {
 
 export default function ImageCarousel({ images }: ImageCarouselProps): ReactNode {
   const [current, setCurrent] = useState(0);
+  const { withBaseUrl } = useBaseUrlUtils();
 
   const prev = () => setCurrent((c) => (c - 1 + images.length) % images.length);
   const next = () => setCurrent((c) => (c + 1) % images.length);
@@ -31,7 +33,7 @@ export default function ImageCarousel({ images }: ImageCarouselProps): ReactNode
           {images.map((img, i) => (
             <div key={i} style={{ minWidth: '100%' }}>
               <img
-                src={img.src}
+                src={withBaseUrl(img.src)}
                 alt={img.alt}
                 style={{ width: '100%', display: 'block', maxHeight: '520px', objectFit: 'contain' }}
               />

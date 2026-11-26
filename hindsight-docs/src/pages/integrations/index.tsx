@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import React, {useMemo, useState} from 'react';
 import Link from '@docusaurus/Link';
-import useBaseUrl from '@docusaurus/useBaseUrl';
+import useBaseUrl, {useBaseUrlUtils} from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import {usePluginData} from '@docusaurus/useGlobalData';
 import IntegrationsBanner from '@site/src/components/IntegrationsBanner';
@@ -103,6 +103,7 @@ function IntegrationCard({
 
 export default function IntegrationsHub(): React.ReactElement {
   const [search, setSearch] = useState('');
+  const {withBaseUrl} = useBaseUrlUtils();
 
   // Which integrations have a changelog page, from the same build-time index the /changelog
   // listing uses — so a card grows a Changelog button the release after its first release,
@@ -225,7 +226,7 @@ export default function IntegrationsHub(): React.ReactElement {
               {harnesses.map((h) => (
                 <Link key={h.id} to={harnessDocLink(h)} className={styles.harnessCard}>
                   <img
-                    src={harnessIconPath(h)}
+                    src={withBaseUrl(harnessIconPath(h))}
                     alt=""
                     className={styles.compactIcon}
                     aria-hidden

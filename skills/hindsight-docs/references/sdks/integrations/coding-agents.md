@@ -2,6 +2,7 @@
 {/* GENERATED from hindsight-integrations/coding-agents/README.md — edit that file, then run
     node hindsight-docs/scripts/sync-coding-agents-doc.mjs */}
 
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import CodingAgentsChart from '@site/src/components/CodingAgentsChart';
 
 Long-term project memory for **coding agents**, backed by [Hindsight](https://vectorize.io/hindsight).

@@ -2,11 +2,13 @@ import React, {type ReactNode} from 'react';
 import Layout from '@theme/Layout';
 import type {Props} from '@theme/BlogLayout';
 import styles from './styles.module.css';
+import {useSignupUrl} from '@site/src/components/useSignupUrl';
 
 // Blog posts get a sticky contents list + Cloud CTA on the left and a
 // "Back to top" button on the right. List pages (no toc) keep the centred column.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export default function BlogLayout({sidebar: _sidebar, toc, children, ...layoutProps}: Props): ReactNode {
+  const signupUrl = useSignupUrl();
   if (!toc) {
     return (
       <Layout {...layoutProps}>
@@ -29,7 +31,7 @@ export default function BlogLayout({sidebar: _sidebar, toc, children, ...layoutP
               <div className={styles.cta}>
                 <div className={styles.ctaTitle}>Try Hindsight Cloud</div>
                 <p>Long-term memory for your agents, fully managed. Sign up with GitHub and get $5 of free credit.</p>
-                <a className="button button--primary button--sm" href="https://ui.hindsight.vectorize.io/signup" target="_blank" rel="noopener noreferrer">
+                <a className="button button--primary button--sm" href={signupUrl} target="_blank" rel="noopener noreferrer">
                   Start free →
                 </a>
               </div>
