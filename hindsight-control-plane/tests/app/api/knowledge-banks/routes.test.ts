@@ -18,6 +18,13 @@ import { GET as getDocuments } from "@/app/api/knowledge-banks/[bankId]/document
 import { GET as getFile } from "@/app/api/knowledge-banks/[bankId]/documents/[documentId]/file/route";
 import { GET as getMedia } from "@/app/api/knowledge-banks/[bankId]/documents/[documentId]/passages/[index]/media/route";
 import { POST as ingestFiles } from "@/app/api/knowledge-banks/[bankId]/files/ingest/route";
+import { GET as listOperations } from "@/app/api/knowledge-banks/[bankId]/operations/route";
+import {
+  DELETE as cancelOperation,
+  GET as getOperation,
+} from "@/app/api/knowledge-banks/[bankId]/operations/[operationId]/route";
+import { POST as retryOperation } from "@/app/api/knowledge-banks/[bankId]/operations/[operationId]/retry/route";
+import { DELETE as deleteOperation } from "@/app/api/knowledge-banks/[bankId]/operations/[operationId]/delete/route";
 
 function req(url: string, init?: RequestInit): NextRequest {
   const request = new Request(url, init) as NextRequest & { nextUrl: URL };
@@ -47,6 +54,30 @@ describe("/api/knowledge-banks routes", () => {
       "http://dataplane/v1/default/knowledge-banks/my%2Fbank/documents?limit=25&status=ready"
     );
     expect(await res.json()).toEqual({ documents: [], total: 0 });
+  });
+
+  it("proxies every operations call to the knowledge-bank endpoint, not the memory-bank one", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("{}", { headers: { "content-type": "application/json" } })
+    );
+    const op = ctx({ bankId: "kb", operationId: "op1" });
+    const base = "http://dataplane/v1/default/knowledge-banks/kb/operations";
+    await listOperations(
+      req("http://cp/x?limit=10&exclude_parents=true&status=failed"),
+      ctx({ bankId: "kb" })
+    );
+    await getOperation(req("http://cp/x?include_payload=true"), op);
+    await cancelOperation(req("http://cp/x", { method: "DELETE" }), op);
+    await retryOperation(req("http://cp/x", { method: "POST" }), op);
+    await deleteOperation(req("http://cp/x", { method: "DELETE" }), op);
+    const sent = fetchSpy.mock.calls.map(([r]) => `${(r as Request).method} ${(r as Request).url}`);
+    expect(sent).toEqual([
+      `GET ${base}?status=failed&limit=10&exclude_parents=true`,
+      `GET ${base}/op1?include_payload=true`,
+      `DELETE ${base}/op1`,
+      `POST ${base}/op1/retry`,
+      `DELETE ${base}/op1/delete`,
+    ]);
   });
 
   it("passes an upstream error's reason and status through", async () => {
