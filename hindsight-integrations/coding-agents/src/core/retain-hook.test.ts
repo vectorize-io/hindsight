@@ -7,8 +7,9 @@ import { deriveBankId } from "./bank";
 import type { TransportTurn } from "./chat";
 import { type RawConfig, resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
-import { buildRetain, runRetainHook } from "./retain-hook";
+import { buildRetain, replayOrphanedSessions, runRetainHook } from "./retain-hook";
 import { fingerprintTurns, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
+import { readClaudeTranscript } from "./transcript";
 import { readCodexTranscript } from "./transcript-codex";
 import { dcodeAssistantText } from "./transcript-dcode";
 import { memoryUsageCursorStore } from "./usage";
@@ -38,12 +39,19 @@ vi.mock("./config", async (importOriginal) => {
 let root: string;
 let file: string;
 
+const realTmp = process.env.TMPDIR;
+
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "hs-retain-hook-"));
   file = join(root, "session.jsonl");
+  // Every Stop now also replays this harness's failed sessions from the temp dir (#6097): point it
+  // at this test's own folder so a developer's real cursors are never read, or written to.
+  process.env.TMPDIR = root;
 });
 
 afterEach(() => {
+  process.env.TMPDIR = realTmp;
+  if (realTmp === undefined) delete process.env.TMPDIR;
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -764,6 +772,119 @@ describe("buildRetain — incremental write-back across Stop hooks", () => {
  * real `runRetainHook` — stdin event in, config resolved through the real loader — because the bug
  * was precisely a missing wire between the two, which a test of either half alone cannot see.
  */
+describe("replayOrphanedSessions (#6097)", () => {
+  const transcript = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      JSON.stringify({
+        type: "user",
+        timestamp: `2026-01-01T00:00:0${i}Z`,
+        message: { role: "user", content: `turn ${i}` },
+      })
+    ).join("\n");
+  const stubClient = (retain = vi.fn().mockResolvedValue(undefined)) => ({
+    retain,
+    bank: "coding-agent::repo",
+    supportsAppendRetain: async () => true,
+  });
+  const stamp = { tags: ["env:work"], metadata: { repo: "acme" } };
+
+  /** A session whose last Stop failed: its cursor is left dirty, pointing at its transcript. */
+  const failedSession = async (cursors: RetainCursorStore, sessionId = "ended") => {
+    writeFileSync(file, transcript(2));
+    const retain = vi.fn().mockRejectedValue(new Error("POST /memories -> 400 bad"));
+    await buildRetain({
+      harness: "codex",
+      sessionId,
+      transcriptPath: file,
+      client: stubClient(retain) as unknown as HindsightClient,
+      cursors,
+      stamp,
+      usageCursors: memoryUsageCursorStore(),
+    });
+    expect(cursors.read(sessionId)?.dirty).toBe(true);
+  };
+
+  const replay = (
+    cursors: RetainCursorStore,
+    client: ReturnType<typeof stubClient>,
+    sessionIds = ["ended"]
+  ) =>
+    replayOrphanedSessions({
+      harness: "codex",
+      currentSessionId: "new",
+      cfg: resolveConfig({ apiToken: "test-key" }),
+      makeClient: () => client as unknown as HindsightClient,
+      deadline: Date.now() + 60_000,
+      cursors,
+      orphans: sessionIds.map((sessionId) => ({ sessionId, cursor: cursors.read(sessionId)! })),
+    });
+
+  it("writes the ended session's turns from a later session's Stop, with its own stamp", async () => {
+    const cursors = memoryCursorStore();
+    await failedSession(cursors);
+    const client = stubClient();
+
+    await replay(cursors, client);
+
+    expect(client.retain).toHaveBeenCalledTimes(1);
+    const [content, , docId, tags] = client.retain.mock.calls[0];
+    expect(docId).toBe("conversation:ended");
+    expect((content as string).split("\n")).toHaveLength(3); // REF-ID + both turns
+    expect(tags).toContain("env:work");
+    expect(cursors.read("ended")?.dirty).toBeFalsy(); // owed nothing any more
+  });
+
+  it("skips the session this Stop already wrote", async () => {
+    const cursors = memoryCursorStore();
+    await failedSession(cursors, "new");
+    const client = stubClient();
+    await replay(cursors, client, ["new"]);
+    expect(client.retain).not.toHaveBeenCalled();
+  });
+
+  it("skips a session whose transcript is gone", async () => {
+    const cursors = memoryCursorStore();
+    await failedSession(cursors);
+    rmSync(file);
+    const client = stubClient();
+    await replay(cursors, client);
+    expect(client.retain).not.toHaveBeenCalled();
+  });
+
+  it("skips a transcript its reader cannot parse, and replays the rest", async () => {
+    const cursors = memoryCursorStore();
+    await failedSession(cursors, "a");
+    await failedSession(cursors, "b");
+    const client = stubClient();
+    let reads = 0;
+    await replayOrphanedSessions({
+      harness: "codex",
+      currentSessionId: "new",
+      cfg: resolveConfig({ apiToken: "test-key" }),
+      makeClient: () => client as unknown as HindsightClient,
+      readTranscript: (path) => {
+        if (reads++ === 0) throw new Error("damaged transcript");
+        return readClaudeTranscript(path);
+      },
+      deadline: Date.now() + 60_000,
+      cursors,
+      orphans: ["a", "b"].map((sessionId) => ({ sessionId, cursor: cursors.read(sessionId)! })),
+    });
+    expect(client.retain.mock.calls.map((c) => c[2])).toEqual(["conversation:b"]);
+    expect(cursors.read("a")?.dirty).toBe(true); // still owed
+  });
+
+  it("stops at the first failure and leaves the session owed for the next Stop", async () => {
+    const cursors = memoryCursorStore();
+    await failedSession(cursors, "a");
+    await failedSession(cursors, "b");
+    const client = stubClient(vi.fn().mockRejectedValue(new Error("POST /memories -> 400 bad")));
+    await replay(cursors, client, ["a", "b"]);
+    expect(client.retain).toHaveBeenCalledTimes(1);
+    expect(cursors.read("a")?.dirty).toBe(true);
+  });
+});
+
 describe("runRetainHook honors retainSessions", () => {
   const event = () => ({
     // A fresh session id per test: `sessionRootDir` caches a session's starting directory in /tmp

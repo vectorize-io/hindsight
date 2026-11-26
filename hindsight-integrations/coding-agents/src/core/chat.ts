@@ -175,11 +175,28 @@ const RETAIN_RETRY_ATTEMPTS = 2;
 
 /** What a retry must still leave room for: `req` aborts a request at 15s. Waiting past the point
  *  where the retry itself could not finish buys nothing. */
-const REQUEST_BUDGET_MS = 15_000;
+export const REQUEST_BUDGET_MS = 15_000;
+
+/** Wait before retrying a failure that is not a rate limit, which carries no Retry-After. Long
+ *  enough for a local daemon that is restarting to start listening again. */
+const TRANSIENT_RETRY_MS = 2000;
+
+/** A "not now" failure worth retrying: the server was down (refused, reset), too slow (our 15s
+ *  abort) or broken for the moment (5xx). A 4xx is the request's own fault and will not change. */
+function isTransientError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  if (e.name === "TimeoutError" || e.name === "AbortError") return true;
+  // fetch() reports a network failure as `TypeError: fetch failed`, the reason in `cause.code`.
+  const code = (e.cause as { code?: string } | undefined)?.code ?? "";
+  if (/^(ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|UND_ERR_)/.test(code)) return true;
+  // HindsightClient.req throws `<METHOD> <url> -> <status> <body>` for a non-OK answer.
+  return / -> 5\d\d /.test(e.message);
+}
 
 /**
- * Submit a write-back, retrying while the API is rate-limiting us AND our write is still the
- * newest one for this session.
+ * Submit a write-back, retrying while the API is rate-limiting us or is briefly unreachable (see
+ * isTransientError) AND our write is still the newest one for this session. Retrying only a rate
+ * limit left a daemon restart or one slow answer to lose the session's last turns (#6097).
  *
  * Retrying is safe rather than duplicative because the payload carries a deterministic
  * `operation_id`: an identical resubmission is collapsed into the original operation server-side.
@@ -200,11 +217,12 @@ async function submitWithRetry(
       return await send();
     } catch (e) {
       const limited = e instanceof RateLimitedError;
-      if (!limited || attempt >= RETAIN_RETRY_ATTEMPTS || !isStillNewest()) throw e;
+      if (!(limited || isTransientError(e))) throw e;
+      if (attempt >= RETAIN_RETRY_ATTEMPTS || !isStillNewest()) throw e;
       // Either honour Retry-After in full or do not retry at all: waiting less than the server
       // asked would just earn another 429. Whether it fits is the CALLER's clock, not a constant —
       // a hook process is killed by its host at a known deadline, a long-lived runtime is not.
-      const wait = e.retryAfterMs || 1000;
+      const wait = limited ? e.retryAfterMs || 1000 : TRANSIENT_RETRY_MS * (attempt + 1);
       if (Date.now() + wait + REQUEST_BUDGET_MS > retryUntil) throw e;
       await sleep(wait);
     }
@@ -419,6 +437,9 @@ async function writeSession(
     ...(paths ? { paths } : {}),
     ...(segments ? { segments } : {}),
     ...(appendSupported ? { appendSupported: true } : {}),
+    // Kept so a write-back replayed from ANOTHER session (retain-hook's replayOrphanedSessions)
+    // stamps the document as this one did, instead of a replace that drops its configured tags.
+    ...(stamp ? { stamp } : {}),
   };
   /** `next` plus the ops to check on the next write-back, with `id` newly accepted. */
   const accepted = (id?: string) => {

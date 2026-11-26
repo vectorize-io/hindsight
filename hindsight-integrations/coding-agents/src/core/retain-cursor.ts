@@ -42,6 +42,7 @@
  */
 import { createHash } from "node:crypto";
 import type { TransportTurn } from "./chat";
+import type { RetainStamp } from "./retain-stamp";
 
 /** One append that was built and submitted but never confirmed. */
 export interface PendingAppend {
@@ -132,6 +133,9 @@ export interface RetainCursor {
    *  already moved past those turns — so the next write-back checks these first, and one that
    *  failed makes it replace, re-sending the turns it carried (#5251). */
   ops?: string[];
+  /** The tags, metadata and context this session's write-backs carry, so a replay started by a
+   *  later session of the same harness (#6097) writes the same document this session would. */
+  stamp?: RetainStamp;
 }
 
 export interface CursorSegment {
