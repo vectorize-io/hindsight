@@ -70,6 +70,32 @@ async def test_the_page_appears_in_the_tree_under_the_name_it_was_given(client, 
     assert page.description == SOURCE_QUERY
 
 
+async def test_moving_a_page_onto_a_taken_name_is_refused_and_changes_nothing(client, bank_id, bank_with_page, settled):
+    """A folder never holds two pages with one name, whatever the case. A move
+    that would break that is the caller's conflict, a 409 like a create gets,
+    not a 500 a client retries forever (#6920), and the rename sent with it does
+    not land either."""
+    folder = await client.pages.create_page_folder(bank_id, {"name": "Places"})
+    twin = await client.pages.create_page(
+        bank_id, {"name": PAGE_NAME.lower(), "source_query": SOURCE_QUERY, "parent_id": folder.id}
+    )
+    await settled(bank_id)
+
+    with pytest.raises(ApiException) as exc:
+        await client.pages.update_page_node(
+            bank_id, bank_with_page.page_id, {"name": PAGE_NAME.upper(), "parent_id": folder.id}
+        )
+    assert exc.value.status == 409
+    assert f"A page named '{PAGE_NAME.upper()}' already exists in this folder" in str(exc.value.body)
+
+    tree = await client.pages.get_page_tree(bank_id)
+    roots = {node.id: node for node in tree.roots}
+    assert set(roots) == {bank_with_page.page_id, folder.id}
+    assert roots[bank_with_page.page_id].name == PAGE_NAME
+    assert roots[bank_with_page.page_id].parent_id is None
+    assert [(child.id, child.name) for child in roots[folder.id].children or []] == [(twin.page_id, PAGE_NAME.lower())]
+
+
 async def test_a_page_refreshes_over_observations_by_delta(client, bank_id, bank_with_page):
     """The defaults that distinguish a page from a bare mental model.
 

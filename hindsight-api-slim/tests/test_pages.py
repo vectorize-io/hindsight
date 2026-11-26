@@ -1108,6 +1108,34 @@ class TestMoveRenameDelete:
         assert resp.status_code == 200, resp.text
         assert resp.json()["parent_id"] == ids.policies
 
+    async def test_move_onto_a_taken_page_name_is_a_conflict(self, api_client, kb_bank, memory, request_context):
+        """Moving a page into a folder that already holds that name is a 409, as
+        creating it there is, not a 500 a client retries forever (#6920). The
+        rename sent with it rolls back too."""
+        bank_id, ids = kb_bank
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/pages/nodes/{ids.loose}",
+            json={"name": "ORDERS", "parent_id": ids.runbooks},
+        )
+        assert resp.status_code == 409, resp.text
+        assert "ORDERS" in resp.json()["detail"]
+        node = next(
+            n for n in await memory.list_page_nodes(bank_id, request_context=request_context) if n["id"] == ids.loose
+        )
+        assert node["name"] == "Loose"
+        assert node["parent_id"] is None
+
+    async def test_rename_onto_a_taken_page_name_is_a_conflict(self, api_client, kb_bank, memory, request_context):
+        bank_id, ids = kb_bank
+        await memory.create_page(
+            bank_id, "Refunds", "Refund policy?", "", parent_id=ids.policies, request_context=request_context
+        )
+        resp = await api_client.patch(
+            f"/v1/default/banks/{_enc(bank_id)}/pages/nodes/{ids.billing}",
+            json={"name": "refunds"},
+        )
+        assert resp.status_code == 409, resp.text
+
     async def test_move_cycle_rejected(self, api_client, kb_bank):
         bank_id, ids = kb_bank
         # moving Runbooks under its own descendant Sub must fail

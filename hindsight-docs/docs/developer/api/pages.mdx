@@ -367,7 +367,7 @@ One `PATCH` renames a node, moves it, and/or updates a page's options. Each fiel
 | `max_tokens` | int | Pages | New content budget |
 | `trigger` | object | Pages | Refresh settings to change, applied as a patch. `{"tags_match": "all"}` keeps the page's tags but stops excluding untagged memories. |
 
-Sending an empty body returns `400`; an unknown node returns `404`.
+Sending an empty body returns `400`; an unknown node returns `404`. Renaming or moving a page so that its folder would hold two pages with the same name (case-insensitively) returns `409`, and nothing in the patch is applied. (Enforced on PostgreSQL only.)
 
 ---
 
