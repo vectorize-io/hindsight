@@ -152,6 +152,8 @@ describe("startCodebaseSurvey", () => {
     const argv = launched(spawn)[1];
     expect(argv[argv.indexOf("--model") + 1]).toBe("haiku");
     expect(argv[argv.indexOf("--max-budget-usd") + 1]).toBe("2");
+    const mcp = JSON.parse(argv[argv.indexOf("--mcp-config") + 1]);
+    expect(mcp.mcpServers.hindsight.env.HINDSIGHT_DISABLE_HOOKS).toBe("1"); // keeps write tools
   });
 
   // ── codex recipe (read-only sandbox + inline -c MCP) ───────────────────────────────────────────
@@ -173,6 +175,8 @@ describe("startCodebaseSurvey", () => {
     // Code's bank even though Codex ran the survey (#3603).
     expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`);
     expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD="/repo"`);
+    // Codex starts MCP servers without its own environment; this keeps the write tools (#6487).
+    expect(argv).toContain(`mcp_servers.hindsight.env.HINDSIGHT_DISABLE_HOOKS="1"`);
     // No Claude-only flags leak into the codex recipe.
     expect(argv).not.toContain("--model");
     expect(argv).not.toContain("--disallowedTools");

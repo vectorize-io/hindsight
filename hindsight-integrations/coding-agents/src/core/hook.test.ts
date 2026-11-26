@@ -62,6 +62,78 @@ function makeClient(
 }
 
 describe("buildHookOutput", () => {
+  describe("autoInjectEveryTurns (#5713)", () => {
+    const turn = (
+      cfg: ReturnType<typeof resolveConfig>,
+      client: ReturnType<typeof makeClient>,
+      prompt: string
+    ) => buildHookOutput({ harness: "claude-code", prompt, cfg, client, cacheFile });
+
+    it("recalls again every N turns with the current prompt, silently", async () => {
+      const cfg = resolveConfig({ autoInject: "recall", autoInjectEveryTurns: 2 });
+      const client = makeClient({ recallObservations: vi.fn(async () => ["An observation."]) });
+      const t1 = await turn(cfg, client, "first topic");
+      const t2 = await turn(cfg, client, "second topic");
+      const t3 = await turn(cfg, client, "third topic");
+      expect(client.recallObservations).toHaveBeenCalledTimes(2);
+      expect(client.recallObservations).toHaveBeenLastCalledWith("third topic", expect.anything());
+      expect(t2.context ?? "").not.toContain("<hindsight_memory>");
+      expect(t3.context).toContain("<hindsight_memory>");
+      // The first injection is announced; a refresh is not.
+      expect(t1.notice).toContain("goal");
+      expect(t3.notice).toBeUndefined();
+    });
+
+    it("default recalls once per session", async () => {
+      const cfg = resolveConfig({ autoInject: "recall" });
+      const client = makeClient({ recallObservations: vi.fn(async () => ["An observation."]) });
+      for (const p of ["a", "b", "c"]) await turn(cfg, client, p);
+      expect(client.recallObservations).toHaveBeenCalledTimes(1);
+    });
+
+    it("reflect ignores it", async () => {
+      const cfg = resolveConfig({ autoInject: "reflect", autoInjectEveryTurns: 1 });
+      const client = makeClient();
+      for (const p of ["a", "b", "c"]) await turn(cfg, client, p);
+      expect(client.reflect).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("notice is plain text unless the host paints color (#6502)", async () => {
+    const plain = await buildHookOutput({
+      harness: "dcode",
+      prompt: UNRELATED_PROMPT,
+      cfg: resolveConfig({}),
+      client: makeClient(),
+      cacheFile,
+    });
+    expect(plain.notice).toMatch(/^Hindsight · goal/);
+    expect(plain.notice).not.toContain("\x1b");
+    rmSync(cacheFile, { force: true });
+    const painted = await buildHookOutput({
+      harness: "claude-code",
+      prompt: UNRELATED_PROMPT,
+      cfg: resolveConfig({}),
+      client: makeClient(),
+      cacheFile,
+      color: true,
+    });
+    expect(painted.notice).toContain("\x1b[38;2;");
+  });
+
+  it("writeTools false: the memory block does not ask for a correction doc (#6487)", async () => {
+    const out = await buildHookOutput({
+      harness: "claude-code",
+      prompt: UNRELATED_PROMPT,
+      cfg: resolveConfig({ writeTools: false }),
+      client: makeClient(),
+      cacheFile,
+    });
+    expect(out.context).toContain("REFLECT_ANSWER");
+    expect(out.context).not.toContain("hindsight_ingest_document");
+    expect(out.context).not.toContain("hindsight_capture_initiative");
+  });
+
   it("turn 1: injects the reflect answer wrapped in the system-injection preamble", async () => {
     const cfg = resolveConfig({});
     const client = makeClient();
@@ -667,16 +739,8 @@ describe("buildHookOutput", () => {
     });
     expect(client.reflect).not.toHaveBeenCalled();
     expect(out.context ?? "").not.toContain("<hindsight_memory>");
-    // Tool-only mode's pull trigger: the roster refresh must carry the pages-first rule.
-    const cfg2 = resolveConfig({ autoReflect: false, pageRefreshEveryTurns: 1 });
-    const out2 = await buildHookOutput({
-      harness: "claude-code",
-      prompt: "next",
-      cfg: cfg2,
-      client,
-      cacheFile,
-    });
-    expect(out2.context ?? "").toContain("NEW task or goal");
+    // Tool-only mode's pull trigger: the session's full guide carries the pages-first rule.
+    expect(out.context ?? "").toContain("NEW task or goal");
   });
 
   it("fetches the page ROSTER (ids + titles, no content) on the first turn; nothing injected from it", async () => {
@@ -763,6 +827,14 @@ describe("buildHookOutput", () => {
     expect(t2.context).toContain("deliberately NOT listed here");
     // reflect block is NOT re-injected on cadence turns (injected once, on the reflect turn)
     expect(t2.context).not.toContain("REFLECT_ANSWER");
+    // turn 4: a later refresh is the one-line reminder, not the guide again (#6597)
+    const turn = () =>
+      buildHookOutput({ harness: "claude-code", prompt: UNRELATED_PROMPT, cfg, client, cacheFile });
+    await turn();
+    const t4 = await turn();
+    expect(t4.context).toContain("<hindsight_page_refresh>");
+    expect(t4.context).toContain("search them (hindsight_search_pages)");
+    expect(t4.context).not.toContain("CREDITING IS NOT OPTIONAL");
   });
 
   it("listPages rejection: no throw, reflect block still returned, turn still counted", async () => {

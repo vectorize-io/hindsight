@@ -356,3 +356,13 @@ describe("HOOK_HARNESSES lifecycle contract", () => {
     }
   });
 });
+
+describe("color (#6502)", () => {
+  it("only Claude Code, which paints color codes, gets them", () => {
+    for (const [name, spec] of Object.entries(HOOK_HARNESSES)) {
+      const want = name === "claude-code";
+      expect(spec.prompt.color === true, `${name} prompt`).toBe(want);
+      expect(spec.sessionStart.color === true, `${name} sessionStart`).toBe(want);
+    }
+  });
+});

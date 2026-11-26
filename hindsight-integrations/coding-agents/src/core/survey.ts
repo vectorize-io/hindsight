@@ -244,7 +244,14 @@ function buildSurveyPlan(
             // ingests are its writes. mcp-server.js REQUIRES it (it used to default to
             // "claude-code", which is how the codex recipe below silently stamped its findings
             // harness:claude-code and wrote them to Claude Code's bank — #3603).
-            env: { HINDSIGHT_MCP_PROJECT_CWD: repoDir, HINDSIGHT_MCP_HARNESS: "claude-code" },
+            // HINDSIGHT_DISABLE_HOOKS is set here, not only on the CLI process: it is what keeps the
+            // write tools registered under `writeTools: false` (page-tools.ts), and a host may start
+            // MCP servers without its own environment (Codex does).
+            env: {
+              HINDSIGHT_MCP_PROJECT_CWD: repoDir,
+              HINDSIGHT_MCP_HARNESS: "claude-code",
+              HINDSIGHT_DISABLE_HOOKS: "1",
+            },
           },
         },
       });
@@ -291,6 +298,8 @@ function buildSurveyPlan(
           `mcp_servers.hindsight.env.HINDSIGHT_MCP_PROJECT_CWD=${tomlValue(repoDir)}`,
           "-c",
           `mcp_servers.hindsight.env.HINDSIGHT_MCP_HARNESS="codex"`,
+          "-c", // see the claude recipe: keeps the write tools under `writeTools: false`
+          `mcp_servers.hindsight.env.HINDSIGHT_DISABLE_HOOKS="1"`,
           SURVEY_PROMPT,
         ],
         env,
