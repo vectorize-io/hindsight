@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +20,13 @@ import { GET as getDocuments } from "@/app/api/knowledge-banks/[bankId]/document
 import { GET as getFile } from "@/app/api/knowledge-banks/[bankId]/documents/[documentId]/file/route";
 import { GET as getMedia } from "@/app/api/knowledge-banks/[bankId]/documents/[documentId]/passages/[index]/media/route";
 import { POST as ingestFiles } from "@/app/api/knowledge-banks/[bankId]/files/ingest/route";
+import { GET as listOperations } from "@/app/api/knowledge-banks/[bankId]/operations/route";
+import {
+  DELETE as cancelOperation,
+  GET as getOperation,
+} from "@/app/api/knowledge-banks/[bankId]/operations/[operationId]/route";
+import { POST as retryOperation } from "@/app/api/knowledge-banks/[bankId]/operations/[operationId]/retry/route";
+import { DELETE as deleteOperation } from "@/app/api/knowledge-banks/[bankId]/operations/[operationId]/delete/route";
 
 function req(url: string, init?: RequestInit): NextRequest {
   const request = new Request(url, init) as NextRequest & { nextUrl: URL };
@@ -47,6 +56,53 @@ describe("/api/knowledge-banks routes", () => {
       "http://dataplane/v1/default/knowledge-banks/my%2Fbank/documents?limit=25&status=ready"
     );
     expect(await res.json()).toEqual({ documents: [], total: 0 });
+  });
+
+  it("proxies every operations call to the knowledge-bank endpoint, not the memory-bank one", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async () => new Response("{}", { headers: { "content-type": "application/json" } })
+    );
+    const op = ctx({ bankId: "kb", operationId: "op1" });
+    const base = "http://dataplane/v1/default/knowledge-banks/kb/operations";
+    await listOperations(
+      req("http://cp/x?limit=10&exclude_parents=true&status=failed"),
+      ctx({ bankId: "kb" })
+    );
+    await getOperation(req("http://cp/x?include_payload=true"), op);
+    await cancelOperation(req("http://cp/x", { method: "DELETE" }), op);
+    await retryOperation(req("http://cp/x", { method: "POST" }), op);
+    await deleteOperation(req("http://cp/x", { method: "DELETE" }), op);
+    const sent = fetchSpy.mock.calls.map(([r]) => `${(r as Request).method} ${(r as Request).url}`);
+    expect(sent).toEqual([
+      `GET ${base}?status=failed&limit=10&exclude_parents=true`,
+      `GET ${base}/op1?include_payload=true`,
+      `DELETE ${base}/op1`,
+      `POST ${base}/op1/retry`,
+      `DELETE ${base}/op1/delete`,
+    ]);
+  });
+
+  it("has a route behind every knowledge-bank call the UI makes", () => {
+    // #6923: api.ts called /operations for a release with no route behind it, so the UI got a
+    // 404 it swallowed. Every knowledgeApi(...) call must resolve to a route.ts: a quoted
+    // segment is a folder of that name, a variable is a [param] folder.
+    const root = join(__dirname, "../../../../src/app/api/knowledge-banks");
+    const hasRoute = (dir: string, args: string[]): boolean => {
+      if (args.length === 0) return existsSync(join(dir, "route.ts"));
+      const [arg, ...rest] = args;
+      const literal = /^"(.*)"$/.exec(arg)?.[1];
+      const dirs = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory());
+      return dirs
+        .filter((d) => (literal ? d.name === literal : d.name.startsWith("[")))
+        .some((d) => hasRoute(join(dir, d.name), rest));
+    };
+    const api = readFileSync(join(__dirname, "../../../../src/lib/api.ts"), "utf8");
+    const calls = [...api.matchAll(/knowledgeApi\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(calls.length).toBeGreaterThan(10);
+    const missing = calls.filter(
+      (c) => !hasRoute(root, c ? c.split(",").map((a) => a.trim()) : [])
+    );
+    expect(missing).toEqual([]);
   });
 
   it("passes an upstream error's reason and status through", async () => {
