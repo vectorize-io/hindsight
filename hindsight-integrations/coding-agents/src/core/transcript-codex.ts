@@ -193,31 +193,40 @@ function toolItemAction(item: NonNullable<Payload["item"]>): string | undefined 
  *  Drops developer/system + synthetic-startup + reasoning + injected memory + empty turns.
  *  Never throws on bad lines. */
 export function readCodexTranscript(path: string): TransportTurn[] {
-  const lines: RolloutLine[] = [];
+  // One pass, keeping only the turns: holding every parsed record until the end kept all the tool
+  // output we drop anyway, and a 2GB rollout ran the Stop hook out of heap (#6556). Two kinds of turn
+  // depend on what the REST of the rollout holds, so they are kept tagged and settled at the end.
+  type Pending = TransportTurn & { unless?: "userEvents" | "actionEvents" };
+  const turns: Pending[] = [];
+  let userFromEvents = false;
+  let actionsFromEvents = false;
+  const push = (
+    role: string,
+    raw: string,
+    stamp: { timestamp?: string } = {},
+    unless?: Pending["unless"]
+  ) => {
+    const text = stripInjectedMemory(raw).trim();
+    if (text) turns.push({ role, content: text, ...stamp, ...(unless ? { unless } : {}) });
+  };
   for (const rawLine of readJsonl(path)) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
+    let line: RolloutLine;
     try {
       const parsed: unknown = JSON.parse(trimmed);
-      if (typeof parsed === "object" && parsed !== null) lines.push(parsed as RolloutLine);
+      if (typeof parsed !== "object" || parsed === null) continue;
+      line = parsed as RolloutLine;
     } catch {
       continue;
     }
-  }
-  const userFromEvents = lines.some(isUserMessageEvent);
-  const actionsFromEvents = lines.some(isToolItemEvent);
-
-  const turns: TransportTurn[] = [];
-  const push = (role: string, raw: string, stamp: { timestamp?: string } = {}) => {
-    const text = stripInjectedMemory(raw).trim();
-    if (text) turns.push({ role, content: text, ...stamp });
-  };
-  for (const line of lines) {
     if (isUserMessageEvent(line)) {
+      userFromEvents = true;
       push("user", contentText(line.payload?.item?.content), stampOf(line));
       continue;
     }
     if (isToolItemEvent(line)) {
+      actionsFromEvents = true;
       const action = toolItemAction(line.payload?.item ?? {});
       if (action) turns.push({ role: "action", content: action, ...stampOf(line) });
       continue;
@@ -239,15 +248,13 @@ export function readCodexTranscript(path: string): TransportTurn[] {
         )
           continue;
         push("assistant", contentText(p.content), stampOf(line));
-      } else if (p.role === "user" && !userFromEvents) {
-        push("user", fallbackUserText(p), stampOf(line));
+      } else if (p.role === "user") {
+        push("user", fallbackUserText(p), stampOf(line), "userEvents");
       }
     } else if (
       (p.type === "function_call" || p.type === "custom_tool_call") &&
       typeof p.name === "string"
     ) {
-      // Already covered by its tool items.
-      if (actionsFromEvents && p.type === "custom_tool_call" && p.name === "exec") continue;
       // Codex CLI/Desktop emits both legacy function_call and current custom_tool_call records.
       // Keep one compact action representation and never retain raw arguments.
       const rawInput = p.type === "function_call" ? p.arguments : p.input;
@@ -257,10 +264,24 @@ export function readCodexTranscript(path: string): TransportTurn[] {
       } catch {
         input = undefined;
       }
-      turns.push({ role: "action", content: actionLine(p.name, input), ...stampOf(line) });
+      // A code-mode `exec` wrapper is already covered by its tool items, when the rollout has them.
+      const unless =
+        p.type === "custom_tool_call" && p.name === "exec" ? "actionEvents" : undefined;
+      turns.push({
+        role: "action",
+        content: actionLine(p.name, input),
+        ...stampOf(line),
+        ...(unless ? { unless } : {}),
+      });
     }
-    // reasoning / other payloads: dropped.
+    // reasoning / function_call_output / other payloads: dropped.
   }
 
-  return turns;
+  return turns
+    .filter(
+      (t) =>
+        !(t.unless === "userEvents" && userFromEvents) &&
+        !(t.unless === "actionEvents" && actionsFromEvents)
+    )
+    .map(({ unless: _unless, ...turn }) => turn);
 }

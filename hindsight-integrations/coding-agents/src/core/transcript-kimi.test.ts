@@ -504,6 +504,44 @@ describe("kimiSessionDir", () => {
     expect(kimiSessionDir(`session_${SESSION}`, root)).toBe(dir);
   });
 
+  it("takes the directory from session_index.jsonl first, the last entry for the id winning", () => {
+    // Outside sessions/, so a workspace scan could never find it: only the index can (#6457).
+    const indexed = join(root, "elsewhere", `session_${SESSION}`);
+    const older = join(root, "older", `session_${SESSION}`);
+    mkdirSync(join(indexed, "agents", "main"), { recursive: true });
+    mkdirSync(join(older, "agents", "main"), { recursive: true });
+    writeFileSync(
+      join(root, "session_index.jsonl"),
+      [
+        { sessionId: `session_${SESSION}`, sessionDir: older },
+        "not json",
+        { sessionId: "session_other", sessionDir: join(root, "nope") },
+        { sessionId: `session_${SESSION}`, sessionDir: indexed },
+      ]
+        .map((e) => (typeof e === "string" ? e : JSON.stringify(e)))
+        .join("\n")
+    );
+    expect(kimiSessionDir(SESSION, root)).toBe(indexed);
+  });
+
+  it("falls back to the workspace scan when the index entry is deleted or stale", () => {
+    const dir = join(root, "sessions", "wd_example-project_4b1c9e07a2f3", `session_${SESSION}`);
+    mkdirSync(join(dir, "agents", "main"), { recursive: true });
+    const index = join(root, "session_index.jsonl");
+    writeFileSync(
+      index,
+      `${JSON.stringify({ sessionId: `session_${SESSION}`, sessionDir: dir })}\n` +
+        `${JSON.stringify({ sessionId: `session_${SESSION}`, deleted: true })}\n`
+    );
+    expect(kimiSessionDir(SESSION, root)).toBe(dir);
+    // an index naming a directory that is gone
+    writeFileSync(
+      index,
+      JSON.stringify({ sessionId: `session_${SESSION}`, sessionDir: join(root, "gone") })
+    );
+    expect(kimiSessionDir(SESSION, root)).toBe(dir);
+  });
+
   it("returns undefined when no workspace holds the session", () => {
     mkdirSync(join(root, "sessions", "wd_amd-research_18567076f83d"), { recursive: true });
     expect(kimiSessionDir(SESSION, root)).toBeUndefined();
