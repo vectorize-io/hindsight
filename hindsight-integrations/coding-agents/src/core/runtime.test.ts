@@ -303,6 +303,110 @@ describe("RuntimeCore session-idle write-back", () => {
     await expect(runtime.onSessionIdle("s5")).resolves.toBeUndefined();
     expect(retained).toHaveLength(0);
   });
+
+  /**
+   * A compaction (or a resume onto an earlier snapshot) hands idle a SHORTER transcript. The old
+   * growth-only count skipped every idle after that until the session out-grew its pre-compaction
+   * length — in practice, never (#6314). These run the real write path, so the mode each save picks
+   * is the one the server would get.
+   */
+  describe("after the transcript shrinks (#6314)", () => {
+    const turns = (n: number, tag = "t") =>
+      Array.from({ length: n }, (_, i) => turn(i % 2 ? "assistant" : "user", `${tag}${i}`));
+
+    /** An append-capable client recording each save's mode and the turn lines it carried. */
+    function appendClient() {
+      const sent: { mode: string; lines: string[] }[] = [];
+      const client = {
+        bank: "bank-1",
+        supportsAppendRetain: async () => true,
+        retain: vi.fn(async (content: string, ...rest: unknown[]) => {
+          const opts = rest[4] as { updateMode?: string };
+          const mode = opts.updateMode ?? "replace";
+          // A replace leads with the REF-ID header line; only turn lines are compared below.
+          const lines = content.split("\n").slice(mode === "replace" ? 1 : 0);
+          sent.push({ mode, lines });
+        }),
+      } as unknown as HindsightClient;
+      return { client, sent };
+    }
+
+    async function idleWith(runtime: RuntimeCore, session: string, list: unknown[]) {
+      runtime.setTranscriptSource(async () => list as never);
+      await runtime.onSessionIdle(session);
+      await runtime.flush();
+    }
+
+    it("keeps writing after a compaction: replaces once, then appends again", async () => {
+      const { client, sent } = appendClient();
+      const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+
+      await idleWith(runtime, "c1", turns(6));
+      await idleWith(runtime, "c1", turns(8));
+      expect(sent.map((s) => s.mode)).toEqual(["replace", "append"]);
+      expect(sent[1].lines).toHaveLength(2);
+
+      // Compaction: a summary plus the recent tail, far shorter than the 8 turns written.
+      const compacted = [turn("user", "summary of turns 0-5"), ...turns(8).slice(6)];
+      await idleWith(runtime, "c1", compacted);
+      expect(sent).toHaveLength(3);
+      expect(sent[2].mode).toBe("replace");
+      expect(sent[2].lines.join("\n")).toContain("summary of turns 0-5");
+
+      // The same compacted transcript again is a repeat idle, not new work.
+      await idleWith(runtime, "c1", compacted);
+      expect(sent).toHaveLength(3);
+
+      // The session goes on. Each new turn is written — as an append onto the compacted document —
+      // although the transcript is still far shorter than before the compaction.
+      await idleWith(runtime, "c1", [...compacted, turn("user", "next question")]);
+      await idleWith(runtime, "c1", [
+        ...compacted,
+        turn("user", "next question"),
+        turn("assistant", "next answer"),
+      ]);
+      expect(sent.slice(3)).toEqual([
+        { mode: "append", lines: [expect.stringContaining("next question")] },
+        { mode: "append", lines: [expect.stringContaining("next answer")] },
+      ]);
+    });
+
+    it("replaces when a resume restores an earlier, shorter snapshot", async () => {
+      const { client, sent } = appendClient();
+      const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+
+      await idleWith(runtime, "c2", turns(10));
+      await idleWith(runtime, "c2", turns(4)); // a strict prefix of what was written
+      expect(sent.map((s) => s.mode)).toEqual(["replace", "replace"]);
+      expect(sent[1].lines).toHaveLength(4);
+
+      await idleWith(runtime, "c2", turns(5));
+      expect(sent[2]).toEqual({ mode: "append", lines: [expect.stringContaining("t4")] });
+    });
+
+    it("replaces a rewrite that lands on the same turn count", async () => {
+      // A count-based guard misses this one even without the shrink: same length, new content.
+      const { client, sent } = appendClient();
+      const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+
+      await idleWith(runtime, "c3", turns(4));
+      await idleWith(runtime, "c3", turns(4, "rewritten"));
+      expect(sent.map((s) => s.mode)).toEqual(["replace", "replace"]);
+      expect(sent[1].lines.join("\n")).toContain("rewritten0");
+    });
+
+    it("tracks each session on its own: one session's compaction does not gate another", async () => {
+      const { client, sent } = appendClient();
+      const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+
+      await idleWith(runtime, "big", turns(20));
+      await idleWith(runtime, "small", turns(2));
+      await idleWith(runtime, "big", turns(3, "compacted"));
+      await idleWith(runtime, "small", turns(2)); // unchanged: skipped
+      expect(sent.map((s) => s.mode)).toEqual(["replace", "replace", "replace"]);
+      expect(client.retain).toHaveBeenCalledTimes(3);
+    });
+  });
 });
 
 /**
