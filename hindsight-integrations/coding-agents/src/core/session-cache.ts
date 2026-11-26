@@ -187,12 +187,12 @@ export function fileUsageCursorStore(harness: string): UsageCursorStore {
   };
 }
 
+const CURSOR_SUFFIX = ".retain.json";
+
 /** The cursor's own file, deliberately NOT the shared session cache — see fileCursorStore. */
 function cursorFile(harness: string, sessionId: string): string {
-  return join(tmpdir(), `hindsight-${harness}`, `${sessionId}.retain.json`);
+  return join(tmpdir(), `hindsight-${harness}`, `${sessionId}${CURSOR_SUFFIX}`);
 }
-
-const CURSOR_SUFFIX = ".retain.json";
 
 /** A session still owing a write-back: its last replace was never confirmed (`dirty`) or it holds
  *  appends that never landed (`pending`). */
@@ -219,16 +219,16 @@ export function orphanedCursors(
   } catch {
     return [];
   }
-  const out: { at: number; found: OrphanedCursor }[] = [];
+  const out: { mtime: number; found: OrphanedCursor }[] = [];
   for (const name of names) {
     try {
       const file = join(dir, name);
-      const age = now - statSync(file).mtimeMs;
-      if (age < opts.idleMs || age > opts.maxAgeMs) continue;
+      const mtime = statSync(file).mtimeMs;
+      if (now - mtime < opts.idleMs || now - mtime > opts.maxAgeMs) continue;
       const cursor = JSON.parse(readFileSync(file, "utf8")) as RetainCursor;
       if (!cursor.dirty && !cursor.pending?.length) continue;
       out.push({
-        at: now - age,
+        mtime,
         found: { sessionId: name.slice(0, -CURSOR_SUFFIX.length), cursor },
       });
     } catch {
@@ -236,7 +236,7 @@ export function orphanedCursors(
     }
   }
   // Newest first: the most recent loss is the one most likely to still have its transcript.
-  return out.sort((a, b) => b.at - a.at).map((o) => o.found);
+  return out.sort((a, b) => b.mtime - a.mtime).map((o) => o.found);
 }
 
 /**

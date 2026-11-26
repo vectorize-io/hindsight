@@ -13,6 +13,7 @@
  * without stdin; `runRetainHook` is thin plumbing around it, mirroring `runHook`/`buildHookOutput`
  * in core/hook.ts.
  */
+import { existsSync } from "node:fs";
 import { deriveBankIdOrSkip } from "./bank";
 import { REQUEST_BUDGET_MS, retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
@@ -32,7 +33,6 @@ import {
   type OrphanedCursor,
 } from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
-import { existsSync } from "node:fs";
 import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
 import { stripInjectedMemory } from "./transcript-util";
 import { recordUsage, type UsageCursorStore } from "./usage";
@@ -186,9 +186,9 @@ export async function buildRetain(args: {
 
 /** A session must be this quiet before another one replays its write-back: a session that is
  *  still running retries on its own next Stop, and two processes writing one document race. */
-export const ORPHAN_IDLE_MS = 30 * 60 * 1000;
+const ORPHAN_IDLE_MS = 30 * 60 * 1000;
 /** Past this a failed session is given up on: its transcript is likely gone. */
-export const ORPHAN_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+const ORPHAN_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 
 /**
  * Re-send the write-backs of this harness's OTHER sessions whose last one failed (#6097).
@@ -228,9 +228,19 @@ export async function replayOrphanedSessions(args: {
     if (Date.now() + REQUEST_BUDGET_MS > args.deadline) return;
     const transcriptPath = cursor.paths?.at(-1);
     if (!transcriptPath || !existsSync(transcriptPath)) continue;
+    // Resolved from the bank id alone: the ended session's working folder is not known here, so a
+    // folder-scoped (`paths`) override does not apply — a `banks.<id>` section does.
     const { cfg, bankId } = applyBankConfig(args.cfg, cursor.bank);
     if (cfg.disabled || !cfg.retainSessions) continue;
-    const turns = readTranscript(transcriptPath);
+    let turns: TransportTurn[];
+    try {
+      // Guarded: a reader can throw on a damaged file (see transcript-qwen.ts), and one bad old
+      // transcript must neither reject this Stop hook nor stop the others from being replayed.
+      turns = readTranscript(transcriptPath);
+    } catch (e) {
+      diag(harness, "retain_replay_failed", { error: describeError(e), session: sessionId });
+      continue;
+    }
     if (!turns.length) continue;
     const client = args.makeClient({
       apiUrl: cfg.apiUrl,
@@ -251,9 +261,10 @@ export async function replayOrphanedSessions(args: {
       );
       diag(harness, "retain_replayed", { ms: Date.now() - t0, session: sessionId });
     } catch (e) {
-      // Still owed: the cursor keeps saying so, and the next Stop tries again.
+      // Still owed: the cursor keeps saying so, and the next Stop tries again. The others would
+      // most likely fail the same way, and each try can cost this hook a request's full timeout.
       diag(harness, "retain_replay_failed", { error: describeError(e), session: sessionId });
-      return; // the server is still unreachable; the rest would fail the same way
+      return;
     }
   }
 }

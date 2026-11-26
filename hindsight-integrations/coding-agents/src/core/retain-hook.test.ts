@@ -9,6 +9,7 @@ import { type RawConfig, resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
 import { buildRetain, replayOrphanedSessions, runRetainHook } from "./retain-hook";
 import { fingerprintTurns, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
+import { readClaudeTranscript } from "./transcript";
 import { readCodexTranscript } from "./transcript-codex";
 import { dcodeAssistantText } from "./transcript-dcode";
 import { memoryUsageCursorStore } from "./usage";
@@ -848,6 +849,29 @@ describe("replayOrphanedSessions (#6097)", () => {
     const client = stubClient();
     await replay(cursors, client);
     expect(client.retain).not.toHaveBeenCalled();
+  });
+
+  it("skips a transcript its reader cannot parse, and replays the rest", async () => {
+    const cursors = memoryCursorStore();
+    await failedSession(cursors, "a");
+    await failedSession(cursors, "b");
+    const client = stubClient();
+    let reads = 0;
+    await replayOrphanedSessions({
+      harness: "codex",
+      currentSessionId: "new",
+      cfg: resolveConfig({ apiToken: "test-key" }),
+      makeClient: () => client as unknown as HindsightClient,
+      readTranscript: (path) => {
+        if (reads++ === 0) throw new Error("damaged transcript");
+        return readClaudeTranscript(path);
+      },
+      deadline: Date.now() + 60_000,
+      cursors,
+      orphans: ["a", "b"].map((sessionId) => ({ sessionId, cursor: cursors.read(sessionId)! })),
+    });
+    expect(client.retain.mock.calls.map((c) => c[2])).toEqual(["conversation:b"]);
+    expect(cursors.read("a")?.dirty).toBe(true); // still owed
   });
 
   it("stops at the first failure and leaves the session owed for the next Stop", async () => {
