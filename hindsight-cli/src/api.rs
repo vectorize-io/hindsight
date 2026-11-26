@@ -1190,7 +1190,7 @@ impl ApiClient {
                     bank_id,
                     filter.tag_groups.as_deref(),
                     filter.tags(),
-                    filter.tags_match,
+                    filter.tags_match.clone(),
                     None,
                 )
                 .humanized()
@@ -1264,7 +1264,7 @@ impl ApiClient {
                     query,
                     filter.tag_groups.as_deref(),
                     filter.tags(),
-                    filter.tags_match,
+                    filter.tags_match.clone(),
                     None,
                 )
                 .humanized()

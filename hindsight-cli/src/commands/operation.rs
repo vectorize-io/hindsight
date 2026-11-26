@@ -190,6 +190,8 @@ fn get(
                     Status::Failed => ui::gradient_end("failed"),
                     Status::Cancelled => ui::dim("cancelled"),
                     Status::NotFound => ui::gradient_end("not_found"),
+                    // A status added on the server after this CLI was built.
+                    Status::Unknown(other) => ui::dim(other),
                 };
 
                 println!("  {} {}", ui::dim("Status:"), status_str);

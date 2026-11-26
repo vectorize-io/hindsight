@@ -436,7 +436,8 @@ impl App {
         self.query_budget = match self.query_budget {
             Budget::Low => Budget::Mid,
             Budget::Mid => Budget::High,
-            Budget::High => Budget::Low,
+            // Unknown only comes from a server newer than this CLI; start the cycle over.
+            Budget::High | Budget::Unknown(_) => Budget::Low,
         };
         self.status_message = format!("Budget: {:?}", self.query_budget);
     }

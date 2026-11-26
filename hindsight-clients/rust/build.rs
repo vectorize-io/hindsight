@@ -289,8 +289,15 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let dest_path = out_dir.join("hindsight_client_generated.rs");
 
-    let syntax_tree = syn::parse2(tokens)
+    let mut syntax_tree: syn::File = syn::parse2(tokens)
         .expect("Failed to parse generated tokens");
+
+    // Let every enum take a value or shape the server added after this client
+    // was built, instead of failing the whole response (see accept_unknown_values).
+    let mut opened = OpenedEnums::default();
+    accept_unknown_values(&mut syntax_tree.items, &mut opened);
+    display_unknown_values(&mut syntax_tree.items, &opened);
+
     let mut formatted = prettyplease::unparse(&syntax_tree);
 
     // Fix progenitor bug with optional header parameters
@@ -302,6 +309,138 @@ fn main() {
         .expect("Failed to write generated client code");
 
     println!("Generated client at: {}", dest_path.display());
+}
+
+/// Names of the enums `accept_unknown_values` opened, by kind; their `Display`
+/// needs an arm for the new variant.
+#[derive(Default)]
+struct OpenedEnums {
+    strings: std::collections::HashSet<String>,
+    unions: std::collections::HashSet<String>,
+}
+
+/// Add a catch-all last variant to every generated enum (#6912).
+///
+/// typify turns each OpenAPI `enum` into a closed Rust enum, so a value the
+/// server adds later (the server only ever adds them) fails serde with "unknown
+/// variant" and takes the whole response down -- and the `hindsight` CLI with
+/// it. The same goes for a union whose shape is newer than the client.
+///
+/// - A string enum gets `#[serde(untagged)] Unknown(String)`: serde tries the
+///   named variants first, so known values parse exactly as before, and an
+///   unknown one keeps its text and serializes back unchanged. It drops `Copy`,
+///   which a `String` field rules out. `FromStr` stays strict, so a value typed
+///   by a user is still checked.
+/// - An untagged union gets `Unknown(serde_json::Value)`; untagged variants are
+///   tried in order, so it only catches what no known shape matches.
+fn accept_unknown_values(items: &mut [syn::Item], opened: &mut OpenedEnums) {
+    use syn::punctuated::Punctuated;
+    use syn::{parse_quote, Fields, Item, Path, Token};
+
+    for item in items {
+        match item {
+            Item::Mod(module) => {
+                if let Some((_, inner)) = &mut module.content {
+                    accept_unknown_values(inner, opened);
+                }
+            }
+            Item::Enum(e) => {
+                let derives_serde = e.attrs.iter().any(|a| {
+                    a.path().is_ident("derive") && attr_args(a).contains("Deserialize")
+                });
+                if !derives_serde {
+                    continue;
+                }
+                let untagged = e
+                    .attrs
+                    .iter()
+                    .any(|a| a.path().is_ident("serde") && attr_args(a).contains("untagged"));
+                if e.variants.iter().all(|v| matches!(v.fields, Fields::Unit)) {
+                    for attr in &mut e.attrs {
+                        if attr.path().is_ident("derive") {
+                            let kept: Vec<Path> = attr
+                                .parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)
+                                .expect("derive attribute")
+                                .into_iter()
+                                .filter(|p| !p.is_ident("Copy"))
+                                .collect();
+                            *attr = parse_quote!(#[derive(#(#kept),*)]);
+                        }
+                    }
+                    e.variants.push(parse_quote! {
+                        /// A value added on the server after this client was built.
+                        #[serde(untagged)]
+                        Unknown(::std::string::String)
+                    });
+                    opened.strings.insert(e.ident.to_string());
+                } else if untagged {
+                    e.variants.push(parse_quote! {
+                        /// A shape added on the server after this client was built.
+                        Unknown(::serde_json::Value)
+                    });
+                    opened.unions.insert(e.ident.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Give each opened enum's `Display` (an exhaustive match) an arm for the
+/// `Unknown` variant added by `accept_unknown_values`; it prints the value (a
+/// union's as JSON). A string enum matches on `*self`, a union on `self`.
+fn display_unknown_values(items: &mut [syn::Item], opened: &OpenedEnums) {
+    use syn::{parse_quote, Expr, ImplItem, Item, Stmt, Type};
+
+    for item in items {
+        match item {
+            Item::Mod(module) => {
+                if let Some((_, inner)) = &mut module.content {
+                    display_unknown_values(inner, opened);
+                }
+            }
+            Item::Impl(imp) => {
+                let is_display = imp
+                    .trait_
+                    .as_ref()
+                    .and_then(|(_, path, _)| path.segments.last())
+                    .is_some_and(|s| s.ident == "Display");
+                let Type::Path(self_ty) = imp.self_ty.as_ref() else {
+                    continue;
+                };
+                let name = self_ty.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+                let arm: syn::Arm = if opened.strings.contains(&name) {
+                    parse_quote!(Self::Unknown(ref value) => f.write_str(value),)
+                } else if opened.unions.contains(&name) {
+                    parse_quote!(Self::Unknown(value) => value.fmt(f),)
+                } else {
+                    continue;
+                };
+                if !is_display {
+                    continue;
+                }
+                for impl_item in &mut imp.items {
+                    if let ImplItem::Fn(func) = impl_item {
+                        match func.block.stmts.last_mut() {
+                            Some(Stmt::Expr(Expr::Match(m), _)) => {
+                                m.arms.push(arm.clone());
+                            }
+                            _ => panic!("Display for {name} is not a match; update display_unknown_values"),
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The text inside an attribute's parentheses, e.g. `untagged` for `#[serde(untagged)]`.
+fn attr_args(attr: &syn::Attribute) -> String {
+    match &attr.meta {
+        syn::Meta::List(list) => list.tokens.to_string(),
+        _ => String::new(),
+    }
 }
 
 /// Fix progenitor's generated code for optional header parameters
