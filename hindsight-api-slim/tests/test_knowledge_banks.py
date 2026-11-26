@@ -3251,3 +3251,20 @@ def test_every_memory_bank_route_carries_the_knowledge_bank_guard(memory):
     bank_routes = [r for r in routes if r.path_format.startswith(MEMORY_BANK_PATH)]
     assert len(bank_routes) > 100
     assert [r.path_format for r in bank_routes if not isinstance(r, UnknownParamsRoute)] == []
+
+
+def test_audio_whose_tag_is_not_utf8_is_probed_and_split():
+    # Issue #6921: PyAV 18 raised UnicodeDecodeError on a tag that is not UTF-8 unless told to replace its bytes;
+    # PyAV 19 (what pip installs on Python 3.12+) dropped that argument, so every audio/video ingest died with a
+    # TypeError. A one-second WAV whose title is latin-1 ("café") opens on both.
+    import struct
+
+    pcm = b"\x00\x00" * 8000
+    title = b"caf\xe9\x00\x00"  # even length: a RIFF chunk is padded to two bytes
+    tag = b"LIST" + struct.pack("<I", 12 + len(title)) + b"INFO" + b"INAM" + struct.pack("<I", len(title)) + title
+    fmt = b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, 8000, 16000, 2, 16)
+    body = b"WAVE" + fmt + tag + b"data" + struct.pack("<I", len(pcm)) + pcm
+    wav = b"RIFF" + struct.pack("<I", len(body)) + body
+
+    assert media.probe(wav).duration == pytest.approx(1.0)
+    assert len(list(media.split_media(wav, "audio", window_seconds=30, overlap_seconds=5, max_seconds=60))) == 1

@@ -405,6 +405,29 @@ jobs:
         .venv-smoke/bin/python -m compileall -q hindsight_api
         .venv-smoke/bin/python -c "import hindsight_api, hindsight_api.main, hindsight_api.config; from hindsight_api.engine import memory_engine, llm_wrapper; print('import OK')"
 
+    # Each interpreter resolves its own PyAV major (3.11 gets 18; 19 needs 3.12),
+    # and 19 broke every audio/video ingest while the test suite, on 3.11, stayed
+    # green (#6921). Open a WAV with the PyAV this interpreter installs.
+    - name: Open audio with PyAV on Python ${{ matrix.python-version }}
+      working-directory: ./hindsight-api-slim
+      run: |
+        VIRTUAL_ENV=.venv-smoke uv pip install 'av>=18.1.0'
+        .venv-smoke/bin/python - <<'EOF'
+        import io, wave
+
+        import av
+        from hindsight_api.knowledge import media
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(8000)
+            w.writeframes(b"\0\0" * 8000)
+        assert media.probe(buf.getvalue()).duration == 1.0
+        print("PyAV", av.__version__, "OK")
+        EOF
+
     # The step above resolves fresh, so it never sees the workspace lock. Dev
     # setups and packagers (e.g. uv2nix) install from uv.lock, which once pinned
     # a dependency with no wheel for 3.14 (#5709). Install from the lock too.
