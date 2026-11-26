@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -78,6 +80,29 @@ describe("/api/knowledge-banks routes", () => {
       `POST ${base}/op1/retry`,
       `DELETE ${base}/op1/delete`,
     ]);
+  });
+
+  it("has a route behind every knowledge-bank call the UI makes", () => {
+    // #6923: api.ts called /operations for a release with no route behind it, so the UI got a
+    // 404 it swallowed. Every knowledgeApi(...) call must resolve to a route.ts: a quoted
+    // segment is a folder of that name, a variable is a [param] folder.
+    const root = join(__dirname, "../../../../src/app/api/knowledge-banks");
+    const hasRoute = (dir: string, args: string[]): boolean => {
+      if (args.length === 0) return existsSync(join(dir, "route.ts"));
+      const [arg, ...rest] = args;
+      const literal = /^"(.*)"$/.exec(arg)?.[1];
+      const dirs = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory());
+      return dirs
+        .filter((d) => (literal ? d.name === literal : d.name.startsWith("[")))
+        .some((d) => hasRoute(join(dir, d.name), rest));
+    };
+    const api = readFileSync(join(__dirname, "../../../../src/lib/api.ts"), "utf8");
+    const calls = [...api.matchAll(/knowledgeApi\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(calls.length).toBeGreaterThan(10);
+    const missing = calls.filter(
+      (c) => !hasRoute(root, c ? c.split(",").map((a) => a.trim()) : [])
+    );
+    expect(missing).toEqual([]);
   });
 
   it("passes an upstream error's reason and status through", async () => {
