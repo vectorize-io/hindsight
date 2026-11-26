@@ -698,7 +698,7 @@ A scenario goes like this:
 | update | `a-new-job-supersedes-the-old` | Acme, then Globex; the LinkedIn headline is the new job (#6886, dated recall lines) |
 | pages | `renovation-decisions-from-the-page` | a page built from the chat (#6897); "what's decided?" must call a page tool |
 | pages | `training-plan-from-the-page` | the same, for a training plan's constraints |
-| builtin_memory | `an-allergy-told-to-remember` | "remember I'm allergic to penicillin" lands in Hermes' built-in memory **and** the bank (#6889) |
+| builtin_memory | `an-allergy-told-to-remember` | "add this to your notes about me: I'm allergic to penicillin" lands in Hermes' built-in memory **and** the bank (#6889); then "my doctor wants me on amoxicillin" |
 | builtin_memory | `a-birthday-told-to-remember` | the same, for a birthday and a hobby |
 
 ```bash
