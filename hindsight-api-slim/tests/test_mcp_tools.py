@@ -12,13 +12,14 @@ from pydantic import ValidationError
 from hindsight_api.engine import page_markdown
 from hindsight_api.engine.memory_engine import KEEP_PARENT, DirectivePage, MentalModelPage
 from hindsight_api.engine.response_models import MemoryFact, RecallResult
+from hindsight_api.extensions.operation_validator import OperationValidationError
 from hindsight_api.mcp_tools import (
     _ALL_TOOLS,
     PAGE_ROOT_PARENT,
     MCPToolsConfig,
     MentalModelTriggerInput,
-    _page_tree_json,
     _mental_model_trigger_patch,
+    _page_tree_json,
     _validate_mental_model_inputs,
     build_content_dict,
     parse_timestamp,
@@ -2451,6 +2452,16 @@ class TestPagesTools:
         mcp = _make_mcp_server(mock_memory, {"update_page_node"}, include_bank_id=True)
         await _tools(mcp)["update_page_node"].fn(node_id="kp-1", parent_id=PAGE_ROOT_PARENT)
         assert mock_memory.update_page_node.call_args.kwargs["parent_id"] is None
+
+    async def test_update_onto_a_taken_name_is_a_tool_error(self, mock_memory):
+        """The engine answers a taken name with a 409 (#6920); an agent must get that
+        as a tool error it can act on, not an internal failure to retry."""
+        mock_memory.update_page_node.side_effect = OperationValidationError(
+            "A page named 'Orders' already exists in this folder", status_code=409
+        )
+        mcp = _make_mcp_server(mock_memory, {"update_page_node"}, include_bank_id=True)
+        result = json.loads(await _tools(mcp)["update_page_node"].fn(node_id="kp-1", parent_id="kf-2"))
+        assert "already exists" in result["error"]
 
     async def test_update_source_query_triggers_refresh(self, mock_memory):
         mcp = _make_mcp_server(mock_memory, {"update_page_node"}, include_bank_id=True)

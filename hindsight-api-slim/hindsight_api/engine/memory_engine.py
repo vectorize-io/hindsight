@@ -21609,104 +21609,118 @@ class MemoryEngine(MemoryEngineInterface):
             # Moving a node into a folder changes that folder too: its pages must be writable.
             await self._require_page_subtree_writable(bank_id, request_context, new_parent)
         backend = await self._get_backend()
-        async with acquire_with_retry(backend) as conn:
-            async with conn.transaction():
-                if moving:
-                    # Structural tree writers lock this bank row before reading or
-                    # changing the hierarchy, serializing moves with creates/deletes.
-                    # A patch that only renames or only edits page options changes no
-                    # parent link and so takes no tree lock.
-                    await self._kp_lock_bank(conn, bank_id)
-                row = await conn.fetchrow(
-                    f"SELECT kind, mental_model_id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1 AND id = $2",
-                    bank_id,
-                    node_id,
-                )
-                if row is None:
-                    return None
-                mental_model_id = row["mental_model_id"]
-                # Page options only exist on a page's backing model. Reporting this
-                # as "not found" is what the dedicated endpoint always did; the part
-                # that changes here is that the rename alongside it rolls back too.
-                if page_options and (row["kind"] != "page" or mental_model_id is None):
-                    return None
-
-                if moving:
-                    await self._kp_assert_folder_parent(conn, bank_id, new_parent)
-                    # Cycle guard: walk up from the new parent; if we reach node_id,
-                    # the move would create a loop. Done in Python so the check stays
-                    # dialect-agnostic (no recursive CTE).
-                    if new_parent is not None:
-                        parents = {
-                            r["id"]: r["parent_id"]
-                            for r in await conn.fetch(
-                                f"SELECT id, parent_id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1",
-                                bank_id,
-                            )
-                        }
-                        # `seen` bounds the walk. The lock above stops this process
-                        # from creating a loop, but a tree corrupted before the lock
-                        # existed (or restored from such an export) would otherwise
-                        # spin here forever, holding a connection and an open
-                        # transaction. Refuse the move instead of hanging.
-                        seen: set[str] = set()
-                        cursor: str | None = new_parent
-                        while cursor is not None:
-                            if cursor == node_id:
-                                raise ValueError("Cannot move a node into its own subtree")
-                            if cursor in seen:
-                                raise ValueError(f"Page tree for bank '{bank_id}' contains a parent cycle")
-                            seen.add(cursor)
-                            cursor = parents.get(cursor)
-
-                node_updates: list[str] = []
-                node_params: list[Any] = [bank_id, node_id]
-                if name is not None:
-                    node_updates.append(f"name = ${len(node_params) + 1}")
-                    node_params.append(name)
-                if moving:
-                    node_updates.append(f"parent_id = ${len(node_params) + 1}")
-                    node_params.append(new_parent)
-                if node_updates:
-                    await conn.execute(
-                        f"UPDATE {fq_table('knowledge_pages')} "
-                        f"SET {', '.join(node_updates)}, updated_at = now() "
-                        f"WHERE bank_id = $1 AND id = $2",
-                        *node_params,
+        # The name the node ends up with, for the conflict message below.
+        target_name = name
+        try:
+            async with acquire_with_retry(backend) as conn:
+                async with conn.transaction():
+                    if moving:
+                        # Structural tree writers lock this bank row before reading or
+                        # changing the hierarchy, serializing moves with creates/deletes.
+                        # A patch that only renames or only edits page options changes no
+                        # parent link and so takes no tree lock.
+                        await self._kp_lock_bank(conn, bank_id)
+                    row = await conn.fetchrow(
+                        f"SELECT kind, name, mental_model_id FROM {fq_table('knowledge_pages')} "
+                        "WHERE bank_id = $1 AND id = $2",
+                        bank_id,
+                        node_id,
                     )
+                    if row is None:
+                        return None
+                    target_name = name if name is not None else row["name"]
+                    mental_model_id = row["mental_model_id"]
+                    # Page options only exist on a page's backing model. Reporting this
+                    # as "not found" is what the dedicated endpoint always did; the part
+                    # that changes here is that the rename alongside it rolls back too.
+                    if page_options and (row["kind"] != "page" or mental_model_id is None):
+                        return None
 
-                if mental_model_id is not None and (name is not None or page_options):
-                    # A page's searchable document is its backing mental model's name +
-                    # content, so a rename has to reach the model too (which also
-                    # re-tokenizes its search_vector). Written on the SAME connection
-                    # and transaction as the node row, so a knowledge_pages
-                    # name-uniqueness violation rolls this back with it. Folders carry
-                    # no backing model (mental_model_id is NULL) and skip this.
-                    #
-                    # update_mental_model owns these columns — including patching a
-                    # partial trigger over the stored one — so this reuses it rather
-                    # than restating its SQL, which would be free to drift.
-                    #
-                    # Already authorized above; the nested write must not re-invoke
-                    # the validator.
-                    with _authorize_nested_operations():
-                        await self.update_mental_model(
-                            bank_id=bank_id,
-                            mental_model_id=mental_model_id,
-                            name=name,
-                            source_query=source_query,
-                            tags=tags,
-                            max_tokens=max_tokens,
-                            trigger=trigger,
-                            conn=conn,
-                            request_context=request_context,
+                    if moving:
+                        await self._kp_assert_folder_parent(conn, bank_id, new_parent)
+                        # Cycle guard: walk up from the new parent; if we reach node_id,
+                        # the move would create a loop. Done in Python so the check stays
+                        # dialect-agnostic (no recursive CTE).
+                        if new_parent is not None:
+                            parents = {
+                                r["id"]: r["parent_id"]
+                                for r in await conn.fetch(
+                                    f"SELECT id, parent_id FROM {fq_table('knowledge_pages')} WHERE bank_id = $1",
+                                    bank_id,
+                                )
+                            }
+                            # `seen` bounds the walk. The lock above stops this process
+                            # from creating a loop, but a tree corrupted before the lock
+                            # existed (or restored from such an export) would otherwise
+                            # spin here forever, holding a connection and an open
+                            # transaction. Refuse the move instead of hanging.
+                            seen: set[str] = set()
+                            cursor: str | None = new_parent
+                            while cursor is not None:
+                                if cursor == node_id:
+                                    raise ValueError("Cannot move a node into its own subtree")
+                                if cursor in seen:
+                                    raise ValueError(f"Page tree for bank '{bank_id}' contains a parent cycle")
+                                seen.add(cursor)
+                                cursor = parents.get(cursor)
+
+                    node_updates: list[str] = []
+                    node_params: list[Any] = [bank_id, node_id]
+                    if name is not None:
+                        node_updates.append(f"name = ${len(node_params) + 1}")
+                        node_params.append(name)
+                    if moving:
+                        node_updates.append(f"parent_id = ${len(node_params) + 1}")
+                        node_params.append(new_parent)
+                    if node_updates:
+                        await conn.execute(
+                            f"UPDATE {fq_table('knowledge_pages')} "
+                            f"SET {', '.join(node_updates)}, updated_at = now() "
+                            f"WHERE bank_id = $1 AND id = $2",
+                            *node_params,
                         )
 
-                node_row = await conn.fetchrow(
-                    f"SELECT {self._KP_PAGE_SELECT} FROM {self._kp_join()} WHERE kp.bank_id = $1 AND kp.id = $2",
-                    bank_id,
-                    node_id,
-                )
+                    if mental_model_id is not None and (name is not None or page_options):
+                        # A page's searchable document is its backing mental model's name +
+                        # content, so a rename has to reach the model too (which also
+                        # re-tokenizes its search_vector). Written on the SAME connection
+                        # and transaction as the node row, so a knowledge_pages
+                        # name-uniqueness violation rolls this back with it. Folders carry
+                        # no backing model (mental_model_id is NULL) and skip this.
+                        #
+                        # update_mental_model owns these columns — including patching a
+                        # partial trigger over the stored one — so this reuses it rather
+                        # than restating its SQL, which would be free to drift.
+                        #
+                        # Already authorized above; the nested write must not re-invoke
+                        # the validator.
+                        with _authorize_nested_operations():
+                            await self.update_mental_model(
+                                bank_id=bank_id,
+                                mental_model_id=mental_model_id,
+                                name=name,
+                                source_query=source_query,
+                                tags=tags,
+                                max_tokens=max_tokens,
+                                trigger=trigger,
+                                conn=conn,
+                                request_context=request_context,
+                            )
+
+                    node_row = await conn.fetchrow(
+                        f"SELECT {self._KP_PAGE_SELECT} FROM {self._kp_join()} WHERE kp.bank_id = $1 AND kp.id = $2",
+                        bank_id,
+                        node_id,
+                    )
+        except asyncpg.UniqueViolationError as exc:
+            if getattr(exc, "constraint_name", None) != "uq_kp_folder_pagename":
+                raise
+            # The transaction rolled the whole patch back. A taken name is the
+            # caller's conflict, answered with the same 409 a create into that
+            # folder gets, not a server fault a client retries forever (#6920).
+            raise OperationValidationError(
+                f"A page named '{target_name}' already exists in this folder", status_code=409
+            ) from exc
         return self._row_to_page_node(node_row) if node_row else None
 
     async def delete_page_node(self, bank_id: str, node_id: str, *, request_context: "RequestContext") -> bool:
