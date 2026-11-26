@@ -151,9 +151,9 @@ export class RuntimeCore {
       // on stderr (shows in the plugin log / console) rather than dropping it.
       // Banner: via the host's toast API when available (stderr corrupts the TUI); always logged.
       if (out.systemMessage) {
-        const plain = out.systemMessage; // no `color`: plain text, a toast shows codes as text
-        log.info(this.harness, plain);
-        this.notify?.("Hindsight", plain.replace(/^Hindsight is /, "Is "));
+        // Plain text: buildSessionStartContext only paints the banner when asked to (#6502).
+        log.info(this.harness, out.systemMessage);
+        this.notify?.("Hindsight", out.systemMessage.replace(/^Hindsight is /, "Is "));
       }
       this.deferInitialReflect = out.deferInitialReflect === true;
     } catch {

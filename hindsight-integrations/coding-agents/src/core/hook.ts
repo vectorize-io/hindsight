@@ -232,8 +232,8 @@ export interface HookOutput {
 }
 
 /**
- * Pure hook logic: reflect once per session (cached); page sections + roster on every
- * turn. Returns the injection plus a per-turn user-facing notice.
+ * Pure hook logic: auto-inject on the first prompt (cached; again every autoInjectEveryTurns for
+ * recall/pages); the roster refresh on its cadence. Returns the injection plus a per-turn user-facing notice.
  */
 export async function buildHookOutput(args: {
   harness: string;
@@ -398,10 +398,10 @@ export async function buildHookOutput(args: {
 
   const blocks: string[] = [];
   // Hook-injected context lands in the USER MESSAGE and persists in the transcript — unlike a
-  // system prompt, it accumulates. The reflect block is injected exactly ONCE, the turn reflect
-  // ran. No cadence re-injection: replaying the turn-1 synthesis at arbitrary later turns reads
-  // as random noise once the session drifts, and the agent holds hindsight_reflect for a FRESH
-  // pass if compaction or drift makes it need memory again.
+  // system prompt, it accumulates. The memory block is injected only on a turn its source RAN —
+  // never replayed: the turn-1 answer at a later turn reads as random noise once the session
+  // drifts. A fresh one comes from autoInjectEveryTurns (a new query for the current prompt), or
+  // from the agent calling hindsight_reflect.
   if (reflectAnswer && reflectRanThisTurn)
     blocks.push(buildSystemInjection(reflectAnswer, { writeTools: cfg.writeTools }));
   // Pages are NOT auto-injected: the agent pulls them through

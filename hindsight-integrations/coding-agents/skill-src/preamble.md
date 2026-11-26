@@ -36,6 +36,10 @@ When the user says "store this in hindsight" / "remember this":
   id, summarising the _current_ intent. Same page, updated plan — never a second page. Trivial
   course-corrections don't count.
 
+If those two tools are not in your tool list, writing is turned off for this setup
+(`writeTools: false`): don't try to call them, and tell the user that only the conversation itself
+is saved.
+
 ## Retrieving
 
 - `hindsight_search_pages(query)` — FIRST STOP for project questions (components,
