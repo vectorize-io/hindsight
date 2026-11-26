@@ -559,14 +559,15 @@ function primeContextFile(c: InstallCtx): string {
   return join(dir, found ?? "AGENTS.md");
 }
 
+/** The file without our block. Only the seam where the block was is re-joined: the rest of the
+ *  user's text, blank lines included, is left exactly as written. */
 function stripPrimeContext(text: string): string {
   const start = text.indexOf(PRIME_CONTEXT_BEGIN);
   const end = text.indexOf(PRIME_CONTEXT_END);
   if (start < 0 || end < start) return text;
-  return (text.slice(0, start) + text.slice(end + PRIME_CONTEXT_END.length)).replace(
-    /\n{3,}/g,
-    "\n\n"
-  );
+  const before = text.slice(0, start).trimEnd();
+  const after = text.slice(end + PRIME_CONTEXT_END.length).replace(/^\s+/, "");
+  return before && after ? `${before}\n\n${after}` : before || after;
 }
 
 /**
@@ -578,7 +579,7 @@ function stripPrimeContext(text: string): string {
  *   in as `--harness` and the session id / agent dir as references to the kernel's own variables.
  *   The 0.9 `extensions` entry is removed: 0.10 ignores it and 0.9 is no longer supported.
  * - the companion skill in `~/.prime/agent/skills`.
- * - a marked block in the global context file asking the agent to search memory first.
+ * - a marked block in the global context file asking the agent to call `hindsight_reflect` first.
  *
  * A same-named foreign MCP server blocks install instead of being overwritten.
  */
@@ -637,8 +638,11 @@ const primeAgent: HarnessInstaller = {
       }
       writeJson(path, cfg);
     }
-    const ctxFile = primeContextFile(c);
-    if (existsSync(ctxFile)) {
+    // Both candidates, not just the one Prime reads now: the block stays where install put it even
+    // if the user creates the other file later.
+    for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+      const ctxFile = join(c.home, ".prime", "agent", name);
+      if (!existsSync(ctxFile)) continue;
       const text = readFileSync(ctxFile, "utf8");
       const kept = stripPrimeContext(text).trim();
       if (kept !== text.trim()) {

@@ -214,7 +214,9 @@ describe("every harness entrypoint reaches a daemon", () => {
   const EXEMPT: Record<string, string> = {
     "status.ts": "diagnostic — reports what is running; starting one would falsify the report",
     "deepen.ts": "spawned by the seed, which already ensured the daemon it inherits",
-    "mcp-server.ts": "child of a hook harness whose SessionStart ensured the daemon first",
+    "mcp-server.ts":
+      "child of a hook harness whose SessionStart ensured the daemon first; for Prime Agent, which " +
+      "has no SessionStart, it runs a RuntimeCore, which ensures it",
     "core/hook.ts":
       "the prompt path, deliberately: a cold start outlives the hook budget and stalls the turn",
     "core/host-client.ts":

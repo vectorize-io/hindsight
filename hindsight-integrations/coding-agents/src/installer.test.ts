@@ -1993,6 +1993,27 @@ describe("prime-agent installer", () => {
     expect(readFileSync(agentsMd(ctx), "utf8")).toBe("# Mine\n");
   });
 
+  it("leaves the user's own blank lines alone around the block", () => {
+    const ctx = makeCtx();
+    mkdirSync(dir(ctx), { recursive: true });
+    const mine = "# Mine\n\n\n\nspaced out\n";
+    writeFileSync(agentsMd(ctx), mine);
+    run(["install", "prime-agent"], ctx);
+    run(["uninstall", "prime-agent"], ctx);
+    expect(readFileSync(agentsMd(ctx), "utf8")).toBe(mine);
+  });
+
+  it("uninstall finds the block in CLAUDE.md even after an AGENTS.md appeared", () => {
+    const ctx = makeCtx();
+    mkdirSync(dir(ctx), { recursive: true });
+    writeFileSync(join(dir(ctx), "CLAUDE.md"), "rules\n");
+    run(["install", "prime-agent"], ctx);
+    writeFileSync(agentsMd(ctx), "new\n");
+    run(["uninstall", "prime-agent"], ctx);
+    expect(readFileSync(join(dir(ctx), "CLAUDE.md"), "utf8")).toBe("rules\n");
+    expect(readFileSync(agentsMd(ctx), "utf8")).toBe("new\n");
+  });
+
   it("uninstall deletes an AGENTS.md that only held our block", () => {
     const ctx = makeCtx();
     run(["install", "prime-agent"], ctx);

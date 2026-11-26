@@ -1,14 +1,13 @@
 /**
- * Shared entrypoint factory for the pi-family EXTENSION hosts (pi and its fork Prime Agent).
+ * Shared entrypoint factory for the pi EXTENSION host. Its fork Prime Agent loaded the same shape
+ * up to 0.9; 0.10 dropped extensions, and its runtime now lives in src/prime-agent.ts.
  *
- * pi (`@earendil-works/pi-coding-agent`) loads extensions listed in `~/.pi/agent/settings.json`;
- * Prime Agent (PrimeIntellect) is a fork of pi and loads the same shape from
- * `~/.prime/agent/settings.json`. Both call an extension's default export with their `pi` API, and
- * both expose the identical surface this adapter needs: `before_agent_start` (recall +
- * user-turn injection), `agent_end` (transcript write-back), and `registerTool` for the native
- * `hindsight_*` page tools. So neither host needs an adapter of its own — they differ only in
- * which harness name they report, which selects the `harnesses.<name>` config section, feeds
- * `{harness}` bank templating, and keeps their sessions attributable in diagnostics separately.
+ * pi (`@earendil-works/pi-coding-agent`) loads extensions listed in `~/.pi/agent/settings.json`
+ * and calls an extension's default export with its `pi` API, which exposes the surface this
+ * adapter needs: `before_agent_start` (recall + user-turn injection), `agent_end` (transcript
+ * write-back), and `registerTool` for the native `hindsight_*` page tools. The harness name the
+ * entry reports selects the `harnesses.<name>` config section and feeds `{harness}` bank
+ * templating.
  *
  * The memory behaviour itself stays in RuntimeCore — the same reflect-and-inject core every
  * Hindsight harness uses; this file only adapts the pi extension API at its boundary.
@@ -248,7 +247,7 @@ function piNotices() {
 
 /**
  * Build the default export for a pi-family extension host. `harness` is the name the host is known
- * by ("pi", "prime-agent"), used for config lookup, bank derivation and diagnostics scoping — it is
+ * by ("pi"), used for config lookup, bank derivation and diagnostics scoping — it is
  * NOT config-chosen; the entrypoint the host loaded determines it.
  *
  * Config and bank are resolved per SESSION, from `ctx.cwd`, and cached per directory. They used to

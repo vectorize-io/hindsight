@@ -153,7 +153,8 @@ async function main() {
     void core.seedIfCold(cwd);
     const stop = startPrimeWriteBack(core, session);
     // The kernel closes our stdin when the session ends; a signal is the harder way out.
-    const exit = () => void stop().finally(() => process.exit(0));
+    let stopping: Promise<void> | undefined;
+    const exit = () => void (stopping ??= stop().finally(() => process.exit(0)));
     process.stdin.once("end", exit);
     process.once("SIGTERM", exit);
   }
