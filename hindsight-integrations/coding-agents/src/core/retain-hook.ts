@@ -14,17 +14,25 @@
  * in core/hook.ts.
  */
 import { deriveBankIdOrSkip } from "./bank";
-import { retainLiveSession } from "./chat";
+import { REQUEST_BUDGET_MS, retainLiveSession } from "./chat";
 import { applyBankConfig, loadConfig } from "./config";
 import { DAEMON_WAIT_RETAIN_MS, ensureDaemon } from "./daemon";
 import { diag, readHookEvent } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
+import type { Config } from "./config";
 import type { ClientOpts } from "./hindsight";
 import { HindsightClient } from "./hindsight";
 import type { RetainCursorStore } from "./retain-cursor";
 import { buildRetainStamp, type RetainStamp } from "./retain-stamp";
-import { fileCursorStore, fileUsageCursorStore, sessionRootDir } from "./session-cache";
+import {
+  fileCursorStore,
+  fileUsageCursorStore,
+  orphanedCursors,
+  sessionRootDir,
+  type OrphanedCursor,
+} from "./session-cache";
 import { readClaudeTranscript } from "./transcript";
+import { existsSync } from "node:fs";
 import { appendJournalTurn, journalPath, readJournalTranscript } from "./turn-journal";
 import { stripInjectedMemory } from "./transcript-util";
 import { recordUsage, type UsageCursorStore } from "./usage";
@@ -176,6 +184,80 @@ export async function buildRetain(args: {
   }
 }
 
+/** A session must be this quiet before another one replays its write-back: a session that is
+ *  still running retries on its own next Stop, and two processes writing one document race. */
+export const ORPHAN_IDLE_MS = 30 * 60 * 1000;
+/** Past this a failed session is given up on: its transcript is likely gone. */
+export const ORPHAN_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Re-send the write-backs of this harness's OTHER sessions whose last one failed (#6097).
+ *
+ * The cursor of a failed session says so (`dirty` or `pending`), but only that session's own next
+ * Stop reads it — a session that ended on a failure kept its last turns out of the bank forever.
+ * Any later Stop of the same harness now picks it up: the transcript is re-read with this harness's
+ * own reader and written exactly as that session's next Stop would have, through the same cursor,
+ * so a write that did land collapses into its original operation server-side.
+ *
+ * ponytail: the idle window is the only guard against replaying a session that is still running in
+ * another process; a session resumed at the very moment of a replay can race it. A per-session
+ * lock file would close that if it is ever seen.
+ */
+export async function replayOrphanedSessions(args: {
+  harness: string;
+  /** The session this Stop is for: its own write-back already ran. */
+  currentSessionId: string;
+  /** Config before any bank override: each orphan is resolved against its OWN bank. */
+  cfg: Config;
+  makeClient: (opts: ClientOpts) => RetainClient;
+  readTranscript?: TranscriptReader;
+  deadline: number;
+  /** Injectable for tests. */
+  orphans?: OrphanedCursor[];
+  cursors?: RetainCursorStore;
+}): Promise<void> {
+  const { harness } = args;
+  const orphans =
+    args.orphans ??
+    orphanedCursors(harness, { idleMs: ORPHAN_IDLE_MS, maxAgeMs: ORPHAN_MAX_AGE_MS });
+  const cursors = args.cursors ?? fileCursorStore(harness);
+  const readTranscript = args.readTranscript ?? readClaudeTranscript;
+  for (const { sessionId, cursor } of orphans) {
+    if (sessionId === args.currentSessionId) continue;
+    // Never start one that cannot finish before the host kills this process.
+    if (Date.now() + REQUEST_BUDGET_MS > args.deadline) return;
+    const transcriptPath = cursor.paths?.at(-1);
+    if (!transcriptPath || !existsSync(transcriptPath)) continue;
+    const { cfg, bankId } = applyBankConfig(args.cfg, cursor.bank);
+    if (cfg.disabled || !cfg.retainSessions) continue;
+    const turns = readTranscript(transcriptPath);
+    if (!turns.length) continue;
+    const client = args.makeClient({
+      apiUrl: cfg.apiUrl,
+      apiToken: cfg.apiToken,
+      bank: bankId,
+      maxParallelRetains: cfg.maxParallelRetains,
+      observationScopes: cfg.observationScopes,
+    });
+    const t0 = Date.now();
+    try {
+      await retainLiveSession(
+        client as HindsightClient,
+        sessionId,
+        turns,
+        turns[0]?.timestamp ?? new Date().toISOString(),
+        harness,
+        { cursors, stamp: cursor.stamp, retryUntil: args.deadline, transcriptPath }
+      );
+      diag(harness, "retain_replayed", { ms: Date.now() - t0, session: sessionId });
+    } catch (e) {
+      // Still owed: the cursor keeps saying so, and the next Stop tries again.
+      diag(harness, "retain_replay_failed", { error: describeError(e), session: sessionId });
+      return; // the server is still unreachable; the rest would fail the same way
+    }
+  }
+}
+
 /** Run one Stop-hook invocation: stdin event in, no stdout output (a Stop hook injects nothing). */
 export async function runRetainHook(
   spec: RetainHookSpec,
@@ -217,6 +299,7 @@ export async function runRetainHook(
 
   if (!transcriptPath) return;
 
+  const baseCfg = cfg;
   const sessionRoot = sessionRootDir(spec.harness, sessionId, cwd);
   const derived = deriveBankIdOrSkip(cfg, cwd, spec.harness, sessionRoot);
   // Skipping the write-back loses this session; retaining it into a guessed bank loses it AND
@@ -267,4 +350,14 @@ export async function runRetainHook(
       sessionId: sessionId || "no-session",
     }),
   });
+
+  if (client)
+    await replayOrphanedSessions({
+      harness: spec.harness,
+      currentSessionId: sessionId || "no-session",
+      cfg: baseCfg,
+      makeClient,
+      readTranscript,
+      deadline: hostDeadline,
+    });
 }

@@ -773,12 +773,48 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(retain).toHaveBeenCalledTimes(3); // attempt + 2 retries, then success
   });
 
-  it("does not retry a failure that is not a rate limit", async () => {
+  it("does not retry a request the server rejected (4xx)", async () => {
     const { retain, client } = stubClient();
-    retain.mockRejectedValue(new Error("500 boom"));
+    retain.mockRejectedValue(new Error("POST /v1/default/banks/b/memories -> 400 bad item"));
 
-    await expect(write(client, turns(3), memoryCursorStore())).rejects.toThrow("500 boom");
+    await expect(write(client, turns(3), memoryCursorStore())).rejects.toThrow("-> 400");
     expect(retain).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "the daemon is restarting",
+      new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } }),
+    ],
+    ["the request timed out", Object.assign(new Error("aborted"), { name: "TimeoutError" })],
+    ["the server failed", new Error("POST /v1/default/banks/b/memories -> 503 unavailable")],
+  ])("retries a write-back when %s (#6097)", async (_why, error) => {
+    // Only a rate limit used to be retried, so one refused connection lost a session's last turns.
+    vi.useFakeTimers();
+    try {
+      const { retain, client } = stubClient();
+      retain.mockRejectedValueOnce(error);
+      const cursors = memoryCursorStore();
+      const done = write(client, turns(3), cursors);
+      await vi.advanceTimersByTimeAsync(2000);
+      await done;
+      expect(retain).toHaveBeenCalledTimes(2);
+      expect(retain.mock.calls[1][5].operationId).toBe(retain.mock.calls[0][5].operationId);
+      expect(cursors.read("s1")?.dirty).toBeFalsy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the stamp on the cursor so a replay from another session can reuse it", async () => {
+    const { client } = stubClient();
+    const cursors = memoryCursorStore();
+    const stamp = { tags: ["env:work"], metadata: { repo: "acme" } };
+    await retainLiveSession(client, "s1", turns(2), "2026-01-01T00:00:00Z", "codex", {
+      cursors,
+      stamp,
+    });
+    expect(cursors.read("s1")?.stamp).toEqual(stamp);
   });
 
   it("keeps the write-back when the capability probe itself fails", async () => {

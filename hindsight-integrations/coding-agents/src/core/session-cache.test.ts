@@ -1,7 +1,8 @@
-import { rmSync } from "node:fs";
+import { rmSync, utimesSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   fileCursorStore,
+  orphanedCursors,
   readSessionCache,
   sessionCacheFile,
   sessionRootDir,
@@ -9,7 +10,7 @@ import {
 } from "./session-cache";
 
 const HARNESS = "codex-cursor-test";
-const sessions = ["s1", "s2"];
+const sessions = ["s1", "s2", "s3", "s4"];
 
 afterEach(() => {
   for (const s of sessions) {
@@ -85,6 +86,35 @@ describe("fileCursorStore", () => {
       expect(seen?.turns).toBe(i);
       expect(seen?.fingerprint).toHaveLength(i * 200);
     }
+  });
+});
+
+describe("orphanedCursors", () => {
+  const MIN = 60_000;
+  /** Write a cursor and backdate its file, as if its session last wrote `agoMin` minutes ago. */
+  const at = (sessionId: string, agoMin: number, extra: object) => {
+    fileCursorStore(HARNESS).write(sessionId, { turns: 2, fingerprint: "f", bank: "b", ...extra });
+    const file = sessionCacheFile(HARNESS, sessionId).replace(/\.json$/, ".retain.json");
+    const when = new Date(Date.now() - agoMin * MIN);
+    utimesSync(file, when, when);
+  };
+
+  it("finds the ended sessions whose last write-back failed, newest first (#6097)", () => {
+    at("s1", 120, { dirty: true });
+    at("s2", 60, { pending: [{ content: "{}", operationId: "op", at: 0 }] });
+    at("s3", 60, {}); // written fine: nothing owed
+    at("s4", 5, { dirty: true }); // still running: its own next Stop retries
+    const found = orphanedCursors(HARNESS, { idleMs: 30 * MIN, maxAgeMs: 24 * 60 * MIN });
+    expect(found.map((o) => o.sessionId)).toEqual(["s2", "s1"]);
+  });
+
+  it("gives up on sessions older than the age limit", () => {
+    at("s1", 120, { dirty: true });
+    expect(orphanedCursors(HARNESS, { idleMs: 30 * MIN, maxAgeMs: 60 * MIN })).toEqual([]);
+  });
+
+  it("is empty when the harness has never written a cursor", () => {
+    expect(orphanedCursors("never-ran-harness", { idleMs: 0, maxAgeMs: 1e12 })).toEqual([]);
   });
 });
 
