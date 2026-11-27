@@ -11565,6 +11565,8 @@ class MemoryEngine(MemoryEngineInterface):
                         chunk_id=r.chunk_id,
                         tags=r.tags,
                         source_fact_ids=source_fact_ids_by_obs.get(r.id) if request.include_source_facts else None,
+                        # The column defaults to 1 on raw facts too, where it counts nothing: only an
+                        # observation has sources, so only an observation reports how many (#6966).
                         proof_count=r.proof_count if r.fact_type == "observation" else None,
                         scores=scores_by_id.get(r.id),
                         attachment_ids=r.attachment_ids,

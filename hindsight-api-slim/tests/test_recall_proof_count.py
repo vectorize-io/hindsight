@@ -41,6 +41,8 @@ async def seeded(memory, request_context):
             FACT_TEXT,
             _to_str(embeddings[0]),
         )
+        # proof_count (3) deliberately differs from the one listed source, so the assertion shows
+        # recall returns the stored count rather than recounting `source_memory_ids`.
         await conn.execute(
             "INSERT INTO memory_units (id, bank_id, text, fact_type, embedding, source_memory_ids, proof_count) "
             "VALUES ($1, $2, $3, 'observation', $4::vector, $5::uuid[], 3)",
