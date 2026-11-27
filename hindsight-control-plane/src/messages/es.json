@@ -2880,6 +2880,7 @@
     "postHintCopied": "Tarjeta copiada. Pulsa {keys} en tu post para añadirla.",
     "postHintCopiedTouch": "Tarjeta copiada. Mantén pulsado en tu post y elige Pegar.",
     "postHintDownloaded": "Tarjeta descargada. Adjúntala a tu post.",
+    "postHintBlocked": "Tu navegador bloqueó la nueva pestaña. Permite las ventanas emergentes en esta página y vuelve a intentarlo.",
     "postText": "Mi {year} en memoria: {count, plural, one {# recuerdo} other {# recuerdos}} con Hindsight.",
     "pill": "Wrapped {year}",
     "cardTagline": "Mi año en recuerdos",

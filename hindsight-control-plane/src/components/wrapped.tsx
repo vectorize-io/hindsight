@@ -683,7 +683,7 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
   const locale = useLocale();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
-  const [hint, setHint] = useState<"copied" | "downloaded" | null>(null);
+  const [hint, setHint] = useState<"copied" | "downloaded" | "blocked" | null>(null);
   // How to paste here: a key on a keyboard, tap and hold on a touch screen.
   const touch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
@@ -728,7 +728,7 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
         peak:
           stats.peakHour === null
             ? ""
-            : t("peakAt", { hour: String(stats.peakHour).padStart(2, "0") }),
+            : t("peakAt", { hour: String(stats.peakHour).padStart(2, "0") }).toUpperCase(),
         agent: t("agentShort").toUpperCase(),
       },
     }).then(() => canvas.toBlob((b) => !cancelled && setBlob(b), "image/png"));
@@ -760,19 +760,27 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
       copied = Promise.resolve(false); // no image clipboard in this browser
     }
     // Both start inside the click: the clipboard needs the page focused, the new tab needs the click.
-    window.open(url, "_blank", "noopener");
+    // Not "noopener": that makes window.open return null always, hiding a blocked tab.
+    const tab = window.open(url, "_blank");
+    if (tab) tab.opener = null;
     void copied.then((ok) => {
       if (!ok) download();
-      setHint(ok ? "copied" : "downloaded");
+      setHint(!tab ? "blocked" : ok ? "copied" : "downloaded");
     });
   };
   const text = t("postText", { year: YEAR, count: stats.memories });
   const postText = encodeURIComponent(text);
   // The system share sheet takes the image itself (phones, Safari, recent Chrome): the app picked
   // there (X, Instagram, LinkedIn, ...) opens with the card already attached.
-  const file = blob ? new File([blob], fileName, { type: "image/png" }) : null;
-  const canShare =
-    !!file && typeof navigator !== "undefined" && !!navigator.canShare?.({ files: [file], text });
+  const file = useMemo(
+    () => (blob ? new File([blob], fileName, { type: "image/png" }) : null),
+    [blob, fileName]
+  );
+  const canShare = useMemo(
+    () =>
+      !!file && typeof navigator !== "undefined" && !!navigator.canShare?.({ files: [file], text }),
+    [file, text]
+  );
   const targets = [
     { label: t("postOnX"), Logo: XLogo, url: `https://x.com/intent/post?text=${postText}` },
     {
@@ -832,11 +840,13 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
           </button>
           {hint && (
             <p role="status" className="mt-2 text-sm text-white/60">
-              {hint === "downloaded"
-                ? t("postHintDownloaded")
-                : touch
-                  ? t("postHintCopiedTouch")
-                  : t("postHintCopied", { keys: mac ? "⌘V" : "Ctrl+V" })}
+              {hint === "blocked"
+                ? t("postHintBlocked")
+                : hint === "downloaded"
+                  ? t("postHintDownloaded")
+                  : touch
+                    ? t("postHintCopiedTouch")
+                    : t("postHintCopied", { keys: mac ? "⌘V" : "Ctrl+V" })}
             </p>
           )}
         </Rise>
@@ -977,7 +987,7 @@ async function drawShareCard(
   // Persona and top agent: side by side at the bottom, no boxes. A small tracked label over
   // each value, like the tagline over the number.
   const footnotes = [
-    text.persona ? { label: text.peak.toUpperCase(), value: text.persona, img: null } : null,
+    text.persona ? { label: text.peak, value: text.persona, img: null } : null,
     harnessLabel ? { label: text.agent, value: harnessLabel, img: harnessImg } : null,
   ].filter((n): n is { label: string; value: string; img: HTMLImageElement | null } => !!n);
   const FOOT_H = 104;
@@ -1021,13 +1031,13 @@ async function drawShareCard(
   const labelBase = numBase + Math.max(0, num.actualBoundingBoxDescent) + 66;
   const heroH = labelBase + 16;
   const th = 150;
-  const panelH = footnotes.length ? FOOT_H : 0;
+  const footH = footnotes.length ? FOOT_H : 0;
   const top = 180;
   const room = H - 130 - top;
   const layout = (n: number) => {
     const rows = Math.ceil(n / 2);
     const tilesH = rows ? rows * th + (rows - 1) * gap : 0;
-    return { tilesH, bodyH: heroH + (tilesH ? 56 + tilesH : 0) + (panelH ? 64 + panelH : 0) };
+    return { tilesH, bodyH: heroH + (tilesH ? 56 + tilesH : 0) + (footH ? 64 + footH : 0) };
   };
   // The memory constellation sits above the number; tiles give way, two at a time, to fit it.
   const SKY_MIN = 300;
@@ -1067,7 +1077,7 @@ async function drawShareCard(
     });
     y += tilesH;
   }
-  if (panelH) drawFootnotes(y + 64);
+  if (footH) drawFootnotes(y + 64);
 
   ctx.fillStyle = INK_MUTED;
   ctx.font = f(600, 28);

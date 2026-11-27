@@ -2880,6 +2880,7 @@
     "postHintCopied": "Carte copiée. Appuie sur {keys} dans ton post pour l'ajouter.",
     "postHintCopiedTouch": "Carte copiée. Appuie longuement dans ton post, puis Coller.",
     "postHintDownloaded": "Carte téléchargée. Joins-la à ton post.",
+    "postHintBlocked": "Ton navigateur a bloqué le nouvel onglet. Autorise les pop-ups pour cette page et réessaie.",
     "postText": "Mon {year} en mémoire : {count, plural, one {# souvenir} other {# souvenirs}} avec Hindsight.",
     "pill": "Wrapped {year}",
     "cardTagline": "Mon année en souvenirs",

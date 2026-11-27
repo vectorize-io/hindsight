@@ -2880,6 +2880,7 @@
     "postHintCopied": "Card copied. Press {keys} in your post to add it.",
     "postHintCopiedTouch": "Card copied. Tap and hold in your post, then Paste.",
     "postHintDownloaded": "Card downloaded. Attach it to your post.",
+    "postHintBlocked": "Your browser blocked the new tab. Allow pop-ups for this page and try again.",
     "postText": "My {year} in memory: {count, plural, one {# memory} other {# memories}} with Hindsight.",
     "pill": "Wrapped {year}",
     "cardTagline": "My year in memory",

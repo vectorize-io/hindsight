@@ -2880,6 +2880,7 @@
     "postHintCopied": "Cartão copiado. Pressione {keys} no seu post para adicioná-lo.",
     "postHintCopiedTouch": "Cartão copiado. Toque e segure no seu post e escolha Colar.",
     "postHintDownloaded": "Cartão baixado. Anexe ao seu post.",
+    "postHintBlocked": "Seu navegador bloqueou a nova aba. Permita pop-ups nesta página e tente de novo.",
     "postText": "Meu {year} em memória: {count, plural, one {# memória} other {# memórias}} com o Hindsight.",
     "pill": "Wrapped {year}",
     "cardTagline": "Meu ano em memórias",

@@ -2880,6 +2880,7 @@
     "postHintCopied": "張卡已經複製咗。喺個帖度撳 {keys} 加入。",
     "postHintCopiedTouch": "張卡已經複製咗。喺個帖度長按，再揀貼上。",
     "postHintDownloaded": "張卡已經下載咗，夾落你個帖度。",
+    "postHintBlocked": "瀏覽器擋咗個新分頁。請容許呢個頁面嘅彈出視窗，再試多次。",
     "postText": "我喺 Hindsight 嘅 {year} 年：{count, number} 則記憶",
     "pill": "Wrapped {year}",
     "cardTagline": "我嘅記憶年度回顧",

@@ -2880,6 +2880,7 @@
     "postHintCopied": "卡片已复制。在帖子里按 {keys} 添加。",
     "postHintCopiedTouch": "卡片已复制。在帖子里长按，然后选择粘贴。",
     "postHintDownloaded": "卡片已下载，附到你的帖子里。",
+    "postHintBlocked": "浏览器拦截了新标签页。请允许此页面的弹出窗口后重试。",
     "postText": "我在 Hindsight 的 {year} 年：{count, number} 条记忆",
     "pill": "Wrapped {year}",
     "cardTagline": "我的记忆年度回顾",

@@ -2880,6 +2880,7 @@
     "postHintCopied": "卡片已複製。在貼文裡按 {keys} 加入。",
     "postHintCopiedTouch": "卡片已複製。在貼文裡長按，然後選擇貼上。",
     "postHintDownloaded": "卡片已下載，附到你的貼文裡。",
+    "postHintBlocked": "瀏覽器封鎖了新分頁。請允許此頁面的彈出視窗後再試一次。",
     "postText": "我在 Hindsight 的 {year} 年：{count, number} 則記憶",
     "pill": "Wrapped {year}",
     "cardTagline": "我的記憶年度回顧",

@@ -2880,6 +2880,7 @@
     "postHintCopied": "Karte kopiert. Drück {keys} in deinem Post, um sie einzufügen.",
     "postHintCopiedTouch": "Karte kopiert. Tippe lange in deinen Post und wähle Einfügen.",
     "postHintDownloaded": "Karte heruntergeladen. Hänge sie an deinen Post an.",
+    "postHintBlocked": "Dein Browser hat den neuen Tab blockiert. Erlaube Pop-ups für diese Seite und versuch es noch einmal.",
     "postText": "Mein {year} in Erinnerungen: {count, plural, one {# Erinnerung} other {# Erinnerungen}} mit Hindsight.",
     "pill": "Wrapped {year}",
     "cardTagline": "Mein Jahr in Erinnerungen",
