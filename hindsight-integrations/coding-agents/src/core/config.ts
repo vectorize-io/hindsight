@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { DEFAULT_SEED_LIMIT } from "./seed";
 import { isOptedIn, pathSection } from "./bank";
 import { log } from "./log";
+import { parseSessionContext, type SessionContextRef } from "./session-context";
 import { type KeptToolInput, setKeptToolInputs } from "./transcript-util";
 import {
   DEFAULT_OBSERVATION_SCOPES,
@@ -196,6 +197,9 @@ export interface RawConfig {
    *  `hindsight_search_pages` results. It adds to the built-in text, never replaces it,
    *  so the plugin's call triggers and crediting rule keep up with releases (#4791). */
   toolGuideExtra?: string;
+  /** Mental models and pages whose content goes into context when a session starts, in order:
+   *  `mental_model:<id>` or `page:<id>` (a bare id is a mental model). Read once per session (#5714). */
+  sessionContext?: string[];
   pageRefreshEveryTurns?: number; // page refresh cadence in user turns (default 1; 0 also means 1)
   /** What it COSTS to keep this project's pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
@@ -392,6 +396,7 @@ export interface Config {
   recallOptions: Record<string, unknown>;
   keepToolInputs: Record<string, KeptToolInput>;
   toolGuideExtra?: string;
+  sessionContext: SessionContextRef[];
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
@@ -729,6 +734,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       typeof raw.toolGuideExtra === "string" && raw.toolGuideExtra.trim()
         ? raw.toolGuideExtra
         : undefined,
+    sessionContext: parseSessionContext(raw.sessionContext),
     // Every turn, not every tenth. The guide is what tells the agent WHEN to reach for memory, and
     // at a cadence of 10 a normal session is told once, on turn 1, and never again. Measured over
     // 40 real Claude Code turns, moving this from 10 to 1 took searches from 15% of turns to 32.5%
@@ -885,6 +891,7 @@ const ENV_KEYS = {
   writeTools: "HINDSIGHT_WRITE_TOOLS",
   pageSearchLimit: "HINDSIGHT_PAGE_SEARCH_LIMIT",
   toolGuideExtra: "HINDSIGHT_TOOL_GUIDE_EXTRA",
+  sessionContext: "HINDSIGHT_SESSION_CONTEXT",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",
@@ -924,7 +931,12 @@ const ENV_BOOLEANS = new Set<keyof RawConfig>([
   "manageBankConfig",
   "writeTools",
 ]);
-const ENV_LISTS = new Set<keyof RawConfig>(["retainTags", "recallTags", "optInPaths"]);
+const ENV_LISTS = new Set<keyof RawConfig>([
+  "retainTags",
+  "recallTags",
+  "optInPaths",
+  "sessionContext",
+]);
 const ENV_NUMBERS = new Set<keyof RawConfig>([
   "apiPort",
   "daemonIdleTimeout",
