@@ -719,3 +719,19 @@ describe("keyless Hindsight Cloud", () => {
     expect(applyBankConfig(cfg, "other").cfg.disabled).toBe(true);
   });
 });
+
+describe("pageScope (#6526)", () => {
+  it('keeps "" (the sentence off) apart from unset (the built-in one)', () => {
+    expect(resolveConfig({}).pageScope).toBeUndefined();
+    expect(resolveConfig({ pageScope: "" }).pageScope).toBe("");
+    expect(resolveConfig({ pageScope: "One project." }).pageScope).toBe("One project.");
+  });
+  it("is set per bank under banks.<id>", () => {
+    const cfg = resolveConfig({ banks: { notes: { pageScope: "", toolGuideMoments: "• y" } } });
+    expect(applyBankConfig(cfg, "notes").cfg).toMatchObject({
+      pageScope: "",
+      toolGuideMoments: "• y",
+    });
+    expect(applyBankConfig(cfg, "other").cfg.pageScope).toBeUndefined();
+  });
+});

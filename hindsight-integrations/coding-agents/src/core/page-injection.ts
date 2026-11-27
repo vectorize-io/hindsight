@@ -21,7 +21,7 @@ export function parsePageList(raw: unknown): PageRef[] {
 }
 
 const EMPTY_STATE =
-  "No pages yet — Hindsight is still learning this repo; they'll appear as it processes.";
+  "No pages yet — Hindsight is still learning this project; they'll appear as it processes.";
 
 /**
  * What the agent is told EXISTS, without listing it.
@@ -40,7 +40,7 @@ const EMPTY_STATE =
 function indexLine(pages: PageRef[]): string {
   const count = pages.length === 1 ? "1 page covers" : `${pages.length} pages cover`;
   return (
-    `${count} this repository — architecture, conventions, past decisions and ` +
+    `${count} this project — architecture, conventions, past decisions and ` +
     "in-flight initiatives. They are deliberately NOT listed here: call " +
     "hindsight_search_pages(query) to find the ones that bear on the current turn, then " +
     "hindsight_read_page(<id>) on anything the results show is worth reading in full."
@@ -56,19 +56,24 @@ function indexLine(pages: PageRef[]): string {
  * In three parts, because two of them do not always apply: the page tools are left out while the
  * bank has no pages (they would point at nothing), the write tools with `writeTools: false`.
  */
-const PAGE_TOOLS_GUIDE =
+const PAGE_SEARCH_INTRO =
   "- hindsight_search_pages(query) — FIRST STOP, and the way IN to everything below. The code " +
   "shows what is true today but not what was decided or why; memory shows what was decided or said " +
   "back then but not whether it still holds. Work built from either alone goes wrong: from code alone " +
   "it quietly re-litigates settled questions, from memory alone it acts on stale claims. Search " +
-  "BEFORE you act whenever the turn is one of these — they are the ones that go wrong silently:\n" +
+  "BEFORE you act whenever the turn is one of these — they are the ones that go wrong silently:\n";
+
+/** A code repository's moments; `toolGuideMoments` replaces them for a bank that is not one (#6526). */
+const DEFAULT_MOMENTS =
   "    • the user reports a bug or a wrong response (the intended behaviour, and the status code or " +
   "value it should return, may already have been decided);\n" +
   "    • you are about to write or change a test (what this project expects a change to ship with, and " +
   "how it asserts, is a convention, not a preference);\n" +
   "    • you are implementing something new, or two parts have to fit together;\n" +
   "    • the user asks why something is the way it is, or what is left to do;\n" +
-  "    • you are about to commit, and need to know what the change was supposed to honour.\n" +
+  "    • you are about to commit, and need to know what the change was supposed to honour.\n";
+
+const PAGE_TOOLS_REST =
   "  It ranks the pages by relevance and shows the opening of each; every page can come back, so " +
   "the ranking, not the list, is the signal. Read the top page with hindsight_read_page before you " +
   "rely on it — the opening is not the passage that matched. What it returns is a past record, " +
@@ -83,12 +88,12 @@ const PAGE_TOOLS_GUIDE =
   '"No content yet." has nothing in it to credit. A search that turned up nothing useful needs ' +
   "no mention at all — just carry on.\n" +
   "- hindsight_list_pages / hindsight_read_page — BEFORE substantial work, list the pages and " +
-  "read the relevant ones to ground yourself in this repo's architecture, conventions, and past decisions instead " +
+  "read the relevant ones to ground yourself in this project's architecture, conventions, and past decisions instead " +
   "of re-deriving them from the code; follow any [[page:<id>]] links you see.\n";
 
 const REFLECT_GUIDE =
   "- hindsight_reflect(query) — when pages are too shallow and you need the WHY: deep reasoning over the " +
-  "repo's full memory for the past decision and exact values that explain a behavior or bug (slower — " +
+  "project's full memory for the past decision and exact values that explain a behavior or bug (slower — " +
   'use deliberately, and credit results with a blockquote header "> 🧠 **From Hindsight memory** — <summary>").\n';
 
 /** The two tools that WRITE to the bank: the host may deny them (#6487). */
@@ -120,6 +125,8 @@ export interface ToolGuideOpts {
   extra?: string;
   /** cfg.writeTools: false leaves out every instruction to call a write tool (#6487). */
   writeTools?: boolean;
+  /** cfg.toolGuideMoments: the moments to search first, in place of a code repository's. */
+  moments?: string;
 }
 
 /** The guide options a config implies — one place, so every block a session sees agrees. */
@@ -128,15 +135,23 @@ export function toolGuideOpts(cfg: Config): ToolGuideOpts {
     reflectOnNewGoals: cfg.autoInject !== "reflect",
     extra: cfg.toolGuideExtra,
     writeTools: cfg.writeTools,
+    moments: cfg.toolGuideMoments,
   };
 }
 
 function toolGuide(pages: PageRef[], opts?: ToolGuideOpts): string {
   const extra = opts?.extra?.trim();
   const has = pages.length > 0;
+  const moments = opts?.moments?.trim()
+    ? opts.moments
+        .trim()
+        .split("\n")
+        .map((line) => `    ${line.trim()}\n`)
+        .join("")
+    : DEFAULT_MOMENTS;
   const guide =
     (has && opts?.reflectOnNewGoals ? PAGES_FIRST_ON_GOALS : "") +
-    (has ? PAGE_TOOLS_GUIDE : "") +
+    (has ? PAGE_SEARCH_INTRO + moments + PAGE_TOOLS_REST : "") +
     REFLECT_GUIDE +
     (opts?.writeTools === false ? "" : WRITE_TOOLS_GUIDE);
   return guide.trimEnd() + (extra ? `\n${extra}` : "");
@@ -147,7 +162,7 @@ export function buildPagesPreamble(pages: PageRef[], opts?: ToolGuideOpts): stri
   const body = pages.length ? indexLine(pages) : EMPTY_STATE;
   return (
     "<hindsight_pages>\n" +
-    "This repository has a Hindsight memory + pages (curated, continuously-updated pages plus the raw " +
+    "This project has a Hindsight memory + pages (curated, continuously-updated pages plus the raw " +
     "memory behind them). The tools below are registered, but you must actually CALL them at the right moments:\n" +
     `${toolGuide(pages, opts)}\n` +
     (opts?.writeTools === false
@@ -175,16 +190,19 @@ export function buildRosterRefresh(
   if (opts?.short) {
     const line = pages.length
       ? `${pages.length === 1 ? "1 Hindsight page covers" : `${pages.length} Hindsight pages cover`} ` +
-        "this repo: search them (hindsight_search_pages) before bugs, tests, new work and commits, " +
-        "and credit any hit you use."
-      : "No Hindsight pages yet; hindsight_reflect answers from this repo's raw memory.";
+        "this project: search them (hindsight_search_pages) " +
+        (opts.moments?.trim()
+          ? "at the moments the guide names"
+          : "before bugs, tests, new work and commits") +
+        ", and credit any hit you use."
+      : "No Hindsight pages yet; hindsight_reflect answers from this project's raw memory.";
     return `<hindsight_page_refresh>\n${line}\n</hindsight_page_refresh>`;
   }
   const rosterBlock = pages.length ? `${indexLine(pages)}\n` : "";
   return (
     "<hindsight_page_refresh>\n" +
     rosterBlock +
-    "Reminder — this repo's Hindsight tools are available; call them at the right moments:\n" +
+    "Reminder — this project's Hindsight tools are available; call them at the right moments:\n" +
     `${toolGuide(pages, opts)}\n` +
     "</hindsight_page_refresh>"
   );

@@ -1071,6 +1071,87 @@ describe("HindsightClient.seedPages", () => {
   });
 });
 
+describe("HindsightClient.seedPages with pageScope (#6526)", () => {
+  const INIT = `Summarize the "Retry backoff" initiative: what is being built or changed and why, and its current state — drawn from the project's memory.`;
+  const CUSTOM = "This bank is one project; its tools and services are its subject.";
+  // A seeded page and a plugin-written initiative page under `from`, re-seeded under `to`.
+  it.each([
+    ["built-in → custom", undefined, CUSTOM],
+    ["built-in → off", undefined, ""],
+    ["custom → off", CUSTOM, ""],
+    ["custom → other custom", CUSTOM, "Something else."],
+    ["off → built-in", "", undefined],
+  ])("%s rewrites existing pages, leaving no trace of the old sentence", async (_l, from, to) => {
+    const old = pageScopeRule("repo-a", from);
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+        json: {
+          roots: [
+            ...pagesFor("repo-a", {}, {}, from).map((p, i) => ({
+              id: `kp-${i}`,
+              kind: "page",
+              name: p.name,
+              description: p.source_query,
+            })),
+            {
+              id: "folder-initiatives",
+              kind: "folder",
+              name: "Initiatives",
+              children: [
+                { id: "kp-init", kind: "page", name: "Retry backoff", description: INIT + old },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    const c = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "repo-a",
+      project: "repo-a",
+      pageScope: to,
+    });
+    await c.seedPages();
+
+    const now = pageScopeRule("repo-a", to);
+    const patches = calls.filter((k) => k.method === "PATCH");
+    expect(patches).toHaveLength(6);
+    for (const p of patches) {
+      expect(p.body.source_query.endsWith(now)).toBe(true);
+      if (old) expect(p.body.source_query).not.toContain(old.trim());
+    }
+    expect(patches[5].body.source_query).toBe(INIT + now);
+  });
+
+  it("an unchanged pageScope writes nothing", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/pages/tree"),
+        json: {
+          roots: pagesFor("repo-a", {}, {}, "").map((p, i) => ({
+            id: `kp-${i}`,
+            kind: "page",
+            name: p.name,
+            description: p.source_query,
+            trigger: settledTrigger(p.name),
+          })),
+        },
+      },
+    ]);
+    const c = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "repo-a",
+      project: "repo-a",
+      pageScope: "",
+    });
+    await c.seedPages();
+    expect(calls.filter((k) => k.method === "PATCH")).toHaveLength(0);
+  });
+});
+
 describe("pagesFor", () => {
   it("scopes every page in the taxonomy to the named repository", () => {
     const pages = pagesFor("dotfiles");

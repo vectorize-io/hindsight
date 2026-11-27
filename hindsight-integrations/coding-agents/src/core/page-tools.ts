@@ -209,7 +209,7 @@ export function buildPageTools(
     {
       name: "hindsight_search_pages",
       description:
-        "Search this repository's Hindsight pages for content relevant to a query — " +
+        "Search this project's Hindsight pages for content relevant to a query — " +
         "hybrid full-text + semantic search, server-side. Call this when the user's question may " +
         "be answered by the project's accumulated knowledge (architecture, conventions, decisions, " +
         "initiatives) rather than by reading code. Returns ranked pages, each with its opening " +
@@ -256,7 +256,7 @@ export function buildPageTools(
     {
       name: "hindsight_list_pages",
       description:
-        "List this repository's Hindsight pages — curated, continuously-updated " +
+        "List this project's Hindsight pages — curated, continuously-updated " +
         "summaries of the project's durable knowledge (architecture, components, conventions, key " +
         "decisions, and in-flight initiatives). Returns each page's id, title, and a one-line " +
         "description of what it covers. Call this at the start of any non-trivial task, and again " +
@@ -282,7 +282,7 @@ export function buildPageTools(
     {
       name: "hindsight_reflect",
       description:
-        "Deep memory reasoning: an agentic synthesis over this repository's FULL memory (git " +
+        "Deep memory reasoning: an agentic synthesis over this project's FULL memory (git " +
         "decisions, past sessions, ingested knowledge) that answers WHY questions — the past " +
         "decision and exact rule/values that explain a behavior, bug, or convention. Slower than " +
         "hindsight_search_pages (several seconds): reach for it when pages are too " +
@@ -340,7 +340,7 @@ export function buildPageTools(
     {
       name: "hindsight_ingest_document",
       description:
-        "Save an external document or a block of durable notes/findings into this repository's " +
+        "Save an external document or a block of durable notes/findings into this project's " +
         "memory so it informs future recall and pages. Use for design notes, research, or " +
         "reference material you want remembered — not for the conversation you're already in " +
         "(that's captured automatically at session end). This is ALSO the correction mechanism: " +

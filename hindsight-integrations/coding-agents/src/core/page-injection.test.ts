@@ -31,7 +31,7 @@ describe("buildPagesPreamble", () => {
   it("names how many pages exist, withholds the index, and gives the FULL tool guide", () => {
     const out = buildPagesPreamble([{ id: "p1", title: "Component map" }]);
     expect(out).toContain("<hindsight_pages>");
-    expect(out).toContain("1 page covers this repository");
+    expect(out).toContain("1 page covers this project");
     expect(out).toContain("deliberately NOT listed here");
     // Crediting is stated as an obligation triggered by the CALL. Measured on a real session: the
     // agent searched, built its answer from ten on-topic pages and credited nothing, because
@@ -87,7 +87,7 @@ describe("buildPagesPreamble", () => {
 describe("buildRosterRefresh", () => {
   it("re-states the page count and the full tool guide, still without the index", () => {
     const out = buildRosterRefresh([{ id: "p1", title: "Component map" }]);
-    expect(out).toContain("1 page covers this repository");
+    expect(out).toContain("1 page covers this project");
     expect(out).toContain("deliberately NOT listed here");
     // Titles and ids stay OUT: handed the index, the agent reads by id and never
     // searches — 0 searches over 40 measured turns, at 3 pages and at 12.
@@ -170,7 +170,7 @@ describe("short refresh (#6597)", () => {
     const extra = "Team rule.";
     const out = buildRosterRefresh([{ id: "p1", title: "Component map" }], { extra, short: true });
     expect(out).toMatch(/^<hindsight_page_refresh>\n.*\n<\/hindsight_page_refresh>$/);
-    expect(out).toContain("1 Hindsight page covers this repo");
+    expect(out).toContain("1 Hindsight page covers this project");
     expect(out).toContain("hindsight_search_pages");
     expect(out).not.toContain(extra);
     expect(out.length).toBeLessThan(300);
@@ -182,6 +182,27 @@ describe("crediting (#6320)", () => {
   it("exempts a page with no content yet", () => {
     expect(buildPagesPreamble([{ id: "p1", title: "x" }])).toContain(
       '"No content yet." has nothing in it to credit'
+    );
+  });
+});
+
+describe("toolGuideMoments (#6526)", () => {
+  const pages = [{ id: "p1", title: "Decisions" }];
+  it("replaces only the list of moments; the crediting rule stays", () => {
+    const moments = "• a decision is about to be revisited;\n• the user asks what was agreed.";
+    const out = buildPagesPreamble(pages, { moments });
+    expect(out).toContain(
+      "    • a decision is about to be revisited;\n    • the user asks what was agreed.\n"
+    );
+    expect(out).not.toContain("about to write or change a test");
+    expect(out).toContain("CREDITING IS NOT OPTIONAL");
+    expect(buildRosterRefresh(pages, { moments, short: true })).not.toContain("tests");
+  });
+  it("reaches the guide from the config", () => {
+    const cfg = resolveConfig({ toolGuideMoments: "• x" });
+    expect(toolGuideOpts(cfg).moments).toBe("• x");
+    expect(buildPagesPreamble(pages, toolGuideOpts(resolveConfig({})))).toContain(
+      "about to write or change a test"
     );
   });
 });
