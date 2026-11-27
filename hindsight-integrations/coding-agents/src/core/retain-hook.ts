@@ -214,6 +214,8 @@ export async function replayOrphanedSessions(args: {
   cfg: Config;
   makeClient: (opts: ClientOpts) => RetainClient;
   readTranscript?: TranscriptReader;
+  /** The harness's originator reader: an orphan from a `skipOriginators` client stays unwritten. */
+  originator?: RetainHookSpec["originator"];
   deadline: number;
   /** Injectable for tests. */
   orphans?: OrphanedCursor[];
@@ -235,6 +237,10 @@ export async function replayOrphanedSessions(args: {
     // folder-scoped (`paths`) override does not apply — a `banks.<id>` section does.
     const { cfg, bankId } = applyBankConfig(args.cfg, cursor.bank);
     if (cfg.disabled || !cfg.retainSessions) continue;
+    if (cfg.skipOriginators.length) {
+      const originator = args.originator?.(transcriptPath);
+      if (originator && cfg.skipOriginators.includes(originator)) continue;
+    }
     let turns: TransportTurn[];
     try {
       // Guarded: a reader can throw on a damaged file (see transcript-qwen.ts), and one bad old
@@ -382,6 +388,7 @@ export async function runRetainHook(
       cfg: baseCfg,
       makeClient,
       readTranscript,
+      originator: spec.originator,
       deadline: hostDeadline,
     });
 }

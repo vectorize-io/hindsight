@@ -825,6 +825,25 @@ describe("replayOrphanedSessions (#6097)", () => {
       orphans: sessionIds.map((sessionId) => ({ sessionId, cursor: cursors.read(sessionId)! })),
     });
 
+  it("never writes an orphan whose originator is in skipOriginators (#5507)", async () => {
+    const cursors = memoryCursorStore();
+    await failedSession(cursors);
+    const client = stubClient();
+
+    await replayOrphanedSessions({
+      harness: "codex",
+      currentSessionId: "new",
+      cfg: resolveConfig({ apiToken: "test-key", skipOriginators: ["Claude Code"] }),
+      makeClient: () => client as unknown as HindsightClient,
+      originator: () => "Claude Code",
+      deadline: Date.now() + 60_000,
+      cursors,
+      orphans: [{ sessionId: "ended", cursor: cursors.read("ended")! }],
+    });
+
+    expect(client.retain).not.toHaveBeenCalled();
+  });
+
   it("writes the ended session's turns from a later session's Stop, with its own stamp", async () => {
     const cursors = memoryCursorStore();
     await failedSession(cursors);
