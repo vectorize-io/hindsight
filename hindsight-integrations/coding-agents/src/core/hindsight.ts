@@ -28,6 +28,14 @@ import type { RetainStamp } from "./retain-stamp";
 /** Sent on every request so the server can tell which integration is calling. */
 export const USER_AGENT = `hindsight-coding-agents/${PKG_VERSION}`;
 
+/**
+ * The tree query every read here sends. Nothing in this client reads `is_stale`, and filling it
+ * costs the server a scan of each page's memories — 0.7 s at 100k observations, 7.5 s at 1M
+ * (#6258) — so `detail=basic` skips it. A server older than that parameter ignores it (an unknown
+ * query param is only reported in a response header) and returns the full tree, as before.
+ */
+const TREE = "/tree?detail=basic";
+
 /** One node of GET /pages/tree. Only the fields this client reads. */
 export interface PageNode {
   id: string;
@@ -1048,12 +1056,12 @@ export class HindsightClient {
   }
 
   /**
-   * The bank's page tree (folders + pages, nested). The tree carries names, source
-   * queries and staleness but NOT synthesized content, so it is cheap enough to poll.
+   * The bank's page tree (folders + pages, nested). The tree carries names and source
+   * queries but NOT synthesized content or staleness (see `TREE`), so it is cheap enough to poll.
    */
   async tree(timeoutMs?: number): Promise<PageNode[]> {
     if (this.pagesSupported === false) throw new PagesUnavailableError();
-    const r = await this.pagesReq("GET", "/tree", undefined, [], timeoutMs);
+    const r = await this.pagesReq("GET", TREE, undefined, [], timeoutMs);
     if (!r) throw new PagesUnavailableError();
     // Bank not created yet: it genuinely has no pages, and the capability stays UNKNOWN so the
     // next call (after the first retain mints the bank) asks again instead of short-circuiting.
@@ -1416,7 +1424,7 @@ export class HindsightClient {
   /** Find a root folder by name (case-insensitive) or create it; returns its id. Fail-open to undefined. */
   async ensureFolder(name: string): Promise<string | undefined> {
     try {
-      const r = await this.pagesReq("GET", "/tree");
+      const r = await this.pagesReq("GET", TREE);
       const tree = (await r?.json()) as
         | { roots?: { id?: string; kind?: string; name?: string }[] }
         | undefined;
