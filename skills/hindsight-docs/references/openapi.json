@@ -22667,6 +22667,17 @@
             ],
             "title": "Source Fact Ids"
           },
+          "proof_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proof Count"
+          },
           "scores": {
             "anyOf": [
               {

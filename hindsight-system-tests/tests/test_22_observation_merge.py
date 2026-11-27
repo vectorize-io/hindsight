@@ -105,3 +105,11 @@ async def test_recall_returns_the_merged_statement_once(client, merged_bank):
     response = await client.arecall(bank_id=merged_bank, query="Where is Alice?", types=["observation"])
 
     assert [r.text for r in response.results] == [MERGED_OBSERVATION]
+
+
+async def test_recall_says_how_many_facts_back_it(client, merged_bank):
+    """The count reaches the caller with the observation, so an agent reading recall
+    can tell a two-round belief from a single restated fact (#6966)."""
+    response = await client.arecall(bank_id=merged_bank, query="Where is Alice?", types=["observation"])
+
+    assert [r.proof_count for r in response.results] == [2]

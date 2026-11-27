@@ -557,6 +557,10 @@ class MemoryFact(BaseModel):
         None,
         description="IDs of source facts this observation was derived from (observation type only, when source_facts is enabled)",
     )
+    proof_count: int | None = Field(
+        None,
+        description="How many facts back this observation (observation type only).",
+    )
     scores: RecallScores | None = Field(
         None,
         description="Recall scores from each pipeline stage (final/reranker/semantic/keyword). Not returned for source facts.",

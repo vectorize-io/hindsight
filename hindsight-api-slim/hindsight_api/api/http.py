@@ -762,6 +762,7 @@ class RecallResult(BaseModel):
     source_fact_ids: list[str] | None = (
         None  # IDs of source facts (observation type only, when source_facts is enabled)
     )
+    proof_count: int | None = None  # How many facts back this observation (observation type only)
     scores: RecallScores | None = None  # Per-stage recall scores (final/reranker/semantic/text)
     attachments: list["ChunkAttachment"] | None = Field(
         default=None,
@@ -5678,6 +5679,7 @@ def _register_routes(app: FastAPI):
                     chunk_id=fact.chunk_id,
                     tags=fact.tags,
                     source_fact_ids=fact.source_fact_ids,
+                    proof_count=fact.proof_count,
                     scores=fact.scores,
                 )
 

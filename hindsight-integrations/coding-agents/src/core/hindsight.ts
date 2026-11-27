@@ -963,7 +963,8 @@ export class HindsightClient {
   /**
    * Raw recall with no LLM in the loop, so it still answers when reflect's synthesis times out or
    * 5xxs. The body is `recallOptions` (consolidated observations by default) — a bank that grows
-   * no observations widens it rather than getting nothing back. Returns the texts in rank order.
+   * no observations widens it rather than getting nothing back. Returns the texts in rank order,
+   * each observation followed by `(sources: N)` when the server sends its count.
    *
    * The name predates `recallOptions` (the observation type used to be hardcoded here) and is
    * kept deliberately: this is the client's published surface, so renaming it would break
@@ -983,8 +984,15 @@ export class HindsightClient {
       opts.timeoutMs
     );
     if (r.status === 404) return [];
-    const j = (await r.json()) as { results?: { text?: string }[] };
-    return (j.results ?? []).map((x) => (x.text ?? "").trim()).filter(Boolean);
+    const j = (await r.json()) as { results?: { text?: string; proof_count?: number | null }[] };
+    // How many facts back an observation, so the agent can tell one restated fact from knowledge
+    // merged from many (#5078). Servers before #6966 send no count, and the line stays as it was.
+    return (j.results ?? [])
+      .map((x) => {
+        const text = (x.text ?? "").trim();
+        return text && x.proof_count ? `${text} (sources: ${x.proof_count})` : text;
+      })
+      .filter(Boolean);
   }
 
   /** Set once a server answered on the deprecated `/knowledge-base/...` paths: one from before the

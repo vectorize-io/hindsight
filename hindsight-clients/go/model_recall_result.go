@@ -34,6 +34,7 @@ type RecallResult struct {
 	ChunkId NullableString `json:"chunk_id,omitempty"`
 	Tags []string `json:"tags,omitempty"`
 	SourceFactIds []string `json:"source_fact_ids,omitempty"`
+	ProofCount NullableInt32 `json:"proof_count,omitempty"`
 	Scores NullableRecallScores `json:"scores,omitempty"`
 	Attachments []ChunkAttachment `json:"attachments,omitempty"`
 }
@@ -533,6 +534,48 @@ func (o *RecallResult) SetSourceFactIds(v []string) {
 	o.SourceFactIds = v
 }
 
+// GetProofCount returns the ProofCount field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *RecallResult) GetProofCount() int32 {
+	if o == nil || IsNil(o.ProofCount.Get()) {
+		var ret int32
+		return ret
+	}
+	return *o.ProofCount.Get()
+}
+
+// GetProofCountOk returns a tuple with the ProofCount field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *RecallResult) GetProofCountOk() (*int32, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.ProofCount.Get(), o.ProofCount.IsSet()
+}
+
+// HasProofCount returns a boolean if a field has been set.
+func (o *RecallResult) HasProofCount() bool {
+	if o != nil && o.ProofCount.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetProofCount gets a reference to the given NullableInt32 and assigns it to the ProofCount field.
+func (o *RecallResult) SetProofCount(v int32) {
+	o.ProofCount.Set(&v)
+}
+// SetProofCountNil sets the value for ProofCount to be an explicit nil
+func (o *RecallResult) SetProofCountNil() {
+	o.ProofCount.Set(nil)
+}
+
+// UnsetProofCount ensures that no value is present for ProofCount, not even an explicit nil
+func (o *RecallResult) UnsetProofCount() {
+	o.ProofCount.Unset()
+}
+
 // GetScores returns the Scores field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *RecallResult) GetScores() RecallScores {
 	if o == nil || IsNil(o.Scores.Get()) {
@@ -652,6 +695,9 @@ func (o RecallResult) ToMap() (map[string]interface{}, error) {
 	}
 	if o.SourceFactIds != nil {
 		toSerialize["source_fact_ids"] = o.SourceFactIds
+	}
+	if o.ProofCount.IsSet() {
+		toSerialize["proof_count"] = o.ProofCount.Get()
 	}
 	if o.Scores.IsSet() {
 		toSerialize["scores"] = o.Scores.Get()

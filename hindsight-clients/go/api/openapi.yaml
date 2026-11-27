@@ -16016,6 +16016,9 @@ components:
             type: string
           nullable: true
           type: array
+        proof_count:
+          nullable: true
+          type: integer
         scores:
           $ref: '#/components/schemas/RecallScores'
         attachments:
