@@ -108,6 +108,15 @@ mod tests {
         assert_eq!(block.kind.to_string(), "text");
     }
 
+    /// Query-parameter enums with the same title get their own type too (#6997):
+    /// `list_mental_models`' `tags_match` allows fewer values than `list_memories`'.
+    #[test]
+    fn test_same_titled_query_enums_keep_their_own_values() {
+        assert!("any_strict".parse::<types::TagsMatch>().is_ok());
+        assert!("exact".parse::<types::ListMentalModelsTagsMatch>().is_ok());
+        assert!("any_strict".parse::<types::ListMentalModelsTagsMatch>().is_err());
+    }
+
     /// A value or shape the server added after this client was built parses
     /// instead of failing the whole response (#6912), and writes back unchanged.
     #[test]
