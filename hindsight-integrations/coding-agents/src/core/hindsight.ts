@@ -127,6 +127,9 @@ export interface ClientOpts {
    *  the key mid-session 401'd every call until the host restarted (#3600). Consulted only on a
    *  401, so the happy path never touches the filesystem. See `core/host-client.ts`. */
   tokenProvider?: () => string | undefined;
+  /** Extra headers sent with every request (config `apiHeaders`, e.g. a Cloudflare Access service
+   *  token, #6651). The plugin's own `Authorization` wins over one set here when a token is set. */
+  headers?: Record<string, string>;
   /** How long one request may spend waiting out rate limits (HTTP 429) before it throws
    *  `RateLimitedError`. Default 0: a hook answers to its host's deadline and must fail fast.
    *  Background work that has nobody waiting on it (deepen) sets this, because a 429 it does not
@@ -380,6 +383,7 @@ export class HindsightClient {
    *  diverge exactly when #3600 bites, which is why `hindsight_diagnose` reports both. */
   private token: string | undefined;
   private readonly tokenProvider?: () => string | undefined;
+  private readonly extraHeaders: Record<string, string>;
   readonly bank: string;
   readonly project?: string;
   readonly opIds: string[] = []; // async operation ids collected by retain(), for drain()
@@ -398,6 +402,7 @@ export class HindsightClient {
     this.apiUrl = o.apiUrl.replace(/\/$/, "");
     this.token = o.apiToken;
     this.tokenProvider = o.tokenProvider;
+    this.extraHeaders = o.headers ?? {};
     this.bank = o.bank;
     this.project = o.project;
     this.log = o.log ?? (() => {});
@@ -423,6 +428,7 @@ export class HindsightClient {
       "Content-Type": "application/json",
       "Accept-Encoding": "identity",
       "User-Agent": USER_AGENT,
+      ...this.extraHeaders,
     };
     if (this.token) h["Authorization"] = `Bearer ${this.token}`;
     return h;

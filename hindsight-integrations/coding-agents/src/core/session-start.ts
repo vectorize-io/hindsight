@@ -487,6 +487,7 @@ export async function runSessionStartHook(
     const client = makeClient({
       apiUrl: cfg.apiUrl,
       apiToken: cfg.apiToken,
+      headers: cfg.apiHeaders,
       bank: bankId,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,

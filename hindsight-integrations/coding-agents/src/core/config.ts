@@ -59,6 +59,11 @@ export interface RawConfig {
   serverMode?: "cloud" | "self-hosted" | "daemon";
   apiUrl?: string; // Hindsight API base URL (default https://api.hindsight.vectorize.io — Cloud; set to http://localhost:8888 for a local server)
   apiToken?: string; // bearer token (optional)
+  /** Extra HTTP headers sent with every request to the Hindsight API, e.g. the
+   *  `CF-Access-Client-Id` / `CF-Access-Client-Secret` pair of a Cloudflare Access service token
+   *  for a server behind Access (#6651). Fixed values: the plugin never runs a command to get them.
+   *  `Authorization` stays the plugin's own when `apiToken` is set. File-only, like the other maps. */
+  apiHeaders?: Record<string, string>;
   /** Daemon mode: port the local daemon listens on (default 9077).
    *  NOT 8888 — that is the conventional port for a server you run yourself, and a daemon must
    *  never squat on it. A healthy server already on this port is adopted rather than restarted. */
@@ -315,6 +320,7 @@ export interface Config {
    *  that builds a client keeps working without knowing which mode is active. */
   apiUrl: string;
   apiToken?: string;
+  apiHeaders: Record<string, string>;
   apiPort: number;
   /** Undefined = never told the daemon to auto-exit; see RawConfig above. */
   daemonIdleTimeout?: number;
@@ -530,6 +536,15 @@ const OBSERVATION_SCOPE_MODES = [
   "per_source",
 ] as const;
 
+/** Keep only string-valued headers: a number or a nested object would reach `fetch` as
+ *  "[object Object]", and an array would spread into numeric header names. */
+function resolveApiHeaders(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw).filter((e): e is [string, string] => typeof e[1] === "string")
+  );
+}
+
 /**
  * Validate `observationScopes`, falling back to the default on anything unrecognized.
  *
@@ -611,6 +626,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     // daemon needs no plumbing through eight separate constructors.
     apiUrl: serverMode === "daemon" ? `http://127.0.0.1:${apiPort}` : (raw.apiUrl ?? CLOUD_URL),
     apiToken: raw.apiToken || undefined,
+    apiHeaders: resolveApiHeaders(raw.apiHeaders),
     apiPort,
     daemonIdleTimeout: raw.daemonIdleTimeout,
     daemonProfile: raw.daemonProfile || DEFAULT_DAEMON_PROFILE,
@@ -759,7 +775,7 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
  * containers, CI, and secret managers that inject `HINDSIGHT_API_TOKEN` rather than writing a
  * credential to disk.
  *
- * The map-valued settings (mapPathToBank, harnesses, banks, retainMetadata, recallOptions, pages,
+ * The map-valued settings (apiHeaders, mapPathToBank, harnesses, banks, retainMetadata, recallOptions, pages,
  * customPages, defaultBankConfig) are deliberately
  * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
  * does not survive flattening into one env var. They stay file-only.

@@ -64,6 +64,7 @@ export function resolveHostMemory(harness: string, directory: string): HostMemor
     client: new HindsightClient({
       apiUrl: cfg.apiUrl,
       apiToken: cfg.apiToken,
+      headers: cfg.apiHeaders,
       bank: bankId,
       // Names the repo in the initiative pages this host captures, as the seeded pages do.
       project,
