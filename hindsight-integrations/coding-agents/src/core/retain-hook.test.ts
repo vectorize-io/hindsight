@@ -888,6 +888,7 @@ describe("replayOrphanedSessions (#6097)", () => {
       usageCursors: memoryUsageCursorStore(),
     });
     expect(cursors.read(sessionId)?.dirty).toBe(true);
+    return retain;
   };
 
   const replay = (
@@ -922,6 +923,17 @@ describe("replayOrphanedSessions (#6097)", () => {
     });
 
     expect(client.retain).not.toHaveBeenCalled();
+  });
+
+  // The failed save may have reached the server and only its response been lost: the replay must
+  // go out as the SAME operation, or the server extracts the session twice (#6559).
+  it("replays a first save whose response was lost as the same operation", async () => {
+    const cursors = memoryCursorStore();
+    const lost = await failedSession(cursors);
+    const client = stubClient();
+    await replay(cursors, client);
+    const operationId = (call: unknown[]) => (call[5] as { operationId?: string }).operationId;
+    expect(operationId(client.retain.mock.calls[0])).toBe(operationId(lost.mock.calls[0]));
   });
 
   it("writes the ended session's turns from a later session's Stop, with its own stamp", async () => {

@@ -125,6 +125,9 @@ export interface RetainCursor {
   appendSupported?: boolean;
   /** A REPLACE was started and not confirmed: the next retain must replace, not append. */
   dirty?: boolean;
+  /** What that unconfirmed replace's operation id was derived from (the document it replaced), so
+   *  a retry — from this process or another — goes out as the same operation (#6559). */
+  replaceBase?: string;
   /** Appends started and not confirmed, oldest first — replayed before anything new. Their turns
    *  are already counted in `turns`: the cursor covers what is committed OR buffered. */
   pending?: PendingAppend[];

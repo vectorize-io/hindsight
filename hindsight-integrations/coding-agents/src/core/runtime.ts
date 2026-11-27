@@ -419,15 +419,25 @@ export class RuntimeCore {
     // daemon produces the same `retain_failed` diagnostic as an unreachable Cloud server.
     const write = ensureDaemon(this.cfg, this.harness, { waitMs: DAEMON_WAIT_RETAIN_MS })
       .then(() =>
-        retainLiveSession(this.client, sessionId, turns, startTs, this.harness, {
-          cursors: this.cursors,
-          stamp: buildRetainStamp(this.cfg, {
-            directory: this.projectDir,
-            harness: this.harness,
-            bankId: this.bankId,
-            sessionId,
-          }),
-        })
+        // Dated by the transcript's first turn when it has one, like the hook path: the date is in
+        // the replace's bytes, and a replay from another process (which only has the turns) has to
+        // rebuild the same bytes to go out as the same operation (#6559).
+        retainLiveSession(
+          this.client,
+          sessionId,
+          turns,
+          turns[0]?.timestamp ?? startTs,
+          this.harness,
+          {
+            cursors: this.cursors,
+            stamp: buildRetainStamp(this.cfg, {
+              directory: this.projectDir,
+              harness: this.harness,
+              bankId: this.bankId,
+              sessionId,
+            }),
+          }
+        )
       )
       .then(() => {
         diag(this.harness, "retain_ok", {

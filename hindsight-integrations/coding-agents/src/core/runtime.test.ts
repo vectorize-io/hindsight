@@ -597,12 +597,14 @@ describe("RuntimeCore.flush", () => {
  * harnesses run on every Stop.
  */
 describe("RuntimeCore replay of a failed session after a restart (#6559)", () => {
+  // Dated, as dsh and opencode turns are: the replay rebuilds the save from the turns alone.
   const turns = (text: string) =>
     [
-      { role: "user", content: text },
-      { role: "assistant", content: "reply" },
+      { role: "user", content: text, timestamp: "2026-01-01T00:00:00.000Z" },
+      { role: "assistant", content: "reply", timestamp: "2026-01-01T00:00:01.000Z" },
     ] as never;
-  const client = (retain: () => Promise<void>) =>
+  const operationIdOf = (call: unknown[]) => (call[5] as { operationId?: string }).operationId;
+  const client = (retain: (...args: unknown[]) => Promise<void>) =>
     ({ bank: "bank-1", retain: vi.fn(retain), supportsAppendRetain: async () => true }) as never;
   const ok = async () => {};
   const down = async () => {
@@ -613,7 +615,7 @@ describe("RuntimeCore replay of a failed session after a restart (#6559)", () =>
 
   /** One host process: it writes back `sessionId`, then exits. */
   async function start(
-    retain: () => Promise<void>,
+    retain: (...args: unknown[]) => Promise<void>,
     sessionId: string,
     pastSessions?: (id: string) => Promise<never>
   ): Promise<void> {
@@ -631,8 +633,8 @@ describe("RuntimeCore replay of a failed session after a restart (#6559)", () =>
   }
 
   /** The first process: Hindsight is down, the write-back fails, the host quits. */
-  async function failedThenQuit(): Promise<void> {
-    await start(down, "orig");
+  async function failedThenQuit(retain: (...args: unknown[]) => Promise<void> = down) {
+    await start(retain, "orig");
     // Long enough ago that it is no longer a session that might still be running.
     const cursor = join(tmpdir(), `hindsight-${harness}`, "orig.retain.json");
     const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
@@ -646,6 +648,16 @@ describe("RuntimeCore replay of a failed session after a restart (#6559)", () =>
     vi.stubEnv("HINDSIGHT_API_TOKEN", "test-key");
   });
   afterEach(() => void vi.unstubAllEnvs());
+
+  // The server may have taken the first save and only the response was lost: the replay has to be
+  // the SAME operation, so the server collapses it instead of extracting the session twice.
+  it("replays a first save whose response was lost as the same operation", async () => {
+    const lost = vi.fn(async (..._args: unknown[]) => down());
+    await failedThenQuit(lost);
+    await start(ok, "second", async (id) => turns(id));
+    expect(replayRetain).toHaveBeenCalledOnce();
+    expect(operationIdOf(replayRetain.mock.calls[0]!)).toBe(operationIdOf(lost.mock.calls[0]!));
+  });
 
   it("replays it from the host's store on a later start, exactly once across two", async () => {
     await failedThenQuit();
