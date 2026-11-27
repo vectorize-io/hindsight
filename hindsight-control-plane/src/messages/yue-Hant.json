@@ -2243,7 +2243,8 @@
       },
       "stats": {
         "fetch": "未能載入統計資料",
-        "memoriesTimeseries": "未能載入記憶時間序列"
+        "memoriesTimeseries": "未能載入記憶時間序列",
+        "summary": "攞唔到統計摘要"
       },
       "version": {
         "fetch": "未能載入版本"
@@ -2818,5 +2819,72 @@
     "filesMode": "檔案",
     "constellationMode": "星圖",
     "sourcesLegend": "來源"
+  },
+  "wrapped": {
+    "brand": "Hindsight Wrapped",
+    "bannerTitle": "用記憶回顧你的 {period}",
+    "dialogLabel": "Hindsight Wrapped",
+    "close": "關閉",
+    "previous": "上一頁",
+    "next": "下一頁",
+    "loading": "倒帶緊 {period}…",
+    "error": "載入唔到呢個時間範圍。",
+    "emptyTitle": "{period} 冇記憶",
+    "emptyBody": "等你嘅記憶庫有記憶再嚟睇吓。",
+    "introKicker": "Hindsight Wrapped",
+    "introBody": "呢啲係你嘅記憶庫記住嘅嘢。",
+    "memoriesLead": "你嘅記憶庫建立咗",
+    "memoriesTitle": "則記憶",
+    "memoriesBody": "來自 {documents} 份文件的 {facts} 則事實與 {observations} 則觀察。",
+    "memoriesBodyNoDocuments": "{facts} 則事實與 {observations} 則觀察。",
+    "rhythmTitle": "你的節奏",
+    "activeDays": "活躍天數",
+    "longestStreak": "天連續",
+    "busiestDay": "最忙嗰日：{day}，共 {count, number} 則記憶。",
+    "namesTitle": "你成日諗起嘅名",
+    "personaLead": "記憶湧嚟嘅時候，你係",
+    "persona": {
+      "nightOwl": {
+        "title": "夜貓子",
+        "body": "大多數記憶出現在 {hour}:00 左右。好點子總在夜裡來。"
+      },
+      "earlyBird": {
+        "title": "早起鳥",
+        "body": "大多數記憶出現在 {hour}:00 左右，在世界醒來之前。"
+      },
+      "nineToFive": {
+        "title": "上午專注型",
+        "body": "大多數記憶出現在 {hour}:00 左右。午餐前專心工作。"
+      },
+      "afternoon": {
+        "title": "午後建造者",
+        "body": "大多數記憶出現在 {hour}:00 左右。午餐後進入狀態。"
+      },
+      "evening": {
+        "title": "傍晚思考者",
+        "body": "大多數記憶出現在 {hour}:00 左右，在一天放慢的時候。"
+      }
+    },
+    "agentLead": "你最常用的程式助手",
+    "agentBody": "一齊建立咗 {count} 則記憶。",
+    "beliefLead": "你嘅記憶最肯定嘅嘢",
+    "beliefBody": "有 {count} 則事實支持。",
+    "firstLead": "一切嘅開始",
+    "documents": "文件",
+    "agentShort": "最常用助手",
+    "shareTitle": "你嘅卡，可以出 post 喇",
+    "download": "下載",
+    "copy": "複製圖片",
+    "copied": "複製咗！",
+    "share": "分享",
+    "pill": "Wrapped {year}",
+    "cardTagline": "我嘅記憶年度回顧",
+    "observations": "觀察",
+    "peakAt": "高峰 {hour}:00",
+    "busiestOn": "則記憶（{date}）",
+    "introBanks": "嚟自 {count} 個記憶庫",
+    "banksLead": "你嘅記憶存放喺",
+    "banksTitle": "個記憶庫",
+    "memoriesCount": "{count} 則記憶"
   }
 }

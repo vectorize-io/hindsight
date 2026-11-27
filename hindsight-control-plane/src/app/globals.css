@@ -638,3 +638,102 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
 *::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* Hindsight Wrapped: each story slide's lines rise in one after another. */
+@keyframes wrapped-rise {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.wrapped-rise {
+  animation: wrapped-rise 600ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+/* The constellations: stars pop in and twinkle, lines draw in, rings turn. */
+@keyframes wrapped-pop {
+  from {
+    opacity: 0;
+    transform: scale(0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes wrapped-twinkle {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes wrapped-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes wrapped-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes wrapped-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.wrapped-star {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation:
+    wrapped-pop 700ms cubic-bezier(0.2, 0.8, 0.2, 1.4) both,
+    wrapped-twinkle 3s ease-in-out infinite;
+}
+.wrapped-line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: wrapped-draw 1100ms ease-out forwards;
+}
+.wrapped-fade {
+  animation: wrapped-fade 800ms ease-out both;
+}
+.wrapped-spin {
+  animation: wrapped-turn 90s linear infinite;
+}
+.wrapped-spin-reverse {
+  animation: wrapped-turn 140s linear infinite reverse;
+}
+.wrapped-spin-slow {
+  animation: wrapped-turn 240s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wrapped-rise,
+  .wrapped-star,
+  .wrapped-fade,
+  .wrapped-spin,
+  .wrapped-spin-reverse,
+  .wrapped-spin-slow {
+    animation: none;
+  }
+  .wrapped-line {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes wrapped-progress {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}

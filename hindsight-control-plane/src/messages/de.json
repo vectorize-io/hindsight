@@ -2243,7 +2243,8 @@
       },
       "stats": {
         "fetch": "Statistiken konnten nicht abgerufen werden",
-        "memoriesTimeseries": "Zeitreihe der Erinnerungen konnte nicht abgerufen werden"
+        "memoriesTimeseries": "Zeitreihe der Erinnerungen konnte nicht abgerufen werden",
+        "summary": "Statistikzusammenfassung konnte nicht geladen werden"
       },
       "version": {
         "fetch": "Version konnte nicht abgerufen werden"
@@ -2818,5 +2819,72 @@
     "filesMode": "Dateien",
     "constellationMode": "Konstellation",
     "sourcesLegend": "Quellen"
+  },
+  "wrapped": {
+    "brand": "Hindsight Wrapped",
+    "bannerTitle": "Dein {period} in Erinnerungen",
+    "dialogLabel": "Hindsight Wrapped",
+    "close": "Schließen",
+    "previous": "Zurück",
+    "next": "Weiter",
+    "loading": "{period} wird zurückgespult…",
+    "error": "Dieser Zeitraum konnte nicht geladen werden.",
+    "emptyTitle": "Keine Erinnerungen in {period}",
+    "emptyBody": "Komm wieder, sobald deine Banks Erinnerungen haben.",
+    "introKicker": "Hindsight Wrapped",
+    "introBody": "Das haben deine Banks behalten.",
+    "memoriesLead": "Deine Banks haben",
+    "memoriesTitle": "{count, plural, one {Erinnerung} other {Erinnerungen}}",
+    "memoriesBody": "{facts} Fakten und {observations} Beobachtungen aus {documents} Dokumenten.",
+    "memoriesBodyNoDocuments": "{facts} Fakten und {observations} Beobachtungen.",
+    "rhythmTitle": "Dein Rhythmus",
+    "activeDays": "{count, plural, one {aktiver Tag} other {aktive Tage}}",
+    "longestStreak": "Tage am Stück",
+    "busiestDay": "Aktivster Tag: {day}, mit {count, plural, one {# Erinnerung} other {# Erinnerungen}}.",
+    "namesTitle": "Die Namen in deinem Kopf",
+    "personaLead": "Wenn die Erinnerungen flossen, warst du",
+    "persona": {
+      "nightOwl": {
+        "title": "Eine Nachteule",
+        "body": "Die meisten Erinnerungen kamen gegen {hour}:00. Die besten Ideen kommen nach Einbruch der Dunkelheit."
+      },
+      "earlyBird": {
+        "title": "Ein Frühaufsteher",
+        "body": "Die meisten Erinnerungen kamen gegen {hour}:00, bevor die Welt aufwachte."
+      },
+      "nineToFive": {
+        "title": "Ein Morgenmensch",
+        "body": "Die meisten Erinnerungen kamen gegen {hour}:00. Konzentriert arbeiten vor dem Mittag."
+      },
+      "afternoon": {
+        "title": "Ein Nachmittags-Macher",
+        "body": "Die meisten Erinnerungen kamen gegen {hour}:00. Nach dem Mittag läuft es bei dir."
+      },
+      "evening": {
+        "title": "Ein Abend-Denker",
+        "body": "Die meisten Erinnerungen kamen gegen {hour}:00, wenn der Tag ausklingt."
+      }
+    },
+    "agentLead": "Dein Top-Coding-Agent",
+    "agentBody": "{count, plural, one {# Erinnerung} other {# Erinnerungen}} gemeinsam geschaffen.",
+    "beliefLead": "Worin sich dein Gedächtnis am sichersten ist",
+    "beliefBody": "Gestützt auf {count, plural, one {# Fakt} other {# Fakten}}.",
+    "firstLead": "Wo alles begann",
+    "documents": "{count, plural, one {Dokument} other {Dokumente}}",
+    "agentShort": "Top-Agent",
+    "shareTitle": "Deine Karte, bereit zum Posten",
+    "download": "Herunterladen",
+    "copy": "Bild kopieren",
+    "copied": "Kopiert!",
+    "share": "Teilen",
+    "pill": "Wrapped {year}",
+    "cardTagline": "Mein Jahr in Erinnerungen",
+    "observations": "{count, plural, one {Beobachtung} other {Beobachtungen}}",
+    "peakAt": "Spitze um {hour}:00",
+    "busiestOn": "{count, plural, one {Erinnerung} other {Erinnerungen}} am {date}",
+    "introBanks": "{count, plural, one {Über # Bank} other {Über # Banks}}",
+    "banksLead": "Dein Gedächtnis lebte in",
+    "banksTitle": "{count, plural, one {Bank} other {Banks}}",
+    "memoriesCount": "{count, plural, one {# Erinnerung} other {# Erinnerungen}}"
   }
 }

@@ -2243,7 +2243,8 @@
       },
       "stats": {
         "fetch": "No se pudieron obtener las estadísticas",
-        "memoriesTimeseries": "No se pudo obtener la serie temporal de memorias"
+        "memoriesTimeseries": "No se pudo obtener la serie temporal de memorias",
+        "summary": "No se pudo obtener el resumen de estadísticas"
       },
       "version": {
         "fetch": "No se pudo obtener la versión"
@@ -2818,5 +2819,72 @@
     "filesMode": "Archivos",
     "constellationMode": "Constelación",
     "sourcesLegend": "fuentes"
+  },
+  "wrapped": {
+    "brand": "Hindsight Wrapped",
+    "bannerTitle": "Tu {period} en recuerdos",
+    "dialogLabel": "Hindsight Wrapped",
+    "close": "Cerrar",
+    "previous": "Anterior",
+    "next": "Siguiente",
+    "loading": "Rebobinando {period}…",
+    "error": "No se pudo cargar este período.",
+    "emptyTitle": "Nada recordado en {period}",
+    "emptyBody": "Vuelve cuando tus bancos tengan recuerdos.",
+    "introKicker": "Hindsight Wrapped",
+    "introBody": "Esto es lo que recordaron tus bancos.",
+    "memoriesLead": "Tus bancos crearon",
+    "memoriesTitle": "{count, plural, one {recuerdo} other {recuerdos}}",
+    "memoriesBody": "{facts} hechos y {observations} observaciones, de {documents} documentos.",
+    "memoriesBodyNoDocuments": "{facts} hechos y {observations} observaciones.",
+    "rhythmTitle": "Tu ritmo",
+    "activeDays": "{count, plural, one {día activo} other {días activos}}",
+    "longestStreak": "días seguidos",
+    "busiestDay": "Día más activo: {day}, con {count, plural, one {# recuerdo} other {# recuerdos}}.",
+    "namesTitle": "Los nombres en tu mente",
+    "personaLead": "Cuando fluían los recuerdos, eras",
+    "persona": {
+      "nightOwl": {
+        "title": "Un búho nocturno",
+        "body": "La mayoría de los recuerdos llegaron hacia las {hour}:00. Las mejores ideas llegan de noche."
+      },
+      "earlyBird": {
+        "title": "Un madrugador",
+        "body": "La mayoría de los recuerdos llegaron hacia las {hour}:00, antes de que el mundo despertara."
+      },
+      "nineToFive": {
+        "title": "Una mente matutina",
+        "body": "La mayoría de los recuerdos llegaron hacia las {hour}:00. Trabajo profundo antes del almuerzo."
+      },
+      "afternoon": {
+        "title": "Un constructor de tarde",
+        "body": "La mayoría de los recuerdos llegaron hacia las {hour}:00. Después de comer, tomas ritmo."
+      },
+      "evening": {
+        "title": "Un pensador nocturno",
+        "body": "La mayoría de los recuerdos llegaron hacia las {hour}:00, cuando el día termina."
+      }
+    },
+    "agentLead": "Tu agente de código favorito",
+    "agentBody": "{count, plural, one {# recuerdo creado} other {# recuerdos creados}} juntos.",
+    "beliefLead": "Lo que tu memoria tiene más claro",
+    "beliefBody": "Respaldado por {count, plural, one {# hecho} other {# hechos}}.",
+    "firstLead": "Donde todo empezó",
+    "documents": "{count, plural, one {documento} other {documentos}}",
+    "agentShort": "Agente principal",
+    "shareTitle": "Tu tarjeta, lista para publicar",
+    "download": "Descargar",
+    "copy": "Copiar imagen",
+    "copied": "¡Copiada!",
+    "share": "Compartir",
+    "pill": "Wrapped {year}",
+    "cardTagline": "Mi año en recuerdos",
+    "observations": "{count, plural, one {observación} other {observaciones}}",
+    "peakAt": "Pico a las {hour}:00",
+    "busiestOn": "{count, plural, one {recuerdo} other {recuerdos}} el {date}",
+    "introBanks": "{count, plural, one {En # banco} other {En # bancos}}",
+    "banksLead": "Tu memoria vivió en",
+    "banksTitle": "{count, plural, one {banco} other {bancos}}",
+    "memoriesCount": "{count, plural, one {# recuerdo} other {# recuerdos}}"
   }
 }

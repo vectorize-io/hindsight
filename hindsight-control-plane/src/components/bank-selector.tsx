@@ -92,6 +92,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { BANKS_PAGE_SIZE, type BankInfo } from "@/lib/bank-context";
+import { WrappedButton } from "./wrapped";
 
 function formatCompact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
@@ -993,13 +994,17 @@ function BankSelectorInner({ kind = "memory", knowledgeBankId }: BankSelectorPro
         {/* Spacer */}
         <div className="hidden sm:block flex-1" />
 
+        <div className="ml-auto sm:ml-0">
+          <WrappedButton />
+        </div>
+
         {/* Phones: GitHub, theme, language and logout fold into one menu. */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
               size="icon"
-              className="md:hidden h-9 w-9 shrink-0 ml-auto"
+              className="md:hidden h-9 w-9 shrink-0"
               aria-label={tNav("more")}
               title={tNav("more")}
             >

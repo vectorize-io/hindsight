@@ -2243,7 +2243,8 @@
       },
       "stats": {
         "fetch": "統計の取得に失敗しました",
-        "memoriesTimeseries": "メモリ時系列の取得に失敗しました"
+        "memoriesTimeseries": "メモリ時系列の取得に失敗しました",
+        "summary": "統計の概要を取得できませんでした"
       },
       "version": {
         "fetch": "バージョンの取得に失敗しました"
@@ -2818,5 +2819,72 @@
     "filesMode": "ファイル",
     "constellationMode": "コンステレーション",
     "sourcesLegend": "ソース"
+  },
+  "wrapped": {
+    "brand": "Hindsight Wrapped",
+    "bannerTitle": "記憶でふり返る {period}",
+    "dialogLabel": "Hindsight Wrapped",
+    "close": "閉じる",
+    "previous": "前へ",
+    "next": "次へ",
+    "loading": "{period} を巻き戻し中…",
+    "error": "この期間を読み込めませんでした。",
+    "emptyTitle": "{period} の記憶はありません",
+    "emptyBody": "バンクに記憶がたまったら、また来てください。",
+    "introKicker": "Hindsight Wrapped",
+    "introBody": "あなたのバンクが覚えていたこと。",
+    "memoriesLead": "あなたのバンクが作った",
+    "memoriesTitle": "件の記憶",
+    "memoriesBody": "{documents} 件のドキュメントから、{facts} 件の事実と {observations} 件の観察。",
+    "memoriesBodyNoDocuments": "{facts} 件の事実と {observations} 件の観察。",
+    "rhythmTitle": "あなたのリズム",
+    "activeDays": "アクティブな日",
+    "longestStreak": "日連続",
+    "busiestDay": "いちばん忙しかった日：{day}（{count, number} 件の記憶）",
+    "namesTitle": "よく出てきた名前",
+    "personaLead": "記憶があふれていたとき、あなたは",
+    "persona": {
+      "nightOwl": {
+        "title": "夜型",
+        "body": "記憶の多くは {hour}:00 ごろに。いいアイデアは夜にやってくる。"
+      },
+      "earlyBird": {
+        "title": "朝型",
+        "body": "記憶の多くは {hour}:00 ごろ、世界が目覚める前に。"
+      },
+      "nineToFive": {
+        "title": "午前集中型",
+        "body": "記憶の多くは {hour}:00 ごろ。昼前にじっくり集中。"
+      },
+      "afternoon": {
+        "title": "午後の職人",
+        "body": "記憶の多くは {hour}:00 ごろ。昼食後に本領発揮。"
+      },
+      "evening": {
+        "title": "夕方の思索家",
+        "body": "記憶の多くは {hour}:00 ごろ、一日が落ち着くころに。"
+      }
+    },
+    "agentLead": "いちばんのコーディングエージェント",
+    "agentBody": "一緒に作った記憶は{count}件。",
+    "beliefLead": "あなたの記憶が最も確信していること",
+    "beliefBody": "{count} 件の事実に裏付けられています。",
+    "firstLead": "すべての始まり",
+    "documents": "ドキュメント",
+    "agentShort": "トップエージェント",
+    "shareTitle": "投稿用カードの完成",
+    "download": "ダウンロード",
+    "copy": "画像をコピー",
+    "copied": "コピーしました",
+    "share": "共有",
+    "pill": "Wrapped {year}",
+    "cardTagline": "記憶でふり返る一年",
+    "observations": "観察",
+    "peakAt": "ピーク {hour}:00",
+    "busiestOn": "件の記憶（{date}）",
+    "introBanks": "{count}個のバンクから",
+    "banksLead": "あなたの記憶があった場所",
+    "banksTitle": "個のバンク",
+    "memoriesCount": "{count}件の記憶"
   }
 }

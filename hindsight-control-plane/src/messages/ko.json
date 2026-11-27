@@ -2243,7 +2243,8 @@
       },
       "stats": {
         "fetch": "통계를 가져오지 못했습니다",
-        "memoriesTimeseries": "메모리 시계열을 가져오지 못했습니다"
+        "memoriesTimeseries": "메모리 시계열을 가져오지 못했습니다",
+        "summary": "통계 요약을 가져오지 못했습니다"
       },
       "version": {
         "fetch": "버전을 가져오지 못했습니다"
@@ -2818,5 +2819,72 @@
     "filesMode": "파일",
     "constellationMode": "별자리",
     "sourcesLegend": "출처"
+  },
+  "wrapped": {
+    "brand": "Hindsight Wrapped",
+    "bannerTitle": "기억으로 보는 {period}",
+    "dialogLabel": "Hindsight Wrapped",
+    "close": "닫기",
+    "previous": "이전",
+    "next": "다음",
+    "loading": "{period} 되감는 중…",
+    "error": "이 기간을 불러오지 못했어요.",
+    "emptyTitle": "{period}에는 기억이 없어요",
+    "emptyBody": "뱅크에 기억이 쌓이면 다시 오세요.",
+    "introKicker": "Hindsight Wrapped",
+    "introBody": "당신의 뱅크가 기억한 것들.",
+    "memoriesLead": "당신의 뱅크가 만든",
+    "memoriesTitle": "개의 기억",
+    "memoriesBody": "문서 {documents}개에서 사실 {facts}개와 관찰 {observations}개.",
+    "memoriesBodyNoDocuments": "사실 {facts}개와 관찰 {observations}개.",
+    "rhythmTitle": "당신의 리듬",
+    "activeDays": "활동한 날",
+    "longestStreak": "일 연속",
+    "busiestDay": "가장 바빴던 날: {day}, 기억 {count, number}개.",
+    "namesTitle": "자주 떠올린 이름들",
+    "personaLead": "기억이 쏟아질 때, 당신은",
+    "persona": {
+      "nightOwl": {
+        "title": "올빼미형",
+        "body": "대부분의 기억이 {hour}:00쯤 생겼어요. 좋은 아이디어는 밤에 와요."
+      },
+      "earlyBird": {
+        "title": "아침형",
+        "body": "대부분의 기억이 {hour}:00쯤, 세상이 깨어나기 전에 생겼어요."
+      },
+      "nineToFive": {
+        "title": "오전 집중형",
+        "body": "대부분의 기억이 {hour}:00쯤 생겼어요. 점심 전에 몰입."
+      },
+      "afternoon": {
+        "title": "오후의 빌더",
+        "body": "대부분의 기억이 {hour}:00쯤 생겼어요. 점심 후에 속도가 붙어요."
+      },
+      "evening": {
+        "title": "저녁의 사색가",
+        "body": "대부분의 기억이 {hour}:00쯤, 하루가 저물 때 생겼어요."
+      }
+    },
+    "agentLead": "최고의 코딩 에이전트",
+    "agentBody": "함께 만든 기억 {count}개.",
+    "beliefLead": "당신의 기억이 가장 확신하는 것",
+    "beliefBody": "사실 {count}개가 뒷받침해요.",
+    "firstLead": "모든 것의 시작",
+    "documents": "문서",
+    "agentShort": "최고 에이전트",
+    "shareTitle": "게시할 카드가 준비됐어요",
+    "download": "다운로드",
+    "copy": "이미지 복사",
+    "copied": "복사됨!",
+    "share": "공유",
+    "pill": "Wrapped {year}",
+    "cardTagline": "기억으로 본 나의 한 해",
+    "observations": "관찰",
+    "peakAt": "{hour}:00에 최고",
+    "busiestOn": "개의 기억 ({date})",
+    "introBanks": "{count}개의 뱅크에서",
+    "banksLead": "당신의 기억이 머문 곳",
+    "banksTitle": "개의 뱅크",
+    "memoriesCount": "기억 {count}개"
   }
 }
