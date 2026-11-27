@@ -10826,9 +10826,9 @@ export type GetMentalModelData = {
     /**
      * Detail
      *
-     * Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+     * Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)
      */
-    detail?: "metadata" | "content" | "full";
+    detail?: "basic" | "metadata" | "content" | "full";
   };
   url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}";
 };
@@ -11073,7 +11073,7 @@ export type GetKnowledgeBaseTreeData = {
   };
   query?: {
     /**
-     * Detail
+     * Page Tree Detail
      *
      * Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).
      */
@@ -11140,7 +11140,7 @@ export type GetPageTreeData = {
   };
   query?: {
     /**
-     * Detail
+     * Page Tree Detail
      *
      * Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).
      */

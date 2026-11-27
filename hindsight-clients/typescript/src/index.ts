@@ -1396,8 +1396,11 @@ export class HindsightClient {
     options?: {
       tags?: string[];
       tagsMatch?: "any" | "all" | "exact";
-      /** Exclude large provenance chains with "metadata" or "content" when they are not needed. */
-      detail?: "metadata" | "content" | "full";
+      /**
+       * Exclude large provenance chains with "metadata" or "content" when they are not needed.
+       * "basic" is "metadata" without `is_stale`, which skips a scan of each model's memories.
+       */
+      detail?: "basic" | "metadata" | "content" | "full";
       limit?: number;
       offset?: number;
       /** Leave out the models that hold page content (standalone models only). */
@@ -1434,7 +1437,7 @@ export class HindsightClient {
     mentalModelId: string,
     options?: {
       /** Exclude large provenance chains with "metadata" or "content" when they are not needed. */
-      detail?: "metadata" | "content" | "full";
+      detail?: "basic" | "metadata" | "content" | "full";
       signal?: AbortSignal;
     }
   ): Promise<MentalModelResponse> {
@@ -1585,12 +1588,19 @@ export class HindsightClient {
    */
   async getPageTree(
     bankId: string,
-    options?: PageTagFilterOptions & { signal?: AbortSignal }
+    options?: PageTagFilterOptions & {
+      /** "basic" leaves `is_stale` null, which skips a scan of each page's memories. */
+      detail?: "basic" | "metadata";
+      signal?: AbortSignal;
+    }
   ): Promise<PageTreeResponse> {
     const response = await sdk.getPageTree({
       client: this.client,
       path: { bank_id: bankId },
-      query: pageTagQuery(options),
+      query: {
+        ...pageTagQuery(options),
+        ...(options?.detail !== undefined ? { detail: options.detail } : {}),
+      },
       signal: options?.signal,
     });
 

@@ -1236,7 +1236,7 @@ class MentalModelsApi:
         self,
         bank_id: StrictStr,
         mental_model_id: StrictStr,
-        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1259,7 +1259,7 @@ class MentalModelsApi:
         :type bank_id: str
         :param mental_model_id: (required)
         :type mental_model_id: str
-        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :param detail: Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)
         :type detail: str
         :param authorization:
         :type authorization: str
@@ -1316,7 +1316,7 @@ class MentalModelsApi:
         self,
         bank_id: StrictStr,
         mental_model_id: StrictStr,
-        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1339,7 +1339,7 @@ class MentalModelsApi:
         :type bank_id: str
         :param mental_model_id: (required)
         :type mental_model_id: str
-        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :param detail: Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)
         :type detail: str
         :param authorization:
         :type authorization: str
@@ -1396,7 +1396,7 @@ class MentalModelsApi:
         self,
         bank_id: StrictStr,
         mental_model_id: StrictStr,
-        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1419,7 +1419,7 @@ class MentalModelsApi:
         :type bank_id: str
         :param mental_model_id: (required)
         :type mental_model_id: str
-        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :param detail: Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)
         :type detail: str
         :param authorization:
         :type authorization: str

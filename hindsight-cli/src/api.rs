@@ -1188,6 +1188,8 @@ impl ApiClient {
                 .client
                 .get_page_tree(
                     bank_id,
+                    // Server default (metadata): the tree view shows each page's staleness.
+                    None,
                     filter.tag_groups.as_deref(),
                     filter.tags(),
                     filter.tags_match.clone(),

@@ -548,7 +548,7 @@ type ApiGetMentalModelRequest struct {
 	authorization *string
 }
 
-// Detail level: &#39;metadata&#39; (names/tags only), &#39;content&#39; (adds content/config), &#39;full&#39; (includes reflect_response)
+// Detail level: &#39;basic&#39;/&#39;metadata&#39; (names/tags only), &#39;content&#39; (adds content/config), &#39;full&#39; (includes reflect_response and is_stale)
 func (r ApiGetMentalModelRequest) Detail(detail string) ApiGetMentalModelRequest {
 	r.detail = &detail
 	return r

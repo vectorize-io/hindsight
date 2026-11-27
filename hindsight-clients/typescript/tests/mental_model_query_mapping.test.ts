@@ -54,6 +54,11 @@ describe("mental-model query mapping", () => {
     );
   });
 
+  test("forwards detail=basic on the list", async () => {
+    await client.listMentalModels("bank-1", { detail: "basic" });
+    expect(mockedList.mock.calls[0][0].query).toEqual({ tags: undefined, detail: "basic" });
+  });
+
   test("preserves optionless and tags-only list request shapes", async () => {
     await client.listMentalModels("bank-1");
     await client.listMentalModels("bank-1", { tags: ["project"] });

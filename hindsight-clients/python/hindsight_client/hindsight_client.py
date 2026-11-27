@@ -1714,7 +1714,7 @@ class Hindsight:
         bank_id: str,
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "exact"] | None = None,
-        detail: Literal["metadata", "content", "full"] | None = None,
+        detail: Literal["basic", "metadata", "content", "full"] | None = None,
         limit: int | None = None,
         offset: int | None = None,
         exclude_knowledge_pages: bool | None = None,  # deprecated alias, remove in 2.x
@@ -1743,7 +1743,7 @@ class Hindsight:
         bank_id: str,
         tags: list[str] | None = None,
         tags_match: Literal["any", "all", "exact"] | None = None,
-        detail: Literal["metadata", "content", "full"] | None = None,
+        detail: Literal["basic", "metadata", "content", "full"] | None = None,
         limit: int | None = None,
         offset: int | None = None,
         exclude_knowledge_pages: bool | None = None,  # deprecated alias, remove in 2.x
@@ -1756,7 +1756,8 @@ class Hindsight:
             bank_id: The memory bank ID
             tags: Optional tags to filter by
             tags_match: How to match tags ("any", "all", or "exact")
-            detail: Detail level — "metadata" (names/tags/staleness), "content"
+            detail: Detail level — "basic" (names/tags, no staleness: skips a
+                scan of each model's memories), "metadata" (names/tags/staleness), "content"
                 (adds content/config), or "full" (includes the large
                 reflect_response provenance chains). Defaults server-side to
                 "metadata"; pass "content" or "full" when you need the models'
@@ -1788,7 +1789,7 @@ class Hindsight:
         self,
         bank_id: str,
         mental_model_id: str,
-        detail: Literal["metadata", "content", "full"] | None = None,
+        detail: Literal["basic", "metadata", "content", "full"] | None = None,
     ):
         """
         Get a specific mental model (sync wrapper — prefer :meth:`aget_mental_model` in async code).
@@ -1801,7 +1802,7 @@ class Hindsight:
         self,
         bank_id: str,
         mental_model_id: str,
-        detail: Literal["metadata", "content", "full"] | None = None,
+        detail: Literal["basic", "metadata", "content", "full"] | None = None,
     ):
         """
         Get a specific mental model (async — preferred over :meth:`get_mental_model`).
@@ -1809,7 +1810,7 @@ class Hindsight:
         Args:
             bank_id: The memory bank ID
             mental_model_id: The mental model ID
-            detail: Detail level — "metadata" (names/tags only), "content" (adds
+            detail: Detail level — "basic"/"metadata" (names/tags only), "content" (adds
                 content/config), or "full" (includes the large reflect_response
                 provenance chains). Defaults server-side to "full"; pass a lighter
                 level to avoid pulling large payloads you don't need.
@@ -2021,13 +2022,16 @@ class Hindsight:
         tags: list[str] | None = None,
         tags_match: str | None = None,
         tag_groups: list[dict[str, Any]] | None = None,
+        detail: Literal["basic", "metadata"] | None = None,
     ):
         """
         Get the bank's pages as a nested folder/page tree (sync wrapper — prefer :meth:`aget_page_tree` in async code).
 
         See :meth:`aget_page_tree` for the full argument and return documentation.
         """
-        return _run_async(self.aget_page_tree(bank_id=bank_id, tags=tags, tags_match=tags_match, tag_groups=tag_groups))
+        return _run_async(
+            self.aget_page_tree(bank_id=bank_id, tags=tags, tags_match=tags_match, tag_groups=tag_groups, detail=detail)
+        )
 
     async def aget_page_tree(
         self,
@@ -2035,6 +2039,7 @@ class Hindsight:
         tags: list[str] | None = None,
         tags_match: str | None = None,
         tag_groups: list[dict[str, Any]] | None = None,
+        detail: Literal["basic", "metadata"] | None = None,
     ):
         """
         Get the bank's pages as a nested folder/page tree (async — preferred over :meth:`get_page_tree`).
@@ -2048,6 +2053,8 @@ class Hindsight:
             tags_match: 'any', 'all', 'any_strict', 'all_strict' or 'exact' (server default 'any',
                 which also returns untagged pages)
             tag_groups: Compound boolean tag filter, same shape as recall's ``tag_groups``
+            detail: "basic" leaves ``is_stale`` unset, which skips a scan of each page's memories
+                (server default "metadata")
 
         Returns:
             PageTreeResponse with roots
@@ -2058,6 +2065,7 @@ class Hindsight:
             tags_match=tags_match,
             # Sent as one JSON query param: the endpoint is a GET, and a boolean tree has no flat form.
             tag_groups=json.dumps(tag_groups) if tag_groups else None,
+            detail=detail,
             _request_timeout=self._timeout,
         )
 

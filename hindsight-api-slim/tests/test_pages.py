@@ -391,6 +391,9 @@ class TestTree:
         listed = await api_client.get(f"{base}/mental-models", params={"detail": "basic"})
         assert listed.status_code == 200, listed.text
         assert all(m.get("is_stale") is None for m in listed.json()["items"])
+        one = await api_client.get(f"{base}/mental-models/{mm_id}", params={"detail": "basic"})
+        assert one.status_code == 200, one.text
+        assert one.json()["id"] == mm_id and one.json().get("is_stale") is None
 
         # Default unchanged: the same reads still answer is_stale.
         tree = await api_client.get(f"{base}/pages/tree")

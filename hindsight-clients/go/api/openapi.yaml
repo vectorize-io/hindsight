@@ -2731,17 +2731,18 @@ paths:
           title: Mental Model Id
           type: string
         style: simple
-      - description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
-          \ content/config), 'full' (includes reflect_response)"
+      - description: "Detail level: 'basic'/'metadata' (names/tags only), 'content'\
+          \ (adds content/config), 'full' (includes reflect_response and is_stale)"
         explode: true
         in: query
         name: detail
         required: false
         schema:
           default: full
-          description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
-            \ content/config), 'full' (includes reflect_response)"
+          description: "Detail level: 'basic'/'metadata' (names/tags only), 'content'\
+            \ (adds content/config), 'full' (includes reflect_response and is_stale)"
           enum:
+          - basic
           - metadata
           - content
           - full
@@ -3048,7 +3049,7 @@ paths:
           enum:
           - basic
           - metadata
-          title: Detail
+          title: Page Tree Detail
           type: string
         style: form
       - description: "Only return pages carrying these tags (matched per `tags_match`,\
@@ -3147,7 +3148,7 @@ paths:
           enum:
           - basic
           - metadata
-          title: Detail
+          title: Page Tree Detail
           type: string
         style: form
       - description: "Only return pages carrying these tags (matched per `tags_match`,\

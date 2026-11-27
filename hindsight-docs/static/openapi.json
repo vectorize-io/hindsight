@@ -3919,16 +3919,17 @@
             "required": false,
             "schema": {
               "enum": [
+                "basic",
                 "metadata",
                 "content",
                 "full"
               ],
               "type": "string",
-              "description": "Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)",
+              "description": "Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)",
               "default": "full",
               "title": "Detail"
             },
-            "description": "Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)"
+            "description": "Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)"
           },
           {
             "name": "authorization",
@@ -4427,9 +4428,9 @@
                 "metadata"
               ],
               "type": "string",
+              "title": "Page Tree Detail",
               "description": "Detail level: 'basic' (no staleness \u2014 skips a scan of each page's memories), 'metadata' (adds is_stale \u2014 the default).",
-              "default": "metadata",
-              "title": "Detail"
+              "default": "metadata"
             },
             "description": "Detail level: 'basic' (no staleness \u2014 skips a scan of each page's memories), 'metadata' (adds is_stale \u2014 the default)."
           },
@@ -4563,9 +4564,9 @@
                 "metadata"
               ],
               "type": "string",
+              "title": "Page Tree Detail",
               "description": "Detail level: 'basic' (no staleness \u2014 skips a scan of each page's memories), 'metadata' (adds is_stale \u2014 the default).",
-              "default": "metadata",
-              "title": "Detail"
+              "default": "metadata"
             },
             "description": "Detail level: 'basic' (no staleness \u2014 skips a scan of each page's memories), 'metadata' (adds is_stale \u2014 the default)."
           },
