@@ -115,6 +115,29 @@ export function takePendingContext(harness: string, sessionId: string): string |
   }
 }
 
+/**
+ * Claim a user message for recall: true only when `mark` (its transcript position) is past the last
+ * one claimed in this session. For a host whose prompt hook fires on every model step and carries no
+ * prompt (Antigravity), so a step recalls only a user message newer than the last one recalled (#6944).
+ * Its own file, like the pending context: `buildHookOutput` rewrites the session cache every turn.
+ */
+export function claimPromptMark(harness: string, sessionId: string, mark: number): boolean {
+  const path = join(tmpdir(), `hindsight-${harness}`, `${sessionId}.recalled`);
+  let last = -1;
+  try {
+    last = Number(readFileSync(path, "utf8"));
+  } catch {
+    /* nothing recalled yet this session */
+  }
+  if (Number.isFinite(last) && mark <= last) return false;
+  try {
+    writeFileAtomic(path, String(mark));
+  } catch {
+    /* best-effort: a lost mark costs one repeat recall, never a missed one */
+  }
+  return true;
+}
+
 /** The session root's own file, deliberately NOT the shared session cache — see sessionRootDir. */
 function sessionRootFile(harness: string, sessionId: string): string {
   return join(tmpdir(), `hindsight-${harness}`, `${sessionId}.root`);
