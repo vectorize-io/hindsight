@@ -25,7 +25,7 @@ import { deriveBankIdOrSkip } from "./core/bank";
 import { claudeProjectDir } from "./core/history";
 import { resolveConfig } from "./core/config";
 import { TRAECODE_WORKSPACE_ENABLED_KEY } from "./core/traecode-mcp";
-import { SKILL_DIRS } from "./core/skill-dirs";
+import { SKILL_DIRS, SKILL_NAMES } from "./core/skill-dirs";
 import { parse as parseToml } from "smol-toml";
 import { HOOK_HARNESSES } from "./harness/hook-lifecycle";
 
@@ -552,8 +552,11 @@ describe("factory-droid installer", () => {
     // in a real temp package root like the skills-sync family test does.
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-droidskill-"));
     homes.push(pkgRoot);
-    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
-    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), "packaged skill body");
+    mkdirSync(join(pkgRoot, "skill", "hindsight-coding-agent"), { recursive: true });
+    writeFileSync(
+      join(pkgRoot, "skill", "hindsight-coding-agent", "SKILL.md"),
+      "packaged skill body"
+    );
     const droidCtx: InstallCtx = { ...ctx, pkgRoot, dist: join(pkgRoot, "dist") };
     expect(run(["install", "factory-droid"], droidCtx)).toBe(0);
     const skill = join(
@@ -714,8 +717,11 @@ describe("zcode installer", () => {
   const ctxWithPackagedSkill = (): InstallCtx => {
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-zcodeskill-"));
     homes.push(pkgRoot);
-    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
-    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), "packaged skill body");
+    mkdirSync(join(pkgRoot, "skill", "hindsight-coding-agent"), { recursive: true });
+    writeFileSync(
+      join(pkgRoot, "skill", "hindsight-coding-agent", "SKILL.md"),
+      "packaged skill body"
+    );
     return { ...makeCtx(), pkgRoot, dist: join(pkgRoot, "dist") };
   };
 
@@ -1193,8 +1199,11 @@ describe("traecode installer", () => {
   const ctxWithPackagedSkill = (): InstallCtx => {
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-traecodeskill-"));
     homes.push(pkgRoot);
-    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
-    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), "packaged skill body");
+    mkdirSync(join(pkgRoot, "skill", "hindsight-coding-agent"), { recursive: true });
+    writeFileSync(
+      join(pkgRoot, "skill", "hindsight-coding-agent", "SKILL.md"),
+      "packaged skill body"
+    );
     return { ...makeCtx(), pkgRoot, dist: join(pkgRoot, "dist") };
   };
 
@@ -2072,9 +2081,9 @@ describe("pi-family companion skill", () => {
     homes.push(home);
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-"));
     homes.push(pkgRoot);
-    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    mkdirSync(join(pkgRoot, "skill", "hindsight-coding-agent"), { recursive: true });
     writeFileSync(
-      join(pkgRoot, "skill", "SKILL.md"),
+      join(pkgRoot, "skill", "hindsight-coding-agent", "SKILL.md"),
       "---\nname: hindsight-coding-agent\n---\nbody"
     );
     return { home, pkgRoot, dist: join(pkgRoot, "dist"), claudeMcp: vi.fn(() => true) };
@@ -2087,8 +2096,17 @@ describe("pi-family companion skill", () => {
       const base = join(ctx.home, ...dir);
       run(["install", harness], ctx);
       expect(existsSync(join(base, "hindsight-coding-agent", "SKILL.md"))).toBe(true);
+      // What a killed sync leaves behind goes too; a user's own look-alike backup does not.
+      for (const left of ["hindsight-coding-agent.tmp-99999", "hindsight-coding-agent.old-99999"]) {
+        mkdirSync(join(base, left));
+        writeFileSync(join(base, left, "SKILL.md"), "leftover");
+      }
+      mkdirSync(join(base, "hindsight-coding-agent.old-backup"));
       run(["uninstall", harness], ctx);
       expect(existsSync(join(base, "hindsight-coding-agent"))).toBe(false);
+      expect(existsSync(join(base, "hindsight-coding-agent.tmp-99999"))).toBe(false);
+      expect(existsSync(join(base, "hindsight-coding-agent.old-99999"))).toBe(false);
+      expect(existsSync(join(base, "hindsight-coding-agent.old-backup"))).toBe(true);
     }
   );
 
@@ -2813,8 +2831,8 @@ describe("runtime staging", () => {
     writeFileSync(join(dist, "installer.js"), "// built");
     writeFileSync(join(dist, "claude-hook.js"), "// built");
     writeFileSync(join(root, "package.json"), JSON.stringify({ name: "x", main: "dist/index.js" }));
-    mkdirSync(join(root, "skill"), { recursive: true });
-    writeFileSync(join(root, "skill", "SKILL.md"), "# skill");
+    mkdirSync(join(root, "skill", "hindsight-coding-agent"), { recursive: true });
+    writeFileSync(join(root, "skill", "hindsight-coding-agent", "SKILL.md"), "# skill");
     return { pkgRoot: root, dist };
   }
 
@@ -2857,7 +2875,7 @@ describe("runtime staging", () => {
     run(["install", "opencode"], ctx);
     const staged = join(ctx.home, ".hindsight", "coding-agents");
     expect(existsSync(join(staged, "package.json"))).toBe(true);
-    expect(existsSync(join(staged, "skill", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(staged, "skill", "hindsight-coding-agent", "SKILL.md"))).toBe(true);
     const cfg = readJson(join(ctx.home, ".config", "opencode", "opencode.json"));
     expect(cfg.plugin).toContain(staged);
   });
@@ -2869,6 +2887,8 @@ describe("runtime staging", () => {
     homes.push(v1, v2);
     fakePackage(v1);
     writeFileSync(join(v1, "dist", "old-only.js"), "// dropped in the next version");
+    // The pre-#6749 flat skill: left staged, dcode (plugin.json "skills": "./skill") would load it.
+    writeFileSync(join(v1, "skill", "SKILL.md"), "# old flat skill");
     fakePackage(v2);
     writeFileSync(join(v2, "dist", "new-only.js"), "// added in the next version");
 
@@ -2881,6 +2901,9 @@ describe("runtime staging", () => {
     expect(existsSync(join(staged, "new-only.js"))).toBe(true);
     // Merging instead of replacing would leave an entry point a host config could still name.
     expect(existsSync(join(staged, "old-only.js"))).toBe(false);
+    const stagedSkill = join(ctx.home, ".hindsight", "coding-agents", "skill");
+    expect(existsSync(join(stagedSkill, "SKILL.md"))).toBe(false);
+    expect(existsSync(join(stagedSkill, "hindsight-coding-agent", "SKILL.md"))).toBe(true);
     const events = readJson(join(ctx.home, ".claude", "settings.json")).hooks.SessionStart;
     expect(events).toHaveLength(1);
   });
@@ -2971,9 +2994,9 @@ describe("skill install across skills-capable hosts", () => {
   it("copies the packaged skill for claude/codex(~/.agents)/antigravity/cursor/qwen/prime-agent and uninstall removes each", () => {
     const home = mkdtempSync(join(tmpdir(), "hs-inst-skill-"));
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-"));
-    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    mkdirSync(join(pkgRoot, "skill", "hindsight-coding-agent"), { recursive: true });
     writeFileSync(
-      join(pkgRoot, "skill", "SKILL.md"),
+      join(pkgRoot, "skill", "hindsight-coding-agent", "SKILL.md"),
       "---\nname: hindsight-coding-agent\n---\nbody"
     );
     const ctx = {
@@ -3010,9 +3033,9 @@ describe("skill install across skills-capable hosts", () => {
   it("uninstalling prime-agent leaves the shared ~/.agents copy Codex installed", () => {
     const home = mkdtempSync(join(tmpdir(), "hs-inst-skill-"));
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-"));
-    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
+    mkdirSync(join(pkgRoot, "skill", "hindsight-coding-agent"), { recursive: true });
     writeFileSync(
-      join(pkgRoot, "skill", "SKILL.md"),
+      join(pkgRoot, "skill", "hindsight-coding-agent", "SKILL.md"),
       "---\nname: hindsight-coding-agent\n---\nbody"
     );
     const ctx = {
@@ -3325,16 +3348,23 @@ describe("server setup", () => {
  * the skill actually landed, and require that the self-update refreshes that same copy.
  */
 describe("every installed companion skill is kept current by the session-start self-update", () => {
-  const SKILL_NAME = "hindsight-coding-agent";
+  const [SKILL_NAME] = SKILL_NAMES;
+
+  /** Both packaged skills, each a SKILL.md holding `body`. */
+  function packageSkills(root: string, body: string): void {
+    for (const name of SKILL_NAMES) {
+      mkdirSync(join(root, name), { recursive: true });
+      writeFileSync(join(root, name, "SKILL.md"), body);
+    }
+  }
 
   /** makeCtx's pkgRoot is a synthetic /opt path, so the packaged skill can't be staged in it.
-   *  Build a real temp package root holding a SKILL.md the installer can copy. */
+   *  Build a real temp package root holding the skills the installer can copy. */
   function ctxWithPackagedSkill(body: string): InstallCtx {
     const ctx = makeCtx();
     const pkgRoot = mkdtempSync(join(tmpdir(), "hs-pkg-skillsync-"));
     homes.push(pkgRoot);
-    mkdirSync(join(pkgRoot, "skill"), { recursive: true });
-    writeFileSync(join(pkgRoot, "skill", "SKILL.md"), body);
+    packageSkills(join(pkgRoot, "skill"), body);
     return { ...ctx, pkgRoot, dist: join(pkgRoot, "dist") };
   }
 
@@ -3370,13 +3400,18 @@ describe("every installed companion skill is kept current by the session-start s
         harness
       ).toEqual([SKILL_DIRS[harness]]);
 
-      // And the self-update must actually refresh THIS host's copy when the package moves on.
-      const installed = join(ctx.home, ...copies[0], "SKILL.md");
+      // Both skills land side by side, and the self-update must actually refresh THIS host's
+      // copies when the package moves on.
+      const base = join(ctx.home, ...SKILL_DIRS[harness]);
       const srcDir = mkdtempSync(join(tmpdir(), "hs-pkg-newer-"));
       homes.push(srcDir);
-      writeFileSync(join(srcDir, "SKILL.md"), "packaged v2");
+      packageSkills(srcDir, "packaged v2");
       syncCompanionSkill(harness, { home: ctx.home, srcDir });
-      expect(readFileSync(installed, "utf8"), harness).toBe("packaged v2");
+      for (const name of SKILL_NAMES) {
+        expect(readFileSync(join(base, name, "SKILL.md"), "utf8"), harness).toBe("packaged v2");
+      }
+      run(["uninstall", harness], ctx);
+      for (const name of SKILL_NAMES) expect(existsSync(join(base, name)), harness).toBe(false);
     }
     expect(withoutSkill.sort()).toEqual(NO_SKILL_MECHANISM);
   });

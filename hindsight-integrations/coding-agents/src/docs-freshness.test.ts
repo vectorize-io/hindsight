@@ -28,12 +28,22 @@ describe("companion skill", () => {
     });
   });
 
-  it("carries the configuration reference, not a subset of it", () => {
-    const skill = readFileSync(join(pkgRoot, "skill", "SKILL.md"), "utf8");
+  const skillMd = (name: string) => readFileSync(join(pkgRoot, "skill", name, "SKILL.md"), "utf8");
+
+  it("carries the configuration reference, not a subset of it, in the setup skill", () => {
+    const skill = skillMd("hindsight-coding-agent-setup");
     // The keys that fix the failure mode #3735 reported: a bank shared across unrelated projects.
     for (const key of ["bankIdTemplate", "dynamicBankId", "mapPathToBank", "disabled", "bank"]) {
       expect(skill).toContain(`\`${key}\``);
     }
+  });
+
+  it("keeps the everyday skill short and pointing at the setup one (#6749)", () => {
+    // A host loads a skill whole on every trigger: the reference must not creep back in.
+    const skill = skillMd("hindsight-coding-agent");
+    expect(skill.split("\n").length).toBeLessThan(150);
+    expect(skill).toContain("`hindsight-coding-agent-setup`");
+    expect(skill).not.toContain("## Configuration");
   });
 });
 
@@ -129,6 +139,12 @@ describe("skill region extraction", () => {
     expect(() => extract(["<!-- skill:begin -->", "## A", "text"].join("\n"))).toThrow(
       /unterminated/
     );
+  });
+
+  it("refuses a skill= naming no skill rather than dropping the region", () => {
+    expect(() =>
+      extract(['<!-- skill:begin skill="setpu" -->', "## A", "<!-- skill:end -->"].join("\n"))
+    ).toThrow(/unknown skill="setpu"/);
   });
 
   it("refuses a README with no marked regions at all", () => {

@@ -133,21 +133,25 @@ describe("opencode2 adapter", () => {
     expect(typeof fake.tools[0].input?.parse).toBe("function");
   });
 
-  it("registers the packaged companion skill in the host's registry", async () => {
+  it("registers both packaged companion skills in the host's registry", async () => {
     // opencode2 owns no skills DIRECTORY (core/skill-dirs.ts), so the installer has nowhere to drop
     // a copy: without this registration an opencode2-only user gets the tools and no skill (#4352).
     const fake = fakeContext();
     await wireOpencode2Runtime(fakeCore(), fake.ctx);
-    expect(fake.skills).toHaveLength(1);
-    expect(fake.skills[0].id).toBe("hindsight-coding-agent");
-    expect(fake.skills[0].name).toBe("hindsight-coding-agent");
-    expect(fake.skills[0].path).toMatch(/skill[\\/]SKILL\.md$/);
-    // opencode v2 requires an absolute `path`; a draft without one disables the plugin (#4732).
-    expect(isAbsolute(fake.skills[0].path)).toBe(true);
-    expect(fake.skills[0].description).toContain("Hindsight");
-    expect(fake.skills[0].content).toContain("Hindsight Coding-Agent Memory");
-    // Frontmatter is split out, not handed to the host as part of the body.
-    expect(fake.skills[0].content.startsWith("---")).toBe(false);
+    expect(fake.skills.map((s) => s.id)).toEqual([
+      "hindsight-coding-agent",
+      "hindsight-coding-agent-setup",
+    ]);
+    for (const skill of fake.skills) {
+      expect(skill.name).toBe(skill.id);
+      expect(skill.path).toMatch(new RegExp(`skill[\\\\/]${skill.id}[\\\\/]SKILL\\.md$`));
+      // opencode v2 requires an absolute `path`; a draft without one disables the plugin (#4732).
+      expect(isAbsolute(skill.path)).toBe(true);
+      expect(skill.description).toContain("Hindsight");
+      expect(skill.content).toContain("Hindsight Coding-Agent Memory");
+      // Frontmatter is split out, not handed to the host as part of the body.
+      expect(skill.content.startsWith("---")).toBe(false);
+    }
   });
 
   it("keeps the session wired when the host rejects the skill", async () => {

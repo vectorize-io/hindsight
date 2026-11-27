@@ -55,7 +55,8 @@ import { PRIME_AGENT_DIR_ENV, PRIME_SESSION_ID_ENV } from "./prime-agent";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
 import { readLegacyEndpoint } from "./core/legacy";
 import { hookNode, hookNodeShell, isOurMcpEntry, nodeBinary } from "./core/util";
-import { SKILL_DIRS, resolveSkillDirs, traecodeDotDirName } from "./core/skill-dirs";
+import { SKILL_DIRS, SKILL_NAMES, resolveSkillDirs, traecodeDotDirName } from "./core/skill-dirs";
+import { leftoversOf, replaceSkillDir } from "./core/skill-sync";
 import {
   enableWorkspaceMcpSetting,
   gateStateFileFor,
@@ -377,25 +378,30 @@ function skillsBaseFor(c: InstallCtx, harness: string): string {
   return join(c.home, ...parts);
 }
 
-/** Copy the packaged companion SKILL into a host's skills directory (idempotent overwrite).
+/** Copy the packaged companion skills into a host's skills directory, each replacing its earlier
+ * copy so a file a newer package dropped goes too.
  * The log line carries the harness prefix like every adapter message: several adapters install
  * the skill before their first own log, and an unprefixed line would render under the PREVIOUS
  * harness's group in the CLI output. */
 function installSkill(c: InstallCtx, harness: string): void {
   const src = join(c.pkgRoot, "skill");
-  if (!existsSync(join(src, "SKILL.md"))) return;
+  if (!existsSync(join(src, SKILL_NAMES[0], "SKILL.md"))) return;
   const skillsBase = skillsBaseFor(c, harness);
-  const dst = join(skillsBase, "hindsight-coding-agent");
-  mkdirSync(skillsBase, { recursive: true });
-  cpSync(src, dst, { recursive: true });
-  c.log?.(`${harness}: skill installed at ${dst}`);
+  for (const name of SKILL_NAMES) {
+    if (!existsSync(join(src, name))) continue;
+    replaceSkillDir(join(src, name), join(skillsBase, name));
+    c.log?.(`${harness}: skill installed at ${join(skillsBase, name)}`);
+  }
 }
 
 function uninstallSkill(c: InstallCtx, harness: string): void {
-  rmSync(join(skillsBaseFor(c, harness), "hindsight-coding-agent"), {
-    recursive: true,
-    force: true,
-  });
+  for (const name of SKILL_NAMES) {
+    const dst = join(skillsBaseFor(c, harness), name);
+    // Plus any copy a killed sync left beside it — deleted, never restored as a sync would.
+    for (const p of [dst, ...leftoversOf(dst).map((l) => l.path)]) {
+      rmSync(p, { recursive: true, force: true });
+    }
+  }
 }
 
 // ── per-harness adapters ────────────────────────────────────────────────────────
@@ -1103,8 +1109,11 @@ function stageRuntime(c: InstallCtx): InstallCtx {
     rmSync(join(target, "dist"), { recursive: true, force: true });
     mkdirSync(target, { recursive: true });
     cpSync(c.dist, join(target, "dist"), { recursive: true });
+    // The skills too, wholesale: the session-start sync copies from here, so a stale file (the
+    // pre-#6749 flat skill/SKILL.md) left behind would never go away.
     const skill = join(c.pkgRoot, "skill");
-    if (existsSync(skill)) cpSync(skill, join(target, "skill"), { recursive: true });
+    if (existsSync(skill)) replaceSkillDir(skill, join(target, "skill"));
+    else rmSync(join(target, "skill"), { recursive: true, force: true });
     const pkgJson = join(c.pkgRoot, "package.json");
     if (existsSync(pkgJson)) copyFileSync(pkgJson, join(target, "package.json"));
     // The Dcode Agent Plugin surface (its manifest and the hooks that manifest points at) plus the

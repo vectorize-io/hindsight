@@ -1,13 +1,14 @@
 ---
 name: hindsight-coding-agent
-description: How this machine's Hindsight coding-agent memory works — the plugin behind the 🧠 banner. Use when the user says "store/remember this in hindsight", asks what the memory/pages are, wants to configure per-repo memory (disable, rename banks, git depth), or something memory-related looks broken.
+description: Everyday use of this machine's Hindsight coding-agent memory — the plugin behind the 🧠 banner. Use when the user says "store/remember this in hindsight", asks what the memory or its pages are, or a memory needs correcting. For installing, configuring or debugging the plugin, use hindsight-coding-agent-setup instead.
 ---
 
 # Hindsight Coding-Agent Memory
 
 This machine runs the `hindsight-coding-agents` plugin: long-term project memory for coding
 sessions, backed by a Hindsight server. You (the agent) are already wired into it — this skill
-explains what happens automatically, which tools you have, and how to configure or debug it.
+explains what happens automatically and which tools you have. Installing, updating, configuration and
+diagnosing problems live in the `hindsight-coding-agent-setup` skill.
 
 ## What happens automatically (no action needed)
 
