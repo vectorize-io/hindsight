@@ -687,7 +687,10 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       ? (raw.gitIngest as "message" | "full" | "none")
       : "message",
     skipOriginators: Array.isArray(raw.skipOriginators)
-      ? raw.skipOriginators.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+      ? raw.skipOriginators
+          .filter((t): t is string => typeof t === "string")
+          .map((t) => t.trim())
+          .filter(Boolean)
       : [],
     // Hostile input is a config typo, not an attack: keep only string entries so a stray number or
     // nested object cannot reach the API as a tag and fail the whole retain.

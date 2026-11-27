@@ -12,7 +12,17 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { INSTALLERS, MARKER, nodeCommand, parseJsonc, run, type InstallCtx } from "./installer";
+import {
+  importSkipOriginators,
+  INSTALLERS,
+  MARKER,
+  nodeCommand,
+  parseJsonc,
+  run,
+  type InstallCtx,
+} from "./installer";
+import { deriveBankIdOrSkip } from "./core/bank";
+import { resolveConfig } from "./core/config";
 import { TRAECODE_WORKSPACE_ENABLED_KEY } from "./core/traecode-mcp";
 import { SKILL_DIRS } from "./core/skill-dirs";
 import { parse as parseToml } from "smol-toml";
@@ -3311,5 +3321,16 @@ describe("nodeCommand", () => {
   it("quotes the script path only when it contains a space", () => {
     expect(nodeCommand("C:\\Users\\me\\dist\\hook.js")).toBe("node C:\\Users\\me\\dist\\hook.js");
     expect(nodeCommand("/Users/my name/dist/hook.js")).toBe('node "/Users/my name/dist/hook.js"');
+  });
+});
+
+describe("importSkipOriginators (#5507)", () => {
+  it("applies a banks.<id> section, as the Stop hook does", () => {
+    const repo = mkdtempSync(join(tmpdir(), "hs-import-skip-"));
+    const id = deriveBankIdOrSkip(resolveConfig(), repo, "codex");
+    expect(id).toBeTruthy();
+    const cfg = resolveConfig({ banks: { [id!]: { skipOriginators: ["Claude Code"] } } });
+    expect(importSkipOriginators(cfg, "codex", repo)).toEqual(["Claude Code"]);
+    expect(importSkipOriginators(resolveConfig(), "codex", repo)).toEqual([]);
   });
 });

@@ -8,6 +8,7 @@ import type { TransportTurn } from "./chat";
 import { type RawConfig, resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
 import { buildRetain, replayOrphanedSessions, runRetainHook } from "./retain-hook";
+import { HOOK_HARNESSES } from "../harness/hook-lifecycle";
 import { fingerprintTurns, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 import { readClaudeTranscript } from "./transcript";
 import { readCodexTranscript } from "./transcript-codex";
@@ -1030,6 +1031,27 @@ describe("runRetainHook honors retainSessions", () => {
     const unknown = stubClient();
     await runRetainHook({ ...codexSpec, originator: () => undefined }, unknown.makeClient);
     expect(unknown.retain).toHaveBeenCalledTimes(1);
+  });
+
+  it("the real Codex spec reads the rollout's originator and skips a listed one (#5507)", async () => {
+    const rollout = (originator: string) =>
+      [
+        JSON.stringify({ type: "session_meta", payload: { id: "c1", cwd: root, originator } }),
+        message("user", "we use zod for validation"),
+        message("assistant", "noted"),
+      ].join("\n");
+    rawConfig = { harnesses: { codex: { skipOriginators: ["Claude Code"] } } };
+    const codex = HOOK_HARNESSES.codex.retain;
+
+    writeFileSync(file, rollout("Claude Code"));
+    const skipped = stubClient();
+    await runRetainHook(codex, skipped.makeClient);
+    expect(skipped.retain).not.toHaveBeenCalled();
+
+    writeFileSync(file, rollout("Codex Desktop"));
+    const kept = stubClient();
+    await runRetainHook(codex, kept.makeClient);
+    expect(kept.retain).toHaveBeenCalledTimes(1);
   });
 
   it("a banks.<id> override turns write-back back on under a global opt-out", async () => {
