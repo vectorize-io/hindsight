@@ -47,6 +47,12 @@ describe("pi extension adapter", () => {
     expect(result).toBeUndefined();
   });
 
+  it("resets the session on session_compact (#6527)", () => {
+    const core = { onCompacted: vi.fn() };
+    createPiHooks(core as never, "pi").sessionCompact("session-1");
+    expect(core.onCompacted).toHaveBeenCalledWith("session-1");
+  });
+
   it("handles a custom-message run, which has no prompt, without throwing (#5592)", async () => {
     // pi's goal resume and `pi.sendMessage(…, { triggerTurn: true })` start a run with
     // `messageType: "custom"` and `message` instead of `prompt`.

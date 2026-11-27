@@ -113,6 +113,7 @@ function fakeCore(overrides: Partial<Record<string, unknown>> = {}) {
     onPrompt: vi.fn(async () => {}),
     getInjection: vi.fn(() => "<hindsight_memories>remember</hindsight_memories>"),
     onSessionIdle: vi.fn(async () => {}),
+    onCompacted: vi.fn(),
     ...overrides,
   };
   return core as unknown as RuntimeCore & typeof core;
@@ -231,6 +232,20 @@ describe("opencode2 adapter", () => {
       { type: "session.idle", data: {} } // no session id: skipped, must not throw
     );
     expect(core.onSessionIdle.mock.calls).toEqual([["ses_run"], ["ses_tui"]]);
+  });
+
+  it("resets its own sessions when a compaction ends, and no one else's (#6527)", async () => {
+    const fake = fakeContext();
+    const core = fakeCore();
+    await wireOpencode2Runtime(core, fake.ctx);
+    await fake.prompt()({ sessionID: "ses_mine", prompt: { text: "a" } });
+    await fake.emit(
+      { type: "session.compaction.started", data: { sessionID: "ses_mine" } },
+      { type: "session.compaction.ended", data: { sessionID: "ses_mine" } },
+      { type: "session.compaction.ended", data: { sessionID: "ses_other_project" } }
+    );
+    expect(core.onCompacted.mock.calls).toEqual([["ses_mine"]]);
+    expect(core.onSessionIdle).not.toHaveBeenCalled();
   });
 
   it("never writes back a session another project's plugin instance owns", async () => {

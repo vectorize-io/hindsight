@@ -72,6 +72,27 @@ describe("RuntimeCore", () => {
     expect(runtime.getInjection(a)).toBeUndefined();
   });
 
+  it("treats a compaction as a new session start: memory and preamble come back (#6527)", async () => {
+    const client = {
+      listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+      listPages: vi.fn(async () => ({ items: [] })),
+      reflect: vi.fn(async () => "a memory"),
+    } as unknown as HindsightClient;
+    const runtime = new RuntimeCore(client, "bank-1", resolveConfig({}));
+    const id = `session-compact-${randomUUID()}`;
+
+    await runtime.onPrompt(id, "first prompt");
+    await runtime.onPrompt(id, "second prompt");
+    expect(runtime.getInjection(id)).not.toContain("a memory");
+
+    runtime.onCompacted(id);
+    expect(runtime.getInjection(id)).toBeUndefined();
+    await runtime.onPrompt(id, "after the compaction");
+    expect(client.reflect).toHaveBeenCalledTimes(2);
+    expect(runtime.getInjection(id)).toContain("a memory");
+    expect(runtime.getInjection(id)).toContain("<hindsight_pages>");
+  });
+
   it("sends the tool guide once on turn 1: the preamble, not also the roster refresh (#5977)", async () => {
     const client = {
       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),

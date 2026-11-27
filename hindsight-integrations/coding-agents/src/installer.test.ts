@@ -264,7 +264,7 @@ describe("kimi-code installer", () => {
     const toml = readFileSync(join(ctx.home, ".kimi-code", "config.toml"), "utf8");
     const ours = toml.slice(toml.indexOf("# HINDSIGHT_CODING_AGENTS_KIMI_START"));
     const entries = hookEntries(ours);
-    expect(entries).toHaveLength(3);
+    expect(entries).toHaveLength(4);
     for (const e of entries) {
       expect(Object.keys(e).sort()).toEqual(["command", "event", "timeout"]);
     }
@@ -278,12 +278,13 @@ describe("kimi-code installer", () => {
     const toml = readFileSync(join(ctx.home, ".kimi-code", "config.toml"), "utf8");
     const ours = toml.slice(toml.indexOf("# HINDSIGHT_CODING_AGENTS_KIMI_START"));
     const got = hookEntries(ours).map((e) => [e.event, e.timeout]);
-    const want = Object.values(HOOK_HARNESSES["kimi-code"].install).map((h) => [
+    const spec = HOOK_HARNESSES["kimi-code"];
+    const want = [...Object.values(spec.install), ...(spec.additionalHooks ?? [])].map((h) => [
       h.event,
       h.timeout,
     ]);
     expect(got).toEqual(want);
-    expect(got.map((g) => g[1])).toEqual([30, 30, 60]);
+    expect(got.map((g) => g[1])).toEqual([30, 30, 60, 30]);
   });
 
   it("preserves a user's own hooks and does not duplicate ours on re-install", () => {
@@ -337,7 +338,7 @@ describe("kimi-code installer", () => {
     process.env.KIMI_CODE_HOME = kimiHome;
     try {
       expect(run(["install", "kimi-code"], ctx)).toBe(0);
-      expect(hookEntries(readFileSync(join(kimiHome, "config.toml"), "utf8"))).toHaveLength(3);
+      expect(hookEntries(readFileSync(join(kimiHome, "config.toml"), "utf8"))).toHaveLength(4);
       expect(existsSync(join(kimiHome, "mcp.json"))).toBe(true);
       expect(existsSync(join(ctx.home, ".kimi-code", "config.toml"))).toBe(false);
     } finally {
@@ -2169,7 +2170,7 @@ describe("cursor-cli installer", () => {
   const hooksPath = (ctx: InstallCtx) => join(ctx.home, ".cursor", "hooks.json");
   const mcpPath = (ctx: InstallCtx) => join(ctx.home, ".cursor", "mcp.json");
 
-  it("install writes sessionStart, beforeSubmitPrompt, and stop hooks plus the mcp.json server entry", () => {
+  it("install writes sessionStart, beforeSubmitPrompt, stop and preCompact hooks plus the mcp.json server entry", () => {
     const ctx = makeCtx();
     expect(run(["install", "cursor-cli"], ctx)).toBe(0);
     const cfg = readJson(hooksPath(ctx));
@@ -2184,6 +2185,9 @@ describe("cursor-cli installer", () => {
     expect(hooks.stop).toHaveLength(1);
     expect(hooks.stop[0].command).toContain(join(ctx.dist, "cursor-stop-hook.js"));
     expect(hooks.stop[0].timeout).toBe(30);
+    // A compaction resets the session through the SessionStart entry (#6527).
+    expect(hooks.preCompact).toHaveLength(1);
+    expect(hooks.preCompact[0].command).toContain(join(ctx.dist, "cursor-sessionstart-hook.js"));
     const mcp = readJson(mcpPath(ctx));
     expect(mcp.mcpServers.hindsight).toEqual({
       command: "node",

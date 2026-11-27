@@ -219,9 +219,14 @@ export async function wireOpencode2Runtime(
   void (async () => {
     for await (const event of ctx.event.subscribe({ signal: events.signal })) {
       const e = event as Oc2Event;
-      if (!e.type || !IDLE_EVENTS.has(e.type)) continue;
       const sessionID = e.data?.sessionID;
       if (!sessionID || !ownSessions.has(sessionID)) continue;
+      // A compaction counts as a new session start (#6527): the next prompt delivers memory again.
+      if (e.type === "session.compaction.ended") {
+        core.onCompacted(sessionID);
+        continue;
+      }
+      if (!e.type || !IDLE_EVENTS.has(e.type)) continue;
       diag(harness, "idle_signal", { signal: e.type, session: sessionID });
       // Deliberately NOT awaited: a retain must never stall delivery of the next event.
       void core.onSessionIdle(sessionID);

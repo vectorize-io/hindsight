@@ -97,6 +97,7 @@ interface ExtensionAPI {
     handler: (event: AgentEndEvent, ctx: ExtensionContext) => Promise<void> | void
   ): void;
   on(event: "session_shutdown", handler: () => Promise<void> | void): void;
+  on(event: "session_compact", handler: (event: unknown, ctx: ExtensionContext) => void): void;
   registerTool(definition: ToolDefinition): void;
 }
 
@@ -143,7 +144,7 @@ export function toPiTool(
  * calls Hindsight directly.
  */
 export function createPiHooks(
-  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "flush">,
+  core: Pick<RuntimeCore, "onPrompt" | "getInjection" | "onTranscript" | "flush" | "onCompacted">,
   harness: string,
   sessionStart?: Promise<void>
 ) {
@@ -187,6 +188,8 @@ export function createPiHooks(
     },
     /** The host is exiting: the last agent_end's write-back is still in flight (#5081). */
     sessionShutdown: () => core.flush(),
+    /** A compaction counts as a new session start (#6527): the next run delivers memory again. */
+    sessionCompact: (sessionId: string) => core.onCompacted(sessionId),
   };
 }
 
@@ -318,6 +321,9 @@ export function createPiExtension(
         ctx.sessionManager.getSessionId(),
         ctx.sessionManager.getBranch?.()
       )
+    );
+    pi.on("session_compact", (_event, ctx) =>
+      at(ctx)?.hooks.sessionCompact(ctx.sessionManager.getSessionId())
     );
     // Every workspace this process served may still have a write-back in flight.
     pi.on("session_shutdown", async () => {

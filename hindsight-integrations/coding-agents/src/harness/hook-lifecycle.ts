@@ -400,6 +400,9 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
       prompt: { event: "beforeSubmitPrompt", entry: "cursor-hook.js" },
       stop: { event: "stop", entry: "cursor-stop-hook.js", timeout: 30 },
     },
+    // Cursor's sessionStart never fires after a compaction; its preCompact hook resets the session
+    // so the next prompt delivers memory again (#6527). See COMPACTION_EVENTS.
+    additionalHooks: [{ event: "preCompact", entry: "cursor-sessionstart-hook.js", timeout: 30 }],
     sessionStart: {
       harness: "cursor-cli",
       parse: (ev) => ({
@@ -724,6 +727,9 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
       prompt: { event: "UserPromptSubmit", entry: "kimi-hook.js", timeout: 30 },
       stop: { event: "Stop", entry: "kimi-stop-hook.js", timeout: 60 },
     },
+    // Kimi's SessionStart is startup/resume only; PostCompact resets the session so the next
+    // prompt delivers memory again (#6527). See COMPACTION_EVENTS.
+    additionalHooks: [{ event: "PostCompact", entry: "kimi-sessionstart-hook.js", timeout: 30 }],
     sessionStart: {
       harness: "kimi-code",
       parse: (ev) => ({

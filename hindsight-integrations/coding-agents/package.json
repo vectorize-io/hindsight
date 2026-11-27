@@ -94,6 +94,7 @@
     "prepublishOnly": "npm run clean && npm run skill:build && npm run build",
     "test": "vitest run --exclude '**/*.e2e.test.ts'",
     "test:dcode-e2e": "npm run build && HINDSIGHT_DCODE_E2E=1 vitest run src/dcode-plugin.e2e.test.ts",
+    "test:compaction-e2e": "npm run build && vitest run src/compaction.e2e.test.ts",
     "test:harness-e2e": "npm run build && HINDSIGHT_HARNESS_E2E=1 vitest run src/harness.e2e.test.ts"
   },
   "devDependencies": {
