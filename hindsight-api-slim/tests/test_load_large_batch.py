@@ -18,7 +18,7 @@ import pytest_asyncio
 
 from hindsight_api import MemoryEngine, LLMConfig, LocalSTEmbeddings, RequestContext
 from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
-from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+from hindsight_api.engine.query_analyzer import Text2DateQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.engine.retain.fact_extraction import FactExtractionResponse, ExtractedFact
 from hindsight_api.engine.response_models import LLMCallResult, TokenUsage

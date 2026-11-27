@@ -822,6 +822,7 @@ ENV_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION
 ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_TOKENIZER"
 ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA = "HINDSIGHT_API_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA"
 ENV_LLM_OUTPUT_LANGUAGE = "HINDSIGHT_API_LLM_OUTPUT_LANGUAGE"
+ENV_QUERY_ANALYZER = "HINDSIGHT_API_QUERY_ANALYZER"
 ENV_QUERY_ANALYZER_LANGUAGES = "HINDSIGHT_API_QUERY_ANALYZER_LANGUAGES"
 
 ENV_HOST = "HINDSIGHT_API_HOST"
@@ -2454,6 +2455,10 @@ DEFAULT_ENABLE_RERANKING = True  # Cross-encoder rerank of the fused candidates
 # "fixed": thinking_budget = recall_budget_fixed_<level> (preserves legacy behavior)
 # "adaptive": thinking_budget = round(max_tokens * recall_budget_adaptive_<level>),
 #             clamped to [recall_budget_min, recall_budget_max]
+# How recall finds the dates in a query: text2date (a small multilingual model, numpy only) or
+# dateparser (the previous path: dateparser plus hand-written rules).
+QUERY_ANALYZERS = ("text2date", "dateparser")
+DEFAULT_QUERY_ANALYZER = "text2date"
 RECALL_BUDGET_FUNCTIONS = ("fixed", "adaptive")
 DEFAULT_RECALL_BUDGET_FUNCTION = "fixed"
 DEFAULT_RECALL_BUDGET_FIXED_LOW = 100
@@ -2848,6 +2853,18 @@ def _validate_default_timezone(name: str) -> str:
         )
         return DEFAULT_DEFAULT_TIMEZONE
     return name
+
+
+def _validate_query_analyzer(name: str) -> str:
+    """Validate and normalize the recall query analyzer."""
+    name_lower = name.strip().lower()
+    if name_lower not in QUERY_ANALYZERS:
+        logger.warning(
+            f"Invalid query analyzer '{name}', must be one of {QUERY_ANALYZERS}. "
+            f"Defaulting to '{DEFAULT_QUERY_ANALYZER}'."
+        )
+        return DEFAULT_QUERY_ANALYZER
+    return name_lower
 
 
 def _validate_recall_budget_function(function: str) -> str:
@@ -3662,6 +3679,8 @@ class HindsightConfig:
     # ParadeDB pg_search function schema (default: "paradedb", e.g. "pgsearch"
     # for certain managed PostgreSQL distributions).
     text_search_extension_pg_search_function_schema: str
+    # How recall finds the dates in a query: "text2date" (default) or "dateparser".
+    query_analyzer: str
     # Restrict dateparser's language detection in the recall temporal analyzer
     # (comma-separated ISO codes, e.g. "en" or "en,zh"). Empty keeps full
     # auto-detection across all 200+ locales. Restricting is much faster and
@@ -5149,6 +5168,7 @@ class HindsightConfig:
                 ENV_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA,
                 DEFAULT_TEXT_SEARCH_EXTENSION_PG_SEARCH_FUNCTION_SCHEMA,
             ),
+            query_analyzer=_validate_query_analyzer(os.getenv(ENV_QUERY_ANALYZER, DEFAULT_QUERY_ANALYZER)),
             query_analyzer_languages=(
                 [code.strip().lower() for code in raw.split(",") if code.strip()] or None
                 if (raw := os.getenv(ENV_QUERY_ANALYZER_LANGUAGES, "").strip())

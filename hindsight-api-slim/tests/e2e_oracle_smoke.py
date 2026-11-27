@@ -138,7 +138,7 @@ async def _run() -> None:
     # ------------------------------------------------------------------
     from hindsight_api import LocalSTEmbeddings, MemoryEngine, RequestContext
     from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
-    from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+    from hindsight_api.engine.query_analyzer import Text2DateQueryAnalyzer
     from hindsight_api.engine.response_models import Budget
     from hindsight_api.engine.task_backend import SyncTaskBackend
 
@@ -149,7 +149,7 @@ async def _run() -> None:
     cross_encoder = LocalSTCrossEncoder()
     await cross_encoder.initialize()
 
-    query_analyzer = DateparserQueryAnalyzer()
+    query_analyzer = Text2DateQueryAnalyzer()
 
     engine = MemoryEngine(
         db_url=oracle_url,

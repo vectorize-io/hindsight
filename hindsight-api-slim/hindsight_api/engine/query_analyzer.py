@@ -9,7 +9,7 @@ import logging
 import re
 import threading
 from abc import ABC, abstractmethod
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any, cast
 
 from dateparser.conf import Settings, apply_settings
@@ -272,6 +272,59 @@ class QueryAnalyzer(ABC):
             QueryAnalysis containing extracted information
         """
         pass
+
+
+class Text2DateQueryAnalyzer(QueryAnalyzer):
+    """
+    Query analyzer using text2date: a small model that reads the dates in a query, in 16 languages,
+    on numpy only (https://github.com/vectorize-io/text2date, model hindsight-ai/hs-date-1).
+
+    The default. Recall takes one window, so a query naming several ranges ("May 2025 and June
+    2026") uses the first. Ranges are whole days, read on the caller's own clock date. A one-sided
+    range ("before 2020", "after May") gives no constraint, as with dateparser: the temporal arm
+    ranks by distance to the window's middle and needs both ends. The parser keeps no state
+    between calls, so it is safe off-thread.
+
+    Performance:
+    - ~1ms per query
+    - Loads a 10 MB model shipped inside the package (no download)
+    """
+
+    def __init__(self) -> None:
+        self._parser: Any = None
+
+    def load(self) -> None:
+        if self._parser is None:
+            from text2date import Parser
+
+            self._parser = Parser()
+
+    def analyze(self, query: str, reference_date: datetime | None = None) -> QueryAnalysis:
+        if reference_date is None:
+            reference_date = default_reference_date()
+        self.load()
+        # text2date reads an aware datetime in UTC; "yesterday" means the caller's own yesterday.
+        ranges = self._parser.parse(query, reference_date.replace(tzinfo=None))
+        if not ranges or ranges[0].start is None or ranges[0].end is None:
+            return QueryAnalysis(temporal_constraint=None)
+        start = datetime.combine(ranges[0].start, time.min)
+        end = datetime.combine(ranges[0].end, time.max)
+        return QueryAnalysis(temporal_constraint=TemporalConstraint(start_date=start, end_date=end))
+
+
+def create_query_analyzer(name: str, languages: list[str] | None = None) -> QueryAnalyzer:
+    """The analyzer ``HINDSIGHT_API_QUERY_ANALYZER`` names: "text2date" (default) or "dateparser".
+
+    ``languages`` (``HINDSIGHT_API_QUERY_ANALYZER_LANGUAGES``) only applies to dateparser.
+    """
+    if name == "dateparser":
+        return DateparserQueryAnalyzer(languages=languages)
+    if languages:
+        logger.warning(
+            "HINDSIGHT_API_QUERY_ANALYZER_LANGUAGES only applies to HINDSIGHT_API_QUERY_ANALYZER=dateparser; "
+            f"ignored with '{name}', which reads every language it supports."
+        )
+    return Text2DateQueryAnalyzer()
 
 
 class DateparserQueryAnalyzer(QueryAnalyzer):

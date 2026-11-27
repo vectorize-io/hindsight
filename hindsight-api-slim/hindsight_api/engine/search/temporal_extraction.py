@@ -1,7 +1,8 @@
 """
 Temporal extraction for time-aware search queries.
 
-Handles natural language temporal expressions using transformer-based query analysis.
+Finds the dates a recall query talks about with the configured query analyzer
+(HINDSIGHT_API_QUERY_ANALYZER: text2date by default, or dateparser).
 """
 
 import asyncio
@@ -11,7 +12,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer, QueryAnalyzer
+from hindsight_api.config import get_config
+from hindsight_api.engine.query_analyzer import QueryAnalyzer, create_query_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +70,12 @@ def get_default_analyzer() -> QueryAnalyzer:
     Uses lazy initialization to avoid loading at import time.
 
     Returns:
-        Default DateparserQueryAnalyzer instance
+        The analyzer HINDSIGHT_API_QUERY_ANALYZER names (text2date by default)
     """
     global _default_analyzer
     if _default_analyzer is None:
-        _default_analyzer = DateparserQueryAnalyzer()
+        config = get_config()
+        _default_analyzer = create_query_analyzer(config.query_analyzer, config.query_analyzer_languages)
     return _default_analyzer
 
 
@@ -89,7 +92,7 @@ def extract_temporal_constraint(
     Args:
         query: Search query
         reference_date: Reference date for relative terms (defaults to the current UTC time)
-        analyzer: Custom query analyzer (defaults to DateparserQueryAnalyzer)
+        analyzer: Custom query analyzer (defaults to get_default_analyzer())
 
     Returns:
         (start_date, end_date) tuple or None

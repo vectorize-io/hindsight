@@ -58,7 +58,7 @@ except ImportError:
 
 from hindsight_api import LLMConfig, LocalSTEmbeddings, MemoryEngine, RequestContext
 from hindsight_api.engine.cross_encoder import LocalSTCrossEncoder
-from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer, Text2DateQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.pg0 import EmbeddedPostgres
 from hindsight_api.tracing import unregister_span_recorder
@@ -571,7 +571,7 @@ def oracle_db_url(_oracle_admin_dsn):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def oracle_memory(oracle_db_url, embeddings, cross_encoder, query_analyzer):
+async def oracle_memory(oracle_db_url, embeddings, cross_encoder, engine_query_analyzer):
     """
     Provide a MemoryEngine backed by Oracle 23ai for each test.
 
@@ -597,7 +597,7 @@ async def oracle_memory(oracle_db_url, embeddings, cross_encoder, query_analyzer
             memory_llm_base_url=os.getenv("HINDSIGHT_API_LLM_BASE_URL") or None,
             embeddings=embeddings,
             cross_encoder=cross_encoder,
-            query_analyzer=query_analyzer,
+            query_analyzer=engine_query_analyzer,
             pool_min_size=1,
             pool_max_size=15,
             run_migrations=False,  # Already ran above
@@ -714,11 +714,20 @@ def cross_encoder(tmp_path_factory, worker_id):
 
 @pytest.fixture(scope="session")
 def query_analyzer():
+    """The dateparser analyzer, for the tests that pin its behaviour (test_query_analyzer.py)."""
     return DateparserQueryAnalyzer()
 
 
+@pytest.fixture(scope="session")
+def engine_query_analyzer():
+    """What engines use by default (HINDSIGHT_API_QUERY_ANALYZER=text2date)."""
+    analyzer = Text2DateQueryAnalyzer()
+    analyzer.load()
+    return analyzer
+
+
 @pytest_asyncio.fixture(scope="function")
-async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
+async def memory(pg0_db_url, embeddings, cross_encoder, engine_query_analyzer):
     """
     Provide a MemoryEngine instance using a mock LLM for deterministic tests.
 
@@ -735,7 +744,7 @@ async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
         memory_llm_model="mock",
         embeddings=embeddings,
         cross_encoder=cross_encoder,
-        query_analyzer=query_analyzer,
+        query_analyzer=engine_query_analyzer,
         pool_min_size=1,
         pool_max_size=15,
         run_migrations=False,
@@ -747,7 +756,7 @@ async def memory(pg0_db_url, embeddings, cross_encoder, query_analyzer):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def memory_real_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer):
+async def memory_real_llm(pg0_db_url, embeddings, cross_encoder, engine_query_analyzer):
     """
     Provide a MemoryEngine instance using a real LLM provider.
 
@@ -764,7 +773,7 @@ async def memory_real_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer)
         memory_llm_base_url=os.getenv("HINDSIGHT_API_LLM_BASE_URL") or None,
         embeddings=embeddings,
         cross_encoder=cross_encoder,
-        query_analyzer=query_analyzer,
+        query_analyzer=engine_query_analyzer,
         pool_min_size=1,
         pool_max_size=15,
         run_migrations=False,
@@ -776,7 +785,7 @@ async def memory_real_llm(pg0_db_url, embeddings, cross_encoder, query_analyzer)
 
 
 @pytest_asyncio.fixture(scope="function")
-async def memory_no_llm_verify(pg0_db_url, embeddings, cross_encoder, query_analyzer):
+async def memory_no_llm_verify(pg0_db_url, embeddings, cross_encoder, engine_query_analyzer):
     """
     Provide a MemoryEngine instance that skips LLM connection verification.
 
@@ -790,7 +799,7 @@ async def memory_no_llm_verify(pg0_db_url, embeddings, cross_encoder, query_anal
         memory_llm_model="mock",
         embeddings=embeddings,
         cross_encoder=cross_encoder,
-        query_analyzer=query_analyzer,
+        query_analyzer=engine_query_analyzer,
         pool_min_size=1,
         pool_max_size=15,
         run_migrations=False,
