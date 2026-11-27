@@ -343,6 +343,7 @@ def _start(command: list[str], *, env: dict[str, str], url: str, log_path: Path)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / ".env").write_text("# intentionally empty: see start_hindsight_server\n")
 
+    env["PYTHONFAULTHANDLER"] = "1"  # DEBUG (ci/pr-7001-debug only)
     log_file = log_path.open("w")
     process = subprocess.Popen(
         ["uv", "run", "--project", str(API_DIR), *command],
@@ -370,5 +371,9 @@ def _wait_until_healthy(server: HindsightServer) -> None:
                 return
         time.sleep(0.5)
 
+    # DEBUG (ci/pr-7001-debug only): every thread's stack, of the server and its children, into the log.
+    subprocess.run(["ps", "-e", "-o", "pid,ppid,pgid,stat,etime,pcpu,args"], stdout=server.log_path.open("a"))
+    os.killpg(server._process.pid, signal.SIGABRT)
+    time.sleep(3)
     server.stop()
     raise RuntimeError(f"{server._process.args} was not healthy within {SERVER_STARTUP_TIMEOUT}s:\n{server.logs()}")
