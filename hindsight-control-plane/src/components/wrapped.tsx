@@ -159,9 +159,16 @@ export function WrappedButton() {
   const shown = (features?.wrapped ?? false) && wrappedInSeason(YEAR);
   // The account is read off the unfiltered bank list only: a search in the bank picker narrows
   // `bankInfos`, and must not look like another account (or no account at all).
+  // ponytail: the stamp moves once the new list is in, so an account switched in place (without
+  // a page load, which nothing in this app does) shows the old year until then; a stamp from the
+  // bank context's unfiltered first page if that ever happens.
+  const [error, setError] = useState(false);
   const [stamp, setStamp] = useState<string | null>(null);
   const fresh = !banksLoading && !bankSearch ? accountStamp(bankInfos) : stamp;
-  if (fresh !== stamp) setStamp(fresh);
+  if (fresh !== stamp) {
+    setStamp(fresh);
+    setError(false); // the last account's failure is not this one's
+  }
   // `stamp` is null on the server render, so localStorage is only touched in the browser.
   const cached = useMemo(() => (stamp ? readCache(localStorage, YEAR, stamp) : null), [stamp]);
   // Kept with the account it was computed for, so switching account never shows the last one's year.
@@ -169,7 +176,6 @@ export function WrappedButton() {
     null
   );
   const stats = cached ?? (computed?.stamp === stamp ? computed.stats : null);
-  const [error, setError] = useState(false);
   // Bumped when the story is opened after a failed load, so a brief outage is retried.
   const [attempt, setAttempt] = useState(0);
   const [open, setOpen] = useState(false);
@@ -431,7 +437,7 @@ function WrappedStory({
             </Rise>
             <ol className="border-b border-white/10">
               {stats.topBanks.map((b, i) => (
-                <Rise key={b.name} delay={450 + i * 120}>
+                <Rise key={i} delay={450 + i * 120}>
                   <li className="flex items-baseline gap-6 border-t border-white/10 py-3">
                     <span className="w-6 font-mono text-sm tabular-nums text-white/40">
                       {String(i + 1).padStart(2, "0")}
