@@ -683,7 +683,7 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
   const locale = useLocale();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
-  const [hint, setHint] = useState<"copied" | "downloaded" | "blocked" | null>(null);
+  const [hint, setHint] = useState<{ blocked: boolean; copied: boolean } | null>(null);
   // How to paste here: a key on a keyboard, tap and hold on a touch screen.
   const touch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
@@ -765,7 +765,7 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
     if (tab) tab.opener = null;
     void copied.then((ok) => {
       if (!ok) download();
-      setHint(!tab ? "blocked" : ok ? "copied" : "downloaded");
+      setHint({ blocked: !tab, copied: ok });
     });
   };
   const text = t("postText", { year: YEAR, count: stats.memories });
@@ -840,13 +840,17 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
           </button>
           {hint && (
             <p role="status" className="mt-2 text-sm text-white/60">
-              {hint === "blocked"
-                ? t("postHintBlocked")
-                : hint === "downloaded"
+              {[
+                hint.blocked && t("postHintBlocked"),
+                !hint.copied
                   ? t("postHintDownloaded")
-                  : touch
-                    ? t("postHintCopiedTouch")
-                    : t("postHintCopied", { keys: mac ? "⌘V" : "Ctrl+V" })}
+                  : !hint.blocked &&
+                    (touch
+                      ? t("postHintCopiedTouch")
+                      : t("postHintCopied", { keys: mac ? "⌘V" : "Ctrl+V" })),
+              ]
+                .filter(Boolean)
+                .join(" ")}
             </p>
           )}
         </Rise>
