@@ -17,7 +17,7 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, StrictStr
+from pydantic import BaseModel, ConfigDict, StrictInt, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from hindsight_client_api.models.chunk_attachment import ChunkAttachment
 from hindsight_client_api.models.recall_scores import RecallScores
@@ -41,9 +41,10 @@ class RecallResult(BaseModel):
     chunk_id: Optional[StrictStr] = None
     tags: Optional[List[StrictStr]] = None
     source_fact_ids: Optional[List[StrictStr]] = None
+    proof_count: Optional[StrictInt] = None
     scores: Optional[RecallScores] = None
     attachments: Optional[List[ChunkAttachment]] = None
-    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "tags", "source_fact_ids", "scores", "attachments"]
+    __properties: ClassVar[List[str]] = ["id", "text", "type", "entities", "context", "occurred_start", "occurred_end", "mentioned_at", "document_id", "metadata", "chunk_id", "tags", "source_fact_ids", "proof_count", "scores", "attachments"]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -149,6 +150,11 @@ class RecallResult(BaseModel):
         if self.source_fact_ids is None and "source_fact_ids" in self.model_fields_set:
             _dict['source_fact_ids'] = None
 
+        # set to None if proof_count (nullable) is None
+        # and model_fields_set contains the field
+        if self.proof_count is None and "proof_count" in self.model_fields_set:
+            _dict['proof_count'] = None
+
         # set to None if scores (nullable) is None
         # and model_fields_set contains the field
         if self.scores is None and "scores" in self.model_fields_set:
@@ -184,6 +190,7 @@ class RecallResult(BaseModel):
             "chunk_id": obj.get("chunk_id"),
             "tags": obj.get("tags"),
             "source_fact_ids": obj.get("source_fact_ids"),
+            "proof_count": obj.get("proof_count"),
             "scores": RecallScores.from_dict(obj["scores"]) if obj.get("scores") is not None else None,
             "attachments": [ChunkAttachment.from_dict(_item) for _item in obj["attachments"]] if obj.get("attachments") is not None else None
         })

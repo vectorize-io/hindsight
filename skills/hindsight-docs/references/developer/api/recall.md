@@ -867,6 +867,10 @@ The ID of the source text chunk this fact was extracted from. Used to cross-refe
 
 For `observation`-type results only: the IDs of the original facts this observation was synthesized from. Cross-references with `source_facts` in the response. `null` for other types or when `include.source_facts` is not enabled.
 
+#### proof_count
+
+For `observation`-type results only: how many facts back this observation. Always returned, with no `include` option, so a caller can weigh an observation that restates one fact against one merged from many without fetching `source_facts`. `null` for other types.
+
 #### scores
 
 An object of the per-stage scores for this result. `null` for `source_facts` entries, which are attached by provenance rather than ranked. Fields:

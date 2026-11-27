@@ -853,6 +853,35 @@ describe("HindsightClient.recallObservations", () => {
     });
   });
 
+  it("follows an observation with how many facts back it, when the server sends the count (#5078)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(200, {
+          results: [
+            { text: "Deploys run from the release branch", proof_count: 4 },
+            { text: "A raw fact", proof_count: null },
+            // A server before #6966 sends no count: the line is exactly what it was.
+            { text: "From an older server" },
+          ],
+        })
+      )
+    );
+
+    const out = await new HindsightClient({ apiUrl: "http://x", bank: "b" }).recallObservations(
+      "goal",
+      {
+        timeoutMs: 5_000,
+      }
+    );
+
+    expect(out).toEqual([
+      "Deploys run from the release branch (sources: 4)",
+      "A raw fact",
+      "From an older server",
+    ]);
+  });
+
   it("asks for every fact type when recallOptions sets types to null", async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
       jsonResponse(200, { results: [{ text: "only" }] })

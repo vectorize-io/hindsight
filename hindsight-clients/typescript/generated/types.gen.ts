@@ -7144,6 +7144,10 @@ export type RecallResult = {
    * Source Fact Ids
    */
   source_fact_ids?: Array<string> | null;
+  /**
+   * Proof Count
+   */
+  proof_count?: number | null;
   scores?: RecallScores | null;
   /**
    * Attachments
