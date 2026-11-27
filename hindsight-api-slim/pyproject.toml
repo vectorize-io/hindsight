@@ -59,6 +59,9 @@ dependencies = [
     # 1.5.0: search_parse returns (text, date, period) and detection changed;
     # engine/temporal_language_detection.py mirrors that version (#6359).
     "dateparser>=1.5.0",
+    # Recall's default date finder (engine/query_analyzer.py Text2DateQueryAnalyzer): numpy only,
+    # the hs-date-1 model ships inside the wheel. HINDSIGHT_API_QUERY_ANALYZER=dateparser switches back.
+    "text2date>=0.1.0",
     # Transitive via dateparser, pinned here because the floor is load-bearing:
     # 2025.11.3 turns concurrent entry into dateparser's locale caches into a SIGSEGV
     # inside _regex (verified -- exit 139 in seconds, 3/3; the same probe on 2026.9.3
