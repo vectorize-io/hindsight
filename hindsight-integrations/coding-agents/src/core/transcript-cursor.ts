@@ -1,7 +1,7 @@
 /** Cursor CLI transcript reader for its `stop` write-back hook. */
 import type { TransportTurn } from "./chat";
 import { readJsonl } from "./jsonl";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 interface ContentBlock {
   type?: string;
@@ -57,19 +57,12 @@ export function readCursorTranscript(path: string): TransportTurn[] {
       if (role === "assistant" && Array.isArray(content)) {
         for (const block of content) {
           if (block?.type === "tool_use" && typeof block.name === "string") {
-            turns.push(
-              withTimestamp(
-                { role: "action", content: actionLine(block.name, block.input) },
-                line.timestamp
-              )
-            );
+            turns.push(withTimestamp(toolTurn(block.name, block.input), line.timestamp));
           }
         }
       }
     } else if (line.type === "tool_call" && typeof line.name === "string") {
-      turns.push(
-        withTimestamp({ role: "action", content: actionLine(line.name, line.args) }, line.timestamp)
-      );
+      turns.push(withTimestamp(toolTurn(line.name, line.args), line.timestamp));
     }
   }
   return turns;

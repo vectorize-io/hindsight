@@ -7,7 +7,7 @@
  */
 import type { TransportTurn } from "./chat";
 import { readJsonl } from "./jsonl";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 interface TranscriptRecord {
   schema_version?: unknown;
@@ -186,7 +186,7 @@ export function readDcodeTranscript(path: string): TransportTurn[] {
       const text = stripInjectedMemory(contentText(record.content)).trim();
       if (text) turns.push({ role, content: text, ...stamp });
     } else if (role === "tool" && typeof record.name === "string" && record.name.trim()) {
-      turns.push({ role: "action", content: actionLine(record.name, record.content), ...stamp });
+      turns.push({ ...toolTurn(record.name, record.content), ...stamp });
     }
   }
   return turns;

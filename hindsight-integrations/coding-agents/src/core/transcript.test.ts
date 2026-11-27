@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readClaudeTranscript } from "./transcript";
+import { setKeptToolInputs, toolTurn } from "./transcript-util";
+import { readOpencodeMessages } from "./transcript-opencode";
 import { buildSystemInjection } from "./inject";
 
 let root: string;
@@ -516,5 +518,134 @@ describe("readClaudeTranscript", () => {
       { role: "user", content: "hi" },
       { role: "assistant", content: "hello" },
     ]);
+  });
+});
+
+describe("Channels conversations (#6481)", () => {
+  const REPLY = "mcp__plugin_telegram_telegram__reply";
+  const write = (lines: unknown[]) =>
+    writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n"));
+  const inbound = (text: string) => ({
+    type: "user",
+    isMeta: true,
+    origin: { kind: "channel", server: "plugin:telegram:telegram" },
+    message: {
+      role: "user",
+      // Claude Code puts the text on its own lines inside the tag.
+      content: `<channel source="plugin:telegram:telegram" chat_id="42" user="alice">\n${text}\n</channel>`,
+    },
+  });
+  const reply = (id: string, text: string) => ({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id, name: REPLY, input: { chat_id: "42", text } }] },
+  });
+  const result = (id: string, isError: boolean) => ({
+    type: "user",
+    message: {
+      content: [{ type: "tool_result", tool_use_id: id, is_error: isError, content: "x" }],
+    },
+  });
+
+  afterEach(() => setKeptToolInputs({}));
+
+  it("keeps the human's channel messages and the replies sent through a kept tool", () => {
+    setKeptToolInputs({ [REPLY]: "text" });
+    write([
+      inbound("bump the timeout?"),
+      reply("t1", "Sure, setting it to 30s.\nAlso change retries?"),
+      result("t1", false),
+      reply("t2", "never delivered"),
+      result("t2", true),
+      inbound("yes, do that"),
+      { type: "user", isMeta: true, message: { content: "harness-injected, still dropped" } },
+    ]);
+    expect(readClaudeTranscript(file).map(({ role, content }) => ({ role, content }))).toEqual([
+      { role: "user", content: "alice: bump the timeout?" },
+      { role: "assistant", content: "Sure, setting it to 30s.\nAlso change retries?" },
+      { role: "action", content: REPLY }, // failed to send: not something the agent said
+      { role: "user", content: "alice: yes, do that" },
+    ]);
+  });
+
+  it("keeps a channel message queued while the agent was busy", () => {
+    write([
+      {
+        type: "attachment",
+        attachment: {
+          type: "queued_command",
+          origin: { kind: "channel", server: "plugin:telegram:telegram" },
+          prompt:
+            '<channel source="plugin:telegram:telegram" user="alice">\nalso the retries\n</channel>',
+        },
+      },
+    ]);
+    expect(readClaudeTranscript(file).map(({ role, content }) => ({ role, content }))).toEqual([
+      { role: "user", content: "alice: also the retries" },
+    ]);
+  });
+
+  it("keeps a channel message stored as content blocks", () => {
+    write([
+      {
+        ...inbound(""),
+        message: {
+          content: [
+            {
+              type: "text",
+              text: '<channel source="plugin:telegram:telegram">look at this</channel>',
+            },
+            { type: "image", source: {} },
+          ],
+        },
+      },
+    ]);
+    expect(readClaudeTranscript(file).map((t) => t.content)).toEqual(["look at this"]);
+  });
+
+  it("leaves a reply tool as a bare action line when no rule names it", () => {
+    write([reply("t1", "hello")]);
+    expect(readClaudeTranscript(file).map((t) => t.content)).toEqual([REPLY]);
+  });
+});
+
+describe("toolTurn (#6633)", () => {
+  afterEach(() => setKeptToolInputs({}));
+
+  it("reaches the opencode reader, where a call the host reports failed stays an action line", () => {
+    setKeptToolInputs({ reply: "text" });
+    const part = (status: string) => ({
+      type: "tool",
+      tool: "reply",
+      state: { status, input: { text: `said (${status})` } },
+    });
+    const turns = readOpencodeMessages([
+      { info: { role: "assistant" }, parts: [part("completed"), part("error")] },
+    ] as never);
+    expect(turns.map(({ role, content }) => ({ role, content }))).toEqual([
+      { role: "assistant", content: "said (completed)" },
+      { role: "action", content: "reply" },
+    ]);
+  });
+
+  it("keeps only the named group `text` when the rule's regex has one", () => {
+    setKeptToolInputs({
+      exec_command: { field: "command", match: '^send-reply "(?<text>[\\s\\S]*)"$' },
+    });
+    expect(toolTurn("exec_command", { command: 'send-reply "hello\nthere"' })).toEqual({
+      role: "assistant",
+      content: "hello\nthere",
+    });
+  });
+
+  it("keeps only the shell commands that match the rule", () => {
+    setKeptToolInputs({ exec_command: { field: "command", match: "^send-reply " } });
+    expect(toolTurn("exec_command", { command: 'send-reply "line one\nline two"' })).toEqual({
+      role: "assistant",
+      content: 'send-reply "line one\nline two"',
+    });
+    expect(toolTurn("exec_command", { command: "ls -la" })).toEqual({
+      role: "action",
+      content: "exec_command ls -la",
+    });
   });
 });

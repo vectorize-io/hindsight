@@ -51,7 +51,7 @@ const ACTION_TARGET_CAP = 100;
  * Retaining raw args/outputs buries the session's decisions in mechanical noise; the extractor only
  * needs WHAT was touched. The one exception is a memory note, whose text is kept (memoryNoteText).
  */
-export function actionLine(tool: string, input: unknown): string {
+function actionLine(tool: string, input: unknown): string {
   let target = "";
   if (input && typeof input === "object") {
     const rec = input as Record<string, unknown>;
@@ -69,6 +69,63 @@ export function actionLine(tool: string, input: unknown): string {
   const line = target ? `${tool} ${target}` : tool;
   const note = memoryNoteText(input);
   return note ? `${line}\n${truncate(note, MEMORY_NOTE_CAP)}` : line;
+}
+
+/** A tool whose input field is what the assistant SAID to the user — a chat bridge's reply tool, or
+ *  a command-line tool that delivers the reply (#6481, #6633). `match`, when set, is a regex the
+ *  field must match, so a shell tool keeps only the commands that send a reply. */
+export type KeptToolInput = string | { field: string; match?: string };
+
+// ponytail: module-level, set once per process by loadConfig — every reader builds its tool turns
+// through toolTurn, so none needs the config passed in. Thread it through if readers ever need
+// different rules in one process.
+let keptToolInputs = new Map<string, { field: string; match?: RegExp }>();
+
+/** Rules are already validated by config normalization; the regex is compiled once here. */
+export function setKeptToolInputs(rules: Record<string, KeptToolInput>): void {
+  keptToolInputs = new Map(
+    Object.entries(rules).map(([tool, rule]) => [
+      tool,
+      typeof rule === "string"
+        ? { field: rule }
+        : { field: rule.field, match: rule.match ? new RegExp(rule.match) : undefined },
+    ])
+  );
+}
+
+/** The text a kept tool call delivered to the user, or "" when the call is not one the user named. */
+function keptToolText(tool: string, input: unknown): string {
+  const rule = keptToolInputs.get(tool);
+  if (!rule || !input || typeof input !== "object") return "";
+  const value = (input as Record<string, unknown>)[rule.field];
+  if (typeof value !== "string") return "";
+  const m = rule.match ? rule.match.exec(value) : null;
+  if (rule.match && !m) return "";
+  // A named group `text` keeps only the message: `^send-reply "(?<text>[\s\S]*)"$` drops the
+  // command and its quoting (#6633). Without one, the whole field is kept.
+  const said = m?.groups?.text ?? value;
+  return truncate(stripInjectedMemory(said).trim(), MEMORY_NOTE_CAP);
+}
+
+/**
+ * The turn one tool call becomes: an assistant turn holding the text it delivered, when it is a
+ * tool the user named in `keepToolInputs`, otherwise the compact action line. A reply sent through
+ * a tool IS what the assistant told the human; as a bare tool name the session kept none of it,
+ * and the human's next message ("yes, do that") lost what it answered. A call the host reports as
+ * FAILED delivered nothing, so it stays an action line: pass `failed` where the reader knows it.
+ *
+ * Every reader builds its tool turns here, so "each tool call becomes a compact action line" in the
+ * readers' own docs always means: unless `keepToolInputs` names the tool.
+ */
+export function toolTurn(
+  tool: string,
+  input: unknown,
+  failed = false
+): { role: string; content: string } {
+  const said = failed ? "" : keptToolText(tool, input);
+  return said
+    ? { role: "assistant", content: said }
+    : { role: "action", content: actionLine(tool, input) };
 }
 
 /** Larger than TOOL_TEXT_CAP: an agent's progress note grows to ~5KB over a run (CL-Bench, 15

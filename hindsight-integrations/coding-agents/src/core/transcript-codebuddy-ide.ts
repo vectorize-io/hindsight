@@ -35,7 +35,7 @@
 import { readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { TransportTurn } from "./chat";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 import {
   isSyntheticUserText,
   readWorkbuddyTranscript,
@@ -158,7 +158,7 @@ export function readCodebuddyIdeTranscript(indexPath: string): TransportTurn[] {
       }
     }
     for (const call of calls) {
-      turns.push({ role: "action", content: actionLine(call.name, call.args), ...stamp });
+      turns.push({ ...toolTurn(call.name, call.args), ...stamp });
     }
   }
 

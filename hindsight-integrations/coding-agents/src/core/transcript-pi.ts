@@ -10,7 +10,7 @@
  */
 import type { TransportTurn } from "./chat";
 import { readJsonl } from "./jsonl";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 /** Structural subset of a pi message content block (TextContent | ToolCall | dropped). */
 export interface PiBlock {
@@ -60,7 +60,7 @@ function renderMessage(m: PiMessage): TransportTurn[] {
         const t = stripInjectedMemory(block.text).trim();
         if (t) texts.push(t);
       } else if (block.type === "toolCall" && typeof block.name === "string") {
-        actions.push({ role: "action", content: actionLine(block.name, block.arguments) });
+        actions.push(toolTurn(block.name, block.arguments));
       }
     }
   }

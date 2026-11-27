@@ -21,7 +21,7 @@
  */
 import type { TransportTurn } from "./chat";
 import { readJsonl } from "./jsonl";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 interface ContentBlock {
   type?: unknown;
@@ -55,7 +55,7 @@ function renderContent(content: unknown, role: string): TransportTurn[] {
       const text = stripInjectedMemory(b.text).trim();
       if (text) texts.push(text);
     } else if (b.type === "tool_use" && typeof b.name === "string") {
-      actions.push({ role: "action", content: actionLine(b.name, b.input) });
+      actions.push(toolTurn(b.name, b.input));
     }
     // tool_result: dropped - outputs are mechanical noise for extraction
   }
