@@ -411,7 +411,7 @@ jobs:
     - name: Open audio with PyAV on Python ${{ matrix.python-version }}
       working-directory: ./hindsight-api-slim
       run: |
-        VIRTUAL_ENV=.venv-smoke uv pip install 'av>=18.1.0'
+        VIRTUAL_ENV=.venv-smoke uv pip install 'av>=18.1.1'
         .venv-smoke/bin/python - <<'EOF'
         import io, wave
 

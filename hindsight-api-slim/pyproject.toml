@@ -135,7 +135,7 @@ local-ml = [
     # runtime-dispatched outline-atomics helpers again. See issue #4142.
     "torch>=2.11.0",
     "torchvision>=0.26.0", # EmbeddingGemma 2 image/video processors (knowledge banks)
-    "av>=18.1.0", # PyAV (19 needs Python 3.12): knowledge banks cut and decode audio/video with its bundled ffmpeg libraries, no system ffmpeg
+    "av>=18.1.1", # PyAV (19 needs Python 3.12): knowledge banks cut and decode audio/video with its bundled ffmpeg libraries, no system ffmpeg
     "einops>=0.8.2",
     "flashrank>=0.2.0",
     # Apple Silicon local inference. mlx is Apple's Metal/unified-memory
