@@ -1340,11 +1340,13 @@ export class HindsightClient {
    * consolidation under the auto-refresh that used to be the default (#3506).
    *
    * Their `name` and `source_query` are written once, from the initiative's own title, and
-   * re-stating either would rebuild a page whose question never changed. The one exception is
-   * the scope clause: a page captured while the clause named the BANK is scoped to a project no
-   * memory is about and comes out empty (#4490), so exactly that clause is swapped for the current
-   * one — the rest of the query, the user's wording included, is kept. The tree read above is
-   * reused rather than re-fetched.
+   * re-stating either would rebuild a page whose question never changed. Two exceptions. The scope
+   * clause: a page captured while the clause named the BANK is scoped to a project no memory is
+   * about and comes out empty (#4490), so exactly that clause is swapped for the current one — the
+   * rest of the query, the user's wording included, is kept. And the question this plugin wrote
+   * before #7007, which let a re-planned page list the dropped plan as current: it is replaced by
+   * the current one, which rebuilds each such page once, on purpose. Pages in subfolders of
+   * Initiatives are included (#6919). The tree read above is reused rather than re-fetched.
    */
   private async resyncInitiativeTriggers(
     roots: PageNode[],
