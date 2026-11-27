@@ -119,6 +119,11 @@ export interface RawConfig {
    *  the page-search -> recall fallback after a reflect timeout/5xx. On hook harnesses, the full
    *  reflect + fallback must fit the host's prompt-hook timeout (30s by default). */
   injectTimeoutMs?: number;
+  /** Most characters of the prompt that autoInject "pages"/"recall" (and the reflect fallback)
+   *  search with. Unset = no extra cap: page search keeps its 500 characters and recall its
+   *  ~500-token bound. A long question makes a slow reranker on a CPU-only server spend the whole
+   *  `injectTimeoutMs`, so memory never arrives (#5089). */
+  injectQueryMaxChars?: number;
   /** Reflect budget for the `hindsight_reflect` tool: "low" | "mid" | "high" (default "high").
    *  Drop to "mid"/"low" on a large bank where high-budget synthesis exceeds the server's wall
    *  timeout. The automatic session-start reflect is NOT affected — it always uses "low" to fit
@@ -335,6 +340,8 @@ export interface Config {
   reflectTimeoutMs: number;
   reflectToolTimeoutMs: number;
   injectTimeoutMs: number;
+  /** Positive integer, or undefined for no extra cap — see RawConfig.injectQueryMaxChars. */
+  injectQueryMaxChars: number | undefined;
   reflectBudget: "low" | "mid" | "high";
   autoInject: AutoInject;
   autoInjectEveryTurns: number;
@@ -643,6 +650,10 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       raw.reflectToolTimeoutMs ||
       Math.max(raw.reflectTimeoutMs || 0, DEFAULT_REFLECT_TOOL_TIMEOUT_MS),
     injectTimeoutMs: raw.injectTimeoutMs || DEFAULT_INJECT_TIMEOUT_MS,
+    injectQueryMaxChars:
+      raw.injectQueryMaxChars && raw.injectQueryMaxChars >= 1
+        ? Math.floor(raw.injectQueryMaxChars)
+        : undefined,
     reflectBudget: resolveReflectBudget(raw),
     autoInject: resolveAutoInject(raw),
     autoInjectEveryTurns: Math.max(0, Math.floor(raw.autoInjectEveryTurns || 0)),
@@ -788,6 +799,7 @@ const ENV_KEYS = {
   reflectTimeoutMs: "HINDSIGHT_REFLECT_TIMEOUT_MS",
   reflectToolTimeoutMs: "HINDSIGHT_REFLECT_TOOL_TIMEOUT_MS",
   injectTimeoutMs: "HINDSIGHT_INJECT_TIMEOUT_MS",
+  injectQueryMaxChars: "HINDSIGHT_INJECT_QUERY_MAX_CHARS",
   reflectBudget: "HINDSIGHT_REFLECT_BUDGET",
   autoInject: "HINDSIGHT_AUTO_INJECT",
   autoInjectEveryTurns: "HINDSIGHT_AUTO_INJECT_EVERY_TURNS",
@@ -839,6 +851,7 @@ const ENV_NUMBERS = new Set<keyof RawConfig>([
   "reflectTimeoutMs",
   "reflectToolTimeoutMs",
   "injectTimeoutMs",
+  "injectQueryMaxChars",
   "pageSearchLimit",
   "pageRefreshEveryTurns",
   "autoInjectEveryTurns",

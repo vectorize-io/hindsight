@@ -250,6 +250,12 @@ export async function buildHookOutput(args: {
   color?: boolean;
 }): Promise<HookOutput> {
   const { harness, prompt, cfg, client, cacheFile } = args;
+  // What page search and recall search with: the first injectQueryMaxChars characters, counted in
+  // code points so a surrogate pair is never split. Their own bounds still apply on top, and
+  // reflect still gets the whole prompt as its goal. A long question let a CPU reranker spend the
+  // whole injectTimeoutMs, so no memory arrived (#5089).
+  const max = cfg.injectQueryMaxChars;
+  const query = max === undefined ? prompt : Array.from(prompt).slice(0, max).join("");
 
   const cached = readSessionCache(cacheFile);
   const turns = (cached.turns ?? 0) + 1;
@@ -292,7 +298,7 @@ export async function buildHookOutput(args: {
     reflectAttempts++;
     const got = await injectPages(
       harness,
-      prompt,
+      query,
       client,
       cfg.injectTimeoutMs,
       "inject_pages",
@@ -308,7 +314,7 @@ export async function buildHookOutput(args: {
     reflectAttempts++;
     const got = await injectRecall(
       harness,
-      prompt,
+      query,
       client,
       cfg.injectTimeoutMs,
       "inject_recall",
@@ -364,7 +370,7 @@ export async function buildHookOutput(args: {
         query: prompt.slice(0, 80),
       });
       if (e instanceof ReflectError && e.fallbackEligible) {
-        fallback = await reflectFallback(harness, prompt, client, cfg.injectTimeoutMs);
+        fallback = await reflectFallback(harness, query, client, cfg.injectTimeoutMs);
         // The fallback body is cached exactly like a reflect answer: injected once, not retried.
         if (fallback) reflectAnswer = fallback;
       }
