@@ -14,6 +14,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const hook = join(dirname(fileURLToPath(import.meta.url)), "..", "dist", "claude-hook.js");
 
+describe.skipIf(existsSync(hook))("injectQueryMaxChars through the built Claude Code hook", () => {
+  it.skip("run `npm run build` first: dist/claude-hook.js is missing", () => {});
+});
+
 describe.runIf(existsSync(hook))("injectQueryMaxChars through the built Claude Code hook", () => {
   let server: Server;
   let url: string;

@@ -147,13 +147,6 @@ function boundRecallQuery(prompt: string): string {
   return prompt.slice(0, end);
 }
 
-/** The prompt's first `maxChars` characters (code points, so a pair is never split), or all of it
- *  when unset. The page search and recall bounds still apply on top (#5089). */
-export function capInjectQuery(prompt: string, maxChars: number | undefined): string {
-  if (maxChars === undefined) return prompt;
-  return Array.from(prompt).slice(0, maxChars).join("");
-}
-
 /** Page search for the prompt, formatted for injection. `null` = it ran and nothing
  *  matched (an answer); `undefined` = it FAILED (recorded as `${event}_failed`) and is worth
  *  retrying. The two used to be one value, which cached a transient failure as "this session has
@@ -257,8 +250,12 @@ export async function buildHookOutput(args: {
   color?: boolean;
 }): Promise<HookOutput> {
   const { harness, prompt, cfg, client, cacheFile } = args;
-  // What page search and recall search with; reflect still gets the whole prompt as its goal.
-  const query = capInjectQuery(prompt, cfg.injectQueryMaxChars);
+  // What page search and recall search with: the first injectQueryMaxChars characters, counted in
+  // code points so a surrogate pair is never split. Their own bounds still apply on top, and
+  // reflect still gets the whole prompt as its goal. A long question let a CPU reranker spend the
+  // whole injectTimeoutMs, so no memory arrived (#5089).
+  const max = cfg.injectQueryMaxChars;
+  const query = max === undefined ? prompt : Array.from(prompt).slice(0, max).join("");
 
   const cached = readSessionCache(cacheFile);
   const turns = (cached.turns ?? 0) + 1;
