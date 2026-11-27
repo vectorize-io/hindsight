@@ -121,6 +121,10 @@ export interface ClientOpts {
   /** Recall-body overrides, merged key-by-key over `DEFAULT_RECALL_OPTIONS`. Passed through to
    *  the API as given (`types`, `max_tokens`, `budget`, …); `query` is never overridable. */
   recallOptions?: Record<string, unknown>;
+  /** Tags recall and reflect are narrowed to (config `recallTags`, placeholders already resolved).
+   *  Empty or absent reads the whole bank. */
+  recallTags?: string[];
+  recallTagsMatch?: TagsMatch;
   /** Re-read the bearer token from the LIVE config, for hosts that outlive their credential.
    *  `apiToken` alone is a construction-time snapshot: a long-lived host (dsh, Cline, Kilo, the
    *  MCP server, any persistent plugin) kept signing with it forever, so enabling auth or rotating
@@ -137,6 +141,11 @@ export interface ClientOpts {
    *  on, dropping about a third of a repo's chats against a rate-limited Hindsight Cloud. */
   rateLimitPatienceMs?: number;
 }
+
+/** How a tag filter matches, as the recall/reflect API takes it. The `_strict` forms leave out
+ *  memories that carry no tags at all. */
+export const TAGS_MATCH_MODES = ["any", "all", "any_strict", "all_strict"] as const;
+export type TagsMatch = (typeof TAGS_MATCH_MODES)[number];
 
 export interface RetainOpts {
   timestamp?: string; // when the content occurred (temporal ranking)
@@ -437,6 +446,8 @@ export class HindsightClient {
   readonly observationScopes: ObservationScopes;
   readonly pageSearchLimit: number;
   readonly recallOptions: Record<string, unknown>;
+  /** The tag filter recall and reflect send: `{}` when no recallTags are configured. */
+  private readonly tagFilter: { tags?: string[]; tags_match?: TagsMatch };
   private readonly rateLimitPatienceMs: number;
 
   constructor(o: ClientOpts) {
@@ -454,6 +465,9 @@ export class HindsightClient {
     // module-level object, and handing every client the same reference makes one caller's
     // mutation everyone's.
     this.recallOptions = { ...DEFAULT_RECALL_OPTIONS, ...o.recallOptions };
+    this.tagFilter = o.recallTags?.length
+      ? { tags: o.recallTags, tags_match: o.recallTagsMatch ?? "any" }
+      : {};
     this.rateLimitPatienceMs = o.rateLimitPatienceMs ?? 0;
   }
 
@@ -920,7 +934,7 @@ export class HindsightClient {
         this.bankUrl("/reflect"),
         {
           method: "POST",
-          body: JSON.stringify({ query, budget: opts.budget ?? "high" }),
+          body: JSON.stringify({ query, budget: opts.budget ?? "high", ...this.tagFilter }),
           signal: ctrl.signal,
         },
         opts.timeoutMs
@@ -962,7 +976,9 @@ export class HindsightClient {
       // `query` is applied AFTER the spread: everything else is the caller's to override, but a
       // config that could replace the goal with a fixed string would silently recall for the
       // wrong question on every turn.
-      { ...this.recallOptions, query },
+      // The tag filter wins over a `tags` in recallOptions: recallTags is the setting that also
+      // narrows reflect, and two settings answering differently would be a silent split.
+      { ...this.recallOptions, ...this.tagFilter, query },
       [],
       opts.timeoutMs
     );

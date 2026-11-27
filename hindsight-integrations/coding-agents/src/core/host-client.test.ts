@@ -63,6 +63,38 @@ describe("resolveHostMemory", () => {
     expect(resolveHostMemory("dsh", repo).client.project).toBeUndefined();
   });
 
+  // #4226: one bank for every repo, each memory tagged with its repo on the way in. Reads must be
+  // narrowed to the same tag, or every repo's answers draw on every other repo's memories.
+  it("narrows reads on a shared bank to the repo's own tag", async () => {
+    const repo = join(root, "my-repo");
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-q", repo]);
+    writeConfig({
+      bankId: "shared-memory",
+      retainTags: ["project:{gitProject}"],
+      recallTags: ["project:{gitProject}"],
+    });
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      Response.json({ text: "answer", results: [] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const { resolveHostMemory } = await loadFactory();
+      const { client } = resolveHostMemory("dsh", repo);
+      await client.reflect("why?", { timeoutMs: 5_000 });
+      await client.recallObservations("why?", { timeoutMs: 5_000 });
+      for (const [, init] of fetchMock.mock.calls) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          tags: ["project:my-repo"],
+          tags_match: "any",
+        });
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("enforces optInOnly for every host, not just the ones that remembered to pass a directory", async () => {
     // dsh called applyBankConfig WITHOUT the directory, so `optInOnly` was never enforced there:
     // an unapproved repo still got a bank and still had memories written for it.

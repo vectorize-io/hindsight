@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildRetainStamp } from "./retain-stamp";
+import { buildRetainStamp, resolveRecallTags } from "./retain-stamp";
 
 let repo: string;
 const ctx = (over: Partial<Parameters<typeof buildRetainStamp>[1]> = {}) => ({
@@ -198,5 +198,16 @@ describe("retainContext", () => {
   it("falls back to undefined rather than empty when a template collapses", () => {
     // An empty context would STRIP the caller's default instead of replacing it.
     expect(buildRetainStamp({ retainContext: "   " }, ctx()).context).toBeUndefined();
+  });
+});
+
+describe("resolveRecallTags (#4226)", () => {
+  it("resolves the retainTags placeholders and keeps the namespaces only writes reserve", () => {
+    const name = repo.split("/").pop()!;
+    expect(resolveRecallTags(["project:{gitProject}", "harness:{harness}", " "], ctx())).toEqual([
+      `project:${name}`,
+      "harness:codex",
+    ]);
+    expect(resolveRecallTags([], ctx())).toEqual([]);
   });
 });

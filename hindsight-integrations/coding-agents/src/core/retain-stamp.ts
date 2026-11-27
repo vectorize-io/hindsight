@@ -63,6 +63,19 @@ export interface RetainStampConfig {
   retainContext?: string;
 }
 
+/** The session's branch, looked up at most once. Like {gitProject}, a live directory git cannot
+ *  place falls back to where the session started. */
+function branchLookup(ctx: RetainStampContext): () => string | null {
+  let branch: string | null | undefined;
+  return () =>
+    branch === undefined
+      ? (branch =
+          (ctx.directory && gitBranch(ctx.directory)) ||
+          (ctx.sessionRoot && gitBranch(ctx.sessionRoot)) ||
+          null)
+      : branch;
+}
+
 function resolversFor(ctx: RetainStampContext, branchOf: () => string | null): Resolvers {
   return {
     // Worktree-aware like the bank id, so every linked worktree of a repo stamps the SAME name —
@@ -86,15 +99,7 @@ function resolversFor(ctx: RetainStampContext, branchOf: () => string | null): R
 export function buildRetainStamp(cfg: RetainStampConfig, ctx: RetainStampContext): RetainStamp {
   // Built lazily and memoized: {gitProject} shells out to git, and a config using it in both a tag
   // and a metadata value should not pay for that twice per retain.
-  // Like {gitProject}, a live directory git cannot place falls back to where the session started.
-  let branch: string | null | undefined;
-  const branchOf = () =>
-    branch === undefined
-      ? (branch =
-          (ctx.directory && gitBranch(ctx.directory)) ||
-          (ctx.sessionRoot && gitBranch(ctx.sessionRoot)) ||
-          null)
-      : branch;
+  const branchOf = branchLookup(ctx);
   const base = resolversFor(ctx, branchOf);
   const cache = new Map<string, string>();
   const resolvers: Resolvers = Object.fromEntries(
@@ -135,4 +140,15 @@ export function buildRetainStamp(cfg: RetainStampConfig, ctx: RetainStampContext
     ? applyTemplate(cfg.retainContext as string, resolvers, "retainContext").trim() || undefined
     : undefined;
   return { tags, metadata, context };
+}
+
+/**
+ * Resolve `recallTags` for one session (#4226): the same placeholders as `retainTags`, so a shared
+ * bank reads back exactly the tag it writes. `source:`/`harness:` entries are kept here: narrowing
+ * a READ to them is legitimate, only writing them is reserved.
+ */
+export function resolveRecallTags(templates: string[], ctx: RetainStampContext): string[] {
+  if (!templates.length) return [];
+  const resolvers = resolversFor(ctx, branchLookup(ctx));
+  return templates.map((t) => applyTemplate(t, resolvers, "recallTags").trim()).filter(Boolean);
 }

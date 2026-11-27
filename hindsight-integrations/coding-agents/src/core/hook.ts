@@ -54,6 +54,7 @@ import {
   type SessionCache,
 } from "./session-cache";
 import { appendJournalTurn, journalPath } from "./turn-journal";
+import { resolveRecallTags } from "./retain-stamp";
 
 export interface HookEventFields {
   prompt?: string;
@@ -528,6 +529,14 @@ export async function runHook(
     observationScopes: cfg.observationScopes,
     pageSearchLimit: cfg.pageSearchLimit,
     recallOptions: cfg.recallOptions,
+    recallTags: resolveRecallTags(cfg.recallTags, {
+      directory: cwd,
+      sessionRoot,
+      harness: spec.harness,
+      bankId,
+      sessionId,
+    }),
+    recallTagsMatch: cfg.recallTagsMatch,
   });
   const cacheFile = sessionCacheFile(spec.harness, sessionId || "no-session");
 

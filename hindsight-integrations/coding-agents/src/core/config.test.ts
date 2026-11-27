@@ -90,6 +90,28 @@ describe("apiHeaders (#6651)", () => {
   });
 });
 
+describe("recallTags (#4226)", () => {
+  it("defaults to reading the whole bank, matching loosely once set", () => {
+    expect(resolveConfig({})).toMatchObject({ recallTags: [], recallTagsMatch: "any" });
+    expect(
+      resolveConfig({ recallTags: ["project:{gitProject}", 3, ""] } as never).recallTags
+    ).toEqual(["project:{gitProject}"]);
+    expect(resolveConfig({ recallTagsMatch: "exact" } as never).recallTagsMatch).toBe("any");
+    expect(resolveConfig({ recallTagsMatch: "all_strict" }).recallTagsMatch).toBe("all_strict");
+  });
+
+  it("reads both from the environment", () => {
+    const env = {
+      HINDSIGHT_RECALL_TAGS: "project:a,env:work",
+      HINDSIGHT_RECALL_TAGS_MATCH: "any_strict",
+    };
+    expect(readEnvConfig(env)).toMatchObject({
+      recallTags: ["project:a", "env:work"],
+      recallTagsMatch: "any_strict",
+    });
+  });
+});
+
 describe("maxParallelRetains", () => {
   it("defaults to 10 when unset", () => {
     expect(loadConfig({ harness: "claude-code" }).maxParallelRetains).toBe(10);
