@@ -367,6 +367,24 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(new Set(ids).size).toBe(3);
   });
 
+  // An unconfirmed replace keeps its id for a retry of the SAME transcript (#6559), and only that:
+  // when both earlier replaces landed with their replies lost, the return to A must not reuse A's
+  // first id, or the server dedupes it and the document keeps B (#5845).
+  it("does not reuse a failed replace's id once the transcript has changed (#5845, #6559)", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    const branchA = turns(3);
+    const branchB = [turn(0), turn(1), { role: "user", content: "sibling" }];
+    retain.mockRejectedValueOnce(new Error("reply lost"));
+    await expect(write(client, branchA, cursors)).rejects.toThrow("reply lost");
+    retain.mockRejectedValueOnce(new Error("reply lost"));
+    await expect(write(client, branchB, cursors)).rejects.toThrow("reply lost");
+    await write(client, branchA, cursors);
+    const ids = retain.mock.calls.map((call) => call[5].operationId);
+    expect(ids).toHaveLength(3);
+    expect(ids[2]).not.toBe(ids[0]);
+  });
+
   it("skips the write entirely when no turn was added", async () => {
     const { retain, client } = stubClient();
     const cursors = memoryCursorStore();

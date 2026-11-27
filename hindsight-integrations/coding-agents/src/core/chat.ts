@@ -467,10 +467,16 @@ async function writeSession(
     // completed id without applying it, leaving B stored (#5845).
     // The claim below moves the cursor to the NEW position, so a retry reading it back would derive
     // a different base and so a different id: a replace the server did take, whose response was
-    // lost, would then be extracted a second time (#6559). The base goes out with the claim and a
-    // retry of that same unconfirmed replace reuses it — same bytes, same operation.
+    // lost, would then be extracted a second time (#6559). The base goes out with the claim, and is
+    // reused ONLY to re-send the same transcript that claim was for — same bytes, same operation. A
+    // transcript that changed since is a new replace, based on the claimed position: reusing the
+    // old base there would make A → B → A (both unconfirmed) repeat A's first id, and the server
+    // would dedupe it and keep B (#5845).
     const base =
-      cursor?.dirty && cursor.replaceBase !== undefined
+      cursor?.dirty &&
+      cursor.replaceBase !== undefined &&
+      cursor.turns === next.turns &&
+      cursor.fingerprint === next.fingerprint
         ? cursor.replaceBase
         : cursor
           ? `${cursor.turns}\n${cursor.fingerprint}`
