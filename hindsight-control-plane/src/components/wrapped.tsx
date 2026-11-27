@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Copy, Download, Share2, X } from "lucide-react";
+import { Download, Share2, X } from "lucide-react";
 import { client } from "@/lib/api";
 import { useBank, type BankInfo } from "@/lib/bank-context";
 import { withBasePath } from "@/lib/base-path";
@@ -683,7 +683,10 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
   const locale = useLocale();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [hint, setHint] = useState<{ blocked: boolean; copied: boolean } | null>(null);
+  // How to paste here: a key on a keyboard, tap and hold on a touch screen.
+  const touch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -725,7 +728,7 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
         peak:
           stats.peakHour === null
             ? ""
-            : t("peakAt", { hour: String(stats.peakHour).padStart(2, "0") }),
+            : t("peakAt", { hour: String(stats.peakHour).padStart(2, "0") }).toUpperCase(),
         agent: t("agentShort").toUpperCase(),
       },
     }).then(() => canvas.toBlob((b) => !cancelled && setBlob(b), "image/png"));
@@ -735,10 +738,6 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
   }, [stats, locale, t]);
 
   const fileName = `hindsight-wrapped-${YEAR}.png`;
-  const file = blob ? new File([blob], fileName, { type: "image/png" }) : null;
-  const canShare =
-    !!file && typeof navigator !== "undefined" && !!navigator.canShare?.({ files: [file] });
-
   const download = () => {
     if (!blob) return;
     const a = document.createElement("a");
@@ -747,16 +746,49 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
     a.click();
     URL.revokeObjectURL(a.href);
   };
-  const copy = async () => {
+  // A post link can't carry an image, so the card goes on the clipboard (or is downloaded where
+  // that is refused) and the post opens with the text filled in, ready for a paste.
+  const postTo = (url: string) => {
     if (!blob) return;
+    let copied: Promise<boolean>;
     try {
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      copied = navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).then(
+        () => true,
+        () => false
+      );
     } catch {
-      download();
+      copied = Promise.resolve(false); // no image clipboard in this browser
     }
+    // Both start inside the click: the clipboard needs the page focused, the new tab needs the click.
+    // Not "noopener": that makes window.open return null always, hiding a blocked tab.
+    const tab = window.open(url, "_blank");
+    if (tab) tab.opener = null;
+    void copied.then((ok) => {
+      if (!ok) download();
+      setHint({ blocked: !tab, copied: ok });
+    });
   };
+  const text = t("postText", { year: YEAR, count: stats.memories });
+  const postText = encodeURIComponent(text);
+  // The system share sheet takes the image itself (phones, Safari, recent Chrome): the app picked
+  // there (X, Instagram, LinkedIn, ...) opens with the card already attached.
+  const file = useMemo(
+    () => (blob ? new File([blob], fileName, { type: "image/png" }) : null),
+    [blob, fileName]
+  );
+  const canShare = useMemo(
+    () =>
+      !!file && typeof navigator !== "undefined" && !!navigator.canShare?.({ files: [file], text }),
+    [file, text]
+  );
+  const targets = [
+    { label: t("postOnX"), Logo: XLogo, url: `https://x.com/intent/post?text=${postText}` },
+    {
+      label: t("postOnLinkedIn"),
+      Logo: LinkedInLogo,
+      url: `https://www.linkedin.com/feed/?shareActive=true&text=${postText}`,
+    },
+  ];
 
   const secondary =
     "inline-flex items-center justify-center gap-2 rounded-md border border-white/15 px-4 py-2.5 text-sm font-medium text-white hover:bg-white/5 disabled:opacity-50";
@@ -781,29 +813,70 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
           {t("shareTitle")}
         </Rise>
         <Rise delay={350} className="mt-8 flex flex-col gap-2">
-          <button
-            onClick={download}
-            disabled={!blob}
-            className="inline-flex items-center justify-center gap-2 rounded-md bg-white px-4 py-2.5 text-sm font-medium text-[#080C17] hover:bg-white/90 disabled:opacity-50"
-          >
-            <Download className="w-4 h-4" /> {t("download")}
-          </button>
-          <button onClick={copy} disabled={!blob} className={secondary}>
-            <Copy className="w-4 h-4" /> {copied ? t("copied") : t("copy")}
-          </button>
+          {targets.map(({ label, Logo, url }, n) => (
+            <button
+              key={url}
+              onClick={() => postTo(url)}
+              disabled={!blob}
+              className={
+                n === 0
+                  ? "inline-flex items-center justify-center gap-2 rounded-md bg-white px-4 py-2.5 text-sm font-medium text-[#080C17] hover:bg-white/90 disabled:opacity-50"
+                  : secondary
+              }
+            >
+              <Logo className="w-4 h-4" /> {label}
+            </button>
+          ))}
           {canShare && (
             <button
-              onClick={() =>
-                navigator.share({ files: [file!], title: "Hindsight Wrapped" }).catch(() => {})
-              }
+              onClick={() => navigator.share({ files: [file!], text }).catch(() => {})}
               className={secondary}
             >
-              <Share2 className="w-4 h-4" /> {t("share")}
+              <Share2 className="w-4 h-4" /> {t("shareMore")}
             </button>
+          )}
+          <button onClick={download} disabled={!blob} className={secondary}>
+            <Download className="w-4 h-4" /> {t("download")}
+          </button>
+          {hint && (
+            <p role="status" className="mt-2 text-sm text-white/60">
+              {[
+                hint.blocked && t("postHintBlocked"),
+                !hint.copied
+                  ? t("postHintDownloaded")
+                  : !hint.blocked &&
+                    (touch
+                      ? t("postHintCopiedTouch")
+                      : t("postHintCopied", { keys: mac ? "⌘V" : "Ctrl+V" })),
+              ]
+                .filter((line): line is string => !!line)
+                .map((line) => (
+                  <span key={line} className="block">
+                    {line}
+                  </span>
+                ))}
+            </p>
           )}
         </Rise>
       </div>
     </div>
+  );
+}
+
+/** The X logo (the lucide icon set has none). */
+function XLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className={className} fill="currentColor">
+      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+    </svg>
+  );
+}
+
+function LinkedInLogo({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden className={className} fill="#0A66C2">
+      <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z" />
+    </svg>
   );
 }
 
@@ -919,53 +992,41 @@ async function drawShareCard(
   ctx.textAlign = "left";
   spacing(0);
 
-  // Persona and top agent share one panel at the bottom, one row each.
-  const personaPanel = (y: number) => {
-    const rows = (text.persona ? 1 : 0) + (harnessLabel ? 1 : 0);
-    if (!rows) return;
-    const rowH = 112;
-    panel(P, y, W - 2 * P, rows * rowH);
-    let ry = y;
-    if (text.persona) {
-      ctx.fillStyle = "#fff";
-      ctx.font = f(600, 46);
-      ctx.fillText(ellipsize(ctx, text.persona, 620), P + 32, ry + 73);
-      ctx.fillStyle = INK_MUTED;
-      ctx.font = f(500, 30);
-      ctx.textAlign = "right";
-      ctx.fillText(text.peak, W - P - 32, ry + 70);
-      ctx.textAlign = "left";
-      ry += rowH;
-      if (harnessLabel) {
-        ctx.strokeStyle = "rgba(255,255,255,0.10)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(P + 32, ry);
-        ctx.lineTo(W - P - 32, ry);
-        ctx.stroke();
-      }
-    }
-    if (harnessLabel) {
-      let nx = P + 32;
-      if (harnessImg) {
+  // Persona and top agent: side by side at the bottom, no boxes. A small tracked label over
+  // each value, like the tagline over the number.
+  const footnotes = [
+    text.persona ? { label: text.peak, value: text.persona, img: null } : null,
+    harnessLabel ? { label: text.agent, value: harnessLabel, img: harnessImg } : null,
+  ].filter((n): n is { label: string; value: string; img: HTMLImageElement | null } => !!n);
+  const FOOT_H = 104;
+  const drawFootnotes = (y: number) => {
+    const colW = (W - 2 * P - (footnotes.length - 1) * 56) / footnotes.length;
+    // One size for both values, shrunk until the longer one fits its column.
+    let size = 44;
+    ctx.font = f(600, size);
+    const widest = () =>
+      Math.max(...footnotes.map((n) => ctx.measureText(n.value).width + (n.img ? 60 : 0)));
+    while (size > 32 && widest() > colW) ctx.font = f(600, --size);
+    footnotes.forEach((n, i) => {
+      const x = P + i * (colW + 56);
+      ctx.fillStyle = BLUE;
+      ctx.font = f(500, 24);
+      spacing(4);
+      ctx.fillText(n.label, x, y + 24);
+      spacing(0);
+      let vx = x;
+      if (n.img) {
         ctx.fillStyle = "#fff";
         ctx.beginPath();
-        ctx.roundRect(P + 32, ry + 24, 64, 64, 10);
+        ctx.roundRect(x, y + 50, 44, 44, 10);
         ctx.fill();
-        ctx.drawImage(harnessImg, P + 42, ry + 34, 44, 44);
-        nx = P + 120;
+        ctx.drawImage(n.img, x + 6, y + 56, 32, 32);
+        vx += 60;
       }
       ctx.fillStyle = "#fff";
-      ctx.font = f(600, 46);
-      ctx.fillText(ellipsize(ctx, harnessLabel, 560), nx, ry + 73);
-      ctx.fillStyle = INK_MUTED;
-      ctx.font = f(600, 26);
-      spacing(3);
-      ctx.textAlign = "right";
-      ctx.fillText(text.agent, W - P - 32, ry + 68);
-      ctx.textAlign = "left";
-      spacing(0);
-    }
+      ctx.font = f(600, size);
+      ctx.fillText(ellipsize(ctx, n.value, x + colW - vx), vx, y + 88);
+    });
   };
 
   // Lay the body out once to measure it, then centre it between header and footer.
@@ -978,13 +1039,13 @@ async function drawShareCard(
   const labelBase = numBase + Math.max(0, num.actualBoundingBoxDescent) + 66;
   const heroH = labelBase + 16;
   const th = 150;
-  const panelH = ((text.persona ? 1 : 0) + (harnessLabel ? 1 : 0)) * 112;
+  const footH = footnotes.length ? FOOT_H : 0;
   const top = 180;
   const room = H - 130 - top;
   const layout = (n: number) => {
     const rows = Math.ceil(n / 2);
     const tilesH = rows ? rows * th + (rows - 1) * gap : 0;
-    return { tilesH, bodyH: heroH + (tilesH ? 56 + tilesH : 0) + (panelH ? 32 + panelH : 0) };
+    return { tilesH, bodyH: heroH + (tilesH ? 56 + tilesH : 0) + (footH ? 64 + footH : 0) };
   };
   // The memory constellation sits above the number; tiles give way, two at a time, to fit it.
   const SKY_MIN = 300;
@@ -1024,7 +1085,7 @@ async function drawShareCard(
     });
     y += tilesH;
   }
-  if (panelH) personaPanel(y + 32);
+  if (footH) drawFootnotes(y + 64);
 
   ctx.fillStyle = INK_MUTED;
   ctx.font = f(600, 28);
