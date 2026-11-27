@@ -50,23 +50,34 @@ export function readAntigravityTranscript(path: string | undefined): TransportTu
   return turns;
 }
 
+/** The newest user record in an Antigravity transcript. `line` is its position in the JSONL, which
+ *  only grows (agy appends), so it tells a newer user message from one already recalled. */
+export interface AntigravityPromptTurn {
+  prompt: string;
+  line: number;
+}
+
 /**
- * Recover the current user prompt for Antigravity's `PreInvocation` hook ONLY when the invocation
- * is the start of a new user turn.
+ * The transcript's newest user message, for Antigravity's `PreInvocation` hook.
  *
- * Antigravity fires `PreInvocation` before every planner step in the agent loop — not just on user
- * submission, but also after every tool result (`GENERIC`), tool-only planner step
- * (`PLANNER_RESPONSE` with empty `content`), and background task wakeup (`SYSTEM_MESSAGE`). Because
- * `readAntigravityTranscript` drops non-chat and empty-content records, taking `.filter(u).at(-1)`
- * from it re-emits the opening user prompt on every intra-turn tool step (e.g. 182 times across a
- * 9-turn session). Checking that the last non-housekeeping record in the JSONL is a `USER_INPUT` /
- * `user` record suppresses every intra-turn continuation via `runHook`'s `if (!prompt) return`.
+ * Antigravity fires `PreInvocation` before every planner step — after every tool result
+ * (`GENERIC`), tool-only planner step and background wakeup (`SYSTEM_MESSAGE`) too — and its
+ * payload carries no prompt. Returning the newest user message on each of those would re-recall the
+ * opening prompt on every tool step (182 times across a 9-turn session), so the caller recalls a
+ * turn only when its `line` is newer than the one it last recalled.
+ *
+ * It must NOT require the transcript to END on the user record: a message sent while the agent is
+ * working is written AFTER the PreInvocation that follows it, and by the next one tool records
+ * already sit behind it, so that rule never saw a follow-up (#6944).
  */
-export function readAntigravityPromptTurn(path: string | undefined): string | undefined {
+export function readAntigravityPromptTurn(
+  path: string | undefined
+): AntigravityPromptTurn | undefined {
   if (!path) return undefined;
-  let lastRole: string | undefined;
-  let lastUserPrompt: string | undefined;
+  let latest: AntigravityPromptTurn | undefined;
+  let index = -1;
   for (const line of readJsonl(path)) {
+    index++;
     try {
       const event = JSON.parse(line) as {
         role?: string;
@@ -76,18 +87,14 @@ export function readAntigravityPromptTurn(path: string | undefined): string | un
         message?: { role?: string; content?: string; text?: string };
       };
       const role = event.role ?? event.message?.role ?? event.type;
-      if (!role || role === "CHECKPOINT" || role === "EPHEMERAL_MESSAGE") continue;
-      lastRole = role;
-      if (role === "user" || role === "USER_INPUT") {
-        const content =
-          event.content ?? event.text ?? event.message?.content ?? event.message?.text;
-        const text = typeof content === "string" ? stripInjectedMemory(content) : "";
-        const clean = unwrapUserRequest(text).trim();
-        lastUserPrompt = clean || undefined;
-      }
+      if (role !== "user" && role !== "USER_INPUT") continue;
+      const content = event.content ?? event.text ?? event.message?.content ?? event.message?.text;
+      const text = typeof content === "string" ? stripInjectedMemory(content) : "";
+      const clean = unwrapUserRequest(text).trim();
+      if (clean) latest = { prompt: clean, line: index };
     } catch {
       // Ignore malformed lines.
     }
   }
-  return lastRole === "user" || lastRole === "USER_INPUT" ? lastUserPrompt : undefined;
+  return latest;
 }
