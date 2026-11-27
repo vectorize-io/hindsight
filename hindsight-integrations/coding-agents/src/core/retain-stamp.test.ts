@@ -44,6 +44,17 @@ describe("buildRetainStamp", () => {
     }
   });
 
+  it("takes the branch from the session root when the live directory is outside git", () => {
+    const plain = mkdtempSync(join(tmpdir(), "hs-stamp-plain-"));
+    try {
+      expect(buildRetainStamp({}, ctx({ directory: plain, sessionRoot: repo })).metadata).toEqual({
+        branch: "main",
+      });
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
   it("resolves {branch} for tags, `detached` on a detached HEAD", () => {
     const tag = () => buildRetainStamp({ retainTags: ["branch:{branch}"] }, ctx()).tags;
     execFileSync("git", ["checkout", "-q", "-b", "feat/x"], { cwd: repo });

@@ -63,7 +63,7 @@ export interface RetainStampConfig {
   retainContext?: string;
 }
 
-function resolversFor(ctx: RetainStampContext): Resolvers {
+function resolversFor(ctx: RetainStampContext, branchOf: () => string | null): Resolvers {
   return {
     // Worktree-aware like the bank id, so every linked worktree of a repo stamps the SAME name —
     // otherwise a shared bank ends up with `project:app` and `project:app-wt2` for one repository.
@@ -75,7 +75,7 @@ function resolversFor(ctx: RetainStampContext): Resolvers {
     timestamp: () => new Date().toISOString(),
     channel: () => process.env.HINDSIGHT_CHANNEL_ID || "default",
     user: () => process.env.HINDSIGHT_USER_ID || "anonymous",
-    branch: () => (ctx.directory && gitBranch(ctx.directory)) || "unknown",
+    branch: () => branchOf() ?? "unknown",
   };
 }
 
@@ -86,7 +86,16 @@ function resolversFor(ctx: RetainStampContext): Resolvers {
 export function buildRetainStamp(cfg: RetainStampConfig, ctx: RetainStampContext): RetainStamp {
   // Built lazily and memoized: {gitProject} shells out to git, and a config using it in both a tag
   // and a metadata value should not pay for that twice per retain.
-  const base = resolversFor(ctx);
+  // Like {gitProject}, a live directory git cannot place falls back to where the session started.
+  let branch: string | null | undefined;
+  const branchOf = () =>
+    branch === undefined
+      ? (branch =
+          (ctx.directory && gitBranch(ctx.directory)) ||
+          (ctx.sessionRoot && gitBranch(ctx.sessionRoot)) ||
+          null)
+      : branch;
+  const base = resolversFor(ctx, branchOf);
   const cache = new Map<string, string>();
   const resolvers: Resolvers = Object.fromEntries(
     Object.entries(base).map(([name, resolve]) => [
@@ -115,8 +124,8 @@ export function buildRetainStamp(cfg: RetainStampConfig, ctx: RetainStampContext
     });
   const metadata: Record<string, string> = {};
   // Outside a git repo there is no branch to record; the {branch} placeholder still says "unknown".
-  if (ctx.stampBranch !== false && resolvers.branch() !== "unknown")
-    metadata.branch = resolvers.branch();
+  const current = ctx.stampBranch === false ? null : branchOf();
+  if (current) metadata.branch = current;
   for (const [key, value] of Object.entries(cfg.retainMetadata ?? {})) {
     metadata[key] = applyTemplate(value, resolvers, "retainMetadata");
   }
