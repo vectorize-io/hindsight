@@ -341,6 +341,46 @@ describe("buildRetain", () => {
     ]);
   });
 
+  it("a session already saved twice before #6960 is rewritten with only its own turns", async () => {
+    // A bank written by the old reader holds conversation:B with A's copied turns in it, and B's
+    // cursor counts them. The new reader yields fewer turns than that cursor, which reads as a
+    // rewritten file, so the next write-back REPLACES the document: the duplicates go away.
+    const line = (sid: string, type: string, content: string) =>
+      JSON.stringify({ type, sessionId: sid, message: { role: type, content } });
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const args = {
+      harness: "claude-code",
+      sessionId: "B",
+      transcriptPath: file,
+      cursors: memoryCursorStore(),
+      client: { retain, bank: "test-bank", supportsAppendRetain: async () => true },
+    };
+    writeFileSync(
+      file,
+      [
+        line("A", "user", "The Atlas connector is amber."),
+        line("A", "assistant", "Noted."),
+        line("B", "user", "The Birch connector is violet."),
+        line("B", "assistant", "Ok."),
+      ].join("\n")
+    );
+    // the old behaviour: every line read as B's own
+    const oldReader = (path: string) =>
+      readFileSync(path, "utf8")
+        .split("\n")
+        .map((l) => JSON.parse(l))
+        .map((l) => ({ role: l.type, content: l.message.content }));
+    await buildRetain({ ...args, readTranscript: oldReader });
+    await buildRetain(args);
+
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[1][5].updateMode).toBeUndefined(); // a replace, not an append
+    const written = retain.mock.calls[1][0].split("\n").map((row: string) => JSON.parse(row));
+    expect(written.filter((t: { role: string }) => t.role !== "system")).toEqual([
+      { role: "user", content: "The Birch connector is violet." },
+      { role: "assistant", content: "Ok." },
+    ]);
+  });
   it("appends a Codex continuation rollout instead of replacing the session document", async () => {
     // Same session_meta id, a NEW rollout file holding only the turns that come next (#4493): the
     // earlier turns live in the earlier file, so replacing would drop them from the document.
