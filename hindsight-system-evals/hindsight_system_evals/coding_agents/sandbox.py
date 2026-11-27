@@ -83,6 +83,17 @@ class Sandbox:
         }
 
 
+def missing_prerequisite() -> str:
+    """Why a real Claude Code session cannot run here, or "" when it can."""
+    if shutil.which("claude") is None:
+        return "claude is not on PATH"
+    if not sys.platform.startswith("darwin"):
+        return "the sandbox copies the Claude Code login out of the macOS Keychain, so it runs on macOS only"
+    if shutil.which("node") is None or not (PLUGIN_DIR / "node_modules").is_dir():
+        return f"the plugin cannot be built: needs node and `npm install` in {PLUGIN_DIR}"
+    return ""
+
+
 def refresh_credentials(sandbox: Sandbox) -> None:
     """Re-copy the host's token into the sandbox.
 
