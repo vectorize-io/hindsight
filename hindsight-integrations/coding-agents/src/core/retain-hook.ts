@@ -84,6 +84,9 @@ export interface RetainHookSpec {
    * Declaring it here rather than in `parse` is what keeps `parse` pure — resolving the reply is a
    * read of the ephemeral transcript the host is about to delete, and closing the turn is a write.
    */
+  /** Which client started the session, read from the transcript — gates `skipOriginators`. Only
+   *  Codex records one (core/transcript-codex.ts). */
+  originator?(transcriptPath: string): string | undefined;
   journal?: {
     /** The assistant reply for this turn, from the Stop event. "" when the host sent none. */
     assistantText(event: Record<string, unknown>): string;
@@ -325,8 +328,18 @@ export async function runRetainHook(
   // daemon start below: a session that writes nothing has no reason to bring a server up. It still
   // reads the transcript, because usage is recorded either way — it is a local file (#5391).
   let client: RetainClient | undefined;
+  const originator =
+    cfg.retainSessions && cfg.skipOriginators.length
+      ? spec.originator?.(transcriptPath)
+      : undefined;
   if (!cfg.retainSessions) {
     diag(spec.harness, "retain_disabled", { bank: bankId, session: sessionId });
+  } else if (originator && cfg.skipOriginators.includes(originator)) {
+    diag(spec.harness, "retain_skipped_originator", {
+      bank: bankId,
+      session: sessionId,
+      originator,
+    });
   } else {
     // Last chance to get the daemon up: this is the write path, and a session whose daemon never
     // started would otherwise lose its whole conversation. The Stop hook has the longest budget of

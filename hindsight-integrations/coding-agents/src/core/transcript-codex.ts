@@ -33,6 +33,8 @@
  * prevents a retain→recall feedback loop (plus stripInjectedMemory as a defensive second pass on the
  * text we do keep). Fail-open: never throws on a missing file or a malformed line.
  */
+import { readdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { TransportTurn } from "./chat";
 import { readJsonl } from "./jsonl";
 import { actionLine, stripInjectedMemory } from "./transcript-util";
@@ -284,4 +286,68 @@ export function readCodexTranscript(path: string): TransportTurn[] {
         !(t.unless === "actionEvents" && actionsFromEvents)
     )
     .map(({ unless: _unless, ...turn }) => turn);
+}
+
+interface CodexSessionMeta {
+  originator?: unknown;
+  /** "cli" | "vscode" | "exec" | …, or `{subagent: {thread_spawn: {parent_thread_id, depth}}}`. */
+  source?: { subagent?: { thread_spawn?: { parent_thread_id?: unknown } } } | string;
+}
+
+/** The `session_meta` payload a rollout opens with, or undefined when the first line is not one. */
+function codexSessionMeta(path: string): CodexSessionMeta | undefined {
+  try {
+    for (const line of readJsonl(path)) {
+      const rec = JSON.parse(line) as { type?: string; payload?: CodexSessionMeta };
+      return rec.type === "session_meta" ? rec.payload : undefined;
+    }
+  } catch {
+    /* malformed header: no originator */
+  }
+  return undefined;
+}
+
+/** The rollout file of a thread id, searched under the sessions root (`<root>/YYYY/MM/DD/`). */
+function findRollout(root: string, threadId: string): string | undefined {
+  const suffix = `-${threadId}.jsonl`;
+  const walk = (dir: string): string | undefined => {
+    for (const entry of readdirSync(dir)) {
+      const p = join(dir, entry);
+      if (entry.endsWith(suffix)) return p;
+      if (!entry.endsWith(".jsonl") && statSync(p).isDirectory()) {
+        const hit = walk(p);
+        if (hit) return hit;
+      }
+    }
+    return undefined;
+  };
+  try {
+    return walk(root);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Which client started this Codex session (`session_meta.originator`, e.g. "Claude Code" for a
+ * job delegated by Claude Code's Codex plugin), for `skipOriginators` (#5507).
+ *
+ * A sub-agent thread carries its own originator, but whether it is delegated work is its PARENT's
+ * call, so a `thread_spawn` sub-agent follows `parent_thread_id` up to the session that started
+ * it. Undefined when the parent's rollout cannot be found: the session is then retained as before.
+ */
+export function codexOriginator(path: string): string | undefined {
+  // <root>/YYYY/MM/DD/rollout-….jsonl — a parent lives under the same root, maybe on an earlier day.
+  const root = dirname(dirname(dirname(dirname(path))));
+  let meta = codexSessionMeta(path);
+  for (let depth = 0; meta && depth < 8; depth++) {
+    const source = meta.source;
+    if (typeof source !== "object" || !source?.subagent) {
+      return typeof meta.originator === "string" ? meta.originator : undefined;
+    }
+    const parentId = source.subagent.thread_spawn?.parent_thread_id;
+    const parent = typeof parentId === "string" ? findRollout(root, parentId) : undefined;
+    meta = parent ? codexSessionMeta(parent) : undefined;
+  }
+  return undefined;
 }

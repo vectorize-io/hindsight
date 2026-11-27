@@ -98,6 +98,11 @@ export interface RawConfig {
    *  cadence alike. Gates ONLY the transcript — recall, git ingest, seeding and the memory
    *  tools keep working (that is `disabled`'s job). */
   retainSessions?: boolean;
+  /** Codex only: don't write back a session whose rollout says another client started it, e.g.
+   *  ["Claude Code"] for jobs Claude Code's Codex plugin delegates — the parent session already
+   *  holds the brief and the result (#5507). Matched against `session_meta.originator`; a
+   *  sub-agent thread follows its parent's. Recall is unchanged. */
+  skipOriginators?: string[];
   /** Cap on concurrent retain-related requests the client sends to the API (default 10):
    *  drain()'s per-operation polls and deepen's chat/git retain pools. A single request returning
    *  200 while bursts get 429s means the server is rate-limiting concurrency, not total volume —
@@ -331,6 +336,7 @@ export interface Config {
   harness: string;
   disabled: boolean;
   retainSessions: boolean;
+  skipOriginators: string[];
   maxParallelRetains: number;
   reflectTimeoutMs: number;
   reflectToolTimeoutMs: number;
@@ -681,6 +687,9 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       : "message",
     // Hostile input is a config typo, not an attack: keep only string entries so a stray number or
     // nested object cannot reach the API as a tag and fail the whole retain.
+    skipOriginators: Array.isArray(raw.skipOriginators)
+      ? raw.skipOriginators.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+      : [],
     retainTags: Array.isArray(raw.retainTags)
       ? raw.retainTags.filter((t): t is string => typeof t === "string" && t.trim() !== "")
       : [],

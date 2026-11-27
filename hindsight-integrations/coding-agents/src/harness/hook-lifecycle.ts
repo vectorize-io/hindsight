@@ -8,7 +8,7 @@ import { runHook, type HookSpec } from "../core/hook";
 import { runRetainHook, type RetainHookSpec } from "../core/retain-hook";
 import { runSessionStartHook, type SessionStartHookSpec } from "../core/session-start";
 import { ensureTraecodeWorkspaceMcp } from "../core/traecode-mcp";
-import { readCodexTranscript } from "../core/transcript-codex";
+import { codexOriginator, readCodexTranscript } from "../core/transcript-codex";
 import { readCursorTranscript } from "../core/transcript-cursor";
 import {
   readAntigravityPromptTurn,
@@ -333,6 +333,7 @@ export const HOOK_HARNESSES: Record<HookHarnessName, HookHarnessSpec> = {
         cwd: ev.cwd as string | undefined,
       }),
       readTranscript: readCodexTranscript,
+      originator: codexOriginator,
     },
   },
   dcode: {

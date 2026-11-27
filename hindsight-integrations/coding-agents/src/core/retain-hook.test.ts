@@ -989,6 +989,24 @@ describe("runRetainHook honors retainSessions", () => {
     expect(untouched.retain).toHaveBeenCalledTimes(1);
   });
 
+  it("skipOriginators: a matching originator is not written back; any other is (#5507)", async () => {
+    rawConfig = { skipOriginators: ["Claude Code"] };
+    const codexSpec = { ...spec, harness: "codex" };
+    const skipped = stubClient();
+    await runRetainHook({ ...codexSpec, originator: () => "Claude Code" }, skipped.makeClient);
+    expect(skipped.retain).not.toHaveBeenCalled();
+    expect(skipped.makeClient).not.toHaveBeenCalled();
+    expect(readFileSync(join(root, "diag.log"), "utf8")).toContain("retain_skipped_originator");
+
+    const kept = stubClient();
+    await runRetainHook({ ...codexSpec, originator: () => "Codex Desktop" }, kept.makeClient);
+    expect(kept.retain).toHaveBeenCalledTimes(1);
+
+    const unknown = stubClient();
+    await runRetainHook({ ...codexSpec, originator: () => undefined }, unknown.makeClient);
+    expect(unknown.retain).toHaveBeenCalledTimes(1);
+  });
+
   it("a banks.<id> override turns write-back back on under a global opt-out", async () => {
     const bankId = deriveBankId(resolveConfig(), root, spec.harness, root);
     rawConfig = { retainSessions: false, banks: { [bankId]: { retainSessions: true } } };
