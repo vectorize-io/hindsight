@@ -19,6 +19,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from hindsight_system_evals.coding_agents.sandbox import Sandbox
 
@@ -27,17 +28,43 @@ from hindsight_system_evals.coding_agents.sandbox import Sandbox
 TURN_TIMEOUT_SECONDS = 600.0
 
 
+#: How Claude Code names a tool of the plugin's MCP server; stripped so a call reads as the plugin names it.
+_MCP_PREFIX = "mcp__hindsight__"
+
+
+@dataclass
+class ToolCall:
+    name: str
+    #: The arguments as the agent sent them: whatever JSON that tool's schema takes.
+    input: dict[str, Any]
+
+
+@dataclass
+class Turn:
+    prompt: str
+    reply: str
+    calls: list[ToolCall] = field(default_factory=list)
+
+    @property
+    def tools(self) -> list[str]:
+        return [call.name for call in self.calls]
+
+
 @dataclass
 class SessionResult:
     session_id: str
     prompts: list[str]
-    replies: list[str] = field(default_factory=list)
+    turns: list[Turn] = field(default_factory=list)
     transcript: Path | None = None
     error: str | None = None
 
     @property
+    def replies(self) -> list[str]:
+        return [t.reply for t in self.turns]
+
+    @property
     def completed_turns(self) -> int:
-        return len(self.replies)
+        return len(self.turns)
 
 
 def run_session(
@@ -94,6 +121,7 @@ def run_session(
         )
         process.stdin.flush()
 
+    calls: list[ToolCall] = []
     try:
         send(prompts[0])
         deadline = time.monotonic() + TURN_TIMEOUT_SECONDS
@@ -108,15 +136,20 @@ def run_session(
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if event.get("type") == "assistant":
+                calls += _tool_calls(event)
+                continue
             if event.get("type") != "result":
                 continue
-            result.replies.append(str(event.get("result", "")))
+            done = len(result.turns)
+            result.turns.append(Turn(prompt=prompts[done], reply=str(event.get("result", "")), calls=calls))
+            calls = []
             if event.get("is_error"):
-                result.error = f"turn {len(result.replies)} returned an error: {event.get('result')}"
+                result.error = f"turn {len(result.turns)} returned an error: {event.get('result')}"
                 break
-            if len(result.replies) >= len(prompts):
+            if len(result.turns) >= len(prompts):
                 break
-            send(prompts[len(result.replies)])
+            send(prompts[len(result.turns)])
             deadline = time.monotonic() + TURN_TIMEOUT_SECONDS
     finally:
         if process.stdin and not process.stdin.closed:
@@ -135,6 +168,16 @@ def run_session(
     transcript = _find_transcript(sandbox, session_id)
     result.transcript = transcript
     return result
+
+
+def _tool_calls(event: dict[str, Any]) -> list[ToolCall]:
+    """The tool calls in one assistant message of the stream-json output."""
+    content = (event.get("message") or {}).get("content") or []
+    return [
+        ToolCall(name=str(block.get("name", "")).removeprefix(_MCP_PREFIX), input=block.get("input") or {})
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "tool_use"
+    ]
 
 
 def _find_transcript(sandbox: Sandbox, session_id: str) -> Path | None:

@@ -27,8 +27,8 @@ signal to re-run, not proof of a regression.
 ## What it evaluates
 
 One test file per operation, `evals/<operation>/test_<operation>.py`: `retain`,
-`recall`, `consolidation`, `reflect`, `refresh-pages`, `knowledge` (odd and big files), `hermes` (the Hermes Agent plugin, end to end) and `misc/` for the
-coding-agents metric. Knowledge-bank benchmarks live in AMB (see Benchmarks below). Run one operation with `uv run pytest evals/recall`.
+`recall`, `consolidation`, `reflect`, `refresh-pages`, `knowledge` (odd and big files), `hermes` (the Hermes Agent plugin, end to end), `coding_agents` (the coding-agents plugin on a real
+Claude Code, end to end) and `misc/` for the coding-agents metric. Knowledge-bank benchmarks live in AMB (see Benchmarks below). Run one operation with `uv run pytest evals/recall`.
 
 **Every case has a category**, and its test id is `<category>/<case id>`
 (`test_retain[temporal/no-event-date]`). That is the syntax:
@@ -96,6 +96,9 @@ stays out of the category counts.
 | hermes | update | 2 | a correction or a newer state wins over the old one |
 | hermes | pages | 2 | a question about what was decided is answered from a page |
 | hermes | builtin_memory | 2 | what Hermes saves to its built-in memory also reaches the bank |
+| coding_agents | cross_session | 1 | a decision told in chat on one machine shapes the work on another |
+| coding_agents | update | 1 | a correction from a later session wins on a new machine |
+| coding_agents | initiatives | 2 | a feature stays one page through a plan change and a move (#6919); a bug fix is no initiative |
 
 The page and reflect evals share one corpus and grade twice per question: **correct** (meets
 its criteria — can fail on an incomplete answer) and **trap** (asserts the
@@ -989,3 +992,36 @@ uv run python -m hindsight_system_evals.debug.replay_delta_ops \
 ```
 
 A variant that wins the replay is a lead; it still has to pass the eval.
+
+### Coding agents — `evals/coding_agents/test_coding_agents.py`
+
+The plugin's own tests stub the host, and the search-rate harness (`hindsight_system_evals/coding_agents`)
+counts how often a turn searches. This grades what a real Claude Code *does* with memory: the plugin
+built from this checkout, a real server, every plugin setting on its default except the pinned bank.
+The sandbox is the harness's: a throwaway HOME, so nothing reaches your own memory or agent config.
+
+Two shapes of test:
+
+- **Memory on a new machine.** Earlier sessions on machine A, where the user says things in passing.
+  The bank settles. Then machine B — a fresh HOME **and a fresh clone of the repo**, the same bank —
+  gets one request. Machine A's edits are not in that clone, so only the bank carries anything over.
+  The reply and the diff are judged: the trap first, then the criteria.
+- **Initiatives.** Page counts under `Initiatives` are asserted exactly; the page's text is judged.
+
+| category | scenario | what it checks |
+|---|---|---|
+| cross_session | `a-decision-told-in-passing` | "a cart line is never over 20 units, bigger is B2B"; then "support an order of 50 in post_quote" |
+| update | `a-correction-wins` | Rotterdam, corrected to Antwerp a session later; the new `ships_from` says Antwerp |
+| initiatives | `test_initiative_stays_one_page_through_a_plan_change` | gift cards planned and built, re-planned as single-use vouchers, the page moved into a subfolder, then finished from machine B: one page throughout (#6919), showing the vouchers |
+| initiatives | `test_small_work_is_not_an_initiative` | a rounding fix and a rename: no capture, no page |
+
+```bash
+uv run pytest evals/coding_agents                     # skips without `claude` on PATH, or off macOS
+uv run pytest evals/coding_agents -k initiative
+HINDSIGHT_EVAL_CODING_MODEL=sonnet uv run pytest evals/coding_agents   # any `claude --model` value
+```
+
+It needs `claude` logged in (the sandbox copies the token out of the macOS Keychain, so macOS only for
+now), node, and `npm install` in `hindsight-integrations/coding-agents`; the plugin is built at the start
+of the run. The scenarios reach Claude Code only through `_machine` and `_session`, so another agent
+(Codex) is another pair of those.
