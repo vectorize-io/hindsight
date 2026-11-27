@@ -1059,9 +1059,17 @@ git history and diffs, survey lifecycle documents, initiative markers, and docum
 
 Recalls can then filter by `project:<repo>`, and every document shows which repository it came out
 of. Both accept the same placeholders as `bankIdTemplate` — `{gitProject}`, `{project}`,
-`{harness}`, `{channel}`, `{user}` — plus `{bankId}`, `{sessionId}` and `{timestamp}`.
+`{harness}`, `{channel}`, `{user}` — plus `{bankId}`, `{sessionId}`, `{timestamp}` and `{branch}`.
 `{gitProject}` is worktree-aware here too, so every linked worktree of a repo stamps one name.
 `{sessionId}` resolves to `unknown` for documents that do not originate from an agent session.
+`{branch}` is the branch checked out when the memory is saved (`detached` on a detached HEAD,
+`unknown` outside git).
+
+The branch is also recorded on its own, with nothing to configure: every memory saved from a git
+repo carries `metadata.branch`, so a fact learnt on a branch that was never merged can be told apart
+from the project's current state. It is not a tag unless you add one, e.g.
+`"retainTags": ["branch:{branch}"]`. History imported from before the plugin was installed carries
+no branch, since today's checkout says nothing about where those sessions ran.
 
 The plugin's own `source:` and `harness:` tags are reserved: entries in those namespaces are ignored
 with a warning, so a document's agent attribution always reflects the agent that actually wrote it.
