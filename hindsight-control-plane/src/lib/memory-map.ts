@@ -43,7 +43,7 @@ export function seeded(seed: number): () => number {
  */
 export function buildMemoryMap(graphs: BankGraph[], start: Date, end: Date): MemoryMap {
   const span = end.getTime() - start.getTime();
-  const nodes: (MemoryMap["nodes"][number] & { bank: number; vx: number; vy: number })[] = [];
+  const nodes: (MemoryMap["nodes"][number] & { vx: number; vy: number })[] = [];
   const index = new Map<string, number>();
   const links: [number, number][] = [];
   const rand = seeded(graphs.length * 7919 + 1);
@@ -62,7 +62,6 @@ export function buildMemoryMap(graphs: BankGraph[], start: Date, end: Date): Mem
         y: cy + (rand() - 0.5) * 0.8,
         k: KINDS[row.fact_type ?? ""] ?? 0,
         t: ms / span,
-        bank,
         vx: 0,
         vy: 0,
       });

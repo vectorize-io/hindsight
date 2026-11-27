@@ -154,6 +154,8 @@ async function loadWrapped(): Promise<{ stats: WrappedStats; complete: boolean }
     }))
     .sort((a, b) => b.n - a.n)
     .slice(0, MAP_BANKS);
+  // ponytail: the graph has no date filter, so this reads each bank's latest memories; in
+  // January most are the new year's and the sky is sparser. A since/until on the graph if it matters.
   const graphs = await Promise.all(
     busiest.map((b) =>
       client

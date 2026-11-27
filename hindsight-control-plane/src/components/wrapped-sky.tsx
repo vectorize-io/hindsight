@@ -257,7 +257,7 @@ export function MemoryMapCanvas({ map }: { map: MemoryMap }) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, w);
       const k = still ? 1 : Math.min(1, (now - t0) / UNFOLD_MS);
-      // Eased, so the year starts slowly and the last months rush in.
+      // Eased out, so the first months come in fast and the year settles at the end.
       paintMemoryMap(ctx, map, { x: 0, y: 0, w, h: w }, 1 - (1 - k) ** 2, still ? 0 : now / 1000);
       if (!still) raf = requestAnimationFrame(frame);
     };

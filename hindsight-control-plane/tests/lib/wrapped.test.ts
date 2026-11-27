@@ -45,6 +45,14 @@ describe("computeWrapped", () => {
     expect(s.strongestBelief).toBeNull();
   });
 
+  it("gives no documents total when only some banks could count them", () => {
+    const s = computeWrapped(2026, [
+      bank("a", { hours: [hour(2, 1, 9, 3)], documents: 5 }),
+      bank("b", { hours: [hour(2, 1, 9, 1)], documents: null }),
+    ]);
+    expect(s.documents).toBeNull();
+  });
+
   it("adds the banks' hours up in local time, and ranks banks, names, agents and beliefs", () => {
     const s = computeWrapped(2026, [
       bank("a", {

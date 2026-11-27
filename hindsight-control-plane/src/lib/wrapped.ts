@@ -141,12 +141,15 @@ export function computeWrapped(year: number, banks: BankYear[]): WrappedStats {
   const spelling = new Map<string, string>();
   let facts = 0;
   let observations = 0;
-  let documents: number | null = null;
+  // Only a total every bank answered: a sum missing some banks would read as the whole year.
+  const documents =
+    banks.length && banks.every((b) => b.summary.documents !== null)
+      ? banks.reduce((a, b) => a + b.summary.documents!, 0)
+      : null;
   let strongest: WrappedStats["strongestBelief"] = null;
   let first: { text: string; date: string } | null = null;
 
   for (const { name, summary } of banks) {
-    if (summary.documents !== null) documents = (documents ?? 0) + summary.documents;
     // UTC hours, placed in the viewer's own days and hours.
     for (const h of summary.hours) {
       const d = new Date(h.time);
