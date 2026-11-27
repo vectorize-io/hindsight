@@ -21,6 +21,8 @@ import {
   DEFAULT_OBSERVATION_SCOPES,
   DEFAULT_PAGE_SEARCH_LIMIT,
   type ObservationScopes,
+  TAGS_MATCH_MODES,
+  type TagsMatch,
 } from "./hindsight";
 import {
   type CustomPagesConfig,
@@ -262,6 +264,16 @@ export interface RawConfig {
    *  core/chat.ts, which names the user and the agent as the two speakers). Same placeholders as
    *  retainTags. Extraction reads this to decide WHOSE claim a sentence is. */
   retainContext?: string;
+  /** Tags every READ is narrowed to — the automatic recall and reflect injected before a prompt, and the
+   *  `hindsight_reflect` tool — e.g. ["project:{gitProject}"]. Same placeholders as retainTags.
+   *  The other half of a shared bank: retainTags records which repo a memory came from, this keeps
+   *  another repo's memories out of this one's answers (#4226). Unset (the default) reads the
+   *  whole bank. Page search is not narrowed: the server cannot filter pages by tag yet (#6967). */
+  recallTags?: string[];
+  /** How `recallTags` match (default "any": memories with any of the tags, plus untagged ones,
+   *  so knowledge shared across repos still answers). "any_strict"/"all_strict" leave out
+   *  untagged memories; "all" requires every tag. */
+  recallTagsMatch?: TagsMatch;
   /** Let the plugin shape the bank's own configuration — the retain strategies it writes under,
    *  the `knowledge` entity-label group, and (on a bank that has none) the missions (default true).
    *
@@ -378,6 +390,8 @@ export interface Config {
   retainTags: string[];
   retainMetadata: Record<string, string>;
   retainContext?: string;
+  recallTags: string[];
+  recallTagsMatch: TagsMatch;
   manageBankConfig: boolean;
   retainExtractionMode: RetainExtractionMode;
   defaultBankConfig: Record<string, unknown>;
@@ -727,6 +741,10 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     retainTags: Array.isArray(raw.retainTags)
       ? raw.retainTags.filter((t): t is string => typeof t === "string" && t.trim() !== "")
       : [],
+    recallTags: Array.isArray(raw.recallTags)
+      ? raw.recallTags.filter((t): t is string => typeof t === "string" && t.trim() !== "")
+      : [],
+    recallTagsMatch: TAGS_MATCH_MODES.includes(raw.recallTagsMatch!) ? raw.recallTagsMatch! : "any",
     // Undefined, not "", when unset or blank: the retain call distinguishes "not configured" (use
     // the built-in default) from a configured value, and an empty context would strip the default.
     retainContext:
@@ -857,6 +875,8 @@ const ENV_KEYS = {
   // Comma-separated, e.g. HINDSIGHT_RETAIN_TAGS="project:{gitProject},env:work". A LIST rather than
   // a map, so it flattens cleanly; its sibling retainMetadata stays file-only for the reason above.
   retainTags: "HINDSIGHT_RETAIN_TAGS",
+  recallTags: "HINDSIGHT_RECALL_TAGS",
+  recallTagsMatch: "HINDSIGHT_RECALL_TAGS_MATCH",
   manageBankConfig: "HINDSIGHT_MANAGE_BANK_CONFIG",
   retainExtractionMode: "HINDSIGHT_RETAIN_EXTRACTION_MODE",
 } as const satisfies Partial<Record<keyof RawConfig, string>>;
@@ -875,7 +895,7 @@ const ENV_BOOLEANS = new Set<keyof RawConfig>([
   "manageBankConfig",
   "writeTools",
 ]);
-const ENV_LISTS = new Set<keyof RawConfig>(["retainTags", "optInPaths"]);
+const ENV_LISTS = new Set<keyof RawConfig>(["retainTags", "recallTags", "optInPaths"]);
 const ENV_NUMBERS = new Set<keyof RawConfig>([
   "apiPort",
   "daemonIdleTimeout",

@@ -655,6 +655,19 @@ describe("every client-building entrypoint forwards observationScopes and apiHea
     expect(dropped).toEqual([]);
   });
 
+  // recallTags is what keeps another repo's memories out of a shared bank's answers (#4226). A
+  // site that reads (it forwards recallOptions) but drops it answers from the whole bank.
+  it("has no reading client without the configured recallTags", () => {
+    const dropped = sourceFiles(SRC).filter((rel) => {
+      const src = readFileSync(join(SRC, rel), "utf8");
+      return (
+        src.includes("recallOptions: cfg.recallOptions") &&
+        !src.includes("recallTags: resolveRecallTags(")
+      );
+    });
+    expect(dropped).toEqual([]);
+  });
+
   // A site that drops `headers` fails HARD for its user — behind Cloudflare Access every request
   // from it is refused at the edge — but only on the one path that forgot (#6651).
   it("has no client construction without the configured apiHeaders", () => {
@@ -802,6 +815,41 @@ describe("HindsightClient.recallObservations", () => {
       // Not overridden, so the defaults stand.
       budget: "low",
       include: { entities: null },
+    });
+  });
+
+  it("sends recallTags on recall and reflect, over a tags in recallOptions (#4226)", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { text: "a", results: [] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new HindsightClient({
+      apiUrl: "http://x",
+      bank: "b",
+      recallOptions: { tags: ["other"] },
+      recallTags: ["project:app"],
+      recallTagsMatch: "any_strict",
+    });
+    await client.recallObservations("goal", { timeoutMs: 5_000 });
+    await client.reflect("goal", { timeoutMs: 5_000 });
+    for (const [, init] of fetchMock.mock.calls)
+      expect(JSON.parse(String(init?.body))).toMatchObject({
+        tags: ["project:app"],
+        tags_match: "any_strict",
+      });
+  });
+
+  it("sends no tag filter on reflect without recallTags", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) =>
+      jsonResponse(200, { text: "a" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await new HindsightClient({ apiUrl: "http://x", bank: "b" }).reflect("goal", {
+      timeoutMs: 5_000,
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      query: "goal",
+      budget: "high",
     });
   });
 
