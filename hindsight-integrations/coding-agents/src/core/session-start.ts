@@ -116,8 +116,8 @@ export function buildUnreachableBanner(bankId: string, apiUrl: string, color = f
     /* not a URL: show it as configured */
   }
   return (
-    `${brandWord(color)} can't reach ${host} — this session runs without memory\n` +
-    `  ↳ memory bank “${bankId}” · it will try again next session`
+    `${brandWord(color)} can't reach ${host} — running without memory until it answers\n` +
+    `  ↳ memory bank “${bankId}”`
   );
 }
 

@@ -161,7 +161,12 @@ export class RuntimeCore {
       if (out.systemMessage) {
         // Plain text: buildSessionStartContext only paints the banner when asked to (#6502).
         log.info(this.harness, out.systemMessage);
-        this.notify?.("Hindsight", out.systemMessage.replace(/^Hindsight is /, "Is "));
+        // The toast's title already says "Hindsight": drop the banner's leading brand word
+        // ("Is tracking…", "Can't reach…").
+        this.notify?.(
+          "Hindsight",
+          out.systemMessage.replace(/^Hindsight (.)/, (_m, c: string) => c.toUpperCase())
+        );
       }
       this.deferInitialReflect = out.deferInitialReflect === true;
     } catch {

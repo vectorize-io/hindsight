@@ -933,6 +933,32 @@ describe("HindsightClient.listPages timeout", () => {
     }
   });
 
+  it("caps the connect wait at the request's own deadline, at most 5s", async () => {
+    const server = createServer((_q, res) => res.end("{}"));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const original = getGlobalDispatcher();
+    // Named `Agent`, like Node's own: the client builds connect-capped siblings from its class.
+    const connectTimeouts: unknown[] = [];
+    class RecordingAgent extends Agent {
+      constructor(opts: { connect?: { timeout?: number } } = {}) {
+        super(opts);
+        connectTimeouts.push(opts.connect?.timeout);
+      }
+    }
+    Object.defineProperty(RecordingAgent, "name", { value: "Agent" });
+    setGlobalDispatcher(new RecordingAgent());
+    try {
+      const { port } = server.address() as AddressInfo;
+      const client = new HindsightClient({ apiUrl: `http://127.0.0.1:${port}`, bank: "b" });
+      await client.listPages({ timeoutMs: 1200 });
+      await client.listPages({ timeoutMs: 60_000 });
+      expect(connectTimeouts.slice(1)).toEqual([2000, 5000]);
+    } finally {
+      setGlobalDispatcher(original);
+      server.close();
+    }
+  });
+
   it("an error answer is not a missing answer", () => {
     expect(isNoAnswerError(new Error("GET http://h/x -> 500 boom"))).toBe(false);
     expect(
