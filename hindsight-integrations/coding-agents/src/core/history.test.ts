@@ -148,6 +148,22 @@ describe("local history import", () => {
     expect(JSON.stringify(r.sessions)).not.toContain("theirs");
   });
 
+  it("skips Codex rollouts whose originator is in skipOriginators (#5507)", () => {
+    const h = newHome();
+    const day = join(h, ".codex", "sessions", "2026", "08", "03");
+    mkdirSync(day, { recursive: true });
+    const rollout = (originator: string, text: string) =>
+      `${JSON.stringify({ type: "session_meta", payload: { id: text, cwd: "/repo/mine", originator } })}\n` +
+      `${JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text }] } })}\n`;
+    writeFileSync(join(day, "delegated.jsonl"), rollout("Claude Code", "delegated"));
+    writeFileSync(join(day, "own.jsonl"), rollout("Codex Desktop", "own"));
+
+    const r = importLocalHistory("codex", "/repo/mine", h, undefined, ["Claude Code"]);
+    expect(JSON.stringify(r.sessions)).toContain("own");
+    expect(JSON.stringify(r.sessions)).not.toContain("delegated");
+    expect(importLocalHistory("codex", "/repo/mine", h).sessions).toHaveLength(2);
+  });
+
   it("handles a session_meta header larger than one read chunk", () => {
     const h = newHome();
     const day = join(h, ".codex", "sessions", "2026", "08", "03");

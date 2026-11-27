@@ -32,7 +32,13 @@ vi.mock("./config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./config")>();
   return {
     ...actual,
-    loadConfig: () => actual.resolveConfig({ apiToken: "test-key", ...rawConfig }),
+    // The asking harness's `harnesses.<name>` section layered on top, as the real loader does.
+    loadConfig: (o?: { harness?: string }) =>
+      actual.resolveConfig({
+        apiToken: "test-key",
+        ...rawConfig,
+        ...(o?.harness ? rawConfig.harnesses?.[o.harness] : undefined),
+      }),
   };
 });
 
@@ -990,7 +996,7 @@ describe("runRetainHook honors retainSessions", () => {
   });
 
   it("skipOriginators: a matching originator is not written back; any other is (#5507)", async () => {
-    rawConfig = { skipOriginators: ["Claude Code"] };
+    rawConfig = { harnesses: { codex: { skipOriginators: ["Claude Code"] } } };
     const codexSpec = { ...spec, harness: "codex" };
     const skipped = stubClient();
     await runRetainHook({ ...codexSpec, originator: () => "Claude Code" }, skipped.makeClient);

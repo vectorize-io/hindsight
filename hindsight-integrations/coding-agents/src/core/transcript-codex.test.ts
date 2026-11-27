@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
   closeSync,
-  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -673,41 +672,31 @@ describe("readCodexTranscript memory", () => {
 });
 
 describe("codexOriginator (#5507)", () => {
-  /** A rollout at `<root>/YYYY/MM/DD/rollout-<date>-<id>.jsonl`, as Codex lays them out. */
-  const rollout = (day: string, id: string, payload: Record<string, unknown>): string => {
-    const dir = join(root, "sessions", ...day.split("-"));
-    mkdirSync(dir, { recursive: true });
-    const path = join(dir, `rollout-${day}T10-00-00-${id}.jsonl`);
+  const rollout = (payload: Record<string, unknown>): string => {
     writeFileSync(
-      path,
-      `${JSON.stringify({ type: "session_meta", payload: { id, ...payload } })}\n`
+      file,
+      `${JSON.stringify({ type: "session_meta", payload: { id: "a", ...payload } })}\n`
     );
-    return path;
+    return file;
   };
-  const spawned = (parent: string) => ({
-    subagent: { thread_spawn: { parent_thread_id: parent, depth: 1 } },
-  });
 
   it("reads the originator from the session_meta header", () => {
+    expect(codexOriginator(rollout({ originator: "Claude Code", source: "exec" }))).toBe(
+      "Claude Code"
+    );
+  });
+
+  it("a sub-agent thread reports its own originator, whatever kind of sub-agent it is", () => {
+    const spawned = { subagent: { thread_spawn: { parent_thread_id: "p", depth: 1 } } };
+    expect(codexOriginator(rollout({ originator: "Claude Code", source: spawned }))).toBe(
+      "Claude Code"
+    );
     expect(
-      codexOriginator(rollout("2026-11-01", "aaa", { originator: "Claude Code", source: "exec" }))
+      codexOriginator(rollout({ originator: "Claude Code", source: { subagent: "review" } }))
     ).toBe("Claude Code");
   });
 
-  it("a sub-agent thread follows its parent's originator, across days and depths", () => {
-    rollout("2026-10-31", "root1", { originator: "Claude Code", source: "exec" });
-    rollout("2026-11-01", "mid1", { originator: "codex_exec", source: spawned("root1") });
-    const child = rollout("2026-11-01", "leaf1", {
-      originator: "codex_exec",
-      source: spawned("mid1"),
-    });
-    expect(codexOriginator(child)).toBe("Claude Code");
-  });
-
-  it("an unresolvable parent, or no header, yields undefined so the session is retained", () => {
-    expect(
-      codexOriginator(rollout("2026-11-01", "orph", { originator: "x", source: spawned("gone") }))
-    ).toBe(undefined);
+  it("no header, or no file, yields undefined so the session is retained", () => {
     writeFileSync(file, `${JSON.stringify({ type: "response_item", payload: {} })}\n`);
     expect(codexOriginator(file)).toBe(undefined);
     expect(codexOriginator(join(root, "missing.jsonl"))).toBe(undefined);

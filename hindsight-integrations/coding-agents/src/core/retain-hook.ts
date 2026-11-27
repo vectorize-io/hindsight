@@ -76,6 +76,9 @@ export interface RetainHookSpec {
   readTranscript?: TranscriptReader;
   /** Harness-specific decoder for `lastAssistantMessage`. Defaults to identity. */
   readLastMessage?: LastMessageReader;
+  /** Which client started the session, read from the transcript — gates `skipOriginators`. Only
+   *  Codex records one (core/transcript-codex.ts). */
+  originator?(transcriptPath: string): string | undefined;
   /**
    * Hosts that expose no durable transcript retain from the plugin's OWN per-session journal
    * (core/turn-journal.ts) instead of a host file: the prompt hook has already appended the user
@@ -84,9 +87,6 @@ export interface RetainHookSpec {
    * Declaring it here rather than in `parse` is what keeps `parse` pure — resolving the reply is a
    * read of the ephemeral transcript the host is about to delete, and closing the turn is a write.
    */
-  /** Which client started the session, read from the transcript — gates `skipOriginators`. Only
-   *  Codex records one (core/transcript-codex.ts). */
-  originator?(transcriptPath: string): string | undefined;
   journal?: {
     /** The assistant reply for this turn, from the Stop event. "" when the host sent none. */
     assistantText(event: Record<string, unknown>): string;

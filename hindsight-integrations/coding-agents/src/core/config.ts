@@ -100,8 +100,9 @@ export interface RawConfig {
   retainSessions?: boolean;
   /** Codex only: don't write back a session whose rollout says another client started it, e.g.
    *  ["Claude Code"] for jobs Claude Code's Codex plugin delegates — the parent session already
-   *  holds the brief and the result (#5507). Matched against `session_meta.originator`; a
-   *  sub-agent thread follows its parent's. Recall is unchanged. */
+   *  holds the brief and the result (#5507). Matched against each rollout's own
+   *  `session_meta.originator`, which a sub-agent thread carries too. Also honoured by the
+   *  conversation import. Recall is unchanged. */
   skipOriginators?: string[];
   /** Cap on concurrent retain-related requests the client sends to the API (default 10):
    *  drain()'s per-operation polls and deepen's chat/git retain pools. A single request returning
@@ -685,11 +686,11 @@ export function resolveConfig(raw: RawConfig = {}): Config {
     gitIngest: ["message", "full", "none"].includes(raw.gitIngest as string)
       ? (raw.gitIngest as "message" | "full" | "none")
       : "message",
-    // Hostile input is a config typo, not an attack: keep only string entries so a stray number or
-    // nested object cannot reach the API as a tag and fail the whole retain.
     skipOriginators: Array.isArray(raw.skipOriginators)
       ? raw.skipOriginators.filter((t): t is string => typeof t === "string" && t.trim() !== "")
       : [],
+    // Hostile input is a config typo, not an attack: keep only string entries so a stray number or
+    // nested object cannot reach the API as a tag and fail the whole retain.
     retainTags: Array.isArray(raw.retainTags)
       ? raw.retainTags.filter((t): t is string => typeof t === "string" && t.trim() !== "")
       : [],

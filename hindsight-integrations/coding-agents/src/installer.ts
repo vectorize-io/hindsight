@@ -42,6 +42,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyEdits, modify } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
+import { loadConfig } from "./core/config";
 import { importLocalHistory } from "./core/history";
 import { PRIME_AGENT_DIR_ENV, PRIME_SESSION_ID_ENV } from "./prime-agent";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
@@ -2522,7 +2523,13 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
  */
 function importConversations(harness: string, ctx: InstallCtx): void {
   const repo = process.cwd();
-  const found = importLocalHistory(harness, repo);
+  const found = importLocalHistory(
+    harness,
+    repo,
+    homedir(),
+    undefined,
+    loadConfig({ harness }).skipOriginators
+  );
   if (!found.supported) {
     ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
     return;
