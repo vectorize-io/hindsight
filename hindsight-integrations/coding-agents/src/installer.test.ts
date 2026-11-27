@@ -3224,13 +3224,12 @@ describe("server setup", () => {
       `require("fs").writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2)));`
     );
     ctx.dist = dist;
-    vi.stubEnv("HOME", ctx.home);
-    vi.spyOn(process, "cwd").mockReturnValue(repo);
+    vi.stubEnv("HOME", ctx.home); // afterEach unstubs it
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(repo);
     try {
       expect(run(["install", "claude-code", "--import-conversations"], ctx)).toBe(0);
     } finally {
-      vi.unstubAllEnvs();
-      vi.restoreAllMocks();
+      cwd.mockRestore();
     }
     const argv: string[] = JSON.parse(readFileSync(argvFile, "utf8"));
     expect(argv[argv.indexOf("--harness") + 1]).toBe("claude-code");
