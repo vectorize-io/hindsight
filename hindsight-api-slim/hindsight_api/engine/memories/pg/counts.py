@@ -22,7 +22,7 @@ from ..base import NameCount, StatsSummaryAggregates, SummaryMemory
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
-# Each stats-summary answer gets this long; past it, that answer is left out (None).
+# The stats summary's answers share this budget; one that would run past it is left out (None).
 STATS_SUMMARY_QUERY_TIMEOUT_S = 10.0
 
 
@@ -200,9 +200,10 @@ async def stats_summary(
 
     Memories are placed on ``COALESCE(mentioned_at, created_at)``, like the event-time
     timeseries; documents on ``created_at``. Only aggregates and two rows cross the wire.
-    Each answer is its own query with its own time limit: one that runs past
-    ``STATS_SUMMARY_QUERY_TIMEOUT_S`` comes back ``None`` and the others still answer,
-    so a very large bank gets a smaller summary instead of a slow one.
+    Each answer is its own query, and together they get ``STATS_SUMMARY_QUERY_TIMEOUT_S``
+    (on both dialects, through ``asyncio.wait_for``): a query that runs past what is left
+    comes back ``None``, as does every one after the budget is spent, so a very large bank
+    gets a smaller summary instead of a slow one. The cheap answers go first.
 
     Every query reads the window from a subquery that applies the tag scope on the bare
     ``tags`` column: the Oracle rewriter only translates the tag-group operators there
@@ -226,15 +227,45 @@ async def stats_summary(
         WHERE bank_id = $1 AND created_at >= $2 AND created_at < $3 {groups.sql}
     ) d"""
 
-    async def bounded(query: Awaitable[T]) -> T | None:
+    deadline = asyncio.get_running_loop().time() + STATS_SUMMARY_QUERY_TIMEOUT_S
+
+    async def bounded(query: Callable[[], Awaitable[T]]) -> T | None:
+        left = deadline - asyncio.get_running_loop().time()
+        if left <= 0:
+            return None
         try:
-            return await asyncio.wait_for(query, timeout=STATS_SUMMARY_QUERY_TIMEOUT_S)
+            return await asyncio.wait_for(query(), timeout=left)
         except asyncio.TimeoutError:
-            logger.warning(f"[stats_summary] a query ran past {STATS_SUMMARY_QUERY_TIMEOUT_S}s for bank {bank_id}")
+            logger.warning(f"[stats_summary] out of its {STATS_SUMMARY_QUERY_TIMEOUT_S}s budget for bank {bank_id}")
             return None
 
+    first = await bounded(
+        lambda: conn.fetchrow(f"SELECT mu.text AS text, mu.ts AS ts FROM {window} ORDER BY mu.ts LIMIT 1", *params)
+    )
+    documents = await bounded(lambda: conn.fetchval(f"SELECT COUNT(*) FROM {docs}", *params))
+    tag_rows = (
+        f"{docs} CROSS APPLY JSON_TABLE(d.tags, '$[*]' COLUMNS (tag VARCHAR2(256) PATH '$')) jt"
+        if oracle
+        else f"{docs}, unnest(d.tags) AS jt(tag)"
+    )
+    harnesses = await bounded(
+        lambda: conn.fetch(
+            f"SELECT jt.tag AS tag, COUNT(*) AS n FROM {tag_rows} WHERE jt.tag LIKE 'harness:%' "
+            "GROUP BY jt.tag ORDER BY n DESC, jt.tag",
+            *params,
+        )
+    )
+    # NULLS LAST: proof_count is nullable (DEFAULT 1, no NOT NULL), and NULL sorts first descending.
+    strongest = await bounded(
+        lambda: conn.fetchrow(
+            f"SELECT mu.text AS text, mu.proof_count AS proof_count, mu.ts AS ts FROM {window} "
+            "WHERE mu.fact_type = 'observation' ORDER BY mu.proof_count DESC NULLS LAST, mu.ts LIMIT 1",
+            *params,
+        )
+    )
+    # Last: the join over every memory's entities is the one a very large bank runs out of time on.
     entities = await bounded(
-        conn.fetch(
+        lambda: conn.fetch(
             f"""
             SELECT e.canonical_name AS name, COUNT(*) AS n
             FROM {window}
@@ -246,30 +277,6 @@ async def stats_summary(
             """,
             *params,
             entity_limit,
-        )
-    )
-    # NULLS LAST: proof_count is nullable (DEFAULT 1, no NOT NULL), and NULL sorts first descending.
-    strongest = await bounded(
-        conn.fetchrow(
-            f"SELECT mu.text AS text, mu.proof_count AS proof_count, mu.ts AS ts FROM {window} "
-            "WHERE mu.fact_type = 'observation' ORDER BY mu.proof_count DESC NULLS LAST, mu.ts LIMIT 1",
-            *params,
-        )
-    )
-    first = await bounded(
-        conn.fetchrow(f"SELECT mu.text AS text, mu.ts AS ts FROM {window} ORDER BY mu.ts LIMIT 1", *params)
-    )
-    documents = await bounded(conn.fetchval(f"SELECT COUNT(*) FROM {docs}", *params))
-    tag_rows = (
-        f"{docs} CROSS APPLY JSON_TABLE(d.tags, '$[*]' COLUMNS (tag VARCHAR2(256) PATH '$')) jt"
-        if oracle
-        else f"{docs}, unnest(d.tags) AS jt(tag)"
-    )
-    harnesses = await bounded(
-        conn.fetch(
-            f"SELECT jt.tag AS tag, COUNT(*) AS n FROM {tag_rows} WHERE jt.tag LIKE 'harness:%' "
-            "GROUP BY jt.tag ORDER BY n DESC, jt.tag",
-            *params,
         )
     )
     return StatsSummaryAggregates(

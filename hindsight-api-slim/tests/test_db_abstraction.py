@@ -1645,4 +1645,4 @@ class TestStatsSummaryOracleSql:
             assert "mu.EXISTS" not in sql and "mu.NOT" not in sql and "d.EXISTS" not in sql, sql
             assert "date_trunc" not in sql and "unnest" not in sql, sql
         assert "TRUNC(CAST(COALESCE(mentioned_at, created_at) AS DATE), 'HH24')" in statements[0]
-        assert "CROSS APPLY JSON_TABLE(d.tags" in statements[-1]
+        assert any("CROSS APPLY JSON_TABLE(d.tags" in sql for sql in statements)
