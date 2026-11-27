@@ -302,6 +302,45 @@ describe("buildRetain", () => {
     ]);
   });
 
+  it("a Claude Code session continued under a new id writes back only its own turns (#6960)", async () => {
+    // Claude Code continues session A as B in a new file that starts with a byte-for-byte copy of
+    // A's file (A's ids kept, no requestSessionId). B's first write-back stored all of A again.
+    const line = (sid: string, type: string, content: string) =>
+      JSON.stringify({ type, sessionId: sid, message: { role: type, content } });
+    const retain = vi.fn().mockResolvedValue(undefined);
+    const args = {
+      harness: "claude-code",
+      cursors: memoryCursorStore(),
+      client: { retain, bank: "test-bank", supportsAppendRetain: async () => true },
+    };
+    const fileA = [
+      line("A", "user", "The Atlas connector is amber."),
+      line("A", "assistant", "Noted."),
+    ];
+    writeFileSync(file, fileA.join("\n"));
+    await buildRetain({ ...args, sessionId: "A", transcriptPath: file });
+
+    const fileB = join(root, "b.jsonl");
+    writeFileSync(
+      fileB,
+      [
+        ...fileA,
+        line("B", "user", "The Birch connector is violet."),
+        line("B", "assistant", "Ok."),
+      ].join("\n")
+    );
+    await buildRetain({ ...args, sessionId: "B", transcriptPath: fileB });
+
+    expect(retain).toHaveBeenCalledTimes(2);
+    expect(retain.mock.calls[1][2]).toBe("conversation:B");
+    const written = retain.mock.calls[1][0].split("\n").map((row: string) => JSON.parse(row));
+    // the first write of a document opens with its REF-ID header; then only B's own turns
+    expect(written.filter((t: { role: string }) => t.role !== "system")).toEqual([
+      { role: "user", content: "The Birch connector is violet." },
+      { role: "assistant", content: "Ok." },
+    ]);
+  });
+
   it("appends a Codex continuation rollout instead of replacing the session document", async () => {
     // Same session_meta id, a NEW rollout file holding only the turns that come next (#4493): the
     // earlier turns live in the earlier file, so replacing would drop them from the document.

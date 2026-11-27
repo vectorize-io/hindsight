@@ -499,6 +499,43 @@ describe("readClaudeTranscript", () => {
     ]);
   });
 
+  it("drops the history a session continued under a new id copied from its old file (#6960)", () => {
+    // Shape of the real continuation: the new file starts with a byte-for-byte copy of the old
+    // one, every copied line keeping the OLD sessionId and none carrying requestSessionId; then
+    // the continuation under the new id. The copied part is already in the old session's document.
+    const old = "a-old-session";
+    const next = "b-new-session";
+    const line = (sid: string, type: string, content: string) =>
+      JSON.stringify({ type, sessionId: sid, message: { role: type, content } });
+    writeFileSync(
+      file,
+      [
+        line(old, "user", "first question"),
+        line(old, "assistant", "first answer"),
+        JSON.stringify({
+          type: "attachment",
+          sessionId: old,
+          attachment: {
+            type: "queued_command",
+            prompt: "queued in old",
+            origin: { kind: "human" },
+          },
+        }),
+        JSON.stringify({ type: "file-history-snapshot", messageId: "x" }), // no sessionId
+        JSON.stringify({ type: "system", subtype: "model_refusal_no_fallback", sessionId: old }),
+        JSON.stringify({ type: "custom-title", sessionId: next, customTitle: "t" }),
+        JSON.stringify({ type: "mode", sessionId: next, mode: "default" }),
+        line(next, "user", "after the switch"),
+        line(next, "assistant", "new answer"),
+      ].join("\n")
+    );
+
+    expect(readClaudeTranscript(file)).toEqual([
+      { role: "user", content: "after the switch" },
+      { role: "assistant", content: "new answer" },
+    ]);
+  });
+
   it("keeps every turn of a session that is not a fork, including one stamped with its own id", () => {
     const sid = "own-session";
     writeFileSync(
