@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="640" viewBox="0 0 800 640" font-family="Arial, sans-serif">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M0 0L10 5L0 10z" fill="#a1a1aa"/>
+</marker>
+</defs>
+<rect x="0" y="0" width="800" height="640" fill="#18181b" stroke="none" rx="18"/>
+<text x="30" y="54" fill="#e4e4e7" font-size="34" font-weight="700">Claude Code on AMB sdebench</text>
+<rect x="32" y="84" width="24" height="24" fill="#0074d9" stroke="none" rx="4"/>
+<text x="66" y="106" fill="#a1a1aa" font-size="28" font-weight="400">No memory</text>
+<rect x="330" y="84" width="24" height="24" fill="#009296" stroke="none" rx="4"/>
+<text x="364" y="106" fill="#a1a1aa" font-size="28" font-weight="400">With Hindsight</text>
+<text x="30" y="176" fill="#e4e4e7" font-size="30" font-weight="700">Corrections per task</text>
+<rect x="32" y="196" width="600" height="36" fill="#27272a" stroke="none" rx="10"/>
+<rect x="32" y="196" width="510.0" height="36" fill="#0074d9" stroke="none" rx="6"/>
+<text x="554.0" y="224" fill="#e4e4e7" font-size="28" font-weight="700">0.85</text>
+<rect x="32" y="246" width="600" height="36" fill="#27272a" stroke="none" rx="10"/>
+<rect x="32" y="246" width="216.0" height="36" fill="#009296" stroke="none" rx="6"/>
+<text x="260.0" y="274" fill="#e4e4e7" font-size="28" font-weight="700">0.36</text>
+<text x="32" y="326" fill="#a1a1aa" font-size="28" font-weight="400">0</text>
+<text x="587.5" y="326" fill="#a1a1aa" font-size="28" font-weight="400">1.0</text>
+<text x="30" y="406" fill="#e4e4e7" font-size="30" font-weight="700">Cost per task</text>
+<rect x="32" y="426" width="600" height="36" fill="#27272a" stroke="none" rx="10"/>
+<rect x="32" y="426" width="445.0" height="36" fill="#0074d9" stroke="none" rx="6"/>
+<text x="489.0" y="454" fill="#e4e4e7" font-size="28" font-weight="700">$0.445</text>
+<rect x="32" y="476" width="600" height="36" fill="#27272a" stroke="none" rx="10"/>
+<rect x="32" y="476" width="338.0" height="36" fill="#009296" stroke="none" rx="6"/>
+<text x="382.0" y="504" fill="#e4e4e7" font-size="28" font-weight="700">$0.338</text>
+<text x="32" y="556" fill="#a1a1aa" font-size="28" font-weight="400">0</text>
+<text x="551.8" y="556" fill="#a1a1aa" font-size="28" font-weight="400">$0.60</text>
+<text x="30" y="616" fill="#a1a1aa" font-size="28" font-weight="400">Mean of 3 runs</text>
+</svg>
