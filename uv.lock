@@ -1934,7 +1934,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'local-ml'", specifier = ">=6.2.0" },
     { name = "sqlalchemy", specifier = ">=2.0.44,<2.1" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.0.0" },
-    { name = "text2date", specifier = ">=0.1.0" },
+    { name = "text2date", specifier = ">=0.1.2" },
     { name = "tokenizers", marker = "extra == 'local-ml'", specifier = ">=0.23.1,<0.24.0" },
     { name = "tokenizers", marker = "extra == 'local-onnx'", specifier = ">=0.23.1,<0.24.0" },
     { name = "toktok-rs", specifier = ">=0.5.0" },
@@ -5323,15 +5323,16 @@ wheels = [
 
 [[package]]
 name = "text2date"
-version = "0.1.0"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
+    { name = "threadpoolctl" },
     { name = "tzdata" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8b/7d/819e356ef6ebdeadb9ed3eae0232abbcc142a0ce2a3061d1bd21309e9bc5/text2date-0.1.0.tar.gz", hash = "sha256:a441b57e442cf46f8ba1618471e13bf4c3c0441f476ce7e55b62bbd831dd0b11", size = 8995680, upload-time = "2026-11-27T10:46:43.876Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/fd/f142fc7c42c8e4f72b20727118f36a9240065e6b7a518469d1deaeaf1090/text2date-0.1.2.tar.gz", hash = "sha256:aa391169239cb04f2e0f1cf8e1b0d773d20a89dccabfcd35e731997d81de8b61", size = 8998231, upload-time = "2026-11-27T16:51:43.572Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/dd/faee65ce9adbe5a0ea5561ee7e4359800561e4b9757dd80c445bf69f1f11/text2date-0.1.0-py3-none-any.whl", hash = "sha256:5eda5136c20260d2ad25bd5914f06c1429829291ab03909713ed535f3d494303", size = 8995385, upload-time = "2026-11-27T10:46:41.693Z" },
+    { url = "https://files.pythonhosted.org/packages/db/2e/017ba6689776d0d801f0e43805ee963979da2dbbe8963ce6f9c953d0c687/text2date-0.1.2-py3-none-any.whl", hash = "sha256:7e1c67f1ad937e312134f3440bc1a2f08262a3727df8e20b32063fb401ff1f90", size = 8998270, upload-time = "2026-11-27T16:51:41.738Z" },
 ]
 
 [[package]]
