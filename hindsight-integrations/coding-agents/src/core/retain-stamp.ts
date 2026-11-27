@@ -14,6 +14,13 @@
  *   {harness}    the agent that wrote it       {bankId}   the bank being written to
  *   {sessionId}  the agent session             {timestamp} ISO-8601, resolved at retain time
  *   {channel}    $HINDSIGHT_CHANNEL_ID         {user}     $HINDSIGHT_USER_ID
+ *   {branch}     the checked-out branch (`detached` on a detached HEAD, `unknown` outside git)
+ *
+ * The branch is also stamped as `metadata.branch` on every live write by default, so a fact learnt
+ * on a feature branch that was never merged can be told apart from the project's current state
+ * (#6456). It is NOT a tag unless configured (`retainTags: ["branch:{branch}"]`). History imports
+ * pass `stampBranch: false`: the branch checked out today says nothing about where an old session
+ * ran.
  *
  * The built-in tags and metadata always win over configured ones. `harness` in particular is load-
  * bearing: the control plane resolves a document's agent logo from `metadata.harness` and the
@@ -23,6 +30,7 @@
 import { applyTemplate, type Resolvers } from "./template";
 import { log } from "./log";
 import { projectNameOf } from "./bank";
+import { gitBranch } from "./git";
 import { basename } from "node:path";
 
 /** Tag namespaces the plugin owns — see the filter in buildRetainStamp. */
@@ -38,6 +46,8 @@ export interface RetainStampContext {
   bankId: string;
   /** Agent session when the document comes from one; absent for non-session documents. */
   sessionId?: string;
+  /** Stamp `metadata.branch` (default true). False for imported history — see the module doc. */
+  stampBranch?: boolean;
 }
 
 export interface RetainStamp {
@@ -65,19 +75,15 @@ function resolversFor(ctx: RetainStampContext): Resolvers {
     timestamp: () => new Date().toISOString(),
     channel: () => process.env.HINDSIGHT_CHANNEL_ID || "default",
     user: () => process.env.HINDSIGHT_USER_ID || "anonymous",
+    branch: () => (ctx.directory && gitBranch(ctx.directory)) || "unknown",
   };
 }
 
 /**
- * Resolve the configured tags and metadata for one retain. Returns empty collections when neither
- * setting is configured, which is the default — this adds nothing to a retain unless asked.
+ * Resolve the configured tags and metadata for one retain. Unconfigured, the only thing added is
+ * `metadata.branch` (see the module doc).
  */
 export function buildRetainStamp(cfg: RetainStampConfig, ctx: RetainStampContext): RetainStamp {
-  const hasTags = Boolean(cfg.retainTags?.length);
-  const hasMetadata = Boolean(cfg.retainMetadata && Object.keys(cfg.retainMetadata).length);
-  const hasContext = Boolean(cfg.retainContext?.trim());
-  if (!hasTags && !hasMetadata && !hasContext) return { tags: [], metadata: {} };
-
   // Built lazily and memoized: {gitProject} shells out to git, and a config using it in both a tag
   // and a metadata value should not pay for that twice per retain.
   const base = resolversFor(ctx);
@@ -108,12 +114,15 @@ export function buildRetainStamp(cfg: RetainStampConfig, ctx: RetainStampContext
       return false;
     });
   const metadata: Record<string, string> = {};
+  // Outside a git repo there is no branch to record; the {branch} placeholder still says "unknown".
+  if (ctx.stampBranch !== false && resolvers.branch() !== "unknown")
+    metadata.branch = resolvers.branch();
   for (const [key, value] of Object.entries(cfg.retainMetadata ?? {})) {
     metadata[key] = applyTemplate(value, resolvers, "retainMetadata");
   }
   // Resolved to undefined rather than "" when a template collapses to nothing, so a bad template
   // falls back to the caller's default instead of stripping the context off the retain entirely.
-  const context = hasContext
+  const context = cfg.retainContext?.trim()
     ? applyTemplate(cfg.retainContext as string, resolvers, "retainContext").trim() || undefined
     : undefined;
   return { tags, metadata, context };

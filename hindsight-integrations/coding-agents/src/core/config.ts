@@ -235,7 +235,7 @@ export interface RawConfig {
   gitIngest?: "message" | "full" | "none";
   /** Extra tags stamped on every session write-back, e.g. ["project:{gitProject}", "env:work"].
    *  Placeholders: {gitProject} {project} {harness} {bankId} {sessionId} {timestamp} {channel}
-   *  {user} (see core/retain-stamp.ts). Mainly for a SHARED bank, where the bank id no longer says
+   *  {user} {branch} (see core/retain-stamp.ts). Mainly for a SHARED bank, where the bank id no longer says
    *  which repo a memory came from. Built-in tags win on conflict. */
   retainTags?: string[];
   /** Extra metadata stamped on every session write-back, e.g. {"repo": "{gitProject}"}. Same

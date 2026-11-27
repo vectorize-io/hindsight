@@ -152,6 +152,8 @@ async function main() {
         harness: HARNESS,
         bankId: FINAL_BANK!,
         sessionId,
+        // Imported history: today's checkout is not where those sessions ran.
+        stampBranch: false,
       });
 
     await client.configureBank({

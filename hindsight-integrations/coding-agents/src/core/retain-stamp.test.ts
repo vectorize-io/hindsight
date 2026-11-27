@@ -16,7 +16,7 @@ const ctx = (over: Partial<Parameters<typeof buildRetainStamp>[1]> = {}) => ({
 
 beforeEach(() => {
   repo = mkdtempSync(join(tmpdir(), "hs-stamp-repo-"));
-  execFileSync("git", ["init", "-q"], { cwd: repo });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
 });
 
 afterEach(() => {
@@ -26,12 +26,43 @@ afterEach(() => {
 });
 
 describe("buildRetainStamp", () => {
-  it("adds nothing when neither setting is configured", () => {
-    expect(buildRetainStamp({}, ctx())).toEqual({ tags: [], metadata: {} });
+  it("adds only the branch when neither setting is configured (#6456)", () => {
+    expect(buildRetainStamp({}, ctx())).toEqual({ tags: [], metadata: { branch: "main" } });
     expect(buildRetainStamp({ retainTags: [], retainMetadata: {} }, ctx())).toEqual({
       tags: [],
-      metadata: {},
+      metadata: { branch: "main" },
     });
+  });
+
+  it("leaves the branch out of imported history and outside a repository", () => {
+    expect(buildRetainStamp({}, ctx({ stampBranch: false })).metadata).toEqual({});
+    const plain = mkdtempSync(join(tmpdir(), "hs-stamp-plain-"));
+    try {
+      expect(buildRetainStamp({}, ctx({ directory: plain })).metadata).toEqual({});
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves {branch} for tags, `detached` on a detached HEAD", () => {
+    const tag = () => buildRetainStamp({ retainTags: ["branch:{branch}"] }, ctx()).tags;
+    execFileSync("git", ["checkout", "-q", "-b", "feat/x"], { cwd: repo });
+    expect(tag()).toEqual(["branch:feat/x"]);
+    const git = [
+      "-c",
+      "user.name=t",
+      "-c",
+      "user.email=t@t",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "c",
+    ];
+    execFileSync("git", git, { cwd: repo });
+    execFileSync("git", ["checkout", "-q", "--detach"], { cwd: repo });
+    expect(tag()).toEqual(["branch:detached"]);
+    expect(buildRetainStamp({}, ctx()).metadata).toEqual({ branch: "detached" });
   });
 
   it("resolves {gitProject} to the repo name — the #3269 use case", () => {
@@ -41,7 +72,7 @@ describe("buildRetainStamp", () => {
     );
     const name = repo.split("/").pop()!;
     expect(tags).toEqual([`project:${name}`]);
-    expect(metadata).toEqual({ repo: name });
+    expect(metadata).toEqual({ branch: "main", repo: name });
   });
 
   it("resolves {gitProject} from the session root outside a repository", () => {

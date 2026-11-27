@@ -59,6 +59,16 @@ export function gitHeadSha(dir: string): string | null {
   }
 }
 
+/** The checked-out branch, `detached` on a detached HEAD, or null outside a repo. `symbolic-ref`
+ *  rather than `rev-parse --abbrev-ref HEAD`: the latter fails on a repo with no commits yet. */
+export function gitBranch(dir: string): string | null {
+  try {
+    return git(dir, "symbolic-ref", "--short", "-q", "HEAD").trim() || null;
+  } catch {
+    return gitHeadSha(dir) ? "detached" : null;
+  }
+}
+
 /**
  * Count commits reachable from HEAD but NOT from `sinceSha` (`git rev-list --count sinceSha..HEAD`).
  * Branch-robust "new commits since a baseline": counts what's reachable from wherever HEAD is now, so
