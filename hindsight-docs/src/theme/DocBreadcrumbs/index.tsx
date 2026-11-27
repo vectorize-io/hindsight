@@ -3,6 +3,7 @@ import Breadcrumbs from '@theme-original/DocBreadcrumbs';
 import type BreadcrumbsType from '@theme/DocBreadcrumbs';
 import type {WrapperProps} from '@docusaurus/types';
 import {useLocation} from '@docusaurus/router';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import SkillBanner from '@site/src/components/SkillBanner';
 
 type Props = WrapperProps<typeof BreadcrumbsType>;
@@ -12,7 +13,10 @@ export default function BreadcrumbsWrapper(props: Props): JSX.Element {
   // page — a bordered strip above it puts a box between the navbar and the
   // band and undoes the full-bleed. The homepage renders its own <SkillBanner />
   // just below the hero instead (docs/developer/index.mdx).
-  const isHome = useLocation().pathname.replace(/\/$/, '') === '';
+  // Compare against baseUrl: under a path prefix (e.g. /oss/) the home is
+  // "/oss", not "/".
+  const {baseUrl} = useDocusaurusContext().siteConfig;
+  const isHome = useLocation().pathname.replace(/\/$/, '') === baseUrl.replace(/\/$/, '');
 
   return (
     <>
