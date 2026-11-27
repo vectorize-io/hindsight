@@ -2840,7 +2840,7 @@
     "rhythmTitle": "你的节奏",
     "activeDays": "活跃天数",
     "longestStreak": "天连续",
-    "busiestDay": "最忙的一天：{day}，共 {count} 条记忆。",
+    "busiestDay": "最忙的一天：{day}，共 {count, number} 条记忆。",
     "namesTitle": "你常想到的名字",
     "personaLead": "记忆涌来的时候，你是",
     "persona": {

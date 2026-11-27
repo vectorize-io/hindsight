@@ -2840,7 +2840,7 @@
     "rhythmTitle": "Your rhythm",
     "activeDays": "{count, plural, one {active day} other {active days}}",
     "longestStreak": "day streak",
-    "busiestDay": "Busiest day: {day}, with {count} memories.",
+    "busiestDay": "Busiest day: {day}, with {count, plural, one {# memory} other {# memories}}.",
     "namesTitle": "The names on your mind",
     "personaLead": "When the memories flowed, you were",
     "persona": {

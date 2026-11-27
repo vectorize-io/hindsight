@@ -2840,7 +2840,7 @@
     "rhythmTitle": "당신의 리듬",
     "activeDays": "활동한 날",
     "longestStreak": "일 연속",
-    "busiestDay": "가장 바빴던 날: {day}, 기억 {count}개.",
+    "busiestDay": "가장 바빴던 날: {day}, 기억 {count, number}개.",
     "namesTitle": "자주 떠올린 이름들",
     "personaLead": "기억이 쏟아질 때, 당신은",
     "persona": {

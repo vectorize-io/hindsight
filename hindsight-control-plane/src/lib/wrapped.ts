@@ -58,6 +58,66 @@ export function wrappedInSeason(year: number, now = new Date()): boolean {
   return now < new Date(year + 1, 1, 1);
 }
 
+/**
+ * Who the cached year belongs to: the account's oldest bank (id and creation time). Read from the
+ * unfiltered bank list only, so two accounts (or orgs) opened in the same browser never share it.
+ * ponytail: the oldest bank is looked for on the loaded page; if it is not there the stamp can
+ * move, and the year is read again.
+ */
+export function accountStamp(
+  banks: { bank_id: string; created_at?: string | null }[]
+): string | null {
+  let oldest: (typeof banks)[number] | null = null;
+  for (const b of banks)
+    if (b.created_at && (!oldest || b.created_at < oldest.created_at!)) oldest = b;
+  return oldest ? `${oldest.bank_id}:${oldest.created_at}` : null;
+}
+
+/** A cached year: `final` once it was computed after the year ended, else the day it was. */
+interface CachedYear {
+  stats: WrappedStats;
+  final: boolean;
+  day: string;
+}
+
+const cacheKey = (year: number, stamp: string) => `hindsight-wrapped-${year}:v3:${stamp}`;
+
+/** The account's saved year: kept for good once final, else only on the day it was computed. */
+export function readCache(
+  storage: Pick<Storage, "getItem">,
+  year: number,
+  stamp: string | null,
+  now = new Date()
+): WrappedStats | null {
+  if (!stamp) return null;
+  try {
+    const raw = storage.getItem(cacheKey(year, stamp));
+    const cached = raw ? (JSON.parse(raw) as Partial<CachedYear>) : null;
+    // A year still running is refreshed daily, so December is not lost to a November visit.
+    return cached?.stats && (cached.final || cached.day === now.toDateString())
+      ? cached.stats
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeCache(
+  storage: Pick<Storage, "setItem">,
+  year: number,
+  stamp: string | null,
+  stats: WrappedStats,
+  now = new Date()
+) {
+  if (!stamp) return;
+  const entry: CachedYear = { stats, final: now >= yearRange(year).end, day: now.toDateString() };
+  try {
+    storage.setItem(cacheKey(year, stamp), JSON.stringify(entry));
+  } catch {
+    // Storage full or blocked: the year is just read again next time.
+  }
+}
+
 /** [start, end) of the year, in the viewer's local time. */
 export function yearRange(year: number): { start: Date; end: Date } {
   return { start: new Date(year, 0, 1), end: new Date(year + 1, 0, 1) };
@@ -136,7 +196,9 @@ export function computeWrapped(year: number, banks: BankYear[]): WrappedStats {
   const hours = new Array(24).fill(0);
   const entities = new Map<string, number>();
   const harnesses = new Map<string, number>();
+  // By bank id: two banks can share a name.
   const bankTotals = new Map<string, number>();
+  const bankNames = new Map<string, string>();
   const add = (m: Map<string, number>, k: string, n: number) => m.set(k, (m.get(k) || 0) + n);
   const spelling = new Map<string, string>();
   let facts = 0;
@@ -151,13 +213,16 @@ export function computeWrapped(year: number, banks: BankYear[]): WrappedStats {
 
   for (const { name, summary } of banks) {
     // UTC hours, placed in the viewer's own days and hours.
+    // ponytail: a half-hour time zone (India, +5:30) puts each hour in the local hour it starts in,
+    // and drops the one that straddles local midnight on Jan 1; per-minute buckets if that matters.
     for (const h of summary.hours) {
       const d = new Date(h.time);
       if (d < start || d >= end) continue;
       const n = h.world + h.experience + h.observation;
       facts += h.world + h.experience;
       observations += h.observation;
-      add(bankTotals, name, n);
+      add(bankTotals, summary.bank_id, n);
+      bankNames.set(summary.bank_id, name);
       add(days, dayKey(d), n);
       hours[d.getHours()] += n;
       bars[d.getMonth()] += n;
@@ -194,7 +259,7 @@ export function computeWrapped(year: number, banks: BankYear[]): WrappedStats {
   return {
     memories: facts + observations,
     banks: bankTotals.size,
-    topBanks: rank(bankTotals, 3),
+    topBanks: rank(bankTotals, 3).map((r) => ({ ...r, name: bankNames.get(r.name) ?? r.name })),
     facts,
     observations,
     documents,

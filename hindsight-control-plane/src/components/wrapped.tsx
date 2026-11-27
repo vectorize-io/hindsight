@@ -18,7 +18,10 @@ import { useBank, type BankInfo } from "@/lib/bank-context";
 import { withBasePath } from "@/lib/base-path";
 import { resolveHarnessLogo } from "@/lib/harness-logo";
 import {
+  accountStamp,
   computeWrapped,
+  readCache,
+  writeCache,
   wrappedInSeason,
   yearRange,
   type BankYear,
@@ -56,54 +59,6 @@ const MARK_H = 139;
 
 // One faint blue light in the corner; every slide sits on the same ground.
 const BACKGROUND = `radial-gradient(1200px 700px at 100% 0%, rgba(0,116,217,0.22), transparent 60%), ${NAVY}`;
-
-// Keyed by the account's oldest bank, so two servers opened in the same
-// browser keep their own year.
-// ponytail: the oldest bank is looked for on the selector's loaded page; if it
-// is not there the stamp can move, and the year is read again.
-const cacheKey = (stamp: string) => `hindsight-wrapped-${YEAR}:v3:${stamp}`;
-
-function accountStamp(banks: BankInfo[]): string | null {
-  let oldest: BankInfo | null = null;
-  for (const b of banks)
-    if (b.created_at && (!oldest || b.created_at < oldest.created_at!)) oldest = b;
-  return oldest ? `${oldest.bank_id}:${oldest.created_at}` : null;
-}
-
-/** A cached year: `final` once it was computed after the year ended, else the day it was. */
-interface CachedYear {
-  stats: WrappedStats;
-  final: boolean;
-  day: string;
-}
-
-const today = () => new Date().toDateString();
-
-function readCache(stamp: string | null): WrappedStats | null {
-  if (!stamp) return null;
-  try {
-    const raw = localStorage.getItem(cacheKey(stamp));
-    const cached = raw ? (JSON.parse(raw) as Partial<CachedYear>) : null;
-    // A year still running is refreshed daily, so December is not lost to a November visit.
-    return cached?.stats && (cached.final || cached.day === today()) ? cached.stats : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeCache(stamp: string | null, stats: WrappedStats) {
-  if (!stamp) return;
-  const entry: CachedYear = {
-    stats,
-    final: Date.now() >= yearRange(YEAR).end.getTime(),
-    day: today(),
-  };
-  try {
-    localStorage.setItem(cacheKey(stamp), JSON.stringify(entry));
-  } catch {
-    // Storage full or blocked: the year is just read again next time.
-  }
-}
 
 async function inPool<T, R>(items: T[], fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
@@ -198,45 +153,56 @@ const GRADIENT_TEXT_ON_LIGHT =
  */
 export function WrappedButton() {
   const t = useTranslations("wrapped");
-  const { bankInfos, banksLoading } = useBank();
+  const { bankInfos, banksLoading, bankSearch } = useBank();
   const { features } = useFeatures();
   // Off on the server (HINDSIGHT_CP_WRAPPED_ENABLED=false) or past January: no button, nothing read.
   const shown = (features?.wrapped ?? false) && wrappedInSeason(YEAR);
-  const stamp = useMemo(() => accountStamp(bankInfos), [bankInfos]);
-  // The cache key needs the bank list, so nothing is read or computed before it is in.
-  const cached = useMemo(() => (banksLoading ? null : readCache(stamp)), [banksLoading, stamp]);
+  // The account is read off the unfiltered bank list only: a search in the bank picker narrows
+  // `bankInfos`, and must not look like another account (or no account at all).
+  const [stamp, setStamp] = useState<string | null>(null);
+  const fresh = !banksLoading && !bankSearch ? accountStamp(bankInfos) : stamp;
+  if (fresh !== stamp) setStamp(fresh);
+  // `stamp` is null on the server render, so localStorage is only touched in the browser.
+  const cached = useMemo(() => (stamp ? readCache(localStorage, YEAR, stamp) : null), [stamp]);
   // Kept with the account it was computed for, so switching account never shows the last one's year.
   const [computed, setComputed] = useState<{ stamp: string | null; stats: WrappedStats } | null>(
     null
   );
   const stats = cached ?? (computed?.stamp === stamp ? computed.stats : null);
   const [error, setError] = useState(false);
+  // Bumped when the story is opened after a failed load, so a brief outage is retried.
+  const [attempt, setAttempt] = useState(0);
   const [open, setOpen] = useState(false);
 
   // Computed in the background, then kept: an empty or partial year is not cached, so it fills in later.
   useEffect(() => {
-    if (!shown || banksLoading || stats || !bankInfos.length) return;
+    if (!shown || !stamp || stats) return;
     let cancelled = false;
-    setError(false);
     loadWrapped()
       .then(({ stats: s, complete }) => {
         if (cancelled) return;
-        if (complete && s.memories > 0) writeCache(stamp, s);
+        if (complete && s.memories > 0) writeCache(localStorage, YEAR, stamp, s);
         setComputed({ stamp, stats: s });
       })
       .catch(() => !cancelled && setError(true));
     return () => {
       cancelled = true;
     };
-  }, [shown, banksLoading, bankInfos.length, stamp, stats]);
+  }, [shown, stamp, stats, attempt]);
 
-  if (!shown || (!banksLoading && !bankInfos.length)) return null;
+  if (!shown || !stamp) return null;
   return (
     <>
       <Button
         variant="outline"
         size="sm"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          if (error) {
+            setError(false);
+            setAttempt((a) => a + 1);
+          }
+          setOpen(true);
+        }}
         title={t("bannerTitle", { period: YEAR })}
         aria-label={t("bannerTitle", { period: YEAR })}
         className="group h-9 shrink-0 gap-1.5 whitespace-nowrap px-2.5 sm:px-3"
@@ -445,7 +411,7 @@ function WrappedStory({
             </Rise>
             {busiest && (
               <Rise delay={600} className={`${BODY} mt-8`}>
-                {t("busiestDay", { day: busiest, count: nf.format(stats.busiestDay!.count) })}
+                {t("busiestDay", { day: busiest, count: stats.busiestDay!.count })}
               </Rise>
             )}
           </Frame>
@@ -662,7 +628,7 @@ function WrappedStory({
             <div className="text-white/60">{t("loading", { period: YEAR })}</div>
           </div>
         )}
-        {error && (
+        {error && !stats && (
           <div className="absolute inset-0 flex items-center justify-center text-white/60">
             {t("error")}
           </div>

@@ -2840,7 +2840,7 @@
     "rhythmTitle": "你的節奏",
     "activeDays": "活躍天數",
     "longestStreak": "天連續",
-    "busiestDay": "最忙嗰日：{day}，共 {count} 則記憶。",
+    "busiestDay": "最忙嗰日：{day}，共 {count, number} 則記憶。",
     "namesTitle": "你成日諗起嘅名",
     "personaLead": "記憶湧嚟嘅時候，你係",
     "persona": {

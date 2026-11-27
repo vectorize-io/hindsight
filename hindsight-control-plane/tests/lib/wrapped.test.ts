@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import type { StatsSummary } from "@/lib/api";
 import {
+  accountStamp,
   computeWrapped,
+  readCache,
+  writeCache,
   quote,
   wrappedEnabled,
   wrappedInSeason,
@@ -154,5 +157,59 @@ describe("when Wrapped is shown", () => {
     expect(wrappedInSeason(2026, new Date(2026, 10, 27))).toBe(true);
     expect(wrappedInSeason(2026, new Date(2027, 0, 31, 23, 59))).toBe(true);
     expect(wrappedInSeason(2026, new Date(2027, 1, 1))).toBe(false);
+  });
+});
+
+describe("the saved year", () => {
+  const memoryStorage = () => {
+    const m = new Map<string, string>();
+    return {
+      getItem: (k: string) => m.get(k) ?? null,
+      setItem: (k: string, v: string) => void m.set(k, v),
+    };
+  };
+  const year = computeWrapped(2026, [bank("a", { hours: [hour(2, 1, 9, 3)] })]);
+
+  it("belongs to one account, whatever order its banks are listed in", () => {
+    const a = [
+      { bank_id: "new", created_at: "2026-05-01" },
+      { bank_id: "old", created_at: "2025-01-01" },
+    ];
+    expect(accountStamp(a)).toBe(accountStamp([...a].reverse()));
+    expect(accountStamp([{ bank_id: "other", created_at: "2025-01-01" }])).not.toBe(
+      accountStamp(a)
+    );
+    expect(accountStamp([])).toBeNull();
+  });
+
+  it("is never read for another account", () => {
+    const store = memoryStorage();
+    const now = new Date(2026, 10, 27);
+    writeCache(store, 2026, "a:1", year, now);
+    expect(readCache(store, 2026, "a:1", now)).toEqual(year);
+    expect(readCache(store, 2026, "b:1", now)).toBeNull();
+    expect(readCache(store, 2026, null, now)).toBeNull();
+  });
+
+  it("is read again the next day while the year runs, and kept once it is over", () => {
+    const store = memoryStorage();
+    writeCache(store, 2026, "a:1", year, new Date(2026, 10, 27));
+    expect(readCache(store, 2026, "a:1", new Date(2026, 10, 28))).toBeNull();
+    writeCache(store, 2026, "a:1", year, new Date(2027, 0, 2));
+    expect(readCache(store, 2026, "a:1", new Date(2027, 0, 20))).toEqual(year);
+  });
+});
+
+describe("banks with the same name", () => {
+  it("still count as two banks", () => {
+    const s = computeWrapped(2026, [
+      bank("Notes", { bank_id: "n1", hours: [hour(2, 1, 9, 3)] }),
+      bank("Notes", { bank_id: "n2", hours: [hour(2, 1, 9, 1)] }),
+    ]);
+    expect(s.banks).toBe(2);
+    expect(s.topBanks).toEqual([
+      { name: "Notes", count: 3 },
+      { name: "Notes", count: 1 },
+    ]);
   });
 });

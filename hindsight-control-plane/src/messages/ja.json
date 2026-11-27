@@ -2840,7 +2840,7 @@
     "rhythmTitle": "あなたのリズム",
     "activeDays": "アクティブな日",
     "longestStreak": "日連続",
-    "busiestDay": "いちばん忙しかった日：{day}（{count} 件の記憶）",
+    "busiestDay": "いちばん忙しかった日：{day}（{count, number} 件の記憶）",
     "namesTitle": "よく出てきた名前",
     "personaLead": "記憶があふれていたとき、あなたは",
     "persona": {
