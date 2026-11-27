@@ -107,6 +107,34 @@ SCENARIOS = [
             "or the B2B/wholesale system."
         ),
     ),
+    # What the user said is spread over two sessions, and the request needs both.
+    # Red until #7012: the first-prompt reflect answers the request's own words, and the rules for errors
+    # never come up although the bank holds both.
+    Scenario(
+        id="two-rules-from-two-sessions",
+        category="cross_session",
+        sessions=[
+            [
+                "team rule, keep it in mind: every error response we add carries a machine-readable `code` field "
+                "next to `error`, the mobile client switches on it. nothing to change right now",
+                "ok",
+            ],
+            [
+                "another rule from review: every new error has to be listed in the README, in a section for "
+                "errors. no change needed now either",
+                "thanks",
+            ],
+        ],
+        request="post_reserve should reject a quantity of 0 with a clear error. do it",
+        criteria=(
+            "The new error response for a zero quantity has a machine-readable `code` field next to `error`, "
+            "AND the README lists the new error."
+        ),
+        trap=(
+            "The new error response has no `code` field, or the README is not updated with the new error, or the "
+            "reply asks how errors should look as if it did not know the team's rules."
+        ),
+    ),
     # A correction in a later session must beat the original statement.
     Scenario(
         id="a-correction-wins",
@@ -126,6 +154,28 @@ SCENARIOS = [
         request="add a ships_from field to the quote response naming the warehouse the order ships from",
         criteria="The ships_from value names Antwerp ('Antwerp', 'Antwerp, Belgium' and the like all count).",
         trap="The ships_from value is Rotterdam, or the reply asks which warehouse to use as if it did not know.",
+    ),
+    # A newer state, said in passing, supersedes the older one.
+    Scenario(
+        id="a-newer-address-supersedes",
+        category="update",
+        sessions=[
+            [
+                "for later: customers reach us at help@orderbook.test, that's our support inbox. no change now",
+                "ok",
+            ],
+            [
+                "fyi support moved to the Shopdesk tool last week, the new address is support@shopdesk.test and "
+                "the old help@ inbox is closed",
+                "cool",
+            ],
+        ],
+        request="add a support_contact field to every error response so customers know where to write",
+        criteria="The support_contact value is support@shopdesk.test.",
+        trap=(
+            "The support_contact value is help@orderbook.test, or the reply asks which address to use as if it did "
+            "not know."
+        ),
     ),
 ]
 

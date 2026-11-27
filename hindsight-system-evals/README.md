@@ -96,8 +96,8 @@ stays out of the category counts.
 | hermes | update | 2 | a correction or a newer state wins over the old one |
 | hermes | pages | 2 | a question about what was decided is answered from a page |
 | hermes | builtin_memory | 2 | what Hermes saves to its built-in memory also reaches the bank |
-| coding_agents | cross_session | 1 | a decision told in chat on one machine shapes the work on another |
-| coding_agents | update | 1 | a correction from a later session wins on a new machine |
+| coding_agents | cross_session | 2 | a decision told in chat, and two rules told in two sessions, shape the work on another machine |
+| coding_agents | update | 2 | a correction, or a newer state said in passing, wins on a new machine |
 | coding_agents | initiatives | 2 | a feature stays one page through a plan change and a move (#6919); a bug fix is no initiative |
 
 The page and reflect evals share one corpus and grade twice per question: **correct** (meets
@@ -1012,7 +1012,9 @@ Two shapes of test:
 | category | scenario | what it checks |
 |---|---|---|
 | cross_session | `a-decision-told-in-passing` | "a cart line is never over 20 units, bigger is B2B"; then "support an order of 50 in post_quote" |
+| cross_session | `two-rules-from-two-sessions` | "errors carry a `code`" in one session, "list new errors in the README" in another; then "reject a quantity of 0" |
 | update | `a-correction-wins` | Rotterdam, corrected to Antwerp a session later; the new `ships_from` says Antwerp |
+| update | `a-newer-address-supersedes` | help@orderbook.test, then support moved to support@shopdesk.test; the new `support_contact` uses it |
 | initiatives | `test_initiative_stays_one_page_through_a_plan_change` | gift cards planned and built, re-planned as single-use vouchers, the page moved into a subfolder, then finished from machine B: one page throughout (#6919), showing the vouchers |
 | initiatives | `test_small_work_is_not_an_initiative` | a rounding fix and a rename: no capture, no page |
 
