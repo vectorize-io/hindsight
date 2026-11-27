@@ -367,6 +367,32 @@ describe("retainLiveSession — incremental write-back", () => {
     expect(new Set(ids).size).toBe(3);
   });
 
+  // The id names the whole history, not just the step before: the second B follows a different
+  // past than the first, so it is a new operation the server applies (#6988).
+  it("gives a branch revisited twice a fresh id each time (A → B → A → B, #6988)", async () => {
+    const { retain, client } = stubClient(false);
+    const cursors = memoryCursorStore();
+    const branchA = turns(3);
+    const branchB = [turn(0), turn(1), { role: "user", content: "sibling" }];
+    for (const branch of [branchA, branchB, branchA, branchB]) await write(client, branch, cursors);
+    const ids = retain.mock.calls.map((call) => call[5].operationId);
+    expect(new Set(ids).size).toBe(4);
+  });
+
+  // Same for an append: a rewind then the same turn typed again must not be deduped away (#6988).
+  it("gives the same turn appended again after a rewind a fresh id (#6988)", async () => {
+    const { retain, client } = stubClient();
+    const cursors = memoryCursorStore();
+    const yes = { role: "user", content: "yes" };
+    await write(client, turns(2), cursors);
+    await write(client, [...turns(2), yes], cursors);
+    await write(client, [turn(0), { role: "user", content: "edited" }], cursors);
+    await write(client, [turn(0), { role: "user", content: "edited" }, yes], cursors);
+    const calls = retain.mock.calls.map((call) => call[5]);
+    expect(calls.map((c) => c.updateMode)).toEqual([undefined, "append", undefined, "append"]);
+    expect(calls[3].operationId).not.toBe(calls[1].operationId);
+  });
+
   // An unconfirmed replace keeps its id for a retry of the SAME transcript (#6559), and only that:
   // when both earlier replaces landed with their replies lost, the return to A must not reuse A's
   // first id, or the server dedupes it and the document keeps B (#5845).
@@ -444,6 +470,7 @@ describe("retainLiveSession — incremental write-back", () => {
       appendSupported: true,
       // Accepted but never seen to complete (this stub cannot answer a status check): kept to check.
       ops: expect.arrayContaining([replay[5].operationId, tail[5].operationId]),
+      lastOp: tail[5].operationId,
     });
   });
 

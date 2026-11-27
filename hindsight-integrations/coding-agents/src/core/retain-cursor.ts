@@ -128,6 +128,9 @@ export interface RetainCursor {
   /** What that unconfirmed replace's operation id was derived from (the document it replaced), so
    *  a retry — from this process or another — goes out as the same operation (#6559). */
   replaceBase?: string;
+  /** Id of the last write the document moved to, claimed or confirmed: the base every new
+   *  operation id is derived from, so an id names the whole history before it (#6988). */
+  lastOp?: string;
   /** Appends started and not confirmed, oldest first — replayed before anything new. Their turns
    *  are already counted in `turns`: the cursor covers what is committed OR buffered. */
   pending?: PendingAppend[];
