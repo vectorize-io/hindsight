@@ -2243,7 +2243,8 @@
       },
       "stats": {
         "fetch": "获取统计数据失败",
-        "memoriesTimeseries": "获取记忆时间序列失败"
+        "memoriesTimeseries": "获取记忆时间序列失败",
+        "summary": "获取统计摘要失败"
       },
       "version": {
         "fetch": "获取版本失败"
@@ -2818,5 +2819,71 @@
     "filesMode": "文件",
     "constellationMode": "星图",
     "sourcesLegend": "来源"
+  },
+  "wrapped": {
+    "brand": "Hindsight Wrapped",
+    "bannerTitle": "用记忆回顾你的 {period}",
+    "dialogLabel": "Hindsight Wrapped",
+    "close": "关闭",
+    "previous": "上一页",
+    "next": "下一页",
+    "loading": "正在回放 {period}…",
+    "error": "无法加载这个时间段。",
+    "emptyTitle": "{period} 没有记忆",
+    "emptyBody": "等你的记忆库有了记忆再来看看。",
+    "introKicker": "Hindsight Wrapped",
+    "introBody": "这是你的记忆库记住的内容。",
+    "memoriesLead": "你的记忆库创建了",
+    "memoriesTitle": "条记忆",
+    "memoriesBody": "来自 {documents} 份文档的 {facts} 条事实和 {observations} 条观察。",
+    "rhythmTitle": "你的节奏",
+    "activeDays": "活跃天数",
+    "longestStreak": "天连续",
+    "busiestDay": "最忙的一天：{day}，共 {count} 条记忆。",
+    "namesTitle": "你常想到的名字",
+    "personaLead": "记忆涌来的时候，你是",
+    "persona": {
+      "nightOwl": {
+        "title": "夜猫子",
+        "body": "大多数记忆出现在 {hour}:00 左右。好点子总在夜里来。"
+      },
+      "earlyBird": {
+        "title": "早起鸟",
+        "body": "大多数记忆出现在 {hour}:00 左右，在世界醒来之前。"
+      },
+      "nineToFive": {
+        "title": "上午专注型",
+        "body": "大多数记忆出现在 {hour}:00 左右。午饭前专心工作。"
+      },
+      "afternoon": {
+        "title": "午后建造者",
+        "body": "大多数记忆出现在 {hour}:00 左右。午饭后进入状态。"
+      },
+      "evening": {
+        "title": "傍晚思考者",
+        "body": "大多数记忆出现在 {hour}:00 左右，在一天放慢的时候。"
+      }
+    },
+    "agentLead": "你最常用的编程助手",
+    "agentBody": "一起创建了 {count} 条记忆。",
+    "beliefLead": "你的记忆最确信的事",
+    "beliefBody": "有 {count} 条事实支持。",
+    "firstLead": "一切的开始",
+    "documents": "文档",
+    "agentShort": "最常用助手",
+    "shareTitle": "你的卡片，可以发布了",
+    "download": "下载",
+    "copy": "复制图片",
+    "copied": "已复制！",
+    "share": "分享",
+    "pill": "Wrapped {year}",
+    "cardTagline": "我的记忆年度回顾",
+    "observations": "观察",
+    "peakAt": "高峰 {hour}:00",
+    "busiestOn": "条记忆（{date}）",
+    "introBanks": "来自 {count} 个记忆库",
+    "banksLead": "你的记忆存放在",
+    "banksTitle": "个记忆库",
+    "memoriesCount": "{count} 条记忆"
   }
 }

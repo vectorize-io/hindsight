@@ -2243,7 +2243,8 @@
       },
       "stats": {
         "fetch": "Failed to fetch stats",
-        "memoriesTimeseries": "Failed to fetch memories timeseries"
+        "memoriesTimeseries": "Failed to fetch memories timeseries",
+        "summary": "Failed to fetch stats summary"
       },
       "version": {
         "fetch": "Failed to get version"
@@ -2818,5 +2819,71 @@
     "filesMode": "Files",
     "constellationMode": "Constellation",
     "sourcesLegend": "sources"
+  },
+  "wrapped": {
+    "brand": "Hindsight Wrapped",
+    "bannerTitle": "Your {period} in memory",
+    "dialogLabel": "Hindsight Wrapped",
+    "close": "Close",
+    "previous": "Previous",
+    "next": "Next",
+    "loading": "Rewinding {period}…",
+    "error": "Could not load this period.",
+    "emptyTitle": "Nothing remembered in {period}",
+    "emptyBody": "Come back once your banks have some memories.",
+    "introKicker": "Hindsight Wrapped",
+    "introBody": "Here is what your banks remembered.",
+    "memoriesLead": "Your banks made",
+    "memoriesTitle": "{count, plural, one {memory} other {memories}}",
+    "memoriesBody": "{facts} facts and {observations} observations, from {documents} documents.",
+    "rhythmTitle": "Your rhythm",
+    "activeDays": "{count, plural, one {active day} other {active days}}",
+    "longestStreak": "day streak",
+    "busiestDay": "Busiest day: {day}, with {count} memories.",
+    "namesTitle": "The names on your mind",
+    "personaLead": "When the memories flowed, you were",
+    "persona": {
+      "nightOwl": {
+        "title": "A night owl",
+        "body": "Most memories landed around {hour}:00. The best ideas come after dark."
+      },
+      "earlyBird": {
+        "title": "An early bird",
+        "body": "Most memories landed around {hour}:00, before the world woke up."
+      },
+      "nineToFive": {
+        "title": "A morning mind",
+        "body": "Most memories landed around {hour}:00. Deep work before lunch."
+      },
+      "afternoon": {
+        "title": "An afternoon builder",
+        "body": "Most memories landed around {hour}:00. You hit your stride after lunch."
+      },
+      "evening": {
+        "title": "An evening thinker",
+        "body": "Most memories landed around {hour}:00, as the day winds down."
+      }
+    },
+    "agentLead": "Your top coding agent",
+    "agentBody": "{count, plural, one {# memory} other {# memories}} made together.",
+    "beliefLead": "The thing your memory is most sure of",
+    "beliefBody": "Backed by {count, plural, one {# fact} other {# facts}}.",
+    "firstLead": "Where it all started",
+    "documents": "{count, plural, one {document} other {documents}}",
+    "agentShort": "Top agent",
+    "shareTitle": "Your card, ready to post",
+    "download": "Download",
+    "copy": "Copy image",
+    "copied": "Copied!",
+    "share": "Share",
+    "pill": "Wrapped {year}",
+    "cardTagline": "My year in memory",
+    "observations": "{count, plural, one {observation} other {observations}}",
+    "peakAt": "Peak at {hour}:00",
+    "busiestOn": "{count, plural, one {memory} other {memories}} on {date}",
+    "introBanks": "{count, plural, one {Across # bank} other {Across # banks}}",
+    "banksLead": "Your memory lived in",
+    "banksTitle": "{count, plural, one {bank} other {banks}}",
+    "memoriesCount": "{count, plural, one {# memory} other {# memories}}"
   }
 }

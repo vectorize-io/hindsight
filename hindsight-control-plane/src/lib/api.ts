@@ -76,6 +76,20 @@ export type RetainContentBlock =
   | { type: "image"; source: RetainAttachmentSource }
   | { type: "file"; source: RetainAttachmentSource; filename?: string };
 
+/** `GET /banks/{id}/stats/summary`: one bank's window, summed up by the server. */
+export interface StatsSummary {
+  bank_id: string;
+  start_date: string;
+  end_date: string;
+  /** Memories per UTC hour by fact type; only hours that have memories. */
+  hours: Array<{ time: string; world: number; experience: number; observation: number }>;
+  documents: number;
+  harnesses: Array<{ name: string; count: number }>;
+  entities: Array<{ name: string; count: number }>;
+  strongest_observation: { text: string; time: string; proof_count: number | null } | null;
+  first_memory: { text: string; time: string } | null;
+}
+
 export interface WebhookHttpConfig {
   method: string;
   timeout_seconds: number;
@@ -842,6 +856,12 @@ export class ControlPlaneClient {
         `/memories-timeseries?period=${encodeURIComponent(period)}&time_field=${encodeURIComponent(timeField)}`
       )
     );
+  }
+
+  /** A bank's memories and documents between two dates, summed up by the server. */
+  async getStatsSummary(bankId: string, startDate: string, endDate: string) {
+    const query = new URLSearchParams({ start_date: startDate, end_date: endDate });
+    return this.fetchApi<StatsSummary>(bankStatsApi(bankId, `/summary?${query}`));
   }
 
   /**

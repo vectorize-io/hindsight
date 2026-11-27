@@ -2243,7 +2243,8 @@
       },
       "stats": {
         "fetch": "Impossible de récupérer les statistiques",
-        "memoriesTimeseries": "Impossible de récupérer la série temporelle des souvenirs"
+        "memoriesTimeseries": "Impossible de récupérer la série temporelle des souvenirs",
+        "summary": "Impossible de récupérer le résumé des statistiques"
       },
       "version": {
         "fetch": "Impossible de récupérer la version"
@@ -2818,5 +2819,71 @@
     "filesMode": "Fichiers",
     "constellationMode": "Constellation",
     "sourcesLegend": "sources"
+  },
+  "wrapped": {
+    "brand": "Hindsight Wrapped",
+    "bannerTitle": "Votre {period} en souvenirs",
+    "dialogLabel": "Hindsight Wrapped",
+    "close": "Fermer",
+    "previous": "Précédent",
+    "next": "Suivant",
+    "loading": "Retour sur {period}…",
+    "error": "Impossible de charger cette période.",
+    "emptyTitle": "Aucun souvenir en {period}",
+    "emptyBody": "Reviens quand tes banques auront des souvenirs.",
+    "introKicker": "Hindsight Wrapped",
+    "introBody": "Voici ce dont tes banques se souviennent.",
+    "memoriesLead": "Tes banques ont créé",
+    "memoriesTitle": "{count, plural, one {souvenir} other {souvenirs}}",
+    "memoriesBody": "{facts} faits et {observations} observations, issus de {documents} documents.",
+    "rhythmTitle": "Votre rythme",
+    "activeDays": "{count, plural, one {jour actif} other {jours actifs}}",
+    "longestStreak": "jours d'affilée",
+    "busiestDay": "Jour le plus actif : {day}, avec {count} souvenirs.",
+    "namesTitle": "Les noms qui vous occupent",
+    "personaLead": "Quand les souvenirs affluaient, vous étiez",
+    "persona": {
+      "nightOwl": {
+        "title": "Un oiseau de nuit",
+        "body": "La plupart des souvenirs sont arrivés vers {hour}:00. Les meilleures idées viennent la nuit."
+      },
+      "earlyBird": {
+        "title": "Un lève-tôt",
+        "body": "La plupart des souvenirs sont arrivés vers {hour}:00, avant que le monde ne se réveille."
+      },
+      "nineToFive": {
+        "title": "Un esprit du matin",
+        "body": "La plupart des souvenirs sont arrivés vers {hour}:00. Travail de fond avant midi."
+      },
+      "afternoon": {
+        "title": "Un bâtisseur d'après-midi",
+        "body": "La plupart des souvenirs sont arrivés vers {hour}:00. Vous trouvez votre rythme après le déjeuner."
+      },
+      "evening": {
+        "title": "Un penseur du soir",
+        "body": "La plupart des souvenirs sont arrivés vers {hour}:00, quand la journée s'achève."
+      }
+    },
+    "agentLead": "Votre agent de code préféré",
+    "agentBody": "{count, plural, one {# souvenir créé} other {# souvenirs créés}} ensemble.",
+    "beliefLead": "Ce dont ta mémoire est la plus sûre",
+    "beliefBody": "Appuyé par {count, plural, one {# fait} other {# faits}}.",
+    "firstLead": "Là où tout a commencé",
+    "documents": "{count, plural, one {document} other {documents}}",
+    "agentShort": "Agent principal",
+    "shareTitle": "Votre carte, prête à publier",
+    "download": "Télécharger",
+    "copy": "Copier l'image",
+    "copied": "Copiée !",
+    "share": "Partager",
+    "pill": "Wrapped {year}",
+    "cardTagline": "Mon année en souvenirs",
+    "observations": "{count, plural, one {observation} other {observations}}",
+    "peakAt": "Pic à {hour}:00",
+    "busiestOn": "{count, plural, one {souvenir} other {souvenirs}} le {date}",
+    "introBanks": "{count, plural, one {Sur # banque} other {Sur # banques}}",
+    "banksLead": "Ta mémoire a vécu dans",
+    "banksTitle": "{count, plural, one {banque} other {banques}}",
+    "memoriesCount": "{count, plural, one {# souvenir} other {# souvenirs}}"
   }
 }
