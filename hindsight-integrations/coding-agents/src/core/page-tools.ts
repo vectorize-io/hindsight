@@ -305,33 +305,37 @@ export function buildPageTools(
         "WHEN TO CALL:\n" +
         "- Starting one: right after the user approves a plan or finishes brainstorming a new feature/" +
         "capability and you are about to start implementing — BEFORE you write any code. Leave " +
-        "relates_to_page_id empty.\n" +
+        "page_id empty.\n" +
         "- Plan changed: call it AGAIN — mid-implementation is fine and expected — whenever the goal, " +
         "scope, or rationale of an initiative you already captured materially changes (an approach is " +
-        "dropped, scope grows or shrinks, the why is rewritten). Pass relates_to_page_id = that " +
-        "initiative's page id so the change lands on the existing page. Never mint a second page for the " +
-        "same initiative.\n\n" +
+        "dropped, scope grows or shrinks, the why is rewritten). Pass page_id = that initiative's " +
+        "page id so the change lands on the existing page. Never mint a second page for the same " +
+        "initiative.\n\n" +
         "WHEN TO SKIP: bug fixes, small tweaks, refactors, chores, and trivial course-corrections that " +
         "leave the goal intact are not initiatives — skip them.\n\n" +
         "- title: short, specific name (e.g. 'Newsletter refinement chat'). On a recapture, reuse the " +
-        "initiative's existing title.\n" +
+        "initiative's existing title: a capture without page_id whose title matches an existing " +
+        "initiative page is recorded as an update to that page.\n" +
         "- summary: 2-3 sentences on what you're building and why — the CURRENT intent, not the " +
         "originally approved plan (on a recapture, say what changed and why).\n" +
-        "- relates_to_page_id: leave empty for a new initiative. Set it to an existing initiative's page " +
-        "id — from hindsight_list_pages, or the id this tool returned earlier — to record a " +
-        "plan change or an enhancement to it.\n\n" +
-        "Returns the page id. The page is generated for you — you never format one yourself.",
+        "- page_id: leave empty for a new initiative. Set it to an existing initiative's page id — " +
+        "from hindsight_list_pages, or the id this tool returned earlier — to record a plan " +
+        "change or an enhancement to it.\n\n" +
+        'Returns the page id and action: "created" (a new page) or "updated" (an existing one). ' +
+        "The page is generated for you — you never format one yourself.",
       inputSchema: {
         title: z.string(),
         summary: z.string(),
-        relates_to_page_id: z.string().optional(),
+        page_id: z.string().optional(),
+        // The old name, still sent by agents that learned it. Remove in 2.x.
+        relates_to_page_id: z.string().optional().describe("Deprecated: use page_id."),
       },
       annotations: NON_DESTRUCTIVE_WRITE_ANNOTATIONS,
-      handler: guarded(async ({ title, summary, relates_to_page_id }) =>
+      handler: guarded(async ({ title, summary, page_id, relates_to_page_id }) =>
         client.captureInitiative({
           title,
           summary,
-          relatesToPageId: relates_to_page_id,
+          pageId: page_id ?? relates_to_page_id,
           ...(opts.stampFor ? { stamp: opts.stampFor() } : {}),
           ...(opts.pageTrigger ? { pageTrigger: opts.pageTrigger } : {}),
         })

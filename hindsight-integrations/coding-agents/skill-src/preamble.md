@@ -37,7 +37,7 @@ When the user says "store this in hindsight" / "remember this":
 - A **new feature/initiative being started** → `hindsight_capture_initiative(title, summary)`,
   right after the plan is agreed and before code is written.
 - A **plan that materially changed** (goal, scope, or rationale — including mid-implementation) →
-  call `hindsight_capture_initiative` again with `relates_to_page_id` set to that initiative's page
+  call `hindsight_capture_initiative` again with `page_id` set to that initiative's page
   id, summarising the _current_ intent. Same page, updated plan — never a second page. Trivial
   course-corrections don't count.
 

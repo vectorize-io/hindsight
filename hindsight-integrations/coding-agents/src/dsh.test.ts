@@ -318,7 +318,7 @@ describe("toDshParameters", () => {
         spec({
           title: z.string(),
           summary: z.string().describe("what and why"),
-          relates_to_page_id: z.string().optional(),
+          page_id: z.string().optional(),
         })
       )
     ).toEqual({
@@ -326,7 +326,7 @@ describe("toDshParameters", () => {
       properties: {
         title: { type: "string" },
         summary: { type: "string", description: "what and why" },
-        relates_to_page_id: { type: "string" },
+        page_id: { type: "string" },
       },
       required: ["title", "summary"],
     });
