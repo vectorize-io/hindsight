@@ -849,8 +849,12 @@ function ShareSlide({ stats }: { stats: WrappedStats }) {
                       ? t("postHintCopiedTouch")
                       : t("postHintCopied", { keys: mac ? "⌘V" : "Ctrl+V" })),
               ]
-                .filter(Boolean)
-                .join(" ")}
+                .filter((line): line is string => !!line)
+                .map((line) => (
+                  <span key={line} className="block">
+                    {line}
+                  </span>
+                ))}
             </p>
           )}
         </Rise>
