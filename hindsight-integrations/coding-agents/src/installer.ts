@@ -2564,7 +2564,9 @@ function importConversations(harness: string, ctx: InstallCtx): void {
   try {
     execFileSync(
       nodeBinary(),
-      [join(ctx.dist, "deepen.js"), "--repo", repo, "--conversations", file],
+      // --harness: without it deepen loads the config without `harnesses.<name>`, so e.g. that
+      // harness's retainSessions:false or bankId was ignored by the import (#6970).
+      [join(ctx.dist, "deepen.js"), "--repo", repo, "--harness", harness, "--conversations", file],
       {
         stdio: "inherit",
       }
@@ -2572,7 +2574,9 @@ function importConversations(harness: string, ctx: InstallCtx): void {
   } catch {
     // The wiring is already in place; a failed backfill must not make `install` look failed.
     ctx.log?.(`${harness}: conversation import did not finish — re-run it any time with:`);
-    ctx.log?.(`  node "${join(ctx.dist, "deepen.js")}" --repo "${repo}" --conversations "${file}"`);
+    ctx.log?.(
+      `  node "${join(ctx.dist, "deepen.js")}" --repo "${repo}" --harness ${harness} --conversations "${file}"`
+    );
   }
 }
 

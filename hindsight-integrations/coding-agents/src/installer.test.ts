@@ -22,6 +22,7 @@ import {
   type InstallCtx,
 } from "./installer";
 import { deriveBankIdOrSkip } from "./core/bank";
+import { claudeProjectDir } from "./core/history";
 import { resolveConfig } from "./core/config";
 import { TRAECODE_WORKSPACE_ENABLED_KEY } from "./core/traecode-mcp";
 import { SKILL_DIRS } from "./core/skill-dirs";
@@ -3195,6 +3196,44 @@ describe("server setup", () => {
     expect(cfg.apiToken).toBe("tok");
     // Conversations are a separate, opt-in step — say so rather than implying a full migration.
     expect(logs.join("\n")).toContain("--import-conversations");
+  });
+
+  it("--import-conversations runs the import for the harness, so its harnesses.<name> settings apply (#6970)", () => {
+    // Without --harness, deepen loaded the config without `harnesses.<name>`: e.g. that harness's
+    // retainSessions:false still imported every past session.
+    const ctx = makeCtx();
+    const repo = mkdtempSync(join(tmpdir(), "hindsight-import-repo-"));
+    homes.push(repo);
+    const project = claudeProjectDir(repo, ctx.home);
+    mkdirSync(project, { recursive: true });
+    writeFileSync(
+      join(project, "s1.jsonl"),
+      [
+        { type: "user", cwd: repo, sessionId: "s1", message: { content: "hello" } },
+        { type: "assistant", cwd: repo, sessionId: "s1", message: { content: "hi" } },
+      ]
+        .map((l) => JSON.stringify(l))
+        .join("\n")
+    );
+    // A stand-in deepen that records the arguments it was started with.
+    const dist = mkdtempSync(join(tmpdir(), "hindsight-import-dist-"));
+    homes.push(dist);
+    const argvFile = join(dist, "argv.json");
+    writeFileSync(
+      join(dist, "deepen.js"),
+      `require("fs").writeFileSync(${JSON.stringify(argvFile)}, JSON.stringify(process.argv.slice(2)));`
+    );
+    ctx.dist = dist;
+    vi.stubEnv("HOME", ctx.home); // afterEach unstubs it
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(repo);
+    try {
+      expect(run(["install", "claude-code", "--import-conversations"], ctx)).toBe(0);
+    } finally {
+      cwd.mockRestore();
+    }
+    const argv: string[] = JSON.parse(readFileSync(argvFile, "utf8"));
+    expect(argv[argv.indexOf("--harness") + 1]).toBe("claude-code");
+    expect(argv[argv.indexOf("--repo") + 1]).toBe(repo);
   });
 
   it("an explicit --server still overrides what the old plugin used", () => {
