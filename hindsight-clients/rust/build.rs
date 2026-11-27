@@ -180,50 +180,87 @@ fn convert_anyof_to_nullable(value: &mut serde_json::Value) {
     }
 }
 
-/// Rename inline property enums whose `title` collides with a different enum.
+/// Rename inline enums whose `title` collides with a different enum.
 ///
 /// typify names an inline enum after its `title`, and pydantic titles a field
-/// after its name. So two models whose `outcome` (or `kind`) fields allow
-/// different values collapse into ONE generated `Outcome` type -- whichever is
-/// generated first -- and the other model then rejects values its own schema
-/// allows (`RefreshMentalModelOperationDetails.outcome = "refresh_failed_error"`,
-/// `PromptBlockModel.kind = "text"`). The first enum with a title keeps it, so
-/// no existing type is renamed; later ones with a different value set become
-/// `{Schema}{Title}`.
+/// (FastAPI: a query parameter) after its name. So two models whose `outcome`
+/// (or `kind`) fields allow different values collapse into ONE generated
+/// `Outcome` type -- whichever is generated first -- and the other model then
+/// rejects values its own schema allows
+/// (`RefreshMentalModelOperationDetails.outcome = "refresh_failed_error"`,
+/// `PromptBlockModel.kind = "text"`). Query parameters collide the same way
+/// (#6997: two endpoints' `detail` params). The first enum with a title keeps
+/// it, so no existing type is renamed; later ones with a different value set
+/// become `{Schema}{Title}` for a model property and `{OperationId}{Title}` for
+/// a query parameter.
 fn dedupe_inline_enum_titles(spec: &mut serde_json::Value) {
-    let Some(schemas) = spec
-        .pointer_mut("/components/schemas")
-        .and_then(|v| v.as_object_mut())
-    else {
-        return;
-    };
     let mut first_values: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
-    for (schema_name, schema) in schemas.iter_mut() {
-        let Some(props) = schema.get_mut("properties").and_then(|v| v.as_object_mut()) else {
-            continue;
-        };
-        for prop in props.values_mut() {
-            let (Some(title), Some(values)) = (
-                prop.get("title").and_then(|t| t.as_str()).map(str::to_owned),
-                prop.get("enum").and_then(|e| e.as_array()),
-            ) else {
+    if let Some(schemas) = spec
+        .pointer_mut("/components/schemas")
+        .and_then(|v| v.as_object_mut())
+    {
+        for (schema_name, schema) in schemas.iter_mut() {
+            let Some(props) = schema.get_mut("properties").and_then(|v| v.as_object_mut()) else {
                 continue;
             };
-            let mut values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
-            values.sort();
-            match first_values.get(&title) {
-                None => {
-                    first_values.insert(title, values);
-                }
-                Some(first) if *first == values => {}
-                Some(_) => {
-                    let prefix: String = schema_name.chars().filter(|c| c.is_alphanumeric()).collect();
-                    prop["title"] = serde_json::json!(format!("{prefix}{title}"));
-                }
+            let prefix: String = schema_name.chars().filter(|c| c.is_alphanumeric()).collect();
+            for prop in props.values_mut() {
+                dedupe_enum_title(prop, &prefix, &mut first_values);
             }
         }
     }
+    let Some(paths) = spec.get_mut("paths").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    for operation in paths.values_mut().filter_map(|p| p.as_object_mut()).flat_map(|p| p.values_mut()) {
+        let prefix = pascal_case(operation.get("operationId").and_then(|v| v.as_str()).unwrap_or(""));
+        let Some(params) = operation.get_mut("parameters").and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        for schema in params.iter_mut().filter_map(|p| p.get_mut("schema")) {
+            dedupe_enum_title(schema, &prefix, &mut first_values);
+        }
+    }
+}
+
+/// Keep `schema`'s enum title if it is the first with that title or has the
+/// same values as the first; otherwise prefix it with `prefix`.
+fn dedupe_enum_title(
+    schema: &mut serde_json::Value,
+    prefix: &str,
+    first_values: &mut std::collections::HashMap<String, Vec<String>>,
+) {
+    let (Some(title), Some(values)) = (
+        schema.get("title").and_then(|t| t.as_str()).map(str::to_owned),
+        schema.get("enum").and_then(|e| e.as_array()),
+    ) else {
+        return;
+    };
+    let mut values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+    values.sort();
+    match first_values.get(&title) {
+        None => {
+            first_values.insert(title, values);
+        }
+        Some(first) if *first == values => {}
+        Some(_) => {
+            let title: String = title.chars().filter(|c| c.is_alphanumeric()).collect();
+            schema["title"] = serde_json::json!(format!("{prefix}{title}"));
+        }
+    }
+}
+
+/// `list_mental_models` -> `ListMentalModels`.
+fn pascal_case(snake: &str) -> String {
+    snake
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut chars = w.chars();
+            chars.next().map(|c| c.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default()
+        })
+        .collect()
 }
 
 fn main() {
