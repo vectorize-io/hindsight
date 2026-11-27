@@ -256,7 +256,10 @@ fn pascal_case(snake: &str) -> String {
     snake
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
-        .map(|w| w[..1].to_uppercase() + &w[1..])
+        .map(|w| {
+            let mut chars = w.chars();
+            chars.next().map(|c| c.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default()
+        })
         .collect()
 }
 
