@@ -34,6 +34,7 @@ import { brandWord } from "./brand";
 import { diag, readHookEvent } from "./diag";
 import { setLogLevel } from "./log";
 import { parsePageList, buildPagesPreamble, toolGuideOpts, type PageRef } from "./page-injection";
+import { loadSessionContext, type SessionContextClient } from "./session-context";
 import type { ClientOpts, RetainOpts } from "./hindsight";
 import { buildPageTrigger, type PageTrigger, type RetainExtractionMode } from "./missions";
 import { buildRetainStamp } from "./retain-stamp";
@@ -58,6 +59,9 @@ interface SeedContextClient {
   // (gitLogIsCurrent). The minimal test clients omit it and keep the exact-HEAD check.
   documentTags?(documentId: string): Promise<string[] | undefined>;
   listPages(opts?: { timeoutMs?: number }): Promise<unknown>;
+  // Optional: reads the `sessionContext` entries. The minimal test clients omit them.
+  getPage?: SessionContextClient["getPage"];
+  getMentalModel?: SessionContextClient["getMentalModel"];
   // Optional: whether the bank holds any document at all. Without it the first-prompt reflect is
   // never deferred — only a confirmed-empty bank is.
   hasDocuments?(): Promise<boolean>;
@@ -431,7 +435,15 @@ export async function buildSessionStartContext(args: {
       /* fail-open preamble */
     }
   }
-  const additionalContext = buildPagesPreamble(pages, toolGuideOpts(cfg));
+  let additionalContext = buildPagesPreamble(pages, toolGuideOpts(cfg));
+  if (!noAnswer && client.getPage && client.getMentalModel) {
+    const pinned = await loadSessionContext(
+      { getPage: client.getPage.bind(client), getMentalModel: client.getMentalModel.bind(client) },
+      cfg.sessionContext,
+      harness
+    );
+    if (pinned) additionalContext += `\n\n${pinned}`;
+  }
   // An empty page roster is NOT an empty bank: a bank with memories and no pages still answers a
   // reflect (#5209), so only the confirmed-empty probe above defers it.
   const deferInitialReflect = bankEmpty;

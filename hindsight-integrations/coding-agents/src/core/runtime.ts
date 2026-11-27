@@ -24,6 +24,7 @@ import { describeError, log, setLogLevel } from "./log";
 import type { HindsightClient } from "./hindsight";
 import { replayOrphanedSessions } from "./retain-hook";
 import { buildPagesPreamble, toolGuideOpts } from "./page-injection";
+import { loadSessionContext } from "./session-context";
 import { buildPageTools, type ToolSpec } from "./page-tools";
 import { buildPageTrigger } from "./missions";
 import { retainLiveSession, type TransportTurn } from "./chat";
@@ -243,6 +244,8 @@ export class RuntimeCore {
     // listed pages by id (#4607).
     if (turns === 1) {
       blocks.push(buildPagesPreamble(output.pages, toolGuideOpts(this.cfg)));
+      const pinned = await loadSessionContext(this.client, this.cfg.sessionContext, this.harness);
+      if (pinned) blocks.push(pinned);
     }
     if (output.context) blocks.push(output.context);
     // OpenCode has no user-message hook channel; use its native toast instead of stderr, which

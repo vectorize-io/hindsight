@@ -119,6 +119,27 @@ describe("RuntimeCore", () => {
     expect(runtime.getInjection(id)).toContain("<hindsight_page_refresh>");
   });
 
+  it("adds the sessionContext entries on turn 1 only (#5714)", async () => {
+    const client = {
+      listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+      listPages: vi.fn(async () => ({ items: [] })),
+      reflect: vi.fn(async () => "a memory"),
+      getMentalModel: vi.fn(async () => ({ name: "Standing rules", content: "Tests first." })),
+    } as unknown as HindsightClient;
+    const runtime = new RuntimeCore(
+      client,
+      "bank-1",
+      resolveConfig({ sessionContext: ["mm-rules"] })
+    );
+    const id = `session-ctx-${randomUUID()}`;
+
+    await runtime.onPrompt(id, "first prompt");
+    expect(runtime.getInjection(id)).toContain("## Standing rules\nTests first.");
+
+    await runtime.onPrompt(id, "second prompt");
+    expect(runtime.getInjection(id)).not.toContain("Standing rules");
+  });
+
   it("drops a host's injected tags from the prompt before reflecting on it (#6488)", async () => {
     const client = {
       listDocumentIds: vi.fn(async () => new Set(["git:existing"])),

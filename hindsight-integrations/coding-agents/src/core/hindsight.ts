@@ -1087,12 +1087,32 @@ export class HindsightClient {
    * the page — that is 70-95% of the raw bytes and can blow past an MCP host's per-tool-result
    * token cap.
    */
-  async getPage(pageId: string): Promise<unknown> {
+  async getPage(pageId: string, opts: { timeoutMs?: number } = {}): Promise<unknown> {
     if (this.pagesSupported === false) throw new PagesUnavailableError();
-    const r = await this.pagesReq("GET", `/${encodeURIComponent(pageId)}`);
+    const r = await this.pagesReq(
+      "GET",
+      `/${encodeURIComponent(pageId)}`,
+      undefined,
+      [],
+      opts.timeoutMs
+    );
     if (!r) throw new PagesUnavailableError();
     if (r.status === 404) throw new Error(`page not found: ${pageId}`);
     return shapePage(await r.json());
+  }
+
+  /** Read one mental model's stored content (`{name, content, …}`); no LLM call. */
+  async getMentalModel(id: string, opts: { timeoutMs?: number } = {}): Promise<unknown> {
+    const r = await this.req(
+      "GET",
+      // detail=content: the default "full" also carries the reflect trace that built it.
+      this.bankUrl(`/mental-models/${encodeURIComponent(id)}?detail=content`),
+      undefined,
+      [],
+      opts.timeoutMs
+    );
+    if (r.status === 404) throw new Error(`mental model not found: ${id}`);
+    return r.json();
   }
 
   /** Hybrid (BM25 + vector, RRF-fused) server-side search over the bank's pages.
