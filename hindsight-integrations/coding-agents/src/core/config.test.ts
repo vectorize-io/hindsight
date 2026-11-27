@@ -124,11 +124,11 @@ describe("injectTimeoutMs (#4843)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("defaults to 7s independently of the reflect timeouts", () => {
-    expect(resolveConfig({}).injectTimeoutMs).toBe(7000);
+  it("defaults to 5s independently of the reflect timeouts", () => {
+    expect(resolveConfig({}).injectTimeoutMs).toBe(5000);
     expect(
       resolveConfig({ reflectTimeoutMs: 15000, reflectToolTimeoutMs: 90000 }).injectTimeoutMs
-    ).toBe(7000);
+    ).toBe(5000);
   });
 
   it.each([2000, 15000])("honours an explicit %ims budget", (ms) => {
@@ -164,7 +164,7 @@ describe("reflectToolTimeoutMs / reflectBudget", () => {
   it("defaults above the server's reflect wall timeout, leaving the hook window untouched", () => {
     const cfg = resolveConfig({});
     expect(cfg.reflectToolTimeoutMs).toBe(330000);
-    expect(cfg.reflectTimeoutMs).toBe(20000);
+    expect(cfg.reflectTimeoutMs).toBe(15000);
     expect(cfg.reflectBudget).toBe("high");
   });
 
@@ -532,7 +532,7 @@ describe("environment fallback", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     process.env.HINDSIGHT_REFLECT_TIMEOUT_MS = "soon";
     // NaN here would silently break the reflect timeout in a way that is very hard to trace.
-    expect(loadConfig({ path: globalCfg }).reflectTimeoutMs).toBe(20000);
+    expect(loadConfig({ path: globalCfg }).reflectTimeoutMs).toBe(15000);
   });
 
   it("an empty env var does not mask the file or the default", () => {

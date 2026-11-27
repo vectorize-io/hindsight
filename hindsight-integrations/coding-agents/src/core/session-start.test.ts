@@ -4,7 +4,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
-import { buildSeedBanner, buildSessionStartContext, runSessionStartHook } from "./session-start";
+import {
+  buildSeedBanner,
+  buildSessionStartContext,
+  buildUnreachableBanner,
+  runSessionStartHook,
+} from "./session-start";
 import { startCodebaseSurvey, SURVEY_MAX_ATTEMPTS } from "./survey";
 import { releaseLease, SURVEY_SPEC_ENV } from "./survey-lease";
 import { resolveConfig } from "./config";
@@ -876,5 +881,82 @@ describe("buildSeedBanner color (#6502)", () => {
   it("is plain text unless the host paints color", () => {
     expect(buildSeedBanner("b", false)).toMatch(/^Hindsight is tracking/);
     expect(buildSeedBanner("b", false, undefined, true)).toContain("\x1b[38;2;");
+  });
+});
+
+// #6553: a dead host cost ~10s per call, 21s for one session start, then said all was well.
+describe("buildSessionStartContext — server not answering", () => {
+  const fetchFailed = (code: string) =>
+    Object.assign(new TypeError("fetch failed"), { cause: { code } });
+
+  it.each([
+    ["a connect timeout", fetchFailed("UND_ERR_CONNECT_TIMEOUT")],
+    ["a refused connection", fetchFailed("ECONNREFUSED")],
+    ["our own deadline", new DOMException("aborted due to timeout", "TimeoutError")],
+  ])("after %s: one call, no others, and a banner that says so", async (_label, error) => {
+    const listDocumentIds = vi.fn(async () => {
+      throw error;
+    });
+    const client = {
+      listDocumentIds,
+      listPages: vi.fn(listPagesOk),
+      configureBankSettings: vi.fn(async () => {}),
+      seedPages: vi.fn(async () => {}),
+    };
+    const cfg = resolveConfig({
+      apiUrl: "http://user:pw@10.255.255.1:9077/x",
+      injectTimeoutMs: 1234,
+    });
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg,
+      client,
+      hasGit: () => true,
+      startSeed: vi.fn(),
+      detectLegacyPlugin: () => undefined,
+    });
+    expect(listDocumentIds).toHaveBeenCalledWith("source:git", "all_strict", 1234);
+    expect(client.configureBankSettings).not.toHaveBeenCalled();
+    expect(client.listPages).not.toHaveBeenCalled();
+    expect(out.systemMessage).toBe(buildUnreachableBanner("bank-1", cfg.apiUrl));
+    expect(out.systemMessage).toContain("can't reach 10.255.255.1:9077");
+    expect(out.systemMessage).not.toContain("pw");
+  });
+
+  it("an error ANSWER is not 'can't reach': the rest still runs", async () => {
+    const client = {
+      listDocumentIds: async (): Promise<Set<string>> => {
+        throw new Error("GET http://h/documents -> 500 boom");
+      },
+      listPages: vi.fn(listPagesOk),
+    };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ injectTimeoutMs: 1234 }),
+      client,
+      hasGit: () => true,
+      detectLegacyPlugin: () => undefined,
+    });
+    expect(client.listPages).toHaveBeenCalledWith({ timeoutMs: 1234 });
+    expect(out.systemMessage).toMatch(/^Hindsight is tracking/);
+  });
+
+  it("a page list with no answer also switches the banner (no git probe ran)", async () => {
+    const client = {
+      listDocumentIds: async () => new Set<string>(),
+      listPages: async () => {
+        throw fetchFailed("EHOSTUNREACH");
+      },
+    };
+    const out = await buildSessionStartContext({
+      cwd: "/repo/dir",
+      bankId: "bank-1",
+      cfg: resolveConfig({ autoSeed: false }),
+      client,
+      detectLegacyPlugin: () => undefined,
+    });
+    expect(out.systemMessage).toContain("can't reach");
   });
 });

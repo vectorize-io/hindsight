@@ -10,6 +10,7 @@ import {
   DEFAULT_MAX_PARALLEL_RETAINS,
   DEFAULT_OBSERVATION_SCOPES,
   HindsightClient,
+  isNoAnswerError,
   ReflectError,
   retryAfterMs,
 } from "./hindsight";
@@ -935,5 +936,60 @@ describe("HindsightClient rate-limit patience", () => {
     await settled;
     expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
     expect(fetchMock.mock.calls.length).toBeLessThan(6);
+  });
+});
+
+// #6167/#6553: the page list had no limit of its own, so a server that never answered held the
+// prompt hook for the full connect/request timeout.
+describe("HindsightClient.listPages timeout", () => {
+  it("gives up at its own limit against a server that never answers", async () => {
+    const server = createServer(() => {}); // accepts, never responds
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const client = new HindsightClient({ apiUrl: `http://127.0.0.1:${port}`, bank: "b" });
+      const t0 = Date.now();
+      const err = await client.listPages({ timeoutMs: 200 }).catch((e: unknown) => e);
+      expect(Date.now() - t0).toBeLessThan(2000);
+      expect(isNoAnswerError(err)).toBe(true);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("caps the connect wait at the request's own deadline, at most 5s", async () => {
+    const server = createServer((_q, res) => res.end("{}"));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const original = getGlobalDispatcher();
+    // Named `Agent`, like Node's own: the client builds connect-capped siblings from its class.
+    const connectTimeouts: unknown[] = [];
+    class RecordingAgent extends Agent {
+      constructor(opts: { connect?: { timeout?: number } } = {}) {
+        super(opts);
+        connectTimeouts.push(opts.connect?.timeout);
+      }
+    }
+    Object.defineProperty(RecordingAgent, "name", { value: "Agent" });
+    setGlobalDispatcher(new RecordingAgent());
+    try {
+      const { port } = server.address() as AddressInfo;
+      const client = new HindsightClient({ apiUrl: `http://127.0.0.1:${port}`, bank: "b" });
+      await client.listPages({ timeoutMs: 1200 });
+      await client.listPages({ timeoutMs: 60_000 });
+      expect(connectTimeouts.slice(1)).toEqual([2000, 5000]);
+    } finally {
+      setGlobalDispatcher(original);
+      server.close();
+    }
+  });
+
+  it("an error answer is not a missing answer", () => {
+    expect(isNoAnswerError(new Error("GET http://h/x -> 500 boom"))).toBe(false);
+    expect(
+      isNoAnswerError(
+        Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } })
+      )
+    ).toBe(true);
   });
 });

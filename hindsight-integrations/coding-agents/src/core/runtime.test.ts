@@ -129,6 +129,32 @@ describe("RuntimeCore", () => {
     expect(toast?.[1]).not.toContain("\x1b");
   });
 
+  it("the session-start toast drops the brand word its title already carries (#6553)", async () => {
+    const noAnswer = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "UND_ERR_CONNECT_TIMEOUT" },
+    });
+    const client = {
+      listDocumentIds: vi.fn(async () => new Set(["git:existing"])),
+      listPages: vi.fn(async () => {
+        throw noAnswer;
+      }),
+    } as unknown as HindsightClient;
+    const runtime = new RuntimeCore(
+      client,
+      "bank-1",
+      resolveConfig({ apiUrl: "http://10.255.255.1:9077", autoSeed: false })
+    );
+    const notify = vi.fn();
+    runtime.setNotifier(notify);
+
+    await runtime.seedIfCold("/definitely-not-a-git-repository");
+
+    expect(notify).toHaveBeenCalledWith(
+      "Hindsight",
+      expect.stringMatching(/^Can't reach 10\.255\.255\.1:9077/)
+    );
+  });
+
   it("the page roster tracks the pages a SESSION sees, not the ones plugin load saw", async () => {
     // These hosts outlive every session. A preamble frozen at load told each new session "No
     // pages yet" for the process's whole life, while the same turn's memory block listed
