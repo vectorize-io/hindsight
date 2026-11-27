@@ -48,7 +48,8 @@ function cardTransitionName(permalink: string): string {
 
 function formatDate(dateString: string): string {
   const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric'});
+  // Front-matter dates are midnight UTC; formatting in the reader's zone shows the day before in the Americas.
+  return date.toLocaleDateString('en-US', {month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'});
 }
 
 // First category (skipping "All") whose tag the post carries, for the card badge.
