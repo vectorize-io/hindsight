@@ -10,7 +10,7 @@ import re
 import threading
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, time, timedelta
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dateparser.conf import Settings, apply_settings
 from pydantic import BaseModel, Field
@@ -20,6 +20,10 @@ from hindsight_api.engine.temporal_periods import (
     extract_period,
     is_embedded_cjk_dateparser_match,
 )
+
+# Type only: importing text2date pulls in numpy (~100 ms), so load() imports it on first use.
+if TYPE_CHECKING:
+    from text2date import Parser
 
 logger = logging.getLogger(__name__)
 
@@ -291,7 +295,7 @@ class Text2DateQueryAnalyzer(QueryAnalyzer):
     """
 
     def __init__(self) -> None:
-        self._parser: Any = None
+        self._parser: Parser | None = None
 
     def load(self) -> None:
         if self._parser is None:
@@ -303,6 +307,7 @@ class Text2DateQueryAnalyzer(QueryAnalyzer):
         if reference_date is None:
             reference_date = default_reference_date()
         self.load()
+        assert self._parser is not None
         # text2date reads an aware datetime in UTC; "yesterday" means the caller's own yesterday.
         ranges = self._parser.parse(query, reference_date.replace(tzinfo=None))
         if not ranges or ranges[0].start is None or ranges[0].end is None:
