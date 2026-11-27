@@ -639,7 +639,7 @@ function stripPrimeContext(text: string): string {
  * Prime Agent 0.10+ (the Rust rewrite). It dropped the JS extension host the 0.9 integration used
  * and has no hooks, so this wires the three things it does load (see src/prime-agent.ts):
  *
- * - `settings.json` `mcpServers.hindsight` — our stdio MCP server, which serves the tools and writes
+ * - `settings.json` `mcpServers.<mcpServerName>` — our stdio MCP server, which serves the tools and writes
  *   the session back while it runs. Prime only forwards env vars by reference, so the harness goes
  *   in as `--harness` and the session id / agent dir as references to the kernel's own variables.
  *   The 0.9 `extensions` entry is removed: 0.10 ignores it and 0.9 is no longer supported.
@@ -791,10 +791,11 @@ const claudeCode: HarnessInstaller = {
     // user config") — so on a machine that already had Hindsight, a re-install could never
     // repoint the server. After the package moved, the stale registration survived and Claude
     // Code reported "Failed to connect — Connection closed" with the hindsight_* tools dead.
-    // Remove first (a no-op when absent) so the add always lands, matching how every other host
-    // wiring is replaced rather than skipped.
-    // Remove only what is provably ours (it runs our mcp-server.js), under whatever name it was
-    // registered: `claude mcp remove` cannot tell ours from a server the user named the same.
+    // So we remove first. That used to be an unconditional `remove hindsight`, which also deleted
+    // a server the USER had named "hindsight" (#6958): `claude mcp remove` cannot tell ours from
+    // theirs. Now only entries of ~/.claude.json that run our mcp-server.js are removed, under
+    // whatever name they were registered; a foreign server holding the name blocks install in
+    // preflight instead (mcpRegistry).
     const userMcp = readJson(join(c.home, ".claude.json")).mcpServers;
     for (const name of ourMcpNames(userMcp)) mcp(["mcp", "remove", "--scope", "user", name]);
     if (
@@ -2048,7 +2049,8 @@ const qwen: HarnessInstaller = {
     installSkill(c, "qwen-code");
     const mcp = c.qwenMcp ?? defaultQwenMcp;
     // Same rationale as claude-code: `qwen mcp add` refuses a name that already exists, so a
-    // re-install could never repoint a stale server. Remove first (a no-op when absent).
+    // re-install could never repoint a stale server. Remove first — only entries that run our
+    // mcp-server.js, never a same-named server of the user's (#6958).
     const userMcp = readJson(join(c.home, ".qwen", "settings.json")).mcpServers;
     for (const name of ourMcpNames(userMcp)) mcp(["mcp", "remove", "-s", "user", name]);
     if (
@@ -2107,7 +2109,7 @@ function defaultQwenMcp(args: string[]): boolean {
  *   this file (unlike Claude Code, which nests it under a `hooks` key inside settings.json), so
  *   `mergeHarnessHooks` is applied to the root object, not to a `hooks` property. The matcher-group
  *   entries themselves are Claude-shaped, which is exactly what the "nested" configStyle emits.
- * - `mcp.json` - `mcpServers.hindsight` runs the same stdio `dist/mcp-server.js` as every other
+ * - `mcp.json` - `mcpServers.<mcpServerName>` runs the same stdio `dist/mcp-server.js` as every other
  *   host, tagged with `HINDSIGHT_MCP_HARNESS=factory-droid`. A same-named foreign server blocks
  *   install instead of being overwritten. Droid reloads this file on change.
  * - `skills/` - the companion skill, same copy/uninstall dance as the other hosts.
@@ -2178,7 +2180,7 @@ const factoryDroid: HarnessInstaller = {
  *
  * MCP and the companion skill land in the same config/home, so ZCode gets the full surface:
  *
- * - `mcp.servers.hindsight` runs the same stdio `dist/mcp-server.js` as every other host, tagged
+ * - `mcp.servers.<mcpServerName>` runs the same stdio `dist/mcp-server.js` as every other host, tagged
  *   `HINDSIGHT_MCP_HARNESS=zcode`. ZCode's schema is `{type, command, args?, cwd?, env?}` and its
  *   loader infers `type: "stdio"` from a `command`, so the shared `mcpServerEntry` drops straight
  *   in. A same-named foreign server blocks install instead of being overwritten.
@@ -2448,7 +2450,7 @@ const traecode: HarnessInstaller = {
     }
     // The per-repo registrations the installer (or the hook) wrote: drop our entry from every
     // opted-in repo's .trae/mcp.json, deleting the file when nothing remains in it. Foreign
-    // servers and foreign "hindsight" entries are never touched — same ownership check as the
+    // servers and foreign same-named entries are never touched — same ownership check as the
     // hook's. Missing repos skip silently; the storage sweep below still catches their switches.
     const config = readJson(hindsightConfigPath(c));
     const repoEntries = Object.keys(config.mapPathToBank ?? {}).sort();
@@ -2472,6 +2474,8 @@ const traecode: HarnessInstaller = {
       }
     }
     // The per-workspace enable switches the installer/hook seeded — an uninstall leaves no storage behind.
+    // ponytail: only the current name's switch; a rename leaves the old name's row behind, inert
+    // because no server has that name any more. Sweep every past name if one ever needs to go.
     removeWorkspaceMcpEnabledKeys(c.home, mcpName(c));
     uninstallSkill(c, "traecode");
     c.log?.(`traecode: hooks + MCP registration + skill removed`);
@@ -2775,7 +2779,7 @@ export function run(argv: string[], ctxIn: InstallCtx): number {
     )
   )
     return 1;
-  if (command === "install" && mcpNameFlag !== undefined) {
+  if (command === "install" && runnable.length > 0 && mcpNameFlag !== undefined) {
     const configPath = hindsightConfigPath(ctx);
     const cfg = readJson(configPath);
     if (chosenMcpName === DEFAULT_MCP_SERVER_NAME) delete cfg.mcpServerName;

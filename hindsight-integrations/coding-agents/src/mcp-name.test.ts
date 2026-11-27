@@ -9,7 +9,10 @@ import { INSTALLERS, run, type InstallCtx } from "./installer";
 const USERS_SERVER = { command: "uvx", args: ["hindsight-local-mcp"], env: { BANK: "support" } };
 
 let home: string;
-const ctx = (): InstallCtx & { claudeMcp: ReturnType<typeof vi.fn> } => ({
+const ctx = (): InstallCtx & {
+  claudeMcp: ReturnType<typeof vi.fn>;
+  qwenMcp: ReturnType<typeof vi.fn>;
+} => ({
   home,
   pkgRoot: "/opt/hindsight-coding-agents",
   dist: "/opt/hindsight-coding-agents/dist",
@@ -126,6 +129,15 @@ describe("--mcp-name leaves the user's own 'hindsight' server alone", () => {
   });
 });
 
+it("every harness either declares where its MCP servers live, or has none the installer writes", () => {
+  // In-process hosts load our plugin and register no MCP server by name; Dcode's ships in
+  // plugin.json, namespaced by the plugin; TraeCode's is per repo (core/traecode-mcp.ts), which
+  // skips a foreign same-named entry itself.
+  const NO_NAMED_REGISTRATION = ["opencode", "opencode2", "kilo", "pi", "dsh", "dcode", "traecode"];
+  const without = INSTALLERS.filter((i) => !i.mcpRegistry).map((i) => i.name);
+  expect(without.sort()).toEqual([...NO_NAMED_REGISTRATION].sort());
+});
+
 // Every host the installer registers a server in, enumerated so a new one cannot skip the rule.
 describe.each(INSTALLERS.filter((i) => i.mcpRegistry).map((i) => i.name))("%s", (harness) => {
   const registry = (c: InstallCtx) => INSTALLERS.find((i) => i.name === harness)!.mcpRegistry!(c);
@@ -152,11 +164,7 @@ describe.each(INSTALLERS.filter((i) => i.mcpRegistry).map((i) => i.name))("%s", 
   it("registers under --mcp-name, never under the default", () => {
     const c = ctx();
     expect(install(c, harness)).toBe(0);
-    const registered = JSON.stringify([
-      serversOf(c),
-      c.claudeMcp.mock.calls,
-      (c.qwenMcp as any).mock.calls,
-    ]);
+    const registered = JSON.stringify([serversOf(c), c.claudeMcp.mock.calls, c.qwenMcp.mock.calls]);
     expect(registered).toContain("hindsight-code");
     expect(serversOf(c)).not.toHaveProperty("hindsight");
   });
@@ -179,7 +187,7 @@ describe.each(INSTALLERS.filter((i) => i.mcpRegistry).map((i) => i.name))("%s", 
     expect(install(c, harness)).toBe(0);
     expect(run(["uninstall", harness], c)).toBe(0);
     expect(users(c)).toEqual(theirs);
-    const removes = [...c.claudeMcp.mock.calls, ...(c.qwenMcp as any).mock.calls]
+    const removes = [...c.claudeMcp.mock.calls, ...c.qwenMcp.mock.calls]
       .map(([a]) => a.join(" "))
       .filter((a) => a.startsWith("mcp remove"));
     expect(removes).toEqual([]);

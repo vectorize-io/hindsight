@@ -369,6 +369,14 @@ describe("workspace enable switch seed", () => {
     expect(ensureWorkspaceMcpEnabled(repo, { home })).toBe("on"); // idempotent skip
   });
 
+  it.runIf(hasSqlite3)("seeds the switch under a renamed server (--mcp-name, #6958)", () => {
+    const repo = tmp("repo-");
+    const { home, db } = homeWithWorkspace(repo);
+    expect(ensureWorkspaceMcpEnabled(repo, { home, mcpName: "hindsight-code" })).toBe("seeded");
+    expect(query(db, "icubeAgentExtension.enabled.mcp.config.ws0.hindsight-code")).toBe("true");
+    expect(query(db, TRAECODE_WORKSPACE_ENABLED_KEY)).toBe(""); // the default name's switch stays off
+  });
+
   it.runIf(hasSqlite3)("matches the repo by its file:// URL only", () => {
     const { home } = homeWithWorkspace(tmp("other-"));
     expect(ensureWorkspaceMcpEnabled(tmp("unrelated-"), { home })).toBe("failed");

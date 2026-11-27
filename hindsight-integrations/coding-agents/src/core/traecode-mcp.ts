@@ -14,10 +14,10 @@
  * servers, and hot-reload the file with a 200ms debounce). So the SessionStart hook — which knows
  * the repo AND runs only where memory is actually live (the caller derives the bank and applies
  * opt-in first) — makes sure that file registers our server pinned to THIS repo:
- *   {"mcpServers":{"hindsight":{"command":"node","args":["<dist>/mcp-server.js"],
+ *   {"mcpServers":{"<mcpServerName>":{"command":"node","args":["<dist>/mcp-server.js"],
  *     "env":{"HINDSIGHT_MCP_HARNESS":"traecode","HINDSIGHT_MCP_PROJECT_CWD":"<repo>"}}}}
  *
- * Fidelity rules, in order: never throw; never touch a foreign "hindsight" entry (same ownership
+ * Fidelity rules, in order: never throw; never touch a foreign same-named entry (same ownership
  * check the installer applies to user-level files); never clobber the rest of the document; and
  * rewrite only on a real diff so the hook is idempotent. The registration carries an absolute,
  * machine-specific path, so a repo .gitignore that does not already ignore the file gets the one
@@ -308,7 +308,7 @@ export function registerTraecodeWorkspaceMcp(
 /** Uninstall counterpart of the registration: drop OUR entry from `<cwd>/.trae/mcp.json`,
  *  dropping the now-empty `mcpServers` husk with it and unlinking the file only when nothing at
  *  all remains of the document — top-level keys the user hung beside `mcpServers` are never a
- *  reason to unlink. A foreign "hindsight" entry and the rest of the document are untouched —
+ *  reason to unlink. A foreign same-named entry and the rest of the document are untouched —
  *  same ownership check the registration applies. Never throws. True when the file changed. */
 export function removeTraecodeWorkspaceMcpEntry(
   cwd: string,
