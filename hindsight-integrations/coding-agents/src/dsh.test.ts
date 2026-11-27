@@ -3,6 +3,7 @@ import {
   createDshHooks,
   dshSessionEvents,
   ownEvents,
+  readPastSession,
   toDshParameters,
   type Workspace,
 } from "./dsh";
@@ -269,6 +270,28 @@ describe("dshSessionEvents (alpha.4+ transcript source)", () => {
     // The model still sees the whole history; an unforked session saves all of it.
     expect(dshSessionEvents(fork)).toHaveLength(3);
     expect(ownEvents({ snapshotEvents: () => sampleEvents })).toEqual(sampleEvents);
+  });
+
+  it("reads a past session's own turns from the host store, and releases the handle (#6559)", async () => {
+    const childTurn = {
+      type: "user/message",
+      data: {
+        role: "user",
+        content: [{ type: "text", text: "after restart" }],
+        source: { kind: "user" },
+      },
+    };
+    const close = vi.fn(async () => {});
+    const open = vi.fn(async () => ({
+      inheritedEventCount: 2,
+      read: async () => ({ events: [...sampleEvents, childTurn] }),
+      close,
+    }));
+    expect(await readPastSession({ open }, "s-old")).toEqual([
+      { role: "user", content: "after restart" },
+    ]);
+    expect(open).toHaveBeenCalledWith("s-old", "read");
+    expect(close).toHaveBeenCalledOnce();
   });
 });
 

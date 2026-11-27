@@ -87,11 +87,15 @@ export function createPluginEntry(harness: string): Plugin {
       }
     )?.session;
     if (sessionApi?.messages) {
-      core.setTranscriptSource(async (sessionId) => {
+      const fetchSession = async (sessionId: string) => {
         const r = await sessionApi.messages!({ path: { id: sessionId } });
         if (r?.error) throw new Error(JSON.stringify(r.error).slice(0, 200));
         return readOpencodeMessages(r?.data ?? []);
-      });
+      };
+      core.setTranscriptSource(fetchSession);
+      // The server keeps every session, so the same call reads one this process never opened: a
+      // session whose last write-back failed before the host exited is replayed from it (#6559).
+      core.setPastSessionSource(fetchSession);
     }
     log.debug(harness, "transcript source", { wired: Boolean(sessionApi?.messages) });
 

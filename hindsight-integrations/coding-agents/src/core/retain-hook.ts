@@ -212,8 +212,12 @@ export async function replayOrphanedSessions(args: {
   currentSessionId: string;
   /** Config before any bank override: each orphan is resolved against its OWN bank. */
   cfg: Config;
-  makeClient: (opts: ClientOpts) => RetainClient;
+  /** Defaults to a plain client: each orphan's bank is only known here. */
+  makeClient?: (opts: ClientOpts) => RetainClient;
   readTranscript?: TranscriptReader;
+  /** Reads back from the HOST an orphan whose cursor names no transcript file: the persistent-plugin
+   *  runtime holds its turns in memory (core/runtime.ts). Absent, such an orphan is skipped. */
+  fetchTurns?: (sessionId: string) => Promise<TransportTurn[]>;
   /** The harness's originator reader: an orphan from a `skipOriginators` client stays unwritten. */
   originator?: RetainHookSpec["originator"];
   deadline: number;
@@ -231,27 +235,29 @@ export async function replayOrphanedSessions(args: {
     if (sessionId === args.currentSessionId) continue;
     // Never start one that cannot finish before the host kills this process.
     if (Date.now() + REQUEST_BUDGET_MS > args.deadline) return;
+    // A cursor with no file is a persistent-plugin session: only its host can give its turns back.
     const transcriptPath = cursor.paths?.at(-1);
-    if (!transcriptPath || !existsSync(transcriptPath)) continue;
+    if (transcriptPath ? !existsSync(transcriptPath) : !args.fetchTurns) continue;
     // Resolved from the bank id alone: the ended session's working folder is not known here, so a
     // folder-scoped (`paths`) override does not apply — a `banks.<id>` section does.
     const { cfg, bankId } = applyBankConfig(args.cfg, cursor.bank);
     if (cfg.disabled || !cfg.retainSessions) continue;
-    if (cfg.skipOriginators.length) {
+    if (transcriptPath && cfg.skipOriginators.length) {
       const originator = args.originator?.(transcriptPath);
       if (originator && cfg.skipOriginators.includes(originator)) continue;
     }
     let turns: TransportTurn[];
     try {
-      // Guarded: a reader can throw on a damaged file (see transcript-qwen.ts), and one bad old
-      // transcript must neither reject this Stop hook nor stop the others from being replayed.
-      turns = readTranscript(transcriptPath);
+      // Guarded: a reader can throw on a damaged file (see transcript-qwen.ts), a host on a session
+      // it no longer holds, and one bad old transcript must neither reject this Stop hook nor stop
+      // the others from being replayed.
+      turns = transcriptPath ? readTranscript(transcriptPath) : await args.fetchTurns!(sessionId);
     } catch (e) {
       diag(harness, "retain_replay_failed", { error: describeError(e), session: sessionId });
       continue;
     }
     if (!turns.length) continue;
-    const client = args.makeClient({
+    const client = (args.makeClient ?? ((o) => new HindsightClient(o)))({
       apiUrl: cfg.apiUrl,
       apiToken: cfg.apiToken,
       headers: cfg.apiHeaders,

@@ -16,28 +16,39 @@
  *   - flush()                       : host is exiting -> wait (bounded) for in-flight write-backs
  * No opencode/claude specifics live here — only the memory logic.
  */
-import type { Config } from "./config";
+import { loadConfig, type Config } from "./config";
 import { maybeAutoUpdate } from "./auto-update";
 import { DAEMON_WAIT_RETAIN_MS, DAEMON_WAIT_SESSION_START_MS, ensureDaemon } from "./daemon";
 import { diag } from "./diag";
 import { describeError, log, setLogLevel } from "./log";
 import type { HindsightClient } from "./hindsight";
+import { replayOrphanedSessions } from "./retain-hook";
 import { buildPagesPreamble, toolGuideOpts } from "./page-injection";
 import { buildPageTools, type ToolSpec } from "./page-tools";
 import { buildPageTrigger } from "./missions";
 import { retainLiveSession, type TransportTurn } from "./chat";
-import { fingerprintTurns, memoryCursorStore } from "./retain-cursor";
+import { fingerprintTurns, type RetainCursorStore } from "./retain-cursor";
 import { memoryUsageCursorStore, recordUsage } from "./usage";
 import { buildRetainStamp } from "./retain-stamp";
 import { buildSessionStartContext } from "./session-start";
 import { syncCompanionSkill } from "./skill-sync";
 import { buildHookOutput } from "./hook";
 import { stripInjectedMemory } from "./transcript-util";
-import { resetSessionCache, sessionCacheFile, writeSessionCache } from "./session-cache";
+import {
+  fileCursorStore,
+  resetSessionCache,
+  sessionCacheFile,
+  writeSessionCache,
+} from "./session-cache";
 
 const HARNESS = "opencode";
 /** How long `flush` holds a host's exit for in-flight write-backs: room for one retain request. */
 const FLUSH_TIMEOUT_MS = 10_000;
+/** How long one round of replaying other sessions' failed write-backs may run. */
+const REPLAY_BUDGET_MS = 60_000;
+/** Harnesses with a replay running in this process: dsh builds one core per workspace, and two of
+ *  them replaying the same orphan would race on its document. */
+const replaying = new Set<string>();
 
 /** What session-idle last wrote for one session, so a repeated idle does not write it again. */
 interface SessionState {
@@ -51,12 +62,15 @@ export class RuntimeCore {
   private readonly injection = new Map<string, string>(); // sessionId -> this turn's injection block
   private readonly turnCount = new Map<string, number>(); // sessionId -> user-turn counter (cadence)
   private readonly sessionState = new Map<string, SessionState>();
-  /** Live write-back cursors. In memory, unlike the hook harnesses': this host outlives the session. */
-  private readonly cursors = memoryCursorStore();
+  /** Write-back cursors, on disk like the hook harnesses': a write that fails before the host exits
+   *  stays marked as owed, so a later process can replay it (see replayOrphans). */
+  private readonly cursors: RetainCursorStore;
   /** Turns already written to the usage log (core/usage.ts), per session. */
   private readonly usageCursors = memoryUsageCursorStore();
   /** Pulls a session's CURRENT transcript from the host (set by the adapter); see onSessionIdle. */
   private fetchTranscript?: (sessionId: string) => Promise<TransportTurn[]>;
+  /** Reads ANY stored session back from the host, including one no longer open; see replayOrphans. */
+  private fetchPastSession?: (sessionId: string) => Promise<TransportTurn[]>;
   /** Write-backs started and not yet settled — what `flush` waits for. */
   private readonly inFlight = new Set<Promise<void>>();
   private deferInitialReflect = false;
@@ -78,6 +92,7 @@ export class RuntimeCore {
     private readonly projectDir: string = process.cwd()
   ) {
     setLogLevel(cfg.logLevel);
+    this.cursors = fileCursorStore(harness);
   }
 
   setNotifier(notify: (title: string, message: string) => void): void {
@@ -91,6 +106,16 @@ export class RuntimeCore {
    */
   setTranscriptSource(fetch: (sessionId: string) => Promise<TransportTurn[]>): void {
     this.fetchTranscript = fetch;
+  }
+
+  /**
+   * Supply a way to read a PAST session back from the host's own store, by id, after the process
+   * that ran it is gone. Only for hosts whose fetch really reaches any stored session: a source that
+   * returns the live session whatever id it is asked for would write it into another's document.
+   * Without it, a session whose last write-back failed before the host exited is never retried.
+   */
+  setPastSessionSource(fetch: (sessionId: string) => Promise<TransportTurn[]>): void {
+    this.fetchPastSession = fetch;
   }
 
   /** The hindsight_* page + recall tools, bound to this bank, for the harness to register natively. */
@@ -404,14 +429,16 @@ export class RuntimeCore {
           }),
         })
       )
-      .then(() =>
+      .then(() => {
         diag(this.harness, "retain_ok", {
           ms: Date.now() - t0,
           turns: turns.length,
           session: sessionId,
           trigger,
-        })
-      )
+        });
+        // The server just took a write, so it is worth retrying the ones that failed (#6559).
+        return this.replayOrphans(sessionId);
+      })
       .catch((e) =>
         diag(this.harness, "retain_failed", {
           ms: Date.now() - t0,
@@ -422,5 +449,31 @@ export class RuntimeCore {
       );
     this.inFlight.add(write);
     void write.finally(() => this.inFlight.delete(write));
+  }
+
+  /**
+   * Re-send the write-backs of this harness's other sessions whose last one failed — the shared
+   * replay the hook harnesses run on every Stop (#6097), fed by the host's session store instead of
+   * a transcript file, since these hosts keep their turns in memory (#6559). Same filters, bank
+   * routing and cursor, so a write that did land collapses server-side. Never throws.
+   */
+  private async replayOrphans(currentSessionId: string): Promise<void> {
+    if (!this.fetchPastSession || replaying.has(this.harness)) return;
+    replaying.add(this.harness);
+    try {
+      await replayOrphanedSessions({
+        harness: this.harness,
+        currentSessionId,
+        // Unresolved: each orphan is routed through its OWN bank's overrides.
+        cfg: loadConfig({ harness: this.harness }),
+        fetchTurns: this.fetchPastSession,
+        deadline: Date.now() + REPLAY_BUDGET_MS,
+        cursors: this.cursors,
+      });
+    } catch (e) {
+      diag(this.harness, "retain_replay_failed", { error: describeError(e) });
+    } finally {
+      replaying.delete(this.harness);
+    }
   }
 }
