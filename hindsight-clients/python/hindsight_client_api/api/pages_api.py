@@ -1530,6 +1530,7 @@ class PagesApi:
     async def get_page_tree(
         self,
         bank_id: StrictStr,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only return pages carrying these tags (matched per `tags_match`, like recall).")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match a page's tags: any, all, any_strict, all_strict, exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact' do not.")] = None,
         tag_groups: Annotated[Optional[StrictStr], Field(description="JSON-encoded compound tag filter, same shape as recall's `tag_groups`, e.g. `[{\"or\":[{\"tags\":[\"user:kate\"],\"match\":\"all_strict\"},{\"tags\":[\"team\"]}]}]`. Top-level groups are AND-ed, and AND-ed with `tags`.")] = None,
@@ -1553,6 +1554,8 @@ class PagesApi:
 
         :param bank_id: (required)
         :type bank_id: str
+        :param detail: Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).
+        :type detail: str
         :param tags: Only return pages carrying these tags (matched per `tags_match`, like recall).
         :type tags: List[str]
         :param tags_match: How `tags` match a page's tags: any, all, any_strict, all_strict, exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact' do not.
@@ -1585,6 +1588,7 @@ class PagesApi:
 
         _param = self._get_page_tree_serialize(
             bank_id=bank_id,
+            detail=detail,
             tags=tags,
             tags_match=tags_match,
             tag_groups=tag_groups,
@@ -1615,6 +1619,7 @@ class PagesApi:
     async def get_page_tree_with_http_info(
         self,
         bank_id: StrictStr,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only return pages carrying these tags (matched per `tags_match`, like recall).")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match a page's tags: any, all, any_strict, all_strict, exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact' do not.")] = None,
         tag_groups: Annotated[Optional[StrictStr], Field(description="JSON-encoded compound tag filter, same shape as recall's `tag_groups`, e.g. `[{\"or\":[{\"tags\":[\"user:kate\"],\"match\":\"all_strict\"},{\"tags\":[\"team\"]}]}]`. Top-level groups are AND-ed, and AND-ed with `tags`.")] = None,
@@ -1638,6 +1643,8 @@ class PagesApi:
 
         :param bank_id: (required)
         :type bank_id: str
+        :param detail: Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).
+        :type detail: str
         :param tags: Only return pages carrying these tags (matched per `tags_match`, like recall).
         :type tags: List[str]
         :param tags_match: How `tags` match a page's tags: any, all, any_strict, all_strict, exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact' do not.
@@ -1670,6 +1677,7 @@ class PagesApi:
 
         _param = self._get_page_tree_serialize(
             bank_id=bank_id,
+            detail=detail,
             tags=tags,
             tags_match=tags_match,
             tag_groups=tag_groups,
@@ -1700,6 +1708,7 @@ class PagesApi:
     async def get_page_tree_without_preload_content(
         self,
         bank_id: StrictStr,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).")] = None,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Only return pages carrying these tags (matched per `tags_match`, like recall).")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How `tags` match a page's tags: any, all, any_strict, all_strict, exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact' do not.")] = None,
         tag_groups: Annotated[Optional[StrictStr], Field(description="JSON-encoded compound tag filter, same shape as recall's `tag_groups`, e.g. `[{\"or\":[{\"tags\":[\"user:kate\"],\"match\":\"all_strict\"},{\"tags\":[\"team\"]}]}]`. Top-level groups are AND-ed, and AND-ed with `tags`.")] = None,
@@ -1723,6 +1732,8 @@ class PagesApi:
 
         :param bank_id: (required)
         :type bank_id: str
+        :param detail: Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).
+        :type detail: str
         :param tags: Only return pages carrying these tags (matched per `tags_match`, like recall).
         :type tags: List[str]
         :param tags_match: How `tags` match a page's tags: any, all, any_strict, all_strict, exact. 'any'/'all' also return untagged pages; the _strict modes and 'exact' do not.
@@ -1755,6 +1766,7 @@ class PagesApi:
 
         _param = self._get_page_tree_serialize(
             bank_id=bank_id,
+            detail=detail,
             tags=tags,
             tags_match=tags_match,
             tag_groups=tag_groups,
@@ -1780,6 +1792,7 @@ class PagesApi:
     def _get_page_tree_serialize(
         self,
         bank_id,
+        detail,
         tags,
         tags_match,
         tag_groups,
@@ -1809,6 +1822,10 @@ class PagesApi:
         if bank_id is not None:
             _path_params['bank_id'] = bank_id
         # process the query parameters
+        if detail is not None:
+            
+            _query_params.append(('detail', detail))
+            
         if tags is not None:
             
             _query_params.append(('tags', tags))

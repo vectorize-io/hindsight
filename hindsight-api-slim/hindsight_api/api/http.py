@@ -6383,10 +6383,11 @@ def _register_routes(app: FastAPI):
         bank_id: str,
         tags_filter: list[str] | None = Query(None, alias="tags", description="Filter by tags"),
         tags_match: Literal["any", "all", "exact"] = Query("any", description="How to match tags"),
-        detail: Literal["metadata", "content", "full"] = Query(
+        detail: Literal["basic", "metadata", "content", "full"] = Query(
             "metadata",
             description=(
-                "Detail level: 'metadata' (names/tags/staleness — the default), "
+                "Detail level: 'basic' (names/tags, no staleness — skips a scan of each model's memories), "
+                "'metadata' (names/tags/staleness — the default), "
                 "'content' (adds content/config), 'full' (includes reflect_response). "
                 "Content is opt-in: it is returned only when explicitly requested."
             ),
@@ -6426,10 +6427,10 @@ def _register_routes(app: FastAPI):
                 bank_id=bank_id,
                 tags=tags_filter,
                 tags_match=tags_match,
-                detail=detail,
+                detail="metadata" if detail == "basic" else detail,
                 limit=limit,
                 offset=offset,
-                with_staleness=True,
+                with_staleness=detail != "basic",
                 exclude_pages=exclude_pages or exclude_knowledge_pages,
                 request_context=request_context,
             )
@@ -6816,12 +6817,22 @@ def _register_routes(app: FastAPI):
     async def api_page_tree(
         bank_id: str,
         tag_filter: PageTagFilter = Depends(_page_tag_filter),
+        detail: Literal["basic", "metadata"] = Query(
+            "metadata",
+            description=(
+                "Detail level: 'basic' (no staleness — skips a scan of each page's memories), "
+                "'metadata' (adds is_stale — the default)."
+            ),
+        ),
         request_context: RequestContext = Depends(get_request_context),
     ):
         """Return the folder/page tree for a bank."""
         try:
             nodes = await app.state.memory.list_page_nodes(
-                bank_id=bank_id, with_staleness=True, tag_filter=tag_filter, request_context=request_context
+                bank_id=bank_id,
+                with_staleness=detail != "basic",
+                tag_filter=tag_filter,
+                request_context=request_context,
             )
             return PageTreeResponse(roots=_build_page_tree(nodes))
         except OperationValidationError as e:

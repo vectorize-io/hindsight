@@ -830,7 +830,7 @@ func (r ApiListMentalModelsRequest) TagsMatch(tagsMatch string) ApiListMentalMod
 	return r
 }
 
-// Detail level: &#39;metadata&#39; (names/tags/staleness — the default), &#39;content&#39; (adds content/config), &#39;full&#39; (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
+// Detail level: &#39;basic&#39; (names/tags, no staleness — skips a scan of each model&#39;s memories), &#39;metadata&#39; (names/tags/staleness — the default), &#39;content&#39; (adds content/config), &#39;full&#39; (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
 func (r ApiListMentalModelsRequest) Detail(detail string) ApiListMentalModelsRequest {
 	r.detail = &detail
 	return r

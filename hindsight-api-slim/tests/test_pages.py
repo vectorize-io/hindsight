@@ -376,6 +376,29 @@ class TestTree:
         assert roots["Loose"]["is_stale"] is True
 
     @pytest.mark.memory_backend_incompatible
+    async def test_detail_basic_skips_the_staleness_check(self, api_client, memory, kb_bank):
+        """Metadata-only callers can skip the scope scan with detail=basic (#6258); default keeps it."""
+        bank_id, ids = kb_bank
+        await self._insert_memory(memory, bank_id, [])
+        base = f"/v1/default/banks/{_enc(bank_id)}"
+
+        tree = await api_client.get(f"{base}/pages/tree", params={"detail": "basic"})
+        assert tree.status_code == 200, tree.text
+        loose = next(r for r in tree.json()["roots"] if r["name"] == "Loose")
+        assert loose.get("is_stale") is None
+        mm_id = loose["mental_model_id"]
+
+        listed = await api_client.get(f"{base}/mental-models", params={"detail": "basic"})
+        assert listed.status_code == 200, listed.text
+        assert all(m.get("is_stale") is None for m in listed.json()["items"])
+
+        # Default unchanged: the same reads still answer is_stale.
+        tree = await api_client.get(f"{base}/pages/tree")
+        assert next(r for r in tree.json()["roots"] if r["name"] == "Loose")["is_stale"] is True
+        listed = await api_client.get(f"{base}/mental-models")
+        assert next(m for m in listed.json()["items"] if m["id"] == mm_id)["is_stale"] is True
+
+    @pytest.mark.memory_backend_incompatible
     async def test_tree_agrees_with_the_exact_per_model_check(self, api_client, memory, kb_bank, request_context):
         """The tree and the single-model read answer the same question.
 

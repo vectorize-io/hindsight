@@ -3713,16 +3713,17 @@
             "required": false,
             "schema": {
               "enum": [
+                "basic",
                 "metadata",
                 "content",
                 "full"
               ],
               "type": "string",
-              "description": "Detail level: 'metadata' (names/tags/staleness \u2014 the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.",
+              "description": "Detail level: 'basic' (names/tags, no staleness \u2014 skips a scan of each model's memories), 'metadata' (names/tags/staleness \u2014 the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.",
               "default": "metadata",
               "title": "Detail"
             },
-            "description": "Detail level: 'metadata' (names/tags/staleness \u2014 the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested."
+            "description": "Detail level: 'basic' (names/tags, no staleness \u2014 skips a scan of each model's memories), 'metadata' (names/tags/staleness \u2014 the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested."
           },
           {
             "name": "limit",
@@ -4417,6 +4418,22 @@
             }
           },
           {
+            "name": "detail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "basic",
+                "metadata"
+              ],
+              "type": "string",
+              "description": "Detail level: 'basic' (no staleness \u2014 skips a scan of each page's memories), 'metadata' (adds is_stale \u2014 the default).",
+              "default": "metadata",
+              "title": "Detail"
+            },
+            "description": "Detail level: 'basic' (no staleness \u2014 skips a scan of each page's memories), 'metadata' (adds is_stale \u2014 the default)."
+          },
+          {
             "name": "tags",
             "in": "query",
             "required": false,
@@ -4535,6 +4552,22 @@
               "type": "string",
               "title": "Bank Id"
             }
+          },
+          {
+            "name": "detail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "basic",
+                "metadata"
+              ],
+              "type": "string",
+              "description": "Detail level: 'basic' (no staleness \u2014 skips a scan of each page's memories), 'metadata' (adds is_stale \u2014 the default).",
+              "default": "metadata",
+              "title": "Detail"
+            },
+            "description": "Detail level: 'basic' (no staleness \u2014 skips a scan of each page's memories), 'metadata' (adds is_stale \u2014 the default)."
           },
           {
             "name": "tags",
