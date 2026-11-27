@@ -554,10 +554,17 @@ type ApiGetKnowledgeBaseTreeRequest struct {
 	ctx context.Context
 	ApiService *KnowledgeBaseAPIService
 	bankId string
+	detail *string
 	tags *[]string
 	tagsMatch *string
 	tagGroups *string
 	authorization *string
+}
+
+// Detail level: &#39;basic&#39; (no staleness — skips a scan of each page&#39;s memories), &#39;metadata&#39; (adds is_stale — the default).
+func (r ApiGetKnowledgeBaseTreeRequest) Detail(detail string) ApiGetKnowledgeBaseTreeRequest {
+	r.detail = &detail
+	return r
 }
 
 // Only return pages carrying these tags (matched per &#x60;tags_match&#x60;, like recall).
@@ -629,6 +636,12 @@ func (a *KnowledgeBaseAPIService) GetKnowledgeBaseTreeExecute(r ApiGetKnowledgeB
 	localVarQueryParams := url.Values{}
 	localVarFormParams := url.Values{}
 
+	if r.detail != nil {
+		parameterAddToHeaderOrQuery(localVarQueryParams, "detail", r.detail, "form", "")
+	} else {
+		var defaultValue string = "metadata"
+		r.detail = &defaultValue
+	}
 	if r.tags != nil {
 		t := *r.tags
 		if reflect.TypeOf(t).Kind() == reflect.Slice {

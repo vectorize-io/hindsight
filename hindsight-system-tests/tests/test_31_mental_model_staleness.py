@@ -69,6 +69,20 @@ async def test_a_later_write_makes_it_stale(client, bank_id, model, settled):
     assert current.is_stale is True
 
 
+async def test_a_basic_list_skips_the_staleness_check(client, bank_id, model, settled):
+    """`detail=basic` is the metadata a caller lists for ids and names, without the
+    per-model scan behind `is_stale` that dominates the request on large banks
+    (#6258). The default list keeps answering it, so existing callers see no change."""
+    await client.aretain(bank_id=bank_id, content="Alice plays cello.")
+    await settled(bank_id)
+
+    basic = await client.mental_models.list_mental_models(bank_id, detail="basic")
+    default = await client.mental_models.list_mental_models(bank_id)
+
+    assert [(m.id, m.name, m.is_stale, m.content) for m in basic.items] == [(model, "Housing", None, None)]
+    assert [(m.id, m.name, m.is_stale, m.content) for m in default.items] == [(model, "Housing", True, None)]
+
+
 async def test_going_stale_does_not_change_the_answer(client, bank_id, model, settled):
     """Stale means "worth refreshing", not "wrong". The old answer keeps serving
     until a refresh replaces it — blanking it on staleness would leave a gap

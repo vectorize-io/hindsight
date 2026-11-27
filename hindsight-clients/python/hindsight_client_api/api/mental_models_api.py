@@ -1236,7 +1236,7 @@ class MentalModelsApi:
         self,
         bank_id: StrictStr,
         mental_model_id: StrictStr,
-        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1259,7 +1259,7 @@ class MentalModelsApi:
         :type bank_id: str
         :param mental_model_id: (required)
         :type mental_model_id: str
-        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :param detail: Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)
         :type detail: str
         :param authorization:
         :type authorization: str
@@ -1316,7 +1316,7 @@ class MentalModelsApi:
         self,
         bank_id: StrictStr,
         mental_model_id: StrictStr,
-        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1339,7 +1339,7 @@ class MentalModelsApi:
         :type bank_id: str
         :param mental_model_id: (required)
         :type mental_model_id: str
-        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :param detail: Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)
         :type detail: str
         :param authorization:
         :type authorization: str
@@ -1396,7 +1396,7 @@ class MentalModelsApi:
         self,
         bank_id: StrictStr,
         mental_model_id: StrictStr,
-        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)")] = None,
         authorization: Optional[StrictStr] = None,
         _request_timeout: Union[
             None,
@@ -1419,7 +1419,7 @@ class MentalModelsApi:
         :type bank_id: str
         :param mental_model_id: (required)
         :type mental_model_id: str
-        :param detail: Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+        :param detail: Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)
         :type detail: str
         :param authorization:
         :type authorization: str
@@ -1840,7 +1840,7 @@ class MentalModelsApi:
         bank_id: StrictStr,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
-        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic' (names/tags, no staleness — skips a scan of each model's memories), 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
         limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of mental models to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         exclude_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold page content (list standalone models only).")] = None,
@@ -1869,7 +1869,7 @@ class MentalModelsApi:
         :type tags: List[str]
         :param tags_match: How to match tags
         :type tags_match: str
-        :param detail: Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
+        :param detail: Detail level: 'basic' (names/tags, no staleness — skips a scan of each model's memories), 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
         :type detail: str
         :param limit: Maximum number of mental models to return. Values above 1000 are trimmed to 1000.
         :type limit: int
@@ -1941,7 +1941,7 @@ class MentalModelsApi:
         bank_id: StrictStr,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
-        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic' (names/tags, no staleness — skips a scan of each model's memories), 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
         limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of mental models to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         exclude_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold page content (list standalone models only).")] = None,
@@ -1970,7 +1970,7 @@ class MentalModelsApi:
         :type tags: List[str]
         :param tags_match: How to match tags
         :type tags_match: str
-        :param detail: Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
+        :param detail: Detail level: 'basic' (names/tags, no staleness — skips a scan of each model's memories), 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
         :type detail: str
         :param limit: Maximum number of mental models to return. Values above 1000 are trimmed to 1000.
         :type limit: int
@@ -2042,7 +2042,7 @@ class MentalModelsApi:
         bank_id: StrictStr,
         tags: Annotated[Optional[List[StrictStr]], Field(description="Filter by tags")] = None,
         tags_match: Annotated[Optional[StrictStr], Field(description="How to match tags")] = None,
-        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
+        detail: Annotated[Optional[StrictStr], Field(description="Detail level: 'basic' (names/tags, no staleness — skips a scan of each model's memories), 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.")] = None,
         limit: Annotated[Optional[Annotated[int, Field(strict=True, ge=1)]], Field(description="Maximum number of mental models to return. Values above 1000 are trimmed to 1000.")] = None,
         offset: Optional[Annotated[int, Field(strict=True, ge=0)]] = None,
         exclude_pages: Annotated[Optional[StrictBool], Field(description="Leave out the mental models that hold page content (list standalone models only).")] = None,
@@ -2071,7 +2071,7 @@ class MentalModelsApi:
         :type tags: List[str]
         :param tags_match: How to match tags
         :type tags_match: str
-        :param detail: Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
+        :param detail: Detail level: 'basic' (names/tags, no staleness — skips a scan of each model's memories), 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
         :type detail: str
         :param limit: Maximum number of mental models to return. Values above 1000 are trimmed to 1000.
         :type limit: int

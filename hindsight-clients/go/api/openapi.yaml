@@ -2590,7 +2590,8 @@ paths:
           title: Tags Match
           type: string
         style: form
-      - description: "Detail level: 'metadata' (names/tags/staleness — the default),\
+      - description: "Detail level: 'basic' (names/tags, no staleness — skips a scan\
+          \ of each model's memories), 'metadata' (names/tags/staleness — the default),\
           \ 'content' (adds content/config), 'full' (includes reflect_response). Content\
           \ is opt-in: it is returned only when explicitly requested."
         explode: true
@@ -2599,10 +2600,12 @@ paths:
         required: false
         schema:
           default: metadata
-          description: "Detail level: 'metadata' (names/tags/staleness — the default),\
-            \ 'content' (adds content/config), 'full' (includes reflect_response).\
+          description: "Detail level: 'basic' (names/tags, no staleness — skips a\
+            \ scan of each model's memories), 'metadata' (names/tags/staleness — the\
+            \ default), 'content' (adds content/config), 'full' (includes reflect_response).\
             \ Content is opt-in: it is returned only when explicitly requested."
           enum:
+          - basic
           - metadata
           - content
           - full
@@ -2794,17 +2797,18 @@ paths:
           title: Mental Model Id
           type: string
         style: simple
-      - description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
-          \ content/config), 'full' (includes reflect_response)"
+      - description: "Detail level: 'basic'/'metadata' (names/tags only), 'content'\
+          \ (adds content/config), 'full' (includes reflect_response and is_stale)"
         explode: true
         in: query
         name: detail
         required: false
         schema:
           default: full
-          description: "Detail level: 'metadata' (names/tags only), 'content' (adds\
-            \ content/config), 'full' (includes reflect_response)"
+          description: "Detail level: 'basic'/'metadata' (names/tags only), 'content'\
+            \ (adds content/config), 'full' (includes reflect_response and is_stale)"
           enum:
+          - basic
           - metadata
           - content
           - full
@@ -3098,6 +3102,22 @@ paths:
           title: Bank Id
           type: string
         style: simple
+      - description: "Detail level: 'basic' (no staleness — skips a scan of each page's\
+          \ memories), 'metadata' (adds is_stale — the default)."
+        explode: true
+        in: query
+        name: detail
+        required: false
+        schema:
+          default: metadata
+          description: "Detail level: 'basic' (no staleness — skips a scan of each\
+            \ page's memories), 'metadata' (adds is_stale — the default)."
+          enum:
+          - basic
+          - metadata
+          title: Page Tree Detail
+          type: string
+        style: form
       - description: "Only return pages carrying these tags (matched per `tags_match`,\
           \ like recall)."
         explode: true
@@ -3181,6 +3201,22 @@ paths:
           title: Bank Id
           type: string
         style: simple
+      - description: "Detail level: 'basic' (no staleness — skips a scan of each page's\
+          \ memories), 'metadata' (adds is_stale — the default)."
+        explode: true
+        in: query
+        name: detail
+        required: false
+        schema:
+          default: metadata
+          description: "Detail level: 'basic' (no staleness — skips a scan of each\
+            \ page's memories), 'metadata' (adds is_stale — the default)."
+          enum:
+          - basic
+          - metadata
+          title: Page Tree Detail
+          type: string
+        style: form
       - description: "Only return pages carrying these tags (matched per `tags_match`,\
           \ like recall)."
         explode: true

@@ -10825,9 +10825,9 @@ export type ListMentalModelsData = {
     /**
      * Detail
      *
-     * Detail level: 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
+     * Detail level: 'basic' (names/tags, no staleness — skips a scan of each model's memories), 'metadata' (names/tags/staleness — the default), 'content' (adds content/config), 'full' (includes reflect_response). Content is opt-in: it is returned only when explicitly requested.
      */
-    detail?: "metadata" | "content" | "full";
+    detail?: "basic" | "metadata" | "content" | "full";
     /**
      * Limit
      *
@@ -10975,9 +10975,9 @@ export type GetMentalModelData = {
     /**
      * Detail
      *
-     * Detail level: 'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response)
+     * Detail level: 'basic'/'metadata' (names/tags only), 'content' (adds content/config), 'full' (includes reflect_response and is_stale)
      */
-    detail?: "metadata" | "content" | "full";
+    detail?: "basic" | "metadata" | "content" | "full";
   };
   url: "/v1/default/banks/{bank_id}/mental-models/{mental_model_id}";
 };
@@ -11222,6 +11222,12 @@ export type GetKnowledgeBaseTreeData = {
   };
   query?: {
     /**
+     * Page Tree Detail
+     *
+     * Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).
+     */
+    detail?: "basic" | "metadata";
+    /**
      * Tags
      *
      * Only return pages carrying these tags (matched per `tags_match`, like recall).
@@ -11282,6 +11288,12 @@ export type GetPageTreeData = {
     bank_id: string;
   };
   query?: {
+    /**
+     * Page Tree Detail
+     *
+     * Detail level: 'basic' (no staleness — skips a scan of each page's memories), 'metadata' (adds is_stale — the default).
+     */
+    detail?: "basic" | "metadata";
     /**
      * Tags
      *

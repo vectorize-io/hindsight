@@ -54,6 +54,16 @@ def test_list_forwards_every_supported_query_option(monkeypatch):
     assert kwargs["exclude_pages"] is True
 
 
+def test_list_forwards_detail_basic(monkeypatch):
+    client = Hindsight(base_url="http://example.invalid")
+    captured: dict[str, object] = {}
+    _capture_list(monkeypatch, client, captured)
+
+    client.list_mental_models("bank-1", detail="basic")
+
+    assert captured["kwargs"]["detail"] == "basic"
+
+
 def test_list_defaults_leave_controls_unset(monkeypatch):
     client = Hindsight(base_url="http://example.invalid")
     captured: dict[str, object] = {}

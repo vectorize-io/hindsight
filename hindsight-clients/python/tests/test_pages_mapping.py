@@ -208,3 +208,15 @@ def test_old_exclude_flag_still_maps(monkeypatch):
         client.list_mental_models("bank-1", exclude_knowledge_pages=True)
 
     assert captured["kwargs"]["exclude_pages"] is True
+
+
+def test_tree_forwards_detail(monkeypatch):
+    client = Hindsight(base_url="http://example.invalid")
+    captured: dict[str, object] = {}
+    _capture(monkeypatch, client, "get_page_tree", captured)
+    client.get_page_tree("bank-1", detail="basic")
+    assert captured["kwargs"]["detail"] == "basic"
+
+    captured.clear()
+    client.get_page_tree("bank-1")
+    assert captured["kwargs"]["detail"] is None

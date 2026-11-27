@@ -70,6 +70,25 @@ async def test_the_page_appears_in_the_tree_under_the_name_it_was_given(client, 
     assert page.description == SOURCE_QUERY
 
 
+async def test_a_basic_tree_skips_the_staleness_check(client, bank_id, bank_with_page):
+    """`detail=basic` is the tree a caller lists for ids and names, without the
+    per-page scan behind `is_stale` (#6258). Everything else is the same tree, and
+    the default still answers staleness."""
+    basic = await client.pages.get_page_tree(bank_id, detail="basic")
+    default = await client.pages.get_page_tree(bank_id)
+
+    def _shape(tree):
+        return [(node.id, node.name, node.kind, node.mental_model_id) for node in tree.roots]
+
+    assert (
+        _shape(basic)
+        == _shape(default)
+        == [(bank_with_page.page_id, PAGE_NAME, "page", bank_with_page.mental_model_id)]
+    )
+    assert [node.is_stale for node in basic.roots] == [None]
+    assert [node.is_stale for node in default.roots] == [False]
+
+
 async def test_moving_a_page_onto_a_taken_name_is_refused_and_changes_nothing(client, bank_id, bank_with_page, settled):
     """A folder never holds two pages with one name, whatever the case. A move
     that would break that is the caller's conflict, a 409 like a create gets,

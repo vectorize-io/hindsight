@@ -188,6 +188,11 @@ describe("page tag filter mapping", () => {
     await client.getPageTree("bank");
     expect(mockedTree.mock.calls[0][0].query).toEqual({});
   });
+
+  test("tree forwards detail", async () => {
+    await client.getPageTree("bank", { detail: "basic" });
+    expect(mockedTree.mock.calls[0][0].query).toEqual({ detail: "basic" });
+  });
 });
 
 describe("deprecated knowledge-page names", () => {
