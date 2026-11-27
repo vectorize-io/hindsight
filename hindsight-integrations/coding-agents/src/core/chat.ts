@@ -392,8 +392,10 @@ async function writeSession(
   const outbox = plan.mode === "replace" || moved ? [] : (cursor?.pending ?? []);
   if (plan.mode === "skip" && !outbox.length) return;
 
-  /** Identity of ONE payload: a resubmission of the same bytes is collapsed server-side into the
-   *  original operation instead of extracting (or appending) twice. */
+  /** Identity of ONE write: a resubmission of the same bytes is collapsed server-side into the
+   *  original operation instead of extracting (or appending) twice. Callers put the previous
+   *  write's id (`lastOp`) in `content` too, so the same bytes later in the history are a new write
+   *  rather than one the server skips as already done (#6988). */
   const opId = (mode: string, content: string) =>
     uuidV5(`${client.bank}\n${refId}\n${mode}\n${content}`);
   const submit = (content: string, operationId: string, append: boolean) =>
