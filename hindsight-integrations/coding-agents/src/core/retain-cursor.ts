@@ -125,6 +125,9 @@ export interface RetainCursor {
   appendSupported?: boolean;
   /** A REPLACE was started and not confirmed: the next retain must replace, not append. */
   dirty?: boolean;
+  /** What that unconfirmed replace's operation id was derived from (the document it replaced), so
+   *  a retry — from this process or another — goes out as the same operation (#6559). */
+  replaceBase?: string;
   /** Appends started and not confirmed, oldest first — replayed before anything new. Their turns
    *  are already counted in `turns`: the cursor covers what is committed OR buffered. */
   pending?: PendingAppend[];
@@ -230,14 +233,15 @@ export function planRetain(
   return { mode: "append", fromTurn: cursor.turns };
 }
 
-/** Per-session cursor storage. Hook harnesses are a fresh process per event so theirs is file-backed
- *  (core/session-cache.ts); the persistent-plugin runtime keeps its own in memory. */
+/** Per-session cursor storage. Every harness's is file-backed (core/session-cache.ts): hook
+ *  harnesses are a fresh process per event, and the persistent-plugin runtime used to keep its own in
+ *  memory until a write that failed before the host exited was lost with it (#6559). */
 export interface RetainCursorStore {
   read(sessionId: string): RetainCursor | undefined;
   write(sessionId: string, cursor: RetainCursor): void;
 }
 
-/** In-memory store for a long-lived host (opencode/kilo). */
+/** In-memory store, for tests: no production path uses it since #6559. */
 export function memoryCursorStore(): RetainCursorStore {
   const cursors = new Map<string, RetainCursor>();
   return {

@@ -21,5 +21,7 @@ export default defineConfig({
       // by the time a test body runs the value is already fixed. Points at a path with no file.
       HINDSIGHT_CONFIG: join(tmpdir(), "hindsight-coding-agent-test-absent.json"),
     },
+    // TMPDIR: a fresh temp dir per run, removed at the end (see the file).
+    globalSetup: ["./vitest.global-setup.ts"],
   },
 });

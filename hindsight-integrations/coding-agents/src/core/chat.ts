@@ -464,9 +464,24 @@ async function writeSession(
     // learn resolves to another replace rather than an append onto an unknown state.
     // The id also names what the document held before, from the cursor: content alone repeats
     // when a session returns to an earlier branch (A → B → A), and the server acknowledges a
-    // completed id without applying it, leaving B stored (#5845). A retry still has the same base.
-    const base = cursor ? `${cursor.turns}\n${cursor.fingerprint}` : "";
-    cursors?.write(sessionId, { ...next, dirty: true });
+    // completed id without applying it, leaving B stored (#5845).
+    // The claim below moves the cursor to the NEW position, so a retry reading it back would derive
+    // a different base and so a different id: a replace the server did take, whose response was
+    // lost, would then be extracted a second time (#6559). The base goes out with the claim, and is
+    // reused ONLY to re-send the same transcript that claim was for — same bytes, same operation. A
+    // transcript that changed since is a new replace, based on the claimed position: reusing the
+    // old base there would make A → B → A (both unconfirmed) repeat A's first id, and the server
+    // would dedupe it and keep B (#5845).
+    const base =
+      cursor?.dirty &&
+      cursor.replaceBase !== undefined &&
+      cursor.turns === next.turns &&
+      cursor.fingerprint === next.fingerprint
+        ? cursor.replaceBase
+        : cursor
+          ? `${cursor.turns}\n${cursor.fingerprint}`
+          : "";
+    cursors?.write(sessionId, { ...next, dirty: true, replaceBase: base });
     const operationId = opId("replace", `${base}\n${content}`);
     await submitWithRetry(() => submit(content, operationId, false), stillOurs, retryUntil);
     ops = []; // the replace re-sends every turn, so nothing older can still lose any

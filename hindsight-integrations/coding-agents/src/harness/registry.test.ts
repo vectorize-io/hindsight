@@ -232,3 +232,38 @@ describe("every harness decides how a compaction reaches it (#6527)", () => {
     }
   );
 });
+
+/**
+ * Which persistent-plugin hosts replay a session whose write-back failed before the host exited
+ * (#6559): only the ones whose host can read back a session by id after the process that ran it is
+ * gone. A new host lands here, and has to say which it is.
+ */
+describe("persistent-plugin hosts that replay a failed session after a restart", () => {
+  const PKG = fileURLToPath(new URL("../..", import.meta.url));
+
+  /** harness -> the file that wires its RuntimeCore, and whether it sets a past-session source. */
+  const PAST_SESSION_SOURCE: Record<string, { file: string; replays: boolean }> = {
+    // The host's server keeps every session: GET /session/{id}/message reads any of them.
+    opencode: { file: "src/harness/plugin-entry.ts", replays: true },
+    kilo: { file: "src/harness/plugin-entry.ts", replays: true },
+    // ctx.sessionPersistence.open(id, "read") reads a session no agent holds.
+    dsh: { file: "src/dsh.ts", replays: true },
+    // `session.context` reads the live session's context; not known to reach a session this
+    // process never opened, so it is not trusted to.
+    opencode2: { file: "src/harness/opencode2.ts", replays: false },
+    // The host hands over the transcript in its own events and offers no read by session id.
+    "cline-cli": { file: "src/cline.ts", replays: false },
+    pi: { file: "src/harness/pi-extension.ts", replays: false },
+    // Its transcript source returns the turns of the run it was given, whatever id it is asked
+    // for: as a past-session source it would write that run into another session's document.
+    "prime-agent": { file: "src/prime-agent.ts", replays: false },
+  };
+
+  it("covers every persistent-plugin host", () => {
+    expect(Object.keys(PAST_SESSION_SOURCE).sort()).toEqual(Object.keys(PLUGIN_ENTRYPOINTS).sort());
+  });
+
+  it.each(Object.entries(PAST_SESSION_SOURCE))("%s", (_harness, { file, replays }) => {
+    expect(readFileSync(join(PKG, file), "utf8").includes("setPastSessionSource")).toBe(replays);
+  });
+});

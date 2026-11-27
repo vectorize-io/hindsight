@@ -888,6 +888,7 @@ describe("replayOrphanedSessions (#6097)", () => {
       usageCursors: memoryUsageCursorStore(),
     });
     expect(cursors.read(sessionId)?.dirty).toBe(true);
+    return retain;
   };
 
   const replay = (
@@ -922,6 +923,17 @@ describe("replayOrphanedSessions (#6097)", () => {
     });
 
     expect(client.retain).not.toHaveBeenCalled();
+  });
+
+  // The failed save may have reached the server and only its response been lost: the replay must
+  // go out as the SAME operation, or the server extracts the session twice (#6559).
+  it("replays a first save whose response was lost as the same operation", async () => {
+    const cursors = memoryCursorStore();
+    const lost = await failedSession(cursors);
+    const client = stubClient();
+    await replay(cursors, client);
+    const operationId = (call: unknown[]) => (call[5] as { operationId?: string }).operationId;
+    expect(operationId(client.retain.mock.calls[0])).toBe(operationId(lost.mock.calls[0]));
   });
 
   it("writes the ended session's turns from a later session's Stop, with its own stamp", async () => {
@@ -987,6 +999,81 @@ describe("replayOrphanedSessions (#6097)", () => {
     await replay(cursors, client, ["a", "b"]);
     expect(client.retain).toHaveBeenCalledTimes(1);
     expect(cursors.read("a")?.dirty).toBe(true);
+  });
+
+  /** A persistent-plugin session owed a write (#6559): its cursor names no transcript file. */
+  describe("an orphan with no transcript file, read back from the host", () => {
+    const owed = (cursors: RetainCursorStore, sessionId: string) =>
+      cursors.write(sessionId, {
+        turns: 0,
+        fingerprint: "",
+        bank: "coding-agent::repo",
+        dirty: true,
+      });
+    const hostTurns = (id: string) => [
+      { role: "user", content: `asked in ${id}` },
+      { role: "assistant", content: "answered" },
+    ];
+    const replayFetched = (
+      cursors: RetainCursorStore,
+      client: ReturnType<typeof stubClient>,
+      sessionIds: string[],
+      extra: Partial<Parameters<typeof replayOrphanedSessions>[0]> = {}
+    ) =>
+      replayOrphanedSessions({
+        harness: "dsh",
+        currentSessionId: "new",
+        cfg: resolveConfig({ apiToken: "test-key" }),
+        makeClient: () => client as unknown as HindsightClient,
+        deadline: Date.now() + 60_000,
+        cursors,
+        orphans: sessionIds.map((sessionId) => ({ sessionId, cursor: cursors.read(sessionId)! })),
+        ...extra,
+      });
+
+    it("logs a session the host cannot return as unavailable, and still writes the next", async () => {
+      vi.stubEnv("HINDSIGHT_DIAG_FILE", join(root, "diag.log"));
+      const cursors = memoryCursorStore();
+      owed(cursors, "gone");
+      owed(cursors, "kept");
+      const client = stubClient();
+      await replayFetched(cursors, client, ["gone", "kept"], {
+        fetchTurns: async (id) => {
+          if (id === "gone") throw new Error("session not found");
+          return hostTurns(id);
+        },
+      });
+      expect(client.retain.mock.calls.map((c) => c[2])).toEqual(["conversation:kept"]);
+      expect(cursors.read("gone")?.dirty).toBe(true); // still owed
+      expect(cursors.read("kept")?.dirty).toBeFalsy();
+      const log = readFileSync(join(root, "diag.log"), "utf8");
+      expect(log).toContain("retain_replay_unavailable");
+      expect(log).not.toContain("retain_replay_failed");
+    });
+
+    it("skips it on a host with no way to read it back", async () => {
+      const cursors = memoryCursorStore();
+      owed(cursors, "gone");
+      const client = stubClient();
+      await replayFetched(cursors, client, ["gone"]);
+      expect(client.retain).not.toHaveBeenCalled();
+    });
+
+    // skipOriginators reads the originator out of a transcript FILE; a fetched session has none,
+    // so the filter does not apply to it (the hosts that fetch record no originator).
+    it("does not apply skipOriginators to it", async () => {
+      const cursors = memoryCursorStore();
+      owed(cursors, "kept");
+      const client = stubClient();
+      const originator = vi.fn(() => "Claude Code");
+      await replayFetched(cursors, client, ["kept"], {
+        cfg: resolveConfig({ apiToken: "test-key", skipOriginators: ["Claude Code"] }),
+        originator,
+        fetchTurns: async (id) => hostTurns(id),
+      });
+      expect(originator).not.toHaveBeenCalled();
+      expect(client.retain).toHaveBeenCalledOnce();
+    });
   });
 });
 
