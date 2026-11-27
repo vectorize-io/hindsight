@@ -152,6 +152,8 @@ def _session(sandbox: Sandbox, prompts: list[str], transcript: Path, title: str)
     result = run_session(sandbox, prompts, model=MODEL, log_path=sandbox.root / f"session-{n}.jsonl")
     _note(transcript, title, _readable(result.turns))
     assert not result.error, f"Claude Code failed a turn: {result.error}\nlog: {sandbox.root}/session-{n}.jsonl"
+    # Without this, "the agent did not capture" also passes when the plugin's tools never loaded.
+    assert CAPTURE in result.offered, f"the session was never offered the plugin's tools: {sandbox.mcp_config}"
     return result.turns
 
 

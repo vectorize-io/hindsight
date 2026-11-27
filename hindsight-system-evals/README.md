@@ -997,7 +997,8 @@ A variant that wins the replay is a lead; it still has to pass the eval.
 
 The plugin's own tests stub the host, and the search-rate harness (`hindsight_system_evals/coding_agents`)
 counts how often a turn searches. This grades what a real Claude Code *does* with memory: the plugin
-built from this checkout, a real server, every plugin setting on its default except the pinned bank.
+built from this checkout, a real server, every plugin setting on its default except the pinned bank,
+auto-update off (so a release cannot swap the plugin mid-run) and debug logging.
 The sandbox is the harness's: a throwaway HOME, so nothing reaches your own memory or agent config.
 
 Two shapes of test:

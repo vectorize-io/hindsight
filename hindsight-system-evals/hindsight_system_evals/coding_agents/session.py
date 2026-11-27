@@ -55,6 +55,9 @@ class SessionResult:
     session_id: str
     prompts: list[str]
     turns: list[Turn] = field(default_factory=list)
+    #: Every tool the session was offered, from its init event, MCP prefix stripped. Lets a test
+    #: that asserts a tool was NOT called tell "chose not to" from "never had it".
+    offered: list[str] = field(default_factory=list)
     transcript: Path | None = None
     error: str | None = None
 
@@ -136,6 +139,9 @@ def run_session(
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if event.get("type") == "system" and event.get("subtype") == "init":
+                result.offered = _offered(event)
+                continue
             if event.get("type") == "assistant":
                 calls += _tool_calls(event)
                 continue
@@ -178,6 +184,11 @@ def _tool_calls(event: dict[str, Any]) -> list[ToolCall]:
         for block in content
         if isinstance(block, dict) and block.get("type") == "tool_use"
     ]
+
+
+def _offered(event: dict[str, Any]) -> list[str]:
+    """The tools a session's init event offers, named as the plugin names them."""
+    return [str(t).removeprefix(_MCP_PREFIX) for t in event.get("tools") or []]
 
 
 def _find_transcript(sandbox: Sandbox, session_id: str) -> Path | None:

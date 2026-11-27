@@ -6,7 +6,7 @@ returned nothing would turn every "the agent must not capture" check into a pass
 
 from __future__ import annotations
 
-from hindsight_system_evals.coding_agents.session import ToolCall, _tool_calls
+from hindsight_system_evals.coding_agents.session import ToolCall, _offered, _tool_calls
 
 
 def test_reads_every_tool_use_block_and_strips_the_mcp_prefix() -> None:
@@ -33,3 +33,13 @@ def test_reads_every_tool_use_block_and_strips_the_mcp_prefix() -> None:
 def test_a_message_without_tool_calls_has_none() -> None:
     assert _tool_calls({"type": "assistant", "message": {"content": [{"type": "text", "text": "hi"}]}}) == []
     assert _tool_calls({"type": "assistant"}) == []
+
+
+def test_the_init_event_lists_the_offered_tools() -> None:
+    event = {
+        "type": "system",
+        "subtype": "init",
+        "tools": ["Edit", "mcp__hindsight__hindsight_capture_initiative"],
+    }
+    assert _offered(event) == ["Edit", "hindsight_capture_initiative"]
+    assert _offered({"type": "system", "subtype": "init"}) == []
