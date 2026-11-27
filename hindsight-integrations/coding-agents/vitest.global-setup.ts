@@ -10,6 +10,7 @@ import { join } from "node:path";
  */
 export default function setup(): () => void {
   const dir = mkdtempSync(join(tmpdir(), "hs-coding-agents-test-"));
-  process.env.TMPDIR = dir;
+  // tmpdir() reads TMPDIR on POSIX and TEMP/TMP on Windows.
+  process.env.TMPDIR = process.env.TMP = process.env.TEMP = dir;
   return () => rmSync(dir, { recursive: true, force: true });
 }
