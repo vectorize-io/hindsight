@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, TypeVar
 
 from ...search.tags import TagClause, TagGroup, build_tag_groups_where_clause
@@ -186,6 +186,11 @@ async def memories_timeseries(
     return [{"bucket": r["bucket"], "fact_type": r["fact_type"], "count": r["count"]} for r in rows]
 
 
+def _utc(when: datetime) -> datetime:
+    """Oracle hands a TIMESTAMP WITH TIME ZONE back without its zone; the stored values are UTC."""
+    return when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when
+
+
 async def stats_summary(
     *,
     conn,
@@ -286,11 +291,11 @@ async def stats_summary(
         else [NameCount(name=r["tag"][len("harness:") :], count=int(r["n"])) for r in harnesses],
         entities=None if entities is None else [NameCount(name=r["name"], count=int(r["n"])) for r in entities],
         strongest_observation=SummaryMemory(
-            text=strongest["text"], time=strongest["ts"], proof_count=int(strongest["proof_count"] or 1)
+            text=strongest["text"], time=_utc(strongest["ts"]), proof_count=int(strongest["proof_count"] or 1)
         )
         if strongest
         else None,
-        first_memory=SummaryMemory(text=first["text"], time=first["ts"]) if first else None,
+        first_memory=SummaryMemory(text=first["text"], time=_utc(first["ts"])) if first else None,
     )
 
 
