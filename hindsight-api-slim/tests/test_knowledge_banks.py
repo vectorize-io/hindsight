@@ -39,7 +39,10 @@ _AXES = ("red", "blue", "key", "password", "invoice", "audio", "video", "green")
 class FakeEmbedder(KnowledgeEmbedder):
     provider = "fake"
     model = "fake"
-    dimension = len(_AXES)
+    # The default knowledge embedder's size, zero-padded past the axes. The vector column is pinned once per
+    # schema and every xdist worker shares one: a smaller fake re-pinned it under a worker that still cached
+    # the old size, and that worker's next insert failed "expected 768 dimensions, not 8" (#6987).
+    dimension = 768
     modalities = frozenset({"text", "image", "audio", "video"})
 
     def __init__(self, modalities: frozenset[str] | None = None) -> None:
@@ -50,7 +53,7 @@ class FakeEmbedder(KnowledgeEmbedder):
     @staticmethod
     def _text(text: str) -> list[float]:
         words = text.lower()
-        return [float(words.count(axis)) for axis in _AXES]
+        return [float(words.count(axis)) for axis in _AXES] + [0.0] * (FakeEmbedder.dimension - len(_AXES))
 
     @staticmethod
     def _norm(v: list[float]) -> list[float]:
@@ -62,10 +65,10 @@ class FakeEmbedder(KnowledgeEmbedder):
             return self._norm(self._text(item.text or ""))
         if item.modality == "image":
             r, g, b = Image.open(io.BytesIO(item.data or b"")).convert("RGB").resize((1, 1)).getpixel((0, 0))
-            v = [0.0] * len(_AXES)
+            v = [0.0] * FakeEmbedder.dimension
             v[0], v[1], v[7] = r / 255, b / 255, g / 255
             return self._norm(v)
-        v = [0.0] * len(_AXES)
+        v = [0.0] * FakeEmbedder.dimension
         v[_AXES.index(item.modality)] = 1.0
         return v
 
@@ -2172,7 +2175,9 @@ async def test_writes_for_a_replaced_version_leave_the_newer_one_alone(api_clien
     newer = (await store.get_documents(kb, ["d"]))["d"]
     # A batch still working on the first version fails it, or commits its passages, too late.
     await store.set_statuses(kb, [StatusUpdate("d", "failed", "old version broke", storage_key="gone")])
-    stale = KnowledgePassage(index=0, modality="text", text="first red", embedding=[1.0] + [0.0] * (len(_AXES) - 1))
+    stale = KnowledgePassage(
+        index=0, modality="text", text="first red", embedding=[1.0] + [0.0] * (FakeEmbedder.dimension - 1)
+    )
     replaced = await store.replace_passages(kb, [PassageReplacement("d", [stale], storage_key="gone")])
     assert (replaced.stale_media_keys, replaced.skipped_document_ids) == ([], ["d"])
     after = (await store.get_documents(kb, ["d"]))["d"]
@@ -2587,7 +2592,7 @@ async def test_a_small_bank_finds_its_passages_next_to_a_big_one(api_client, mem
                 "INSERT INTO kb_passages (bank_id, document_id, idx, modality, embedding) "
                 "SELECT $1, 'd', i, 'text', $2::vector FROM generate_series(1, 3000) i",
                 big,
-                str(FakeEmbedder._norm([1.0] * len(_AXES))),
+                str(FakeEmbedder._norm(FakeEmbedder._text(" ".join(_AXES)))),  # one of each axis
             )
             await conn.execute("ANALYZE kb_passages")
         for n, color in enumerate(((255, 0, 0), (0, 0, 255), (0, 255, 0))):
