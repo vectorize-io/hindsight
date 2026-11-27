@@ -2836,6 +2836,7 @@
     "memoriesLead": "你的記憶庫建立了",
     "memoriesTitle": "則記憶",
     "memoriesBody": "來自 {documents} 份文件的 {facts} 則事實與 {observations} 則觀察。",
+    "memoriesBodyNoDocuments": "{facts} 則事實與 {observations} 則觀察。",
     "rhythmTitle": "你的節奏",
     "activeDays": "活躍天數",
     "longestStreak": "天連續",

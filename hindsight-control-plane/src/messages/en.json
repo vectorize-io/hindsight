@@ -2836,6 +2836,7 @@
     "memoriesLead": "Your banks made",
     "memoriesTitle": "{count, plural, one {memory} other {memories}}",
     "memoriesBody": "{facts} facts and {observations} observations, from {documents} documents.",
+    "memoriesBodyNoDocuments": "{facts} facts and {observations} observations.",
     "rhythmTitle": "Your rhythm",
     "activeDays": "{count, plural, one {active day} other {active days}}",
     "longestStreak": "day streak",

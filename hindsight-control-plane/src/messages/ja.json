@@ -2836,6 +2836,7 @@
     "memoriesLead": "あなたのバンクが作った",
     "memoriesTitle": "件の記憶",
     "memoriesBody": "{documents} 件のドキュメントから、{facts} 件の事実と {observations} 件の観察。",
+    "memoriesBodyNoDocuments": "{facts} 件の事実と {observations} 件の観察。",
     "rhythmTitle": "あなたのリズム",
     "activeDays": "アクティブな日",
     "longestStreak": "日連続",

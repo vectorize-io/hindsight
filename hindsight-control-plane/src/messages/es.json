@@ -2836,6 +2836,7 @@
     "memoriesLead": "Tus bancos crearon",
     "memoriesTitle": "{count, plural, one {recuerdo} other {recuerdos}}",
     "memoriesBody": "{facts} hechos y {observations} observaciones, de {documents} documentos.",
+    "memoriesBodyNoDocuments": "{facts} hechos y {observations} observaciones.",
     "rhythmTitle": "Tu ritmo",
     "activeDays": "{count, plural, one {día activo} other {días activos}}",
     "longestStreak": "días seguidos",

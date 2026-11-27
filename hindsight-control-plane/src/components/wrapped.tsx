@@ -383,11 +383,16 @@ function WrappedStory({
               {t("memoriesTitle", { count: stats.memories })}
             </Rise>
             <Rise delay={450} className={`${BODY} mt-6`}>
-              {t("memoriesBody", {
-                facts: nf.format(stats.facts),
-                observations: nf.format(stats.observations),
-                documents: nf.format(stats.documents),
-              })}
+              {stats.documents === null
+                ? t("memoriesBodyNoDocuments", {
+                    facts: nf.format(stats.facts),
+                    observations: nf.format(stats.observations),
+                  })
+                : t("memoriesBody", {
+                    facts: nf.format(stats.facts),
+                    observations: nf.format(stats.observations),
+                    documents: nf.format(stats.documents),
+                  })}
             </Rise>
           </Frame>
         ),

@@ -2836,6 +2836,7 @@
     "memoriesLead": "당신의 뱅크가 만든",
     "memoriesTitle": "개의 기억",
     "memoriesBody": "문서 {documents}개에서 사실 {facts}개와 관찰 {observations}개.",
+    "memoriesBodyNoDocuments": "사실 {facts}개와 관찰 {observations}개.",
     "rhythmTitle": "당신의 리듬",
     "activeDays": "활동한 날",
     "longestStreak": "일 연속",

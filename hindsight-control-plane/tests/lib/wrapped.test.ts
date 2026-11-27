@@ -27,6 +27,18 @@ const hour = (m: number, d: number, h: number, world: number, observation = 0) =
 });
 
 describe("computeWrapped", () => {
+  it("keeps the hours when a bank's store can't give the rest", () => {
+    const s = computeWrapped(2026, [
+      bank("a", { hours: [hour(2, 1, 9, 3)], documents: null, harnesses: null, entities: null }),
+    ]);
+    expect(s.memories).toBe(3);
+    expect(s.peakHour).toBe(9);
+    expect(s.documents).toBeNull();
+    expect(s.topEntities).toEqual([]);
+    expect(s.topHarness).toBeNull();
+    expect(s.strongestBelief).toBeNull();
+  });
+
   it("adds the banks' hours up in local time, and ranks banks, names, agents and beliefs", () => {
     const s = computeWrapped(2026, [
       bank("a", {

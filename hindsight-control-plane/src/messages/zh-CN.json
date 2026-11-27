@@ -2836,6 +2836,7 @@
     "memoriesLead": "你的记忆库创建了",
     "memoriesTitle": "条记忆",
     "memoriesBody": "来自 {documents} 份文档的 {facts} 条事实和 {observations} 条观察。",
+    "memoriesBodyNoDocuments": "{facts} 条事实和 {observations} 条观察。",
     "rhythmTitle": "你的节奏",
     "activeDays": "活跃天数",
     "longestStreak": "天连续",

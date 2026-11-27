@@ -83,9 +83,10 @@ export interface StatsSummary {
   end_date: string;
   /** Memories per UTC hour by fact type; only hours that have memories. */
   hours: Array<{ time: string; world: number; experience: number; observation: number }>;
-  documents: number;
-  harnesses: Array<{ name: string; count: number }>;
-  entities: Array<{ name: string; count: number }>;
+  /** Every answer below is null when the bank's memory store can't give it. */
+  documents: number | null;
+  harnesses: Array<{ name: string; count: number }> | null;
+  entities: Array<{ name: string; count: number }> | null;
   strongest_observation: { text: string; time: string; proof_count: number | null } | null;
   first_memory: { text: string; time: string } | null;
 }

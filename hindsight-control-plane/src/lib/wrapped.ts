@@ -27,7 +27,8 @@ export interface WrappedStats {
   topBanks: Ranked[];
   facts: number;
   observations: number;
-  documents: number;
+  /** Null when no bank's store could count them. */
+  documents: number | null;
   activeDays: number;
   longestStreak: number;
   busiestDay: Ranked | null;
@@ -130,12 +131,12 @@ export function computeWrapped(year: number, banks: BankYear[]): WrappedStats {
   const spelling = new Map<string, string>();
   let facts = 0;
   let observations = 0;
-  let documents = 0;
+  let documents: number | null = null;
   let strongest: WrappedStats["strongestBelief"] = null;
   let first: { text: string; date: string } | null = null;
 
   for (const { name, summary } of banks) {
-    documents += summary.documents;
+    if (summary.documents !== null) documents = (documents ?? 0) + summary.documents;
     // UTC hours, placed in the viewer's own days and hours.
     for (const h of summary.hours) {
       const d = new Date(h.time);
@@ -154,7 +155,7 @@ export function computeWrapped(year: number, banks: BankYear[]): WrappedStats {
     const f = summary.first_memory;
     if (f && (!first || new Date(f.time) < new Date(first.date)))
       first = { text: quote(f.text), date: f.time };
-    for (const e of summary.entities) {
+    for (const e of summary.entities ?? []) {
       const n = e.name.trim();
       if (!n || n === "None" || GENERIC_ENTITIES.has(n.toLowerCase())) continue;
       // `key:value` entities are labels some integrations add (`knowledge:decision`), not names.
@@ -164,7 +165,7 @@ export function computeWrapped(year: number, banks: BankYear[]): WrappedStats {
       if (!spelling.has(key)) spelling.set(key, n);
       add(entities, key, e.count);
     }
-    for (const h of summary.harnesses) add(harnesses, h.name, h.count);
+    for (const h of summary.harnesses ?? []) add(harnesses, h.name, h.count);
   }
 
   // Longest run of consecutive active days.

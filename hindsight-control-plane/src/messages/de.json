@@ -2836,6 +2836,7 @@
     "memoriesLead": "Deine Banks haben",
     "memoriesTitle": "{count, plural, one {Erinnerung} other {Erinnerungen}}",
     "memoriesBody": "{facts} Fakten und {observations} Beobachtungen aus {documents} Dokumenten.",
+    "memoriesBodyNoDocuments": "{facts} Fakten und {observations} Beobachtungen.",
     "rhythmTitle": "Dein Rhythmus",
     "activeDays": "{count, plural, one {aktiver Tag} other {aktive Tage}}",
     "longestStreak": "Tage am Stück",
