@@ -17804,7 +17804,9 @@ class MemoryEngine(MemoryEngineInterface):
             # Both dialects hand back the UTC hour; one of them without a zone.
             when: datetime = row["bucket"]
             bucket = when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when.astimezone(timezone.utc)
-            if bucket >= end:  # The timeseries only takes a start.
+            # ponytail: the timeseries has no end, so a window in the past also reads up to now;
+            # give the store interface an end if past windows become common.
+            if bucket >= end:
                 continue
             entry = hours.setdefault(bucket, MemoryTimeseriesBucketData(time=bucket.isoformat()))
             if row["fact_type"] == "world":

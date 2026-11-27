@@ -6,6 +6,7 @@ Covers the new fields exposed by GET /v1/default/banks/{bank_id}/stats
 GET /v1/default/banks/{bank_id}/stats/memories-timeseries.
 """
 
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import MethodType
@@ -17,10 +18,10 @@ import pytest_asyncio
 from hindsight_api import RequestContext
 from hindsight_api.api import create_app
 from hindsight_api.engine.memories import get_memories
-from hindsight_api.engine.memories.base import MemoriesExtension
+from hindsight_api.engine.memories.base import MemoriesExtension, StatsSummaryAggregates
 from hindsight_api.engine.memories.pg import counts
 from hindsight_api.engine.memory_engine import get_current_schema
-from hindsight_api.engine.schema import fq_table
+from hindsight_api.engine.schema import fq_store_table, fq_table
 
 
 @pytest_asyncio.fixture
@@ -322,6 +323,47 @@ async def test_stats_summary_still_counts_the_hours_when_the_store_cannot_say(
         assert {k: body[k] for k in unanswered} == dict.fromkeys(unanswered)
     finally:
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_stats_summary_cancels_a_query_past_its_budget_and_keeps_the_connection(memory, monkeypatch):
+    """A query still running when the budget runs out is cancelled and the rest are skipped;
+    the pooled connection it ran on still answers the next query."""
+    monkeypatch.setattr(counts, "STATS_SUMMARY_QUERY_TIMEOUT_S", 0.5)
+
+    class FirstQuerySleeps:
+        def __init__(self, conn):
+            self.conn = conn
+            self.calls = 0
+
+        async def fetchrow(self, query, *args):
+            self.calls += 1
+            return await self.conn.fetchrow("SELECT pg_sleep(5)")
+
+        async def fetch(self, query, *args):
+            self.calls += 1
+            return await self.conn.fetch(query, *args)
+
+        async def fetchval(self, query, *args):
+            self.calls += 1
+            return await self.conn.fetchval(query, *args)
+
+    async with memory._pool.acquire() as conn:
+        slow = FirstQuerySleeps(conn)
+        started = time.monotonic()
+        answers = await counts.stats_summary(
+            conn=slow,
+            fq_table=fq_store_table,
+            bank_id="no-such-bank",
+            start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            end=datetime(2027, 1, 1, tzinfo=timezone.utc),
+            entity_limit=5,
+        )
+        assert time.monotonic() - started < 3, "the sleeping query must be cancelled, not waited out"
+        assert answers == StatsSummaryAggregates()
+        assert slow.calls == 1, "nothing runs once the budget is spent"
+        assert await conn.fetchval("SELECT 1") == 1
 
 
 @pytest.mark.asyncio
