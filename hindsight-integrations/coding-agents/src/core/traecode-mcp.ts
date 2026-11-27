@@ -36,10 +36,10 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { configuredMcpServerName, DEFAULT_MCP_SERVER_NAME } from "./config";
 import { diag } from "./diag";
 import { hookNode, isOurMcpEntry } from "./util";
 
-const MCP_SERVER_NAME = "hindsight";
 const MCP_FILE_REL = join(".trae", "mcp.json");
 
 /** Where the packaged `dist/mcp-server.js` sits: a sibling of this module in the flat `dist/`
@@ -224,8 +224,9 @@ export function ensureTraecodeWorkspaceMcp(
   cwd: string,
   opts: { home?: string; dist?: string; stateFile?: string } = {}
 ): string | undefined {
-  registerTraecodeWorkspaceMcp(cwd, opts);
-  const seeded = ensureWorkspaceMcpEnabled(cwd, opts);
+  const named = { ...opts, mcpName: configuredMcpServerName() };
+  registerTraecodeWorkspaceMcp(cwd, named);
+  const seeded = ensureWorkspaceMcpEnabled(cwd, named);
   return workspaceMcpHint(opts) ?? (seeded === "failed" ? workspaceEnableHint(opts) : undefined);
 }
 
@@ -234,8 +235,9 @@ export function ensureTraecodeWorkspaceMcp(
  *  Returns what happened: the installer reports it per opted-in repo; the hook ignores it. */
 export function registerTraecodeWorkspaceMcp(
   cwd: string,
-  opts: { home?: string; dist?: string } = {}
+  opts: { home?: string; dist?: string; mcpName?: string } = {}
 ): "registered" | "current" | "skipped" | "failed" {
+  const name = opts.mcpName ?? DEFAULT_MCP_SERVER_NAME;
   try {
     const home = opts.home ?? homedir();
     // Trae launched the USER-level server from home — that is exactly the registration we are
@@ -265,7 +267,10 @@ export function registerTraecodeWorkspaceMcp(
       args: [script],
       env: { HINDSIGHT_MCP_HARNESS: "traecode", HINDSIGHT_MCP_PROJECT_CWD: cwd },
     };
-    const existing = servers[MCP_SERVER_NAME];
+    // Our entry under any OTHER name is one an earlier --mcp-name left behind: move it.
+    const stale = Object.keys(servers).filter((k) => k !== name && isOurMcpEntry(servers[k]));
+    for (const k of stale) delete servers[k];
+    const existing = servers[name];
     let merged: Record<string, unknown>;
     if (existing === undefined) {
       merged = entry;
@@ -280,11 +285,12 @@ export function registerTraecodeWorkspaceMcp(
       };
     } else {
       diag("traecode", "workspace_mcp_foreign_entry", { cwd, file });
-      return "skipped"; // a foreign "hindsight" server is the user's decision, not ours to overwrite
+      return "skipped"; // a foreign same-named server is the user's decision, not ours to overwrite
     }
-    if (existing !== undefined && canon(merged) === canon(existing)) return "current"; // already correct — idempotent no-op
+    if (!stale.length && existing !== undefined && canon(merged) === canon(existing))
+      return "current"; // already correct — idempotent no-op
 
-    servers[MCP_SERVER_NAME] = merged;
+    servers[name] = merged;
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
     if (!exists) ensureGitignored(cwd);
@@ -321,8 +327,10 @@ export function removeTraecodeWorkspaceMcpEntry(
     const servers = doc.mcpServers;
     if (!servers || typeof servers !== "object" || Array.isArray(servers)) return false;
     const record = servers as Record<string, unknown>;
-    if (!isOurMcpEntry(record[MCP_SERVER_NAME])) return false; // foreign or absent: not ours to remove
-    delete record[MCP_SERVER_NAME];
+    // Ours under whatever name it was registered; a foreign same-named entry is not ours to remove.
+    const ours = Object.keys(record).filter((k) => isOurMcpEntry(record[k]));
+    if (!ours.length) return false;
+    for (const k of ours) delete record[k];
     if (Object.keys(record).length === 0) delete doc.mcpServers; // an empty husk carries no information
     if (Object.keys(doc).length === 0) rmSync(file);
     else writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
@@ -349,15 +357,21 @@ const WORKSPACE_STORAGE_REL = join("User", "workspaceStorage");
 const ENABLED_KEY_PREFIX = "icubeAgentExtension.enabled.mcp.config.ws0.";
 const SQLITE_TIMEOUT_MS = 5_000;
 
-/** The ItemTable key Trae persists for this server's per-workspace switch. */
-export const TRAECODE_WORKSPACE_ENABLED_KEY = ENABLED_KEY_PREFIX + MCP_SERVER_NAME;
+/** The ItemTable key Trae persists for a server's per-workspace switch. The name is validated
+ *  (MCP_SERVER_NAME_RE) before it gets here, so it is safe inside the SQL literal. */
+const enabledKey = (name: string): string => ENABLED_KEY_PREFIX + name;
+/** The switch key under the default server name. */
+export const TRAECODE_WORKSPACE_ENABLED_KEY = enabledKey(DEFAULT_MCP_SERVER_NAME);
 
 export const traecodeWorkspaceStorageDir = (home: string): string =>
   join(traecodeUserDataDir(home), WORKSPACE_STORAGE_REL);
 
 /** Uninstall counterpart of the seed: drop our switch from every window's storage DB. The key
  *  is ours by name. Best-effort: a locked or absent DB is skipped. Never throws. */
-export function removeWorkspaceMcpEnabledKeys(home: string): void {
+export function removeWorkspaceMcpEnabledKeys(
+  home: string,
+  mcpName: string = DEFAULT_MCP_SERVER_NAME
+): void {
   const storage = traecodeWorkspaceStorageDir(home);
   let entries: string[];
   try {
@@ -371,11 +385,7 @@ export function removeWorkspaceMcpEnabledKeys(home: string): void {
     try {
       execFileSync(
         "sqlite3",
-        [
-          db,
-          ".timeout 3000",
-          `DELETE FROM ItemTable WHERE key='${TRAECODE_WORKSPACE_ENABLED_KEY}';`,
-        ],
+        [db, ".timeout 3000", `DELETE FROM ItemTable WHERE key='${enabledKey(mcpName)}';`],
         {
           timeout: SQLITE_TIMEOUT_MS,
           windowsHide: true,
@@ -423,8 +433,9 @@ function findWorkspaceStorageDir(storage: string, repo: string): string | undefi
  *  locked — the caller hints instead. Never throws. */
 export function ensureWorkspaceMcpEnabled(
   cwd: string,
-  opts: { home?: string; sqlite?: typeof execFileSync } = {}
+  opts: { home?: string; sqlite?: typeof execFileSync; mcpName?: string } = {}
 ): "on" | "seeded" | "failed" {
+  const key = enabledKey(opts.mcpName ?? DEFAULT_MCP_SERVER_NAME);
   try {
     const home = opts.home ?? homedir();
     // Same guard as the registration: home/root/relative cwds are not Trae workspaces.
@@ -441,14 +452,10 @@ export function ensureWorkspaceMcpEnabled(
         windowsHide: true,
         stdio: ["ignore", "pipe", "pipe"],
       } as const).trim();
-    if (
-      run(`SELECT value FROM ItemTable WHERE key='${TRAECODE_WORKSPACE_ENABLED_KEY}';`) === "true"
-    ) {
+    if (run(`SELECT value FROM ItemTable WHERE key='${key}';`) === "true") {
       return "on";
     }
-    run(
-      `INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('${TRAECODE_WORKSPACE_ENABLED_KEY}', 'true');`
-    );
+    run(`INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('${key}', 'true');`);
     diag("traecode", "workspace_mcp_enabled_seeded", { cwd, db });
     return "seeded";
   } catch (e) {

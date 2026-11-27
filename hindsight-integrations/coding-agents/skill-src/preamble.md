@@ -23,7 +23,8 @@ explains what happens automatically, which tools you have, and how to configure 
 - **Write-back**: the session transcript is retained into the bank automatically at session end
   (per-turn on opencode). The user never needs to "save" a conversation.
 - **Prime Agent 0.10+ is the exception**: it has no hooks, so nothing is injected. Call
-  `hindsight_reflect` yourself first (`await mcp.call_tool("hindsight", "hindsight_reflect", …)`);
+  `hindsight_reflect` yourself first (`await mcp.call_tool("hindsight", "hindsight_reflect", …)`, with the server name your
+  install chose if it is not `hindsight`);
   that call also starts the server that saves the session.
 
 ## Storing things deliberately

@@ -9,6 +9,8 @@ import {
   ensureTraecodeWorkspaceMcp,
   ensureWorkspaceMcpEnabled,
   markWorkspaceMcpEnabled,
+  registerTraecodeWorkspaceMcp,
+  removeTraecodeWorkspaceMcpEntry,
   traecodeUserSettingsPath,
   TRAECODE_WORKSPACE_ENABLED_KEY,
   workspaceEnableHint,
@@ -87,6 +89,23 @@ describe("ensureTraecodeWorkspaceMcp", () => {
       args: [join(dist, "mcp-server.js")],
       env: { HINDSIGHT_MCP_HARNESS: "traecode", HINDSIGHT_MCP_PROJECT_CWD: r },
     });
+  });
+
+  it("a renamed server moves our entry and never touches the user's own 'hindsight' (#6958)", () => {
+    const { repo: r, home } = repo();
+    // isOurMcpEntry recognises the package's real layout, <pkg>/dist/mcp-server.js.
+    const dist = join(tmp("traecode-mcp-pkg-"), "hindsight-coding-agents", "dist");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, "mcp-server.js"), "// stub");
+    const theirs = { command: "uvx", args: ["hindsight-local-mcp"] };
+    mkdirSync(join(r, ".trae"), { recursive: true });
+    writeFileSync(mcpFile(r), JSON.stringify({ mcpServers: { hindsight: theirs } }));
+    expect(registerTraecodeWorkspaceMcp(r, { dist, home })).toBe("skipped");
+    expect(registerTraecodeWorkspaceMcp(r, { dist, home, mcpName: "a" })).toBe("registered");
+    expect(registerTraecodeWorkspaceMcp(r, { dist, home, mcpName: "b" })).toBe("registered");
+    expect(Object.keys(readJson(r).mcpServers).sort()).toEqual(["b", "hindsight"]);
+    expect(removeTraecodeWorkspaceMcpEntry(r, { home })).toBe(true);
+    expect(readJson(r).mcpServers).toEqual({ hindsight: theirs });
   });
 
   it("is idempotent: a second run rewrites nothing", () => {
