@@ -279,12 +279,33 @@ function pagesPath(sub: string, legacy = false): string {
 }
 
 /** An initiative page's question before its scope clause: what `captureInitiative` writes, and what
- *  `resyncInitiativeTriggers` recognises as ours to rewrite. */
+ *  `resyncInitiativeTriggers` recognises as ours to rewrite.
+ *
+ *  It asks for the plan as it stands NOW. It used to ask for "what is being built ... and its
+ *  current state", and a page re-planned mid-work then listed the dropped plan next to the new
+ *  one under its current state, because the creation marker states the opening plan for good
+ *  (#7007). */
 function initiativeQuery(title: string): string {
+  return (
+    `Summarize the "${title}" initiative as it stands now: what is being built or changed and ` +
+    `why, and its current state — drawn from the project's memory. Where the plan changed, ` +
+    `describe only the latest plan; mention an earlier plan only as history, saying what ` +
+    `replaced it.`
+  );
+}
+
+/** The question `initiativeQuery` wrote before #7007, still on pages captured then. Recognised so the
+ *  re-sync rewrites it to the current one instead of treating it as the user's own wording. */
+function legacyInitiativeQuery(title: string): string {
   return (
     `Summarize the "${title}" initiative: what is being built or changed and why, ` +
     `and its current state — drawn from the project's memory.`
   );
+}
+
+/** Every page under `nodes`, at any depth. */
+function pagesUnder(nodes: PageNode[]): PageNode[] {
+  return nodes.flatMap((n) => [...(n.kind === "page" ? [n] : []), ...pagesUnder(n.children ?? [])]);
 }
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
@@ -1319,11 +1340,13 @@ export class HindsightClient {
    * consolidation under the auto-refresh that used to be the default (#3506).
    *
    * Their `name` and `source_query` are written once, from the initiative's own title, and
-   * re-stating either would rebuild a page whose question never changed. The one exception is
-   * the scope clause: a page captured while the clause named the BANK is scoped to a project no
-   * memory is about and comes out empty (#4490), so exactly that clause is swapped for the current
-   * one — the rest of the query, the user's wording included, is kept. The tree read above is
-   * reused rather than re-fetched.
+   * re-stating either would rebuild a page whose question never changed. Two exceptions. The scope
+   * clause: a page captured while the clause named the BANK is scoped to a project no memory is
+   * about and comes out empty (#4490), so exactly that clause is swapped for the current one — the
+   * rest of the query, the user's wording included, is kept. And the question this plugin wrote
+   * before #7007, which let a re-planned page list the dropped plan as current: it is replaced by
+   * the current one, which rebuilds each such page once, on purpose. Pages in subfolders of
+   * Initiatives are included (#6919). The tree read above is reused rather than re-fetched.
    */
   private async resyncInitiativeTriggers(
     roots: PageNode[],
@@ -1335,15 +1358,15 @@ export class HindsightClient {
     const bankScope = pageScopeRule(this.bank);
     const scope = pageScopeRule(this.project, this.pageScope);
     let updated = 0;
-    for (const page of folder?.children ?? []) {
-      if (page.kind !== "page") continue;
+    // Any depth: a page filed into a subfolder of Initiatives is still an initiative page (#6919).
+    for (const page of pagesUnder(folder?.children ?? [])) {
       const patch: { trigger?: PageTrigger; source_query?: string } = {};
       // A query this plugin wrote is rebuilt whole, so a changed `pageScope` — custom wording
       // included, which leaves nothing to match on once it is gone — reaches it (#6526). One
       // edited by hand keeps its wording; only the old bank-named clause is swapped out of it.
-      const ours = initiativeQuery(page.name ?? "");
-      const query = page.description?.startsWith(ours)
-        ? ours + scope
+      const ours = [initiativeQuery(page.name ?? ""), legacyInitiativeQuery(page.name ?? "")];
+      const query = ours.some((q) => page.description?.startsWith(q))
+        ? ours[0] + scope
         : page.description?.replace(bankScope, scope);
       if (query !== page.description) patch.source_query = query;
       // No trigger reported = policy unknown, not divergent (a server older than #3572).
@@ -1441,8 +1464,13 @@ export class HindsightClient {
     }
     // "Update", not "Enhancement": a recapture is just as often a plan change (scope/goal/why
     // rewritten) as an addition, and this string is what the page synthesis reads.
-    const verb = isUpdate ? "Update to an existing initiative" : "New initiative";
-    const content = `${verb}: ${args.title}. ${args.summary}`;
+    // Each marker says where it stands in time, because the creation marker is kept for good and
+    // would otherwise read as the current plan long after a recapture replaced it (#7007).
+    const content = isUpdate
+      ? `Update to an existing initiative: ${args.title}. This is newer than the opening plan and ` +
+        `replaces it where they differ: ${args.summary}`
+      : `New initiative: ${args.title}. Its opening plan, as first approved (a later update ` +
+        `replaces it where they differ): ${args.summary}`;
     // A STABLE id per initiative, so a recapture upserts instead of adding one more document every
     // call (#5076). Keyed on the page, not the title — a recapture may reword it — and two slots:
     // the creation marker keeps what the initiative set out to do, the update marker holds the

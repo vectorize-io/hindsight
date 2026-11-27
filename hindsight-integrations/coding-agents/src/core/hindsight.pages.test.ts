@@ -1112,7 +1112,9 @@ describe("HindsightClient.seedPages", () => {
 });
 
 describe("HindsightClient.seedPages with pageScope (#6526)", () => {
+  // The question a page captured before #7007 carries; the re-sync rewrites it to CURRENT.
   const INIT = `Summarize the "Retry backoff" initiative: what is being built or changed and why, and its current state — drawn from the project's memory.`;
+  const CURRENT = `Summarize the "Retry backoff" initiative as it stands now: what is being built or changed and why, and its current state — drawn from the project's memory. Where the plan changed, describe only the latest plan; mention an earlier plan only as history, saying what replaced it.`;
   const CUSTOM = "This bank is one project; its tools and services are its subject.";
   // A seeded page and a plugin-written initiative page under `from`, re-seeded under `to`.
   it.each([
@@ -1162,7 +1164,62 @@ describe("HindsightClient.seedPages with pageScope (#6526)", () => {
       expect(p.body.source_query.endsWith(now)).toBe(true);
       if (old) expect(p.body.source_query).not.toContain(old.trim());
     }
-    expect(patches[5].body.source_query).toBe(INIT + now);
+    expect(patches[5].body.source_query).toBe(CURRENT + now);
+  });
+
+  // #7007: a page captured under the old question listed a dropped plan as current. The re-sync
+  // moves it to the question that asks for the latest plan — also once it was filed into a
+  // subfolder (#6919) — and a page already on it is left alone.
+  it("moves an initiative page on the old question to the current one, at any depth", async () => {
+    const scope = pageScopeRule("repo-a");
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/pages/tree?detail=basic"),
+        json: {
+          roots: [
+            ...pagesFor("repo-a").map((p, i) => ({
+              id: `kp-${i}`,
+              kind: "page",
+              name: p.name,
+              description: p.source_query,
+            })),
+            {
+              id: "folder-initiatives",
+              kind: "folder",
+              name: "Initiatives",
+              children: [
+                {
+                  id: "folder-sub",
+                  kind: "folder",
+                  name: "Payments",
+                  children: [
+                    {
+                      id: "kp-old",
+                      kind: "page",
+                      name: "Retry backoff",
+                      description: INIT + scope,
+                    },
+                  ],
+                },
+                {
+                  id: "kp-current",
+                  kind: "page",
+                  name: "Retry backoff",
+                  description: CURRENT + scope,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a", project: "repo-a" });
+    await c.seedPages();
+
+    const patches = calls.filter((k) => k.method === "PATCH");
+    expect(patches.map((k) => k.url.split("/").pop())).toEqual(["kp-old"]);
+    expect(patches[0].body.source_query).toBe(CURRENT + scope);
   });
 
   it("an unchanged pageScope writes nothing", async () => {
@@ -1369,6 +1426,9 @@ describe("HindsightClient.captureInitiative", () => {
     expect(memPost.body.async).toBe(true);
     // A stable per-initiative document id (NOT the page id itself), so a recapture upserts.
     expect(item.document_id).toBe("initiative-marker-pg");
+    // Kept for good, so it says it is the opening plan a later update replaces (#7007).
+    expect(item.content).toContain("opening plan");
+    expect(item.content).toContain("a later update replaces it where they differ");
 
     // The returned page id and the id the marker names must be the same (the real page node id).
     expect(item.metadata.relatedPageId).toBe(result.page_id);
@@ -1448,6 +1508,7 @@ describe("HindsightClient.captureInitiative", () => {
     expect(item.metadata).toEqual({ relatedPageId: "initiative-x" });
     expect(item.context).toBe("initiative marker for [[page:initiative-x]]");
     expect(item.content).toContain("Update to an existing initiative");
+    expect(item.content).toContain("replaces it where they differ");
   });
 
   // #6919: the agent lost the id it got back and recaptured by title, after the first page was moved
