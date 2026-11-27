@@ -98,3 +98,27 @@ describe("opencode per-turn injection", () => {
     expect(output.parts).toEqual([{ type: "text", text: "hi" }]);
   });
 });
+
+describe("opencode events", () => {
+  type EventHook = (input: {
+    event?: { type?: string; properties?: { sessionID?: string } };
+  }) => Promise<void>;
+
+  it("resets the session on session.compacted and writes back on session.idle (#6527)", async () => {
+    const core = {
+      harness: "opencode",
+      toolSpecs: () => [],
+      onCompacted: vi.fn(),
+      onSessionIdle: vi.fn(async () => {}),
+    };
+    const runtime = opencodeAdapter.createRuntime(core as unknown as RuntimeCore) as {
+      event: EventHook;
+    };
+    await runtime.event({ event: { type: "session.compacted", properties: { sessionID: "s1" } } });
+    await runtime.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } });
+    await runtime.event({ event: { type: "session.compacted", properties: {} } });
+    await runtime.event({ event: { type: "file.edited", properties: { sessionID: "s1" } } });
+    expect(core.onCompacted.mock.calls).toEqual([["s1"]]);
+    expect(core.onSessionIdle.mock.calls).toEqual([["s1"]]);
+  });
+});

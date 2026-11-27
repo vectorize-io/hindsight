@@ -1640,7 +1640,7 @@ const kimi: HarnessInstaller = {
     // else, and take the values from the lifecycle spec so the installed hooks can never
     // diverge from the ones the runtime entrypoints implement.
     const spec = HOOK_HARNESSES["kimi-code"];
-    const entries = Object.values(spec.install)
+    const entries = [...Object.values(spec.install), ...(spec.additionalHooks ?? [])]
       .map(
         (h) =>
           `[[hooks]]\nevent = ${JSON.stringify(h.event)}\n` +

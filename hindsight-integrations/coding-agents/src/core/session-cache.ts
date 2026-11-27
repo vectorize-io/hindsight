@@ -76,6 +76,19 @@ export function writeSessionCache(cacheFile: string, cache: SessionCache): void 
   }
 }
 
+/**
+ * Forget what this session has been shown, as if it had just started (#6527). A compaction drops
+ * the injected memory and the page roster from the model's context, so the next prompt must
+ * deliver both again: with no cache file it is the session's first prompt once more.
+ */
+export function resetSessionCache(cacheFile: string): void {
+  try {
+    rmSync(cacheFile, { force: true });
+  } catch {
+    /* session state is best-effort */
+  }
+}
+
 /** Context a prompt hook could not deliver itself, waiting for the session's next tool hook (see
  *  HookSpec.toolHook). Its own file: `buildHookOutput` rewrites the session cache every turn. */
 function pendingContextFile(harness: string, sessionId: string): string {

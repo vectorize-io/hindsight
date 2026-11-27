@@ -148,11 +148,13 @@ function createRuntime(core: RuntimeCore) {
     // The Stop-equivalent these hosts otherwise lack: `session.idle` fires once the assistant has
     // finished, which is the only moment the completed exchange is readable. Without it a session's
     // last turn — usually its conclusion — was never retained at all.
+    // `session.compacted` is the other event acted on: a compaction counts as a new session start
+    // (#6527), so the next prompt delivers memory again.
     event: async (input: { event?: { type?: string; properties?: { sessionID?: string } } }) => {
-      if (input?.event?.type !== "session.idle") return;
-      const sid = input.event.properties?.sessionID;
+      const sid = input?.event?.properties?.sessionID;
       if (!sid) return;
-      await core.onSessionIdle(sid);
+      if (input.event!.type === "session.compacted") core.onCompacted(sid);
+      else if (input.event!.type === "session.idle") await core.onSessionIdle(sid);
     },
   };
 }

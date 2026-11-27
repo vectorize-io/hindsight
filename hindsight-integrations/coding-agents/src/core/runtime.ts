@@ -33,7 +33,7 @@ import { buildSessionStartContext } from "./session-start";
 import { syncCompanionSkill } from "./skill-sync";
 import { buildHookOutput } from "./hook";
 import { stripInjectedMemory } from "./transcript-util";
-import { sessionCacheFile, writeSessionCache } from "./session-cache";
+import { resetSessionCache, sessionCacheFile, writeSessionCache } from "./session-cache";
 
 const HARNESS = "opencode";
 /** How long `flush` holds a host's exit for in-flight write-backs: room for one retain request. */
@@ -230,6 +230,18 @@ export class RuntimeCore {
     }
     const block = blocks.filter(Boolean).join("\n\n");
     this.injection.set(sessionId, block);
+  }
+
+  /**
+   * The host compacted this session: treat it as a new session start (#6527). The model kept a
+   * summary and lost the memory block and the page preamble, so the next prompt is turn one again
+   * and delivers both. Write-back state is untouched: the transcript is still the same session.
+   */
+  onCompacted(sessionId: string): void {
+    resetSessionCache(sessionCacheFile(this.harness, sessionId));
+    this.turnCount.delete(sessionId);
+    this.injection.delete(sessionId);
+    diag(this.harness, "session_compacted", { session: sessionId });
   }
 
   /**

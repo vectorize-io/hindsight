@@ -647,6 +647,10 @@ jobs:
       working-directory: ./hindsight-integrations/coding-agents
       run: npm run build
 
+    - name: Compaction E2E (built hooks, stub server)
+      working-directory: ./hindsight-integrations/coding-agents
+      run: npx vitest run src/compaction.e2e.test.ts
+
   test-cursor-integration:
     needs: [detect-changes]
     if: >-

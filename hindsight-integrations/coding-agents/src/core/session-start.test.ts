@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
@@ -16,6 +16,7 @@ import { resolveConfig } from "./config";
 import { repoNameOf } from "./git";
 import { HOOK_HARNESSES } from "../harness/hook-lifecycle";
 import type { RawConfig } from "./config";
+import { readSessionCache, sessionCacheFile, writeSessionCache } from "./session-cache";
 
 /** The SessionStart event `runSessionStartHook` reads from fd 0; every other read stays real. */
 let stdin = "";
@@ -533,6 +534,56 @@ describe("runSessionStartHook anti-recursion guard", () => {
     // this call would attempt to read the real process stdin. Resolving without calling makeClient
     // proves the guard fired first.
     await runSessionStartHook(HOOK_HARNESSES["claude-code"].sessionStart, makeClient);
+    expect(makeClient).not.toHaveBeenCalled();
+  });
+});
+
+/** A compaction is a new session start (#6527): the session's once-per-session cache is dropped so
+ *  the next prompt delivers memory again. */
+describe("runSessionStartHook after a compaction", () => {
+  const seed = (harness: string, sessionId: string) => {
+    const file = sessionCacheFile(harness, sessionId);
+    writeSessionCache(file, { turns: 3, reflectAnswer: "already shown" });
+    return file;
+  };
+  afterEach(() => {
+    rawConfig = undefined;
+  });
+
+  it("SessionStart source 'compact' resets the session and still runs the session start", async () => {
+    const sessionId = `compact-${Date.now()}`;
+    const file = seed("claude-code", sessionId);
+    rawConfig = { disabled: true }; // the reset must not depend on anything past it
+    stdin = JSON.stringify({ session_id: sessionId, cwd: tmpdir(), source: "compact" });
+    await runSessionStartHook(HOOK_HARNESSES["claude-code"].sessionStart, vi.fn());
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("a fresh start or a resume keeps the session", async () => {
+    const sessionId = `resume-${Date.now()}`;
+    const file = seed("claude-code", sessionId);
+    rawConfig = { disabled: true };
+    stdin = JSON.stringify({ session_id: sessionId, cwd: tmpdir(), source: "resume" });
+    await runSessionStartHook(HOOK_HARNESSES["claude-code"].sessionStart, vi.fn());
+    expect(readSessionCache(file).reflectAnswer).toBe("already shown");
+  });
+
+  it.each([
+    ["kimi-code", "PostCompact", "session_id"],
+    ["cursor-cli", "preCompact", "conversation_id"],
+  ] as const)("%s's %s resets the session and does nothing else", async (harness, event, idKey) => {
+    const sessionId = `${harness}-${Date.now()}`;
+    const file = seed(harness, sessionId);
+    stdin = JSON.stringify({ hook_event_name: event, [idKey]: sessionId, trigger: "auto" });
+    const makeClient = vi.fn();
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      await runSessionStartHook(HOOK_HARNESSES[harness].sessionStart, makeClient);
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      write.mockRestore();
+    }
+    expect(existsSync(file)).toBe(false);
     expect(makeClient).not.toHaveBeenCalled();
   });
 });

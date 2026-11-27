@@ -40,6 +40,7 @@ import { buildRetainStamp } from "./retain-stamp";
 import { detectLegacyClaudePlugin, legacyClaudePluginWarning } from "./legacy";
 import { HindsightClient, isNoAnswerError } from "./hindsight";
 import {
+  resetSessionCache,
   sessionCacheFile,
   sessionRootDir,
   stashPendingContext,
@@ -474,6 +475,10 @@ export async function buildSessionStartContext(args: {
   return { systemMessage, additionalContext, deferInitialReflect };
 }
 
+/** Hosts that report a compaction with an event of its own rather than a SessionStart: Kimi's
+ *  `PostCompact` and Cursor's `preCompact`. They are wired to the SessionStart entry. */
+const COMPACTION_EVENTS = new Set(["PostCompact", "preCompact"]);
+
 /** Run one SessionStart hook invocation: stdin event in, (maybe) an additionalContext object on stdout. */
 export async function runSessionStartHook(
   spec: SessionStartHookSpec,
@@ -493,6 +498,17 @@ export async function runSessionStartHook(
     const { harness } = spec;
     const { cwd: rawCwd, sessionId } = spec.parse(ev);
     const cwd = rawCwd || process.cwd();
+
+    // A compaction is a new session start (#6527): the model kept a summary and lost the memory
+    // and page roster it was shown, so the next prompt delivers both again. Hosts that restart the
+    // session say so with SessionStart `source: "compact"` (Claude Code, Codex, Qwen Code, Factory
+    // Droid) and get the rest of this hook too; a bare compaction event only resets.
+    const compactionEvent = COMPACTION_EVENTS.has(ev.hook_event_name as string);
+    if ((compactionEvent || ev.source === "compact") && sessionId) {
+      resetSessionCache(sessionCacheFile(harness, sessionId));
+      diag(harness, "session_compacted", { session: sessionId });
+    }
+    if (compactionEvent) return;
 
     let cfg = loadConfig({ harness });
     setLogLevel(cfg.logLevel);
