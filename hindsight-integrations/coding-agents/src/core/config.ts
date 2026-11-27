@@ -264,7 +264,7 @@ export interface RawConfig {
    *  core/chat.ts, which names the user and the agent as the two speakers). Same placeholders as
    *  retainTags. Extraction reads this to decide WHOSE claim a sentence is. */
   retainContext?: string;
-  /** Tags every READ is narrowed to — the first-prompt recall and reflect, and the
+  /** Tags every READ is narrowed to — the automatic recall and reflect injected before a prompt, and the
    *  `hindsight_reflect` tool — e.g. ["project:{gitProject}"]. Same placeholders as retainTags.
    *  The other half of a shared bank: retainTags records which repo a memory came from, this keeps
    *  another repo's memories out of this one's answers (#4226). Unset (the default) reads the
