@@ -23,7 +23,7 @@ from hindsight_api.engine.temporal_periods import (
 
 # Type only: importing text2date pulls in numpy (~100 ms), so load() imports it on first use.
 if TYPE_CHECKING:
-    from text2date import Parser
+    from text2date import Parser, ProcessParser
 
 logger = logging.getLogger(__name__)
 
@@ -286,22 +286,36 @@ class Text2DateQueryAnalyzer(QueryAnalyzer):
     The default. Recall takes one window, so a query naming several ranges ("May 2025 and June
     2026") uses the first. Ranges are whole days, read on the caller's own clock date. A one-sided
     range ("before 2020", "after May") gives no constraint, as with dateparser: the temporal arm
-    ranks by distance to the window's middle and needs both ends. The parser keeps no state
-    between calls, so it is safe off-thread.
+    ranks by distance to the window's middle and needs both ends.
+
+    The model runs in a small child process (text2date.ProcessParser): in-process, its numpy steps
+    hold the GIL, so even from the temporal worker thread it stalled the event loop for 30-60 ms
+    with 64 recalls at once. The worker thread now only waits on a pipe. If the child cannot start,
+    the model runs in-process instead.
 
     Performance:
-    - ~1ms per query
-    - Loads a 10 MB model shipped inside the package (no download)
+    - ~1ms per query, plus ~0.1ms for the pipe
+    - Loads a 10 MB model shipped inside the package (no download); the child takes ~0.5s to start
     """
 
     def __init__(self) -> None:
-        self._parser: Parser | None = None
+        self._parser: ProcessParser | Parser | None = None
+        self._load_lock = threading.Lock()
 
     def load(self) -> None:
-        if self._parser is None:
-            from text2date import Parser
+        with self._load_lock:  # the startup warm-up and the first recall can race here
+            if self._parser is not None:
+                return
+            from text2date import Parser, ProcessParser
 
-            self._parser = Parser()
+            parser = ProcessParser()
+            try:
+                parser.load()
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"text2date worker process did not start ({e}); running the model in-process")
+                self._parser = Parser()
+            else:
+                self._parser = parser
 
     def analyze(self, query: str, reference_date: datetime | None = None) -> QueryAnalysis:
         if reference_date is None:
