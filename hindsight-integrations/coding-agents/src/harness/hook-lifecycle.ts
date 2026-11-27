@@ -171,10 +171,14 @@ const antigravityPrompt: HookSpec = {
     // PreInvocation carries no prompt and fires before EVERY planner step, tool steps included.
     // Recall the newest user message once: a follow-up sent mid-turn is picked up on the next
     // step, and the steps after it stay silent (#6944).
+    // No claim without a workspace: runHook drops that event (requireCwd), and a claimed message
+    // would then never be recalled.
     const sessionId = ev.conversationId as string | undefined;
+    const cwd = antigravityCwd(ev);
     const turn = readAntigravityPromptTurn(ev.transcriptPath as string | undefined);
-    const fresh = turn && sessionId && claimPromptMark("antigravity-cli", sessionId, turn.line);
-    return { prompt: fresh ? turn.prompt : undefined, cwd: antigravityCwd(ev), sessionId };
+    const fresh =
+      turn && sessionId && cwd && claimPromptMark("antigravity-cli", sessionId, turn.line);
+    return { prompt: fresh ? turn.prompt : undefined, cwd, sessionId };
   },
   // `systemMessage` stays in the trajectory, so recall survives the turn's tool calls. agy
   // deprecated `ephemeralMessage`; on agy 1.5.4–1.5.9 it reached only the first model call (#6632).

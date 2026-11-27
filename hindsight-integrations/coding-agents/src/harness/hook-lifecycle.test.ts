@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HOOK_HARNESSES, type HookHarnessName } from "./hook-lifecycle";
 import { DEFAULT_REFLECT_TIMEOUT_MS } from "../core/config";
@@ -364,5 +367,72 @@ describe("color (#6502)", () => {
       expect(spec.prompt.color === true, `${name} prompt`).toBe(want);
       expect(spec.sessionStart.color === true, `${name} sessionStart`).toBe(want);
     }
+  });
+});
+
+const rec = (type: string, content = "") => JSON.stringify({ type, content });
+const ask = (text: string) => rec("USER_INPUT", `<USER_REQUEST>\n${text}\n</USER_REQUEST>`);
+
+describe("antigravity PreInvocation prompt (#6944)", () => {
+  // The record order agy 1.5.18 writes, read at each PreInvocation: the mid-turn follow-up lands
+  // AFTER the hook that follows it, and tool records already sit behind it at the next one.
+  it("recalls the opening prompt once and a mid-turn follow-up once, never a tool step", () => {
+    const root = mkdtempSync(join(tmpdir(), "hs-antigravity-prompt-"));
+    const file = join(root, "transcript.jsonl");
+    const parse = HOOK_HARNESSES["antigravity-cli"].prompt.parse;
+    const ev = {
+      transcriptPath: file,
+      conversationId: `test-6944-${process.pid}-${Date.now()}`,
+      workspacePaths: [root],
+    };
+    const steps: string[][] = [
+      [ask("Run sleep 40")],
+      [
+        ask("Run sleep 40"),
+        rec("SYSTEM_MESSAGE", "s"),
+        rec("PLANNER_RESPONSE"),
+        rec("GENERIC", "running"),
+      ],
+      [
+        ask("Run sleep 40"),
+        rec("SYSTEM_MESSAGE", "s"),
+        rec("PLANNER_RESPONSE"),
+        rec("GENERIC", "running"),
+        ask("Also: what is the team mascot?"),
+        rec("PLANNER_RESPONSE"),
+        rec("GENERIC", "done"),
+      ],
+      [
+        ask("Run sleep 40"),
+        rec("SYSTEM_MESSAGE", "s"),
+        rec("PLANNER_RESPONSE"),
+        rec("GENERIC", "running"),
+        ask("Also: what is the team mascot?"),
+        rec("PLANNER_RESPONSE"),
+        rec("GENERIC", "done"),
+        rec("PLANNER_RESPONSE"),
+        rec("GENERIC", "more"),
+      ],
+    ];
+    const prompts = steps.map((lines) => {
+      writeFileSync(file, lines.join("\n"));
+      return parse(ev).prompt;
+    });
+    // An event with no workspace is dropped by runHook, so it must not claim the message either.
+    writeFileSync(file, ask("Run sleep 40"));
+    const noWorkspace = { ...ev, conversationId: `${ev.conversationId}-nows`, workspacePaths: [] };
+    expect(parse(noWorkspace).prompt).toBeUndefined();
+    expect(parse({ ...noWorkspace, workspacePaths: [root] }).prompt).toBe("Run sleep 40");
+
+    rmSync(root, { recursive: true, force: true });
+    for (const id of [ev.conversationId, noWorkspace.conversationId]) {
+      rmSync(join(tmpdir(), "hindsight-antigravity-cli", `${id}.recalled`), { force: true });
+    }
+    expect(prompts).toEqual([
+      "Run sleep 40",
+      undefined,
+      "Also: what is the team mascot?",
+      undefined,
+    ]);
   });
 });
