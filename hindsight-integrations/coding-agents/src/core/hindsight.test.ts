@@ -484,7 +484,7 @@ describe("HindsightClient credential refresh", () => {
       apiUrl: "http://x",
       bank: "b",
       apiToken: "key",
-      headers: { "CF-Access-Client-Id": "id.access", Authorization: "Bearer other" },
+      headers: { "CF-Access-Client-Id": "id.access", authorization: "Bearer other" },
     }).req("GET", "http://x/thing");
     const sent = new Headers(fetchMock.mock.calls[0][1].headers);
     expect(sent.get("CF-Access-Client-Id")).toBe("id.access");

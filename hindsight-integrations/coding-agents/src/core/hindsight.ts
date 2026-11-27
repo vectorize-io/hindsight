@@ -430,7 +430,12 @@ export class HindsightClient {
       "User-Agent": USER_AGENT,
       ...this.extraHeaders,
     };
-    if (this.token) h["Authorization"] = `Bearer ${this.token}`;
+    if (this.token) {
+      // Header names are case-insensitive: a configured `authorization` would otherwise travel
+      // alongside ours and reach the server as one comma-joined value.
+      for (const k of Object.keys(h)) if (k.toLowerCase() === "authorization") delete h[k];
+      h["Authorization"] = `Bearer ${this.token}`;
+    }
     return h;
   }
 
