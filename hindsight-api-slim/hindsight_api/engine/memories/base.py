@@ -231,24 +231,14 @@ class SummaryMemory:
 
 
 @dataclass(frozen=True)
-class HourCount:
-    """Memories of one fact type in one UTC hour (``time`` is the hour's start, UTC)."""
-
-    time: datetime
-    fact_type: str
-    count: int
-
-
-@dataclass(frozen=True)
 class StatsSummaryAggregates:
-    """What ``stats_summary`` adds up for a window."""
+    """What ``stats_summary`` adds up for a window. ``None`` = this store can't say (cheaply)."""
 
-    hours: list[HourCount]
-    documents: int
-    harnesses: list[NameCount]
-    entities: list[NameCount]
-    strongest_observation: SummaryMemory | None
-    first_memory: SummaryMemory | None
+    documents: int | None = None
+    harnesses: list[NameCount] | None = None
+    entities: list[NameCount] | None = None
+    strongest_observation: SummaryMemory | None = None
+    first_memory: SummaryMemory | None = None
 
 
 # ------------------------------------------------------------------ document and chunk types
@@ -2548,17 +2538,19 @@ class MemoriesExtension(Extension, ABC):
         entity_limit: int,
         tag_groups: "list[TagGroup] | None" = None,
     ) -> StatsSummaryAggregates:
-        """A bank's ``[start, end)`` summed up.
+        """A bank's ``[start, end)`` summed up, beyond the per-hour counts (those come from
+        ``memories_timeseries``).
 
         Memories are placed on ``COALESCE(mentioned_at, created_at)``; documents on
-        ``created_at``. ``hours`` counts memories per UTC hour and fact type (only hours
-        that have any). ``harnesses`` counts the window's documents per ``harness:<id>``
+        ``created_at``. ``harnesses`` counts the window's documents per ``harness:<id>``
         tag, ``entities`` the window's memories per mentioned entity (top ``entity_limit``),
         ``strongest_observation`` is the one with the highest ``proof_count`` and
         ``first_memory`` the earliest memory. A store must aggregate in place: no memory
-        list crosses the wire.
+        list crosses the wire. Every answer is optional: leave out (``None``) any the store
+        cannot give within bounded work, or that ran out of its budget, so the endpoint
+        still answers with the rest. The default answers none of them.
         """
-        raise NotImplementedError
+        return StatsSummaryAggregates()
 
     async def observation_scope_counts(
         self,
@@ -4746,7 +4738,6 @@ __all__ = [
     "build_fact_records",
     "build_text_signals",
     "source_key",
-    "HourCount",
     "NameCount",
     "StatsSummaryAggregates",
     "SummaryMemory",

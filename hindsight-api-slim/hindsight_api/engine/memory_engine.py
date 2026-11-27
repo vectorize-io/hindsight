@@ -17779,6 +17779,16 @@ class MemoryEngine(MemoryEngineInterface):
         from .memories import get_memories
 
         async with self._store_read_conn(bank_id) as conn:
+            # The hours are the event-time timeseries: every store already answers it.
+            rows = await get_memories().memories_timeseries(
+                conn=conn,
+                fq_table=fq_table,
+                bank_id=bank_id,
+                time_field="mentioned_at",
+                trunc="hour",
+                since=start,
+                tag_groups=tag_scope,
+            )
             aggregates = await get_memories().stats_summary(
                 conn=conn,
                 fq_table=fq_table,
@@ -17790,16 +17800,19 @@ class MemoryEngine(MemoryEngineInterface):
             )
 
         hours: dict[datetime, MemoryTimeseriesBucketData] = {}
-        for h in aggregates.hours:
+        for row in rows:
             # Both dialects hand back the UTC hour; one of them without a zone.
-            bucket = h.time.replace(tzinfo=timezone.utc) if h.time.tzinfo is None else h.time.astimezone(timezone.utc)
+            when: datetime = row["bucket"]
+            bucket = when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when.astimezone(timezone.utc)
+            if bucket >= end:  # The timeseries only takes a start.
+                continue
             entry = hours.setdefault(bucket, MemoryTimeseriesBucketData(time=bucket.isoformat()))
-            if h.fact_type == "world":
-                entry.world += h.count
-            elif h.fact_type == "experience":
-                entry.experience += h.count
-            elif h.fact_type == "observation":
-                entry.observation += h.count
+            if row["fact_type"] == "world":
+                entry.world += row["count"]
+            elif row["fact_type"] == "experience":
+                entry.experience += row["count"]
+            elif row["fact_type"] == "observation":
+                entry.observation += row["count"]
         return StatsSummaryData(
             bank_id=bank_id,
             start_date=start.isoformat(),

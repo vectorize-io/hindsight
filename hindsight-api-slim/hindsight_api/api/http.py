@@ -3383,17 +3383,25 @@ class StatsSummaryResponse(BaseModel):
         description="Memories per UTC hour by fact type, on mentioned_at (else created_at). Only hours that "
         "have memories, so a client can regroup them into its own time zone's days and hours.",
     )
-    documents: int = Field(description="Documents created in the window.")
-    harnesses: list[SummaryCount] = Field(
-        default_factory=list, description="Those documents per coding agent (`harness:<id>` tag), most first."
+    documents: int | None = Field(
+        default=None, description="Documents created in the window; null when the store can't say."
     )
-    entities: list[SummaryCount] = Field(
-        default_factory=list, description="The entities most memories in the window mention, most first."
+    harnesses: list[SummaryCount] | None = Field(
+        default=None,
+        description="Those documents per coding agent (`harness:<id>` tag), most first; null when the store can't say.",
+    )
+    entities: list[SummaryCount] | None = Field(
+        default=None,
+        description="The entities most memories in the window mention, most first; null when the store can't say.",
     )
     strongest_observation: SummaryMemory | None = Field(
-        default=None, description="The window's observation backed by the most facts."
+        default=None,
+        description="The window's observation backed by the most facts; null when there is none or the store "
+        "can't say.",
     )
-    first_memory: SummaryMemory | None = Field(default=None, description="The window's earliest memory.")
+    first_memory: SummaryMemory | None = Field(
+        default=None, description="The window's earliest memory; null when there is none or the store can't say."
+    )
 
 
 # Mental Model models
@@ -6184,7 +6192,8 @@ def _register_routes(app: FastAPI):
         summary="Memories over a window, summed up",
         description="Aggregates of a bank's memories and documents between two dates, computed in the database: "
         "counts per UTC hour by fact type, documents and their coding agents, the most mentioned entities, "
-        "the strongest observation and the first memory. No memory list crosses the wire.",
+        "the strongest observation and the first memory. No memory list crosses the wire. Every answer but the "
+        "hours is optional: null when the memory store can't give it within bounded work.",
         operation_id="get_stats_summary",
         tags=["Banks"],
         responses=_BANK_NOT_FOUND_RESPONSES,
@@ -6210,8 +6219,12 @@ def _register_routes(app: FastAPI):
                 end_date=data.end_date,
                 hours=[MemoryTimeseriesBucket(**h.as_dict()) for h in data.hours],
                 documents=agg.documents,
-                harnesses=[SummaryCount(name=h.name, count=h.count) for h in agg.harnesses],
-                entities=[SummaryCount(name=e.name, count=e.count) for e in agg.entities],
+                harnesses=None
+                if agg.harnesses is None
+                else [SummaryCount(name=h.name, count=h.count) for h in agg.harnesses],
+                entities=None
+                if agg.entities is None
+                else [SummaryCount(name=e.name, count=e.count) for e in agg.entities],
                 strongest_observation=SummaryMemory(
                     text=strongest.text, time=strongest.time, proof_count=strongest.proof_count
                 )

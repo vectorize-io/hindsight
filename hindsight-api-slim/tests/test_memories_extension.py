@@ -38,7 +38,6 @@ from hindsight_api.engine.memories.base import (
     DOC_META_RETAIN_PARAMS,
     META_OBSERVATION_SCOPES,
     EntityPrunePassResult,
-    HourCount,
     MemoriesExtension,
     RecallArms,
     RelinkPassResult,
@@ -776,7 +775,8 @@ class InMemoryMemories(MemoriesExtension):
     async def stats_summary(self, *, conn, fq_table, bank_id, start, end, entity_limit, tag_groups=None):
         self.calls.append("stats_summary")
 
-        # The window over the stub's own rows; it keeps no documents or entity links.
+        # A store that answers only what is cheap for it: the earliest memory. The rest stays
+        # None, which the endpoint passes on as "can't say".
         def when(row: StoredMemory) -> datetime | None:
             return row.mentioned_at or row.created_at
 
@@ -784,22 +784,8 @@ class InMemoryMemories(MemoriesExtension):
             (r for r in self.rows.values() if (t := when(r)) is not None and start <= t < end),
             key=lambda r: when(r),
         )
-        hours: dict[tuple[datetime, str], int] = {}
-        for r in rows:
-            hour = when(r).astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
-            hours[(hour, r.fact_type)] = hours.get((hour, r.fact_type), 0) + 1
-        observations = sorted((r for r in rows if r.fact_type == "observation"), key=lambda r: -r.proof_count)
         return StatsSummaryAggregates(
-            hours=[HourCount(time=h, fact_type=f, count=n) for (h, f), n in sorted(hours.items())],
-            documents=0,
-            harnesses=[],
-            entities=[],
-            strongest_observation=SummaryMemory(
-                text=observations[0].text, time=when(observations[0]), proof_count=observations[0].proof_count
-            )
-            if observations
-            else None,
-            first_memory=SummaryMemory(text=rows[0].text, time=when(rows[0])) if rows else None,
+            first_memory=SummaryMemory(text=rows[0].text, time=when(rows[0])) if rows else None
         )
 
     async def observation_scope_counts(self, *, conn, fq_table, bank_id, limit=100, offset=0, tag_groups=None):

@@ -7890,27 +7890,27 @@ export type StatsSummaryResponse = {
   /**
    * Documents
    *
-   * Documents created in the window.
+   * Documents created in the window; null when the store can't say.
    */
-  documents: number;
+  documents?: number | null;
   /**
    * Harnesses
    *
-   * Those documents per coding agent (`harness:<id>` tag), most first.
+   * Those documents per coding agent (`harness:<id>` tag), most first; null when the store can't say.
    */
-  harnesses?: Array<SummaryCount>;
+  harnesses?: Array<SummaryCount> | null;
   /**
    * Entities
    *
-   * The entities most memories in the window mention, most first.
+   * The entities most memories in the window mention, most first; null when the store can't say.
    */
-  entities?: Array<SummaryCount>;
+  entities?: Array<SummaryCount> | null;
   /**
-   * The window's observation backed by the most facts.
+   * The window's observation backed by the most facts; null when there is none or the store can't say.
    */
   strongest_observation?: SummaryMemory | null;
   /**
-   * The window's earliest memory.
+   * The window's earliest memory; null when there is none or the store can't say.
    */
   first_memory?: SummaryMemory | null;
 };

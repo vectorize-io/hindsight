@@ -8,6 +8,7 @@ GET /v1/default/banks/{bank_id}/stats/memories-timeseries.
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import MethodType
 
 import httpx
 import pytest
@@ -15,6 +16,9 @@ import pytest_asyncio
 
 from hindsight_api import RequestContext
 from hindsight_api.api import create_app
+from hindsight_api.engine.memories import get_memories
+from hindsight_api.engine.memories.base import MemoriesExtension
+from hindsight_api.engine.memories.pg import counts
 from hindsight_api.engine.memory_engine import get_current_schema
 from hindsight_api.engine.schema import fq_table
 
@@ -279,6 +283,43 @@ async def test_stats_summary_sums_up_the_window(api_client, test_bank_id):
             url, params={"start_date": "2000-01-01T00:00:00Z", "end_date": "2002-01-01T00:00:00Z"}
         )
         assert response.status_code == 400
+    finally:
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store", ["answers nothing", "runs out of time"])
+async def test_stats_summary_still_counts_the_hours_when_the_store_cannot_say(
+    api_client, test_bank_id, monkeypatch, store
+):
+    """Every answer but the hours is optional. A store that answers none of them (the
+    interface's default) or whose queries all run past their time limit still gets the
+    hours, from the timeseries, and nulls for the rest: never a 500."""
+    if store == "answers nothing":
+        # On the instance: the store's methods are wrapped there (call timing).
+        store = get_memories()
+        monkeypatch.setattr(store, "stats_summary", MethodType(MemoriesExtension.stats_summary, store))
+    else:
+        monkeypatch.setattr(counts, "STATS_SUMMARY_QUERY_TIMEOUT_S", 0)
+    try:
+        response = await api_client.post(
+            f"/v1/default/banks/{test_bank_id}/memories",
+            json={"items": [{"content": "Alice is a software engineer.", "document_id": "chat-1"}]},
+        )
+        assert response.status_code == 200
+        now = datetime.now(timezone.utc)
+        response = await api_client.get(
+            f"/v1/default/banks/{test_bank_id}/stats/summary",
+            params={
+                "start_date": (now - timedelta(days=1)).isoformat(),
+                "end_date": (now + timedelta(days=1)).isoformat(),
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert sum(h["world"] + h["experience"] + h["observation"] for h in body["hours"]) >= 1
+        unanswered = ("documents", "harnesses", "entities", "strongest_observation", "first_memory")
+        assert {k: body[k] for k in unanswered} == dict.fromkeys(unanswered)
     finally:
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 

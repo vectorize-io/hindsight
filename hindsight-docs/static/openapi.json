@@ -3051,7 +3051,7 @@
           "Banks"
         ],
         "summary": "Memories over a window, summed up",
-        "description": "Aggregates of a bank's memories and documents between two dates, computed in the database: counts per UTC hour by fact type, documents and their coding agents, the most mentioned entities, the strongest observation and the first memory. No memory list crosses the wire.",
+        "description": "Aggregates of a bank's memories and documents between two dates, computed in the database: counts per UTC hour by fact type, documents and their coding agents, the most mentioned entities, the strongest observation and the first memory. No memory list crosses the wire. Every answer but the hours is optional: null when the memory store can't give it within bounded work.",
         "operationId": "get_stats_summary",
         "parameters": [
           {
@@ -24019,25 +24019,46 @@
             "description": "Memories per UTC hour by fact type, on mentioned_at (else created_at). Only hours that have memories, so a client can regroup them into its own time zone's days and hours."
           },
           "documents": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Documents",
-            "description": "Documents created in the window."
+            "description": "Documents created in the window; null when the store can't say."
           },
           "harnesses": {
-            "items": {
-              "$ref": "#/components/schemas/SummaryCount"
-            },
-            "type": "array",
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SummaryCount"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Harnesses",
-            "description": "Those documents per coding agent (`harness:<id>` tag), most first."
+            "description": "Those documents per coding agent (`harness:<id>` tag), most first; null when the store can't say."
           },
           "entities": {
-            "items": {
-              "$ref": "#/components/schemas/SummaryCount"
-            },
-            "type": "array",
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SummaryCount"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Entities",
-            "description": "The entities most memories in the window mention, most first."
+            "description": "The entities most memories in the window mention, most first; null when the store can't say."
           },
           "strongest_observation": {
             "anyOf": [
@@ -24048,7 +24069,7 @@
                 "type": "null"
               }
             ],
-            "description": "The window's observation backed by the most facts."
+            "description": "The window's observation backed by the most facts; null when there is none or the store can't say."
           },
           "first_memory": {
             "anyOf": [
@@ -24059,15 +24080,14 @@
                 "type": "null"
               }
             ],
-            "description": "The window's earliest memory."
+            "description": "The window's earliest memory; null when there is none or the store can't say."
           }
         },
         "type": "object",
         "required": [
           "bank_id",
           "start_date",
-          "end_date",
-          "documents"
+          "end_date"
         ],
         "title": "StatsSummaryResponse",
         "description": "A bank's window summed up in the database: what a year-in-numbers view needs."

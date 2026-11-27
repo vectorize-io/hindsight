@@ -1360,7 +1360,7 @@ func (r ApiGetStatsSummaryRequest) Execute() (*StatsSummaryResponse, *http.Respo
 /*
 GetStatsSummary Memories over a window, summed up
 
-Aggregates of a bank's memories and documents between two dates, computed in the database: counts per UTC hour by fact type, documents and their coding agents, the most mentioned entities, the strongest observation and the first memory. No memory list crosses the wire.
+Aggregates of a bank's memories and documents between two dates, computed in the database: counts per UTC hour by fact type, documents and their coding agents, the most mentioned entities, the strongest observation and the first memory. No memory list crosses the wire. Every answer but the hours is optional: null when the memory store can't give it within bounded work.
 
  @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
  @param bankId

@@ -485,7 +485,11 @@ def _rewrite_pg_to_oracle(query: str) -> RewriteResult:
         fmt = _DATE_TRUNC_MAP.get(interval, "DD")
         return f"TRUNC(CAST({expr} AS DATE), '{fmt}')"
 
-    query = re.sub(r"date_trunc\(\s*'(\w+)'\s*,\s*(.+?)\s*\)", _rewrite_date_trunc, query, flags=re.IGNORECASE)
+    # One level of nested parentheses, so an event-time bucket's
+    # `COALESCE(mentioned_at, created_at) AT TIME ZONE 'UTC'` is taken whole.
+    query = re.sub(
+        r"date_trunc\(\s*'(\w+)'\s*,\s*((?:[^()]|\([^()]*\))+?)\s*\)", _rewrite_date_trunc, query, flags=re.IGNORECASE
+    )
 
     # interval 'N units' → NUMTODSINTERVAL(N, 'UNIT')
     # Handles PG interval literals like interval '7 days', interval '1 hour', etc.

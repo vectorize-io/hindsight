@@ -2054,7 +2054,9 @@ paths:
       description: "Aggregates of a bank's memories and documents between two dates,\
         \ computed in the database: counts per UTC hour by fact type, documents and\
         \ their coding agents, the most mentioned entities, the strongest observation\
-        \ and the first memory. No memory list crosses the wire."
+        \ and the first memory. No memory list crosses the wire. Every answer but\
+        \ the hours is optional: null when the memory store can't give it within bounded\
+        \ work."
       operationId: get_stats_summary
       parameters:
       - explode: false
@@ -16815,19 +16817,17 @@ components:
             $ref: '#/components/schemas/MemoryTimeseriesBucket'
           type: array
         documents:
-          description: Documents created in the window.
-          title: Documents
+          nullable: true
           type: integer
         harnesses:
-          description: "Those documents per coding agent (`harness:<id>` tag), most\
-            \ first."
           items:
             $ref: '#/components/schemas/SummaryCount'
+          nullable: true
           type: array
         entities:
-          description: "The entities most memories in the window mention, most first."
           items:
             $ref: '#/components/schemas/SummaryCount'
+          nullable: true
           type: array
         strongest_observation:
           $ref: '#/components/schemas/SummaryMemory'
@@ -16835,7 +16835,6 @@ components:
           $ref: '#/components/schemas/SummaryMemory'
       required:
       - bank_id
-      - documents
       - end_date
       - start_date
       title: StatsSummaryResponse

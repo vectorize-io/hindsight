@@ -9,13 +9,21 @@ carry it; only the connection and ``fq_table`` resolver are now parameters.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Callable
+import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any
+from typing import Any, TypeVar
 
 from ...search.tags import TagClause, TagGroup, build_tag_groups_where_clause
-from ..base import HourCount, NameCount, StatsSummaryAggregates, SummaryMemory
+from ..base import NameCount, StatsSummaryAggregates, SummaryMemory
+
+logger = logging.getLogger(__name__)
+T = TypeVar("T")
+
+# Each stats-summary answer gets this long; past it, that answer is left out (None).
+STATS_SUMMARY_QUERY_TIMEOUT_S = 10.0
 
 
 async def consolidation_freshness(*, conn, fq_table: Callable[[str], str], bank_id: str) -> dict[str, Any]:
@@ -192,13 +200,15 @@ async def stats_summary(
 
     Memories are placed on ``COALESCE(mentioned_at, created_at)``, like the event-time
     timeseries; documents on ``created_at``. Only aggregates and two rows cross the wire.
+    Each answer is its own query with its own time limit: one that runs past
+    ``STATS_SUMMARY_QUERY_TIMEOUT_S`` comes back ``None`` and the others still answer,
+    so a very large bank gets a smaller summary instead of a slow one.
 
     Every query reads the window from a subquery that applies the tag scope on the bare
     ``tags`` column: the Oracle rewriter only translates the tag-group operators there
     (an aliased ``mu.tags`` comes out as ``mu.EXISTS (...)``), the same constraint
-    ``_oracle_observation_scope_counts`` works around. The hour bucket and the documents'
-    tag expansion differ per dialect, so those two are written out for each; the
-    rewriter's ``date_trunc`` translation cannot take a ``COALESCE`` argument.
+    ``_oracle_observation_scope_counts`` works around. The documents' tag expansion
+    differs per dialect, so it is written out for each.
     """
     from ...schema import _is_oracle  # noqa: PLC0415
 
@@ -216,49 +226,58 @@ async def stats_summary(
         WHERE bank_id = $1 AND created_at >= $2 AND created_at < $3 {groups.sql}
     ) d"""
 
-    bucket = "TRUNC(SYS_EXTRACT_UTC(mu.ts), 'HH24')" if oracle else "date_trunc('hour', mu.ts AT TIME ZONE 'UTC')"
-    hours = await conn.fetch(
-        f"SELECT {bucket} AS bucket, mu.fact_type AS fact_type, COUNT(*) AS n FROM {window} "
-        f"GROUP BY {bucket}, mu.fact_type ORDER BY bucket",
-        *params,
-    )
-    entities = await conn.fetch(
-        f"""
-        SELECT e.canonical_name AS name, COUNT(*) AS n
-        FROM {window}
-        JOIN {fq_table("unit_entities")} ue ON ue.unit_id = mu.id
-        JOIN {fq_table("entities")} e ON e.id = ue.entity_id
-        GROUP BY e.canonical_name
-        ORDER BY n DESC, e.canonical_name
-        LIMIT ${groups.next_param_offset}
-        """,
-        *params,
-        entity_limit,
+    async def bounded(query: Awaitable[T]) -> T | None:
+        try:
+            return await asyncio.wait_for(query, timeout=STATS_SUMMARY_QUERY_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            logger.warning(f"[stats_summary] a query ran past {STATS_SUMMARY_QUERY_TIMEOUT_S}s for bank {bank_id}")
+            return None
+
+    entities = await bounded(
+        conn.fetch(
+            f"""
+            SELECT e.canonical_name AS name, COUNT(*) AS n
+            FROM {window}
+            JOIN {fq_table("unit_entities")} ue ON ue.unit_id = mu.id
+            JOIN {fq_table("entities")} e ON e.id = ue.entity_id
+            GROUP BY e.canonical_name
+            ORDER BY n DESC, e.canonical_name
+            LIMIT ${groups.next_param_offset}
+            """,
+            *params,
+            entity_limit,
+        )
     )
     # NULLS LAST: proof_count is nullable (DEFAULT 1, no NOT NULL), and NULL sorts first descending.
-    strongest = await conn.fetchrow(
-        f"SELECT mu.text AS text, mu.proof_count AS proof_count, mu.ts AS ts FROM {window} "
-        "WHERE mu.fact_type = 'observation' ORDER BY mu.proof_count DESC NULLS LAST, mu.ts LIMIT 1",
-        *params,
+    strongest = await bounded(
+        conn.fetchrow(
+            f"SELECT mu.text AS text, mu.proof_count AS proof_count, mu.ts AS ts FROM {window} "
+            "WHERE mu.fact_type = 'observation' ORDER BY mu.proof_count DESC NULLS LAST, mu.ts LIMIT 1",
+            *params,
+        )
     )
-    first = await conn.fetchrow(f"SELECT mu.text AS text, mu.ts AS ts FROM {window} ORDER BY mu.ts LIMIT 1", *params)
-
-    documents = await conn.fetchval(f"SELECT COUNT(*) FROM {docs}", *params)
+    first = await bounded(
+        conn.fetchrow(f"SELECT mu.text AS text, mu.ts AS ts FROM {window} ORDER BY mu.ts LIMIT 1", *params)
+    )
+    documents = await bounded(conn.fetchval(f"SELECT COUNT(*) FROM {docs}", *params))
     tag_rows = (
         f"{docs} CROSS APPLY JSON_TABLE(d.tags, '$[*]' COLUMNS (tag VARCHAR2(256) PATH '$')) jt"
         if oracle
         else f"{docs}, unnest(d.tags) AS jt(tag)"
     )
-    harnesses = await conn.fetch(
-        f"SELECT jt.tag AS tag, COUNT(*) AS n FROM {tag_rows} WHERE jt.tag LIKE 'harness:%' "
-        "GROUP BY jt.tag ORDER BY n DESC, jt.tag",
-        *params,
+    harnesses = await bounded(
+        conn.fetch(
+            f"SELECT jt.tag AS tag, COUNT(*) AS n FROM {tag_rows} WHERE jt.tag LIKE 'harness:%' "
+            "GROUP BY jt.tag ORDER BY n DESC, jt.tag",
+            *params,
+        )
     )
     return StatsSummaryAggregates(
-        hours=[HourCount(time=r["bucket"], fact_type=r["fact_type"], count=int(r["n"])) for r in hours],
-        documents=int(documents or 0),
-        harnesses=[NameCount(name=r["tag"][len("harness:") :], count=int(r["n"])) for r in harnesses],
-        entities=[NameCount(name=r["name"], count=int(r["n"])) for r in entities],
+        documents=None if documents is None else int(documents),
+        harnesses=None
+        if harnesses is None
+        else [NameCount(name=r["tag"][len("harness:") :], count=int(r["n"])) for r in harnesses],
+        entities=None if entities is None else [NameCount(name=r["name"], count=int(r["n"])) for r in entities],
         strongest_observation=SummaryMemory(
             text=strongest["text"], time=strongest["ts"], proof_count=int(strongest["proof_count"] or 1)
         )
