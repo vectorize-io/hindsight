@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 
@@ -1259,6 +1260,150 @@ func (a *BanksAPIService) GetMemoriesTimeseriesExecute(r ApiGetMemoriesTimeserie
 		var defaultValue string = "created_at"
 		r.timeField = &defaultValue
 	}
+	// to determine the Content-Type header
+	localVarHTTPContentTypes := []string{}
+
+	// set Content-Type header
+	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
+	if localVarHTTPContentType != "" {
+		localVarHeaderParams["Content-Type"] = localVarHTTPContentType
+	}
+
+	// to determine the Accept header
+	localVarHTTPHeaderAccepts := []string{"application/json"}
+
+	// set Accept header
+	localVarHTTPHeaderAccept := selectHeaderAccept(localVarHTTPHeaderAccepts)
+	if localVarHTTPHeaderAccept != "" {
+		localVarHeaderParams["Accept"] = localVarHTTPHeaderAccept
+	}
+	if r.authorization != nil {
+		parameterAddToHeaderOrQuery(localVarHeaderParams, "authorization", r.authorization, "simple", "")
+	}
+	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
+	if err != nil {
+		return localVarReturnValue, nil, err
+	}
+
+	localVarHTTPResponse, err := a.client.callAPI(req)
+	if err != nil || localVarHTTPResponse == nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	localVarBody, err := io.ReadAll(localVarHTTPResponse.Body)
+	localVarHTTPResponse.Body.Close()
+	localVarHTTPResponse.Body = io.NopCloser(bytes.NewBuffer(localVarBody))
+	if err != nil {
+		return localVarReturnValue, localVarHTTPResponse, err
+	}
+
+	if localVarHTTPResponse.StatusCode >= 300 {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: localVarHTTPResponse.Status,
+		}
+		if localVarHTTPResponse.StatusCode == 422 {
+			var v HTTPValidationError
+			err = a.client.decode(&v, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+			if err != nil {
+				newErr.error = err.Error()
+				return localVarReturnValue, localVarHTTPResponse, newErr
+			}
+					newErr.error = formatErrorMessage(localVarHTTPResponse.Status, &v)
+					newErr.model = v
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	err = a.client.decode(&localVarReturnValue, localVarBody, localVarHTTPResponse.Header.Get("Content-Type"))
+	if err != nil {
+		newErr := &GenericOpenAPIError{
+			body:  localVarBody,
+			error: err.Error(),
+		}
+		return localVarReturnValue, localVarHTTPResponse, newErr
+	}
+
+	return localVarReturnValue, localVarHTTPResponse, nil
+}
+
+type ApiGetStatsSummaryRequest struct {
+	ctx context.Context
+	ApiService *BanksAPIService
+	bankId string
+	startDate *time.Time
+	endDate *time.Time
+	authorization *string
+}
+
+// ISO-8601, inclusive.
+func (r ApiGetStatsSummaryRequest) StartDate(startDate time.Time) ApiGetStatsSummaryRequest {
+	r.startDate = &startDate
+	return r
+}
+
+// ISO-8601, exclusive.
+func (r ApiGetStatsSummaryRequest) EndDate(endDate time.Time) ApiGetStatsSummaryRequest {
+	r.endDate = &endDate
+	return r
+}
+
+func (r ApiGetStatsSummaryRequest) Authorization(authorization string) ApiGetStatsSummaryRequest {
+	r.authorization = &authorization
+	return r
+}
+
+func (r ApiGetStatsSummaryRequest) Execute() (*StatsSummaryResponse, *http.Response, error) {
+	return r.ApiService.GetStatsSummaryExecute(r)
+}
+
+/*
+GetStatsSummary Memories over a window, summed up
+
+Aggregates of a bank's memories and documents between two dates, computed in the database: counts per UTC hour by fact type, documents and their coding agents, the most mentioned entities, the strongest observation and the first memory. No memory list crosses the wire.
+
+ @param ctx context.Context - for authentication, logging, cancellation, deadlines, tracing, etc. Passed from http.Request or context.Background().
+ @param bankId
+ @return ApiGetStatsSummaryRequest
+*/
+func (a *BanksAPIService) GetStatsSummary(ctx context.Context, bankId string) ApiGetStatsSummaryRequest {
+	return ApiGetStatsSummaryRequest{
+		ApiService: a,
+		ctx: ctx,
+		bankId: bankId,
+	}
+}
+
+// Execute executes the request
+//  @return StatsSummaryResponse
+func (a *BanksAPIService) GetStatsSummaryExecute(r ApiGetStatsSummaryRequest) (*StatsSummaryResponse, *http.Response, error) {
+	var (
+		localVarHTTPMethod   = http.MethodGet
+		localVarPostBody     interface{}
+		formFiles            []formFile
+		localVarReturnValue  *StatsSummaryResponse
+	)
+
+	localBasePath, err := a.client.cfg.ServerURLWithContext(r.ctx, "BanksAPIService.GetStatsSummary")
+	if err != nil {
+		return localVarReturnValue, nil, &GenericOpenAPIError{error: err.Error()}
+	}
+
+	localVarPath := localBasePath + "/v1/default/banks/{bank_id}/stats/summary"
+	localVarPath = strings.Replace(localVarPath, "{"+"bank_id"+"}", url.PathEscape(parameterValueToString(r.bankId, "bankId")), -1)
+
+	localVarHeaderParams := make(map[string]string)
+	localVarQueryParams := url.Values{}
+	localVarFormParams := url.Values{}
+	if r.startDate == nil {
+		return localVarReturnValue, nil, reportError("startDate is required and must be specified")
+	}
+	if r.endDate == nil {
+		return localVarReturnValue, nil, reportError("endDate is required and must be specified")
+	}
+
+	parameterAddToHeaderOrQuery(localVarQueryParams, "start_date", r.startDate, "form", "")
+	parameterAddToHeaderOrQuery(localVarQueryParams, "end_date", r.endDate, "form", "")
 	// to determine the Content-Type header
 	localVarHTTPContentTypes := []string{}
 

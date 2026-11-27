@@ -492,6 +492,7 @@ class BankReadOperation(StrEnum):
     GET_GRAPH_DATA = "get_graph_data"
     GET_KNOWLEDGE_BASE_TREE = "get_knowledge_base_tree"
     GET_KNOWLEDGE_PAGE = "get_knowledge_page"
+    GET_STATS_SUMMARY = "get_stats_summary"
     GET_MEMORIES_TIMESERIES = "get_memories_timeseries"
     GET_MEMORY_UNIT = "get_memory_unit"
     GET_MENTAL_MODEL_HISTORY = "get_mental_model_history"

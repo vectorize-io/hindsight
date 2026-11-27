@@ -32,6 +32,7 @@ _REQUIRED_PARAMS: dict[str, dict[str, str]] = {
     "/pages/search": {"q": "anything"},
     # Deprecated path of /pages/search, removed in 2.x.
     "/knowledge-base/search": {"q": "anything"},
+    "/stats/summary": {"start_date": "2026-01-01T00:00:00Z", "end_date": "2027-01-01T00:00:00Z"},
 }
 
 # Bank-scoped GETs deliberately outside this contract.

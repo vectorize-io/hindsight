@@ -7,7 +7,7 @@ GET /v1/default/banks/{bank_id}/stats/memories-timeseries.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -221,6 +221,64 @@ async def test_memories_timeseries_reflects_retained_memories(api_client, test_b
         # Those memories should land in the most-recent bucket.
         latest = body["buckets"][-1]
         assert latest["world"] + latest["experience"] + latest["observation"] >= 2
+    finally:
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+async def test_stats_summary_sums_up_the_window(api_client, test_bank_id):
+    """The summary counts the window's memories per hour and its documents per coding agent,
+    quotes its first memory, and leaves out what falls outside the window."""
+    try:
+        response = await api_client.post(
+            f"/v1/default/banks/{test_bank_id}/memories",
+            json={
+                "items": [
+                    {
+                        "content": "Alice is a software engineer.",
+                        "context": "team",
+                        "document_id": "chat-1",
+                        "tags": ["harness:codex"],
+                    },
+                    {"content": "Bob works on infrastructure.", "context": "team", "document_id": "chat-2"},
+                ]
+            },
+        )
+        assert response.status_code == 200
+
+        now = datetime.now(timezone.utc)
+        url = f"/v1/default/banks/{test_bank_id}/stats/summary"
+        response = await api_client.get(
+            url,
+            params={
+                "start_date": (now - timedelta(days=1)).isoformat(),
+                "end_date": (now + timedelta(days=1)).isoformat(),
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert sum(h["world"] + h["experience"] + h["observation"] for h in body["hours"]) >= 2
+        assert body["documents"] == 2
+        assert body["harnesses"] == [{"name": "codex", "count": 1}]
+        assert body["first_memory"] is not None and body["first_memory"]["text"]
+
+        # A window before any of it holds nothing.
+        response = await api_client.get(
+            url, params={"start_date": "2000-01-01T00:00:00Z", "end_date": "2000-12-31T00:00:00Z"}
+        )
+        assert response.status_code == 200
+        empty = response.json()
+        assert (empty["hours"], empty["documents"], empty["entities"], empty["first_memory"]) == ([], 0, [], None)
+
+        response = await api_client.get(
+            url, params={"start_date": "2001-01-01T00:00:00Z", "end_date": "2000-01-01T00:00:00Z"}
+        )
+        assert response.status_code == 400
+        # More than a year of hourly buckets is refused.
+        response = await api_client.get(
+            url, params={"start_date": "2000-01-01T00:00:00Z", "end_date": "2002-01-01T00:00:00Z"}
+        )
+        assert response.status_code == 400
     finally:
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
 

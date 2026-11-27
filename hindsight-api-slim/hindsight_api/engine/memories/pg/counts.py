@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from ...search.tags import TagClause, TagGroup, build_tag_groups_where_clause
+from ..base import HourCount, NameCount, StatsSummaryAggregates, SummaryMemory
 
 
 async def consolidation_freshness(*, conn, fq_table: Callable[[str], str], bank_id: str) -> dict[str, Any]:
@@ -177,6 +178,96 @@ async def memories_timeseries(
     return [{"bucket": r["bucket"], "fact_type": r["fact_type"], "count": r["count"]} for r in rows]
 
 
+async def stats_summary(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    start: datetime,
+    end: datetime,
+    entity_limit: int,
+    tag_groups: list[TagGroup] | None = None,
+) -> StatsSummaryAggregates:
+    """A bank's ``[start, end)`` summed up in the database: what a year-in-numbers view needs.
+
+    Memories are placed on ``COALESCE(mentioned_at, created_at)``, like the event-time
+    timeseries; documents on ``created_at``. Only aggregates and two rows cross the wire.
+
+    Every query reads the window from a subquery that applies the tag scope on the bare
+    ``tags`` column: the Oracle rewriter only translates the tag-group operators there
+    (an aliased ``mu.tags`` comes out as ``mu.EXISTS (...)``), the same constraint
+    ``_oracle_observation_scope_counts`` works around. The hour bucket and the documents'
+    tag expansion differ per dialect, so those two are written out for each; the
+    rewriter's ``date_trunc`` translation cannot take a ``COALESCE`` argument.
+    """
+    from ...schema import _is_oracle  # noqa: PLC0415
+
+    oracle = _is_oracle()
+    groups = build_tag_groups_where_clause(tag_groups, 4)
+    params = [bank_id, start, end, *groups.params]
+    t = "COALESCE(mentioned_at, created_at)"
+    window = f"""(
+        SELECT id, text, fact_type, proof_count, {t} AS ts
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $1 AND {t} >= $2 AND {t} < $3 {groups.sql}
+    ) mu"""
+    docs = f"""(
+        SELECT tags FROM {fq_table("documents")}
+        WHERE bank_id = $1 AND created_at >= $2 AND created_at < $3 {groups.sql}
+    ) d"""
+
+    bucket = "TRUNC(SYS_EXTRACT_UTC(mu.ts), 'HH24')" if oracle else "date_trunc('hour', mu.ts AT TIME ZONE 'UTC')"
+    hours = await conn.fetch(
+        f"SELECT {bucket} AS bucket, mu.fact_type AS fact_type, COUNT(*) AS n FROM {window} "
+        f"GROUP BY {bucket}, mu.fact_type ORDER BY bucket",
+        *params,
+    )
+    entities = await conn.fetch(
+        f"""
+        SELECT e.canonical_name AS name, COUNT(*) AS n
+        FROM {window}
+        JOIN {fq_table("unit_entities")} ue ON ue.unit_id = mu.id
+        JOIN {fq_table("entities")} e ON e.id = ue.entity_id
+        GROUP BY e.canonical_name
+        ORDER BY n DESC, e.canonical_name
+        LIMIT ${groups.next_param_offset}
+        """,
+        *params,
+        entity_limit,
+    )
+    # NULLS LAST: proof_count is nullable (DEFAULT 1, no NOT NULL), and NULL sorts first descending.
+    strongest = await conn.fetchrow(
+        f"SELECT mu.text AS text, mu.proof_count AS proof_count, mu.ts AS ts FROM {window} "
+        "WHERE mu.fact_type = 'observation' ORDER BY mu.proof_count DESC NULLS LAST, mu.ts LIMIT 1",
+        *params,
+    )
+    first = await conn.fetchrow(f"SELECT mu.text AS text, mu.ts AS ts FROM {window} ORDER BY mu.ts LIMIT 1", *params)
+
+    documents = await conn.fetchval(f"SELECT COUNT(*) FROM {docs}", *params)
+    tag_rows = (
+        f"{docs} CROSS APPLY JSON_TABLE(d.tags, '$[*]' COLUMNS (tag VARCHAR2(256) PATH '$')) jt"
+        if oracle
+        else f"{docs}, unnest(d.tags) AS jt(tag)"
+    )
+    harnesses = await conn.fetch(
+        f"SELECT jt.tag AS tag, COUNT(*) AS n FROM {tag_rows} WHERE jt.tag LIKE 'harness:%' "
+        "GROUP BY jt.tag ORDER BY n DESC, jt.tag",
+        *params,
+    )
+    return StatsSummaryAggregates(
+        hours=[HourCount(time=r["bucket"], fact_type=r["fact_type"], count=int(r["n"])) for r in hours],
+        documents=int(documents or 0),
+        harnesses=[NameCount(name=r["tag"][len("harness:") :], count=int(r["n"])) for r in harnesses],
+        entities=[NameCount(name=r["name"], count=int(r["n"])) for r in entities],
+        strongest_observation=SummaryMemory(
+            text=strongest["text"], time=strongest["ts"], proof_count=int(strongest["proof_count"] or 1)
+        )
+        if strongest
+        else None,
+        first_memory=SummaryMemory(text=first["text"], time=first["ts"]) if first else None,
+    )
+
+
 async def observation_scope_counts(
     *,
     conn,
@@ -305,6 +396,7 @@ __all__ = [
     "document_memory_counts",
     "has_pending_consolidation",
     "link_counts",
+    "stats_summary",
     "memories_timeseries",
     "observation_scope_counts",
 ]

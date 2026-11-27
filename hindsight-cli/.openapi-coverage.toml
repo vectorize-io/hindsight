@@ -28,6 +28,7 @@ get_knowledge_bank_timeseries = "UI-only endpoint for the control plane knowledg
 # UI-only endpoint powering the control-plane stats chart.
 # Zero-filled bucket arrays don't map to a useful CLI command.
 get_memories_timeseries = "UI-only endpoint for the control plane stats chart"
+get_stats_summary = "UI-only endpoint for the control plane's year in review (Hindsight Wrapped)"
 
 # Per-bank LLM connectivity probe — a control-plane/diagnostics action (the "Health"
 # dialog). Makes a real provider call and is off by default; not an end-user CLI command.

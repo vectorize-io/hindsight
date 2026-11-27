@@ -7864,6 +7864,58 @@ export type SourceFactsIncludeOptions = {
 };
 
 /**
+ * StatsSummaryResponse
+ *
+ * A bank's window summed up in the database: what a year-in-numbers view needs.
+ */
+export type StatsSummaryResponse = {
+  /**
+   * Bank Id
+   */
+  bank_id: string;
+  /**
+   * Start Date
+   */
+  start_date: string;
+  /**
+   * End Date
+   */
+  end_date: string;
+  /**
+   * Hours
+   *
+   * Memories per UTC hour by fact type, on mentioned_at (else created_at). Only hours that have memories, so a client can regroup them into its own time zone's days and hours.
+   */
+  hours?: Array<MemoryTimeseriesBucket>;
+  /**
+   * Documents
+   *
+   * Documents created in the window.
+   */
+  documents: number;
+  /**
+   * Harnesses
+   *
+   * Those documents per coding agent (`harness:<id>` tag), most first.
+   */
+  harnesses?: Array<SummaryCount>;
+  /**
+   * Entities
+   *
+   * The entities most memories in the window mention, most first.
+   */
+  entities?: Array<SummaryCount>;
+  /**
+   * The window's observation backed by the most facts.
+   */
+  strongest_observation?: SummaryMemory | null;
+  /**
+   * The window's earliest memory.
+   */
+  first_memory?: SummaryMemory | null;
+};
+
+/**
  * StrategyPreview
  *
  * Preview of one strategy, aligned by position with the request.
@@ -7945,6 +7997,46 @@ export type StrategyScopePreview = {
    * Index of the strategy that actually applies to this scope (the first that claims it), or null when no strategy does and Default applies
    */
   handled_by: number | null;
+};
+
+/**
+ * SummaryCount
+ *
+ * A name and how often it appears in the window.
+ */
+export type SummaryCount = {
+  /**
+   * Name
+   */
+  name: string;
+  /**
+   * Count
+   */
+  count: number;
+};
+
+/**
+ * SummaryMemory
+ *
+ * One memory quoted by a stats summary.
+ */
+export type SummaryMemory = {
+  /**
+   * Text
+   */
+  text: string;
+  /**
+   * Time
+   *
+   * When it happened: mentioned_at, else created_at.
+   */
+  time: string;
+  /**
+   * Proof Count
+   *
+   * Facts backing it (observations only).
+   */
+  proof_count?: number | null;
 };
 
 /**
@@ -10342,6 +10434,59 @@ export type GetMemoriesTimeseriesResponses = {
 
 export type GetMemoriesTimeseriesResponse =
   GetMemoriesTimeseriesResponses[keyof GetMemoriesTimeseriesResponses];
+
+export type GetStatsSummaryData = {
+  body?: never;
+  headers?: {
+    /**
+     * Authorization
+     */
+    authorization?: string | null;
+  };
+  path: {
+    /**
+     * Bank Id
+     */
+    bank_id: string;
+  };
+  query: {
+    /**
+     * Start Date
+     *
+     * ISO-8601, inclusive.
+     */
+    start_date: string;
+    /**
+     * End Date
+     *
+     * ISO-8601, exclusive.
+     */
+    end_date: string;
+  };
+  url: "/v1/default/banks/{bank_id}/stats/summary";
+};
+
+export type GetStatsSummaryErrors = {
+  /**
+   * The bank does not exist.
+   */
+  404: unknown;
+  /**
+   * Validation Error
+   */
+  422: HttpValidationError;
+};
+
+export type GetStatsSummaryError = GetStatsSummaryErrors[keyof GetStatsSummaryErrors];
+
+export type GetStatsSummaryResponses = {
+  /**
+   * Successful Response
+   */
+  200: StatsSummaryResponse;
+};
+
+export type GetStatsSummaryResponse = GetStatsSummaryResponses[keyof GetStatsSummaryResponses];
 
 export type ListEntitiesData = {
   body?: never;

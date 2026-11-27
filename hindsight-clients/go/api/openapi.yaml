@@ -2049,6 +2049,70 @@ paths:
       summary: Memory ingestion time-series
       tags:
       - Banks
+  /v1/default/banks/{bank_id}/stats/summary:
+    get:
+      description: "Aggregates of a bank's memories and documents between two dates,\
+        \ computed in the database: counts per UTC hour by fact type, documents and\
+        \ their coding agents, the most mentioned entities, the strongest observation\
+        \ and the first memory. No memory list crosses the wire."
+      operationId: get_stats_summary
+      parameters:
+      - explode: false
+        in: path
+        name: bank_id
+        required: true
+        schema:
+          title: Bank Id
+          type: string
+        style: simple
+      - description: "ISO-8601, inclusive."
+        explode: true
+        in: query
+        name: start_date
+        required: true
+        schema:
+          description: "ISO-8601, inclusive."
+          format: date-time
+          title: Start Date
+          type: string
+        style: form
+      - description: "ISO-8601, exclusive."
+        explode: true
+        in: query
+        name: end_date
+        required: true
+        schema:
+          description: "ISO-8601, exclusive."
+          format: date-time
+          title: End Date
+          type: string
+        style: form
+      - explode: false
+        in: header
+        name: authorization
+        required: false
+        schema:
+          nullable: true
+          type: string
+        style: simple
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsSummaryResponse'
+          description: Successful Response
+        "404":
+          description: The bank does not exist.
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+          description: Validation Error
+      summary: "Memories over a window, summed up"
+      tags:
+      - Banks
   /v1/default/banks/{bank_id}/entities:
     get:
       description: "List all entities (people, organizations, etc.) known by the bank,\
@@ -16698,6 +16762,83 @@ components:
           title: Max Tokens Per Observation
           type: integer
       title: SourceFactsIncludeOptions
+    StatsSummaryResponse:
+      description: "A bank's window summed up in the database: what a year-in-numbers\
+        \ view needs."
+      example:
+        end_date: end_date
+        harnesses:
+        - name: name
+          count: 6
+        - name: name
+          count: 6
+        hours:
+        - world: 0
+          observation: 1
+          time: time
+          experience: 6
+        - world: 0
+          observation: 1
+          time: time
+          experience: 6
+        first_memory:
+          proof_count: 1
+          text: text
+          time: 2000-01-23T04:56:07.000+00:00
+        documents: 0
+        entities:
+        - name: name
+          count: 6
+        - name: name
+          count: 6
+        bank_id: bank_id
+        strongest_observation:
+          proof_count: 1
+          text: text
+          time: 2000-01-23T04:56:07.000+00:00
+        start_date: start_date
+      properties:
+        bank_id:
+          title: Bank Id
+          type: string
+        start_date:
+          title: Start Date
+          type: string
+        end_date:
+          title: End Date
+          type: string
+        hours:
+          description: "Memories per UTC hour by fact type, on mentioned_at (else\
+            \ created_at). Only hours that have memories, so a client can regroup\
+            \ them into its own time zone's days and hours."
+          items:
+            $ref: '#/components/schemas/MemoryTimeseriesBucket'
+          type: array
+        documents:
+          description: Documents created in the window.
+          title: Documents
+          type: integer
+        harnesses:
+          description: "Those documents per coding agent (`harness:<id>` tag), most\
+            \ first."
+          items:
+            $ref: '#/components/schemas/SummaryCount'
+          type: array
+        entities:
+          description: "The entities most memories in the window mention, most first."
+          items:
+            $ref: '#/components/schemas/SummaryCount'
+          type: array
+        strongest_observation:
+          $ref: '#/components/schemas/SummaryMemory'
+        first_memory:
+          $ref: '#/components/schemas/SummaryMemory'
+      required:
+      - bank_id
+      - documents
+      - end_date
+      - start_date
+      title: StatsSummaryResponse
     StrategyPreview:
       description: "Preview of one strategy, aligned by position with the request."
       example:
@@ -16821,6 +16962,44 @@ components:
       - handled_by
       - tags
       title: StrategyScopePreview
+    SummaryCount:
+      description: A name and how often it appears in the window.
+      example:
+        name: name
+        count: 6
+      properties:
+        name:
+          title: Name
+          type: string
+        count:
+          title: Count
+          type: integer
+      required:
+      - count
+      - name
+      title: SummaryCount
+    SummaryMemory:
+      description: One memory quoted by a stats summary.
+      example:
+        proof_count: 1
+        text: text
+        time: 2000-01-23T04:56:07.000+00:00
+      properties:
+        text:
+          title: Text
+          type: string
+        time:
+          description: "When it happened: mentioned_at, else created_at."
+          format: date-time
+          title: Time
+          type: string
+        proof_count:
+          nullable: true
+          type: integer
+      required:
+      - text
+      - time
+      title: SummaryMemory
     TagGroupAnd-Input:
       description: "Compound AND group: all child filters must match."
       properties:

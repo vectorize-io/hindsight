@@ -210,6 +210,47 @@ def document_attachment_filenames(record: "Mapping | None") -> dict[str, str]:
     return {str(k): str(v) for k, v in decoded.items() if k and v}
 
 
+# ------------------------------------------------------------------ stats summary types
+
+
+@dataclass(frozen=True)
+class NameCount:
+    """A name and how often it appears in a stats summary's window."""
+
+    name: str
+    count: int
+
+
+@dataclass(frozen=True)
+class SummaryMemory:
+    """One memory a stats summary quotes; ``proof_count`` is set for observations."""
+
+    text: str
+    time: datetime
+    proof_count: int | None = None
+
+
+@dataclass(frozen=True)
+class HourCount:
+    """Memories of one fact type in one UTC hour (``time`` is the hour's start, UTC)."""
+
+    time: datetime
+    fact_type: str
+    count: int
+
+
+@dataclass(frozen=True)
+class StatsSummaryAggregates:
+    """What ``stats_summary`` adds up for a window."""
+
+    hours: list[HourCount]
+    documents: int
+    harnesses: list[NameCount]
+    entities: list[NameCount]
+    strongest_observation: SummaryMemory | None
+    first_memory: SummaryMemory | None
+
+
 # ------------------------------------------------------------------ document and chunk types
 
 
@@ -2496,6 +2537,29 @@ class MemoriesExtension(Extension, ABC):
         """
         raise NotImplementedError
 
+    async def stats_summary(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        start: datetime,
+        end: datetime,
+        entity_limit: int,
+        tag_groups: "list[TagGroup] | None" = None,
+    ) -> StatsSummaryAggregates:
+        """A bank's ``[start, end)`` summed up.
+
+        Memories are placed on ``COALESCE(mentioned_at, created_at)``; documents on
+        ``created_at``. ``hours`` counts memories per UTC hour and fact type (only hours
+        that have any). ``harnesses`` counts the window's documents per ``harness:<id>``
+        tag, ``entities`` the window's memories per mentioned entity (top ``entity_limit``),
+        ``strongest_observation`` is the one with the highest ``proof_count`` and
+        ``first_memory`` the earliest memory. A store must aggregate in place: no memory
+        list crosses the wire.
+        """
+        raise NotImplementedError
+
     async def observation_scope_counts(
         self,
         *,
@@ -4682,4 +4746,8 @@ __all__ = [
     "build_fact_records",
     "build_text_signals",
     "source_key",
+    "HourCount",
+    "NameCount",
+    "StatsSummaryAggregates",
+    "SummaryMemory",
 ]
