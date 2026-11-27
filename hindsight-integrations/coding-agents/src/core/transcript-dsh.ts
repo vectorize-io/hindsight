@@ -22,7 +22,7 @@
  * still runs on what remains, for text that arrived inside a genuine prompt.
  */
 import type { TransportTurn } from "./chat";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 /**
  * The Cordis plugin name. Messages this integration injects carry `source.kind: 'plugin:hindsight'`
@@ -89,8 +89,7 @@ export function readDshEvents(events: readonly DshSessionEvent[]): TransportTurn
       const call = event.data as { name?: string; arguments?: string } | undefined;
       if (!call?.name) continue;
       turns.push({
-        role: "action",
-        content: actionLine(call.name, parseArgs(call.arguments)),
+        ...toolTurn(call.name, parseArgs(call.arguments)),
         ...stamp,
       });
     }

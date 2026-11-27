@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { buildSync } from "esbuild";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { codexOriginator, readCodexTranscript } from "./transcript-codex";
+import { setKeptToolInputs } from "./transcript-util";
 import { memoryUsageCursorStore, recordUsage, summarizeTurns } from "./usage";
 
 let root: string;
@@ -460,6 +461,45 @@ describe("readCodexTranscript", () => {
         { role: "action", content: "exec" },
         { role: "action", content: "exec systemctl status service" },
       ]);
+    });
+
+    it("names a direct exec_command call's command (`cmd`) in its action line, with no rule set", () => {
+      writeFileSync(
+        file,
+        item({
+          type: "function_call",
+          name: "exec_command",
+          arguments: JSON.stringify({ cmd: "ls" }),
+        })
+      );
+      expect(readCodexTranscript(file).map((t) => t.content)).toEqual(["exec_command ls"]);
+    });
+
+    it("keeps a reply command as said unless it failed, from items and direct calls (#6633)", () => {
+      setKeptToolInputs({ exec_command: { field: "command", match: "^send-reply " } });
+      try {
+        writeFileSync(
+          file,
+          [
+            toolItem({ type: "CommandExecution", command: "send-reply hi", status: "completed" }),
+            toolItem({ type: "CommandExecution", command: "send-reply lost", status: "failed" }),
+            toolItem({ type: "CommandExecution", command: "send-reply no", status: "declined" }),
+            item({
+              type: "function_call",
+              name: "exec_command",
+              arguments: JSON.stringify({ cmd: "send-reply direct" }),
+            }),
+          ].join("\n")
+        );
+        expect(readCodexTranscript(file).map(({ role, content }) => ({ role, content }))).toEqual([
+          { role: "assistant", content: "send-reply hi" },
+          { role: "action", content: "exec_command send-reply lost" },
+          { role: "action", content: "exec_command send-reply no" },
+          { role: "assistant", content: "send-reply direct" },
+        ]);
+      } finally {
+        setKeptToolInputs({});
+      }
     });
   });
 });

@@ -16,7 +16,7 @@
  * bank.
  */
 import type { TransportTurn } from "./chat";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 /** Structural subset of an assistant message's content entry (text | tool | reasoning | …). */
 interface Oc2Content {
@@ -51,7 +51,7 @@ function renderMessage(m: Oc2Message): TransportTurn[] {
     if (!c || typeof c !== "object") continue;
     if (c.type === "text" && typeof c.text === "string") texts.push(c.text);
     else if (c.type === "tool" && typeof c.name === "string")
-      actions.push({ role: "action", content: actionLine(c.name, c.state?.input), ...ts });
+      actions.push({ ...toolTurn(c.name, c.state?.input, c.state?.status === "error"), ...ts });
     // reasoning / media / snapshot / …: dropped
   }
 

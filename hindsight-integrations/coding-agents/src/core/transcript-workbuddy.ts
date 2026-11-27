@@ -28,7 +28,7 @@
  */
 import type { TransportTurn } from "./chat";
 import { readJsonl } from "./jsonl";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 /** One entry of a WorkBuddy message's `content` block array. Only text blocks carry prose. */
 interface WorkbuddyBlock {
@@ -148,8 +148,7 @@ export function readWorkbuddyTranscript(path: string): TransportTurn[] {
       turns.push({ role: line.role, content: text, ...stamp });
     } else if (line.type === "function_call" && typeof line.name === "string") {
       turns.push({
-        role: "action",
-        content: actionLine(line.name, parseArgs(line.arguments)),
+        ...toolTurn(line.name, parseArgs(line.arguments)),
         ...stamp,
       });
     }

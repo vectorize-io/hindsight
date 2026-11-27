@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { TransportTurn } from "./chat";
 import { readJsonl } from "./jsonl";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 const CHAT_HISTORY = "chat_history.jsonl";
 
@@ -71,7 +71,7 @@ export function readGrokTranscript(path: string): TransportTurn[] {
             /* preserve the raw string */
           }
         }
-        turns.push({ role: "action", content: actionLine(toolCall.name, input) });
+        turns.push(toolTurn(toolCall.name, input));
       }
     } catch {
       // Grok may write partial JSON while a session is stopping; ignore malformed records.

@@ -13,7 +13,8 @@
  * write-back (retainLiveSession) renders both identically:
  *   - user text (real prompts only) — see below.
  *   - assistant text (commentary, final answers, and unmarked legacy messages).
- *   - function_call → a compact `role:"action"` turn (tool name + primary target, no args);
+ *   - function_call → a compact `role:"action"` turn (tool name + primary target, no args), or
+ *     an assistant turn with its text when `keepToolInputs` names the tool;
  *     function_call_output is dropped (outputs are mechanical noise for extraction).
  *
  * User turns: a `role:"user"` response_item is NOT necessarily the user — Codex also sends its
@@ -35,7 +36,7 @@
  */
 import type { TransportTurn } from "./chat";
 import { readJsonl } from "./jsonl";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 interface ContentItem {
   type?: string;
@@ -59,6 +60,7 @@ interface Payload {
     tool?: unknown;
     arguments?: unknown;
     command?: unknown;
+    status?: unknown;
   };
 }
 interface RolloutLine {
@@ -176,17 +178,22 @@ function commandText(command: unknown): string {
 }
 
 /** MCP tools are named `mcp__<server>__<tool>`, as in Claude transcripts. */
-function toolItemAction(item: NonNullable<Payload["item"]>): string | undefined {
+function toolItemTurn(
+  item: NonNullable<Payload["item"]>
+): { role: string; content: string } | undefined {
+  // A failed or declined (refused by the user) call delivered nothing: a `send-reply` that never
+  // ran was never said (#6633). Not `!== "completed"`: some items carry no status at all.
+  const undelivered = item.status === "failed" || item.status === "declined";
   if (item.type === "McpToolCall") {
     if (typeof item.tool !== "string" || !item.tool) return undefined;
     const name =
       typeof item.server === "string" && item.server
         ? `mcp__${item.server}__${item.tool}`
         : item.tool;
-    return actionLine(name, parseArgs(item.arguments));
+    return toolTurn(name, parseArgs(item.arguments), undelivered);
   }
   const command = commandText(item.command).trim();
-  return command ? actionLine("exec_command", { command }) : undefined;
+  return command ? toolTurn("exec_command", { command }, undelivered) : undefined;
 }
 
 /** Parse a Codex rollout JSONL into normalized markdown turns (text + tool calls/results).
@@ -227,8 +234,8 @@ export function readCodexTranscript(path: string): TransportTurn[] {
     }
     if (isToolItemEvent(line)) {
       actionsFromEvents = true;
-      const action = toolItemAction(line.payload?.item ?? {});
-      if (action) turns.push({ role: "action", content: action, ...stampOf(line) });
+      const turn = toolItemTurn(line.payload?.item ?? {});
+      if (turn) turns.push({ ...turn, ...stampOf(line) });
       continue;
     }
     if (line.type !== "response_item") continue;
@@ -256,7 +263,8 @@ export function readCodexTranscript(path: string): TransportTurn[] {
       typeof p.name === "string"
     ) {
       // Codex CLI/Desktop emits both legacy function_call and current custom_tool_call records.
-      // Keep one compact action representation and never retain raw arguments.
+      // Keep one compact action representation and never retain raw arguments — unless
+      // `keepToolInputs` names the tool, when its text is what the agent said (toolTurn).
       const rawInput = p.type === "function_call" ? p.arguments : p.input;
       let input: unknown;
       try {
@@ -264,12 +272,16 @@ export function readCodexTranscript(path: string): TransportTurn[] {
       } catch {
         input = undefined;
       }
+      // Codex's own `exec_command` call names its command `cmd`, while the tool items above carry
+      // it as `command`: read both the same way, so one `keepToolInputs` rule covers them.
+      const cmd =
+        p.name === "exec_command" ? (input as { cmd?: unknown } | undefined)?.cmd : undefined;
+      if (typeof cmd === "string") input = { ...(input as object), command: cmd };
       // A code-mode `exec` wrapper is already covered by its tool items, when the rollout has them.
       const unless =
         p.type === "custom_tool_call" && p.name === "exec" ? "actionEvents" : undefined;
       turns.push({
-        role: "action",
-        content: actionLine(p.name, input),
+        ...toolTurn(p.name, input),
         ...stampOf(line),
         ...(unless ? { unless } : {}),
       });

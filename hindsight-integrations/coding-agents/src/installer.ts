@@ -2531,6 +2531,7 @@ export function importSkipOriginators(base: Config, harness: string, repo: strin
  */
 function importConversations(harness: string, ctx: InstallCtx): void {
   const repo = process.cwd();
+  // loadConfig also turns on this harness's keepToolInputs for the readers below.
   const found = importLocalHistory(
     harness,
     repo,

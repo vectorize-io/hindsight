@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { claudeProjectDir, importLocalHistory, piSessionDir } from "./history";
+import { setKeptToolInputs } from "./transcript-util";
 
 let home: string;
 afterEach(() => {
@@ -84,6 +85,27 @@ describe("local history import", () => {
     expect(r.sessions[0].id).toBe("s1");
     expect(JSON.stringify(r.sessions[0].turns)).toContain("why retry 429?");
     expect(JSON.stringify(r.sessions)).not.toContain("unrelated");
+  });
+
+  it("keeps the replies a keepToolInputs rule names (#6481)", () => {
+    const h = newHome();
+    const repo = "/Users/x/dev/myrepo";
+    const dir = claudeProjectDir(repo, h);
+    mkdirSync(dir, { recursive: true });
+    const reply = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [{ type: "tool_use", id: "t1", name: "reply", input: { text: "on it" } }],
+      },
+    });
+    writeFileSync(join(dir, "s1.jsonl"), `${claudeLine("user", "bump it", repo)}\n${reply}\n`);
+    setKeptToolInputs({ reply: "text" });
+    try {
+      const turns = importLocalHistory("claude-code", repo, h).sessions[0].turns;
+      expect(turns.map((t) => t.text)).toEqual(["bump it", "on it"]);
+    } finally {
+      setKeptToolInputs({});
+    }
   });
 
   // Claude Code encodes EVERY non-alphanumeric character as `-`, not just `/` and `.`. Encoding

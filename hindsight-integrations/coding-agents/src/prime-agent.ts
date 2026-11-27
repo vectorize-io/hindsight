@@ -72,6 +72,9 @@ export function startPrimeWriteBack(
     turns = readPiTranscript(session.file);
     // Mid-turn the last turn is the prompt or a tool call: recording it now would log a turn
     // before its reply. The next poll (or the final sync) catches it once the reply is in.
+    // ponytail: a reply sent through a `keepToolInputs` tool is an assistant turn too, so with such
+    // a rule a turn that keeps working after it reads as finished one poll early, and the usage of
+    // its later tool calls can be missed. Mark kept turns in toolTurn if that ever matters.
     if (!final && turns.at(-1)?.role !== "assistant") return;
     await core.onSessionIdle(session.id);
   };

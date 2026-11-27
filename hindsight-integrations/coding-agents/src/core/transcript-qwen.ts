@@ -35,7 +35,7 @@
  */
 import type { TransportTurn } from "./chat";
 import { readJsonl } from "./jsonl";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 import { log } from "./log";
 
 /**
@@ -155,8 +155,7 @@ function renderLine(parts: Part[] | undefined, type: string): RenderedLine[] {
     } else if (part.functionCall && typeof part.functionCall.name === "string") {
       // `args` is a real object here (unlike Codex's raw JSON string), so no parse step.
       actions.push({
-        role: "action",
-        content: actionLine(part.functionCall.name, part.functionCall.args),
+        ...toolTurn(part.functionCall.name, part.functionCall.args),
       });
     }
     // functionResponse: dropped — outputs are mechanical noise for extraction

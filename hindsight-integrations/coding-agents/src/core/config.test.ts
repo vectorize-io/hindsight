@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig, applyBankConfig, readEnvConfig, resolveConfig } from "./config";
 import { log } from "./log";
+import { toolTurn } from "./transcript-util";
 
 let root: string;
 let globalCfg: string;
@@ -427,6 +428,36 @@ describe("environment fallback", () => {
     const base = resolveConfig({ autoInject: "pages", banks: { b: { autoReflect: false } } });
     expect(applyBankConfig(base, "b").cfg.autoInject).toBe("none");
     expect(applyBankConfig(base, "other").cfg.autoInject).toBe("pages");
+  });
+
+  it("keepToolInputs: loading the file turns the rules on, per harness, never per bank", () => {
+    writeFileSync(
+      globalCfg,
+      JSON.stringify({
+        harnesses: { "claude-code": { keepToolInputs: { reply: "text" } } },
+        banks: { b: { keepToolInputs: { other: "text" } } },
+      })
+    );
+    const cfg = loadConfig({ path: globalCfg, harness: "claude-code" });
+    expect(toolTurn("reply", { text: "hi" })).toEqual({ role: "assistant", content: "hi" });
+    expect(applyBankConfig(cfg, "b").cfg.keepToolInputs).toEqual({ reply: "text" });
+    loadConfig({ path: globalCfg, harness: "codex" }); // a harness with no rules turns them off
+    expect(toolTurn("reply", { text: "hi" }).role).toBe("action");
+  });
+
+  it("keepToolInputs: none by default; each bad rule is dropped on its own", () => {
+    expect(resolveConfig({}).keepToolInputs).toEqual({});
+    expect(
+      resolveConfig({
+        keepToolInputs: {
+          reply: "text",
+          shell: { field: "command", match: "^send " },
+          badRegex: { field: "command", match: "(" },
+          noField: { match: "x" } as never,
+          empty: "",
+        },
+      }).keepToolInputs
+    ).toEqual({ reply: "text", shell: { field: "command", match: "^send " } });
   });
 
   it("recallOptions: empty by default, passed through verbatim, non-objects rejected", () => {

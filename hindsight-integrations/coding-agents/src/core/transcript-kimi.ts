@@ -53,7 +53,7 @@ import type { TransportTurn } from "./chat";
 import { diag } from "./diag";
 import { readJsonl } from "./jsonl";
 import { log } from "./log";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 const HARNESS = "kimi-code";
 const SESSIONS_DIR = "sessions";
@@ -222,7 +222,7 @@ export function readKimiWire(events: readonly KimiWireEvent[]): TransportTurn[] 
     } else if (loop.type === "tool.call") {
       flushStep(); // a step's prose precedes the calls it made
       if (typeof loop.name !== "string" || !loop.name) continue;
-      turns.push({ role: "action", content: actionLine(loop.name, loop.args), ...stamp });
+      turns.push({ ...toolTurn(loop.name, loop.args), ...stamp });
     }
     // step.begin / step.end: loop bookkeeping. tool.result: raw tool output, which the shared
     // `actionLine` convention keeps out of the bank (see transcript-util.ts).

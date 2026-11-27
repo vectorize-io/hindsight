@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { DEFAULT_SEED_LIMIT } from "./seed";
 import { isOptedIn, pathSection } from "./bank";
 import { log } from "./log";
+import { type KeptToolInput, setKeptToolInputs } from "./transcript-util";
 import {
   DEFAULT_OBSERVATION_SCOPES,
   DEFAULT_PAGE_SEARCH_LIMIT,
@@ -175,6 +176,17 @@ export interface RawConfig {
    *  back empty on it: those set `{"types": ["world", "experience"]}`, or `{"types": null}` for
    *  every type. */
   recallOptions?: Record<string, unknown>;
+  /** Tools whose input is what the agent SAID to the user, kept in full as an assistant turn instead
+   *  of a bare action line: a chat bridge's reply tool, or a command-line tool that delivers the
+   *  reply. Keyed by the tool's name as the transcript records it; the value names the input field
+   *  that holds the text, e.g. {"mcp__plugin_telegram_telegram__reply": "text"}. A rule can be
+   *  {"field": "command", "match": "^send-reply "} to keep only the calls whose field matches the
+   *  regex — for a shell tool that also runs everything else. Kept text is capped at 8000 characters.
+   *  A rule with no field or a bad regex is dropped with a warning. Default: none.
+   *
+   *  Global or per harness, not per bank: the rules apply before a bank is resolved. File-only, like
+   *  `recallOptions` — a nested object does not flatten into an env var. */
+  keepToolInputs?: Record<string, KeptToolInput>;
   /** Your own guidance for how the agent should treat memory, added AFTER the built-in tool guide
    *  (SessionStart and every refresh) and after the crediting note that comes back with
    *  `hindsight_search_pages` results. It adds to the built-in text, never replaces it,
@@ -374,6 +386,7 @@ export interface Config {
   writeTools: boolean;
   pageSearchLimit: number;
   recallOptions: Record<string, unknown>;
+  keepToolInputs: Record<string, KeptToolInput>;
   toolGuideExtra?: string;
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
@@ -707,6 +720,7 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       !Array.isArray(raw.recallOptions)
         ? { ...raw.recallOptions }
         : {},
+    keepToolInputs: keptToolRules(raw.keepToolInputs),
     toolGuideExtra:
       typeof raw.toolGuideExtra === "string" && raw.toolGuideExtra.trim()
         ? raw.toolGuideExtra
@@ -820,8 +834,8 @@ function applyLayer(raw: RawConfig, layer: RawConfig, harness?: string): RawConf
  * containers, CI, and secret managers that inject `HINDSIGHT_API_TOKEN` rather than writing a
  * credential to disk.
  *
- * The map-valued settings (apiHeaders, mapPathToBank, harnesses, banks, retainMetadata, recallOptions, pages,
- * customPages, defaultBankConfig) are deliberately
+ * The map-valued settings (apiHeaders, mapPathToBank, harnesses, banks, retainMetadata, recallOptions,
+ * pages, customPages, defaultBankConfig, keepToolInputs) are deliberately
  * absent: they are structures whose whole point is per-repo/per-harness/per-key branching, which
  * does not survive flattening into one env var. They stay file-only.
  */
@@ -952,7 +966,39 @@ export function loadConfig(opts: LoadOptions | string = {}): Config {
   // "opencode", whose silent default misfiled every other harness's background seed into an
   // `opencode::<project>` bank (#3247). An explicit `harness:` in the config file still wins.
   if (!raw.harness && o.harness) raw.harness = o.harness;
-  return resolveConfig(raw);
+  const cfg = resolveConfig(raw);
+  setKeptToolInputs(cfg.keepToolInputs);
+  return cfg;
+}
+
+/** The valid `keepToolInputs` rules; each bad one is dropped on its own, with a warning. */
+function keptToolRules(value: unknown): Record<string, KeptToolInput> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, KeptToolInput> = {};
+  for (const [tool, rule] of Object.entries(value)) {
+    if (typeof rule === "string" && rule) {
+      out[tool] = rule;
+      continue;
+    }
+    const r = rule as { field?: unknown; match?: unknown } | null;
+    const field = r && typeof r === "object" && typeof r.field === "string" ? r.field : "";
+    const match = r && typeof r === "object" && typeof r.match === "string" ? r.match : undefined;
+    try {
+      if (match !== undefined) new RegExp(match);
+    } catch {
+      log.warn(
+        "config",
+        `keepToolInputs.${tool}: invalid regex ${JSON.stringify(match)}, rule ignored`
+      );
+      continue;
+    }
+    if (!field) {
+      log.warn("config", `keepToolInputs.${tool}: needs a field name, rule ignored`);
+      continue;
+    }
+    out[tool] = match === undefined ? field : { field, match };
+  }
+  return out;
 }
 
 /** Bank-resolution fields are meaningless inside a `banks.<id>` section (they can't change the id
@@ -968,6 +1014,9 @@ const BANK_OVERRIDE_EXCLUDED = [
   "optInOnly",
   "optInPaths",
   "harness",
+  // Applied once per process, before any bank is resolved (core/transcript-util.ts): a per-bank
+  // rule could never take effect, so strip it rather than let it read as effective.
+  "keepToolInputs",
 ] as const;
 
 /**

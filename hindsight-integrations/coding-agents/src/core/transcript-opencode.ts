@@ -9,7 +9,7 @@
  * memory back into recall and tool noise stays out of the bank.
  */
 import type { TransportTurn } from "./chat";
-import { actionLine, stripInjectedMemory } from "./transcript-util";
+import { toolTurn, stripInjectedMemory } from "./transcript-util";
 
 /** Structural subset of the opencode SDK's ToolState we render (avoids a hard dep on its types). */
 interface OcToolState {
@@ -53,7 +53,8 @@ function renderMessage(m: OcMessage): TransportTurn[] {
       const t = stripInjectedMemory(p.text).trim();
       if (t) texts.push(t);
     } else if (p.type === "tool" && typeof p.tool === "string") {
-      actions.push({ role: "action", content: actionLine(p.tool, p.state?.input), ...ts });
+      // An errored call delivered nothing: a reply tool that failed was never said.
+      actions.push({ ...toolTurn(p.tool, p.state?.input, p.state?.status === "error"), ...ts });
     }
     // reasoning / step-start / step-finish / snapshot / patch / …: dropped
   }
