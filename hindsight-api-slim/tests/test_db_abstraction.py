@@ -5,6 +5,7 @@ without requiring a live database connection.
 """
 
 import asyncio
+import re
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
@@ -1580,3 +1581,68 @@ class TestOracleSessionAndClobBinding:
         assert params["4"].lob_type == oracledb.DB_TYPE_CLOB and params["4"].data == text
         assert params["1"] == "doc-id" and params["3"] == bytes(16)  # a UUID stays RAW(16)
         assert params["5"] == "x" * 5000  # 4 000-32 767 bytes stay a string with a CLOB input size
+
+
+class TestStatsSummaryOracleSql:
+    """The stats summary's SQL, as the Oracle rewriter turns it out.
+
+    The Oracle CI job only runs on a label, so this is what catches the two shapes the
+    rewriter cannot translate: an aliased ``mu.tags`` under a tag scope (it emits
+    ``mu.EXISTS (...)``) and ``date_trunc`` over a ``COALESCE`` (the summary's hours are
+    the event-time timeseries).
+    """
+
+    def test_every_statement_comes_out_valid_with_a_tag_scope(self):
+        from datetime import timezone
+
+        from hindsight_api.engine.db.oracle import _rewrite_pg_to_oracle
+        from hindsight_api.engine.memories.pg import counts
+        from hindsight_api.engine.search.tags import TagGroupLeaf
+
+        statements: list[str] = []
+
+        class RecordingConn:
+            async def fetch(self, query: str, *args: object, timeout: float | None = None) -> list:
+                statements.append(_rewrite_pg_to_oracle(query).query)
+                return []
+
+            async def fetchrow(self, query: str, *args: object, timeout: float | None = None) -> None:
+                statements.append(_rewrite_pg_to_oracle(query).query)
+
+            async def fetchval(self, query: str, *args: object, timeout: float | None = None) -> int:
+                statements.append(_rewrite_pg_to_oracle(query).query)
+                return 0
+
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        scope = [TagGroupLeaf(tags=["user:dan"], match="any_strict")]
+
+        async def summarise() -> None:
+            await counts.memories_timeseries(
+                conn=RecordingConn(),
+                fq_table=lambda table: table,
+                bank_id="b",
+                time_field="mentioned_at",
+                trunc="hour",
+                since=start,
+                tag_groups=scope,
+            )
+            await counts.stats_summary(
+                conn=RecordingConn(),
+                fq_table=lambda table: table,
+                bank_id="b",
+                start=start,
+                end=datetime(2027, 1, 1, tzinfo=timezone.utc),
+                entity_limit=50,
+                tag_groups=scope,
+            )
+
+        with patch("hindsight_api.engine.schema._is_oracle", return_value=True):
+            asyncio.run(summarise())
+
+        assert len(statements) == 6
+        for sql in statements:
+            assert not re.search(r"\$\d", sql), sql
+            assert "mu.EXISTS" not in sql and "mu.NOT" not in sql and "d.EXISTS" not in sql, sql
+            assert "date_trunc" not in sql and "unnest" not in sql, sql
+        assert "TRUNC(CAST(COALESCE(mentioned_at, created_at) AS DATE), 'HH24')" in statements[0]
+        assert any("CROSS APPLY JSON_TABLE(d.tags" in sql for sql in statements)

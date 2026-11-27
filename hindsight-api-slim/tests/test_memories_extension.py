@@ -32,7 +32,6 @@ import pytest
 
 from hindsight_api.engine.chunk_ids import build_chunk_id
 from hindsight_api.engine.db import DatabaseBackend
-from hindsight_api.extensions import OperationValidationError
 from hindsight_api.engine.memories import create_memories, get_memories, set_memories
 from hindsight_api.engine.memories.base import (
     DOC_META_FILE_STORAGE_KEY,
@@ -46,11 +45,14 @@ from hindsight_api.engine.memories.base import (
     RetainResult,
     RetainSession,
     ScanPage,
+    StatsSummaryAggregates,
     StoredMemory,
     StoreWriteConflict,
+    SummaryMemory,
 )
 from hindsight_api.engine.memories.postgres import PostgresMemories
 from hindsight_api.engine.schema import fq_store_table
+from hindsight_api.extensions import OperationValidationError
 
 
 class InMemoryMemories(MemoriesExtension):
@@ -770,6 +772,22 @@ class InMemoryMemories(MemoriesExtension):
         self.calls.append("memories_timeseries")
         return []
 
+    async def stats_summary(self, *, conn, fq_table, bank_id, start, end, entity_limit, tag_groups=None):
+        self.calls.append("stats_summary")
+
+        # A store that answers only what is cheap for it: the earliest memory. The rest stays
+        # None, which the endpoint passes on as "can't say".
+        def when(row: StoredMemory) -> datetime | None:
+            return row.mentioned_at or row.created_at
+
+        rows = sorted(
+            (r for r in self.rows.values() if (t := when(r)) is not None and start <= t < end),
+            key=lambda r: when(r),
+        )
+        return StatsSummaryAggregates(
+            first_memory=SummaryMemory(text=rows[0].text, time=when(rows[0])) if rows else None
+        )
+
     async def observation_scope_counts(self, *, conn, fq_table, bank_id, limit=100, offset=0, tag_groups=None):
         self.calls.append("observation_scope_counts")
         # Same paged shape as list_tags above: the histogram is the store's to group,
@@ -1233,7 +1251,6 @@ async def test_retain_refuses_a_bank_the_store_has_closed_to_writes(restore_defa
 # ---------------------------------------------------------------------------
 
 import inspect  # noqa: E402
-
 
 # Old page-hook names, kept only so a store written before the rename is still called; the
 # new hooks forward to them. A complete store implements the new names. Remove in 2.x.

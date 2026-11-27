@@ -9,12 +9,21 @@ carry it; only the connection and ``fq_table`` resolver are now parameters.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Callable
-from datetime import datetime
-from typing import Any
+import logging
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
+from typing import Any, TypeVar
 
 from ...search.tags import TagClause, TagGroup, build_tag_groups_where_clause
+from ..base import NameCount, StatsSummaryAggregates, SummaryMemory
+
+logger = logging.getLogger(__name__)
+T = TypeVar("T")
+
+# The stats summary's answers share this budget; one that would run past it is left out (None).
+STATS_SUMMARY_QUERY_TIMEOUT_S = 10.0
 
 
 async def consolidation_freshness(*, conn, fq_table: Callable[[str], str], bank_id: str) -> dict[str, Any]:
@@ -177,6 +186,119 @@ async def memories_timeseries(
     return [{"bucket": r["bucket"], "fact_type": r["fact_type"], "count": r["count"]} for r in rows]
 
 
+def _utc(when: datetime) -> datetime:
+    """Oracle hands a TIMESTAMP WITH TIME ZONE back without its zone; the stored values are UTC."""
+    return when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when
+
+
+async def stats_summary(
+    *,
+    conn,
+    fq_table: Callable[[str], str],
+    bank_id: str,
+    start: datetime,
+    end: datetime,
+    entity_limit: int,
+    tag_groups: list[TagGroup] | None = None,
+) -> StatsSummaryAggregates:
+    """A bank's ``[start, end)`` summed up in the database: what a year-in-numbers view needs.
+
+    Memories are placed on ``COALESCE(mentioned_at, created_at)``, like the event-time
+    timeseries; documents on ``created_at``. Only aggregates and two rows cross the wire.
+    Each answer is its own query, and together they get ``STATS_SUMMARY_QUERY_TIMEOUT_S``
+    (on both dialects, through ``asyncio.wait_for``): a query that runs past what is left
+    comes back ``None``, as does every one after the budget is spent, so a very large bank
+    gets a smaller summary instead of a slow one. The cheap answers go first.
+
+    Every query reads the window from a subquery that applies the tag scope on the bare
+    ``tags`` column: the Oracle rewriter only translates the tag-group operators there
+    (an aliased ``mu.tags`` comes out as ``mu.EXISTS (...)``), the same constraint
+    ``_oracle_observation_scope_counts`` works around. The documents' tag expansion
+    differs per dialect, so it is written out for each.
+    """
+    from ...schema import _is_oracle  # noqa: PLC0415
+
+    oracle = _is_oracle()
+    groups = build_tag_groups_where_clause(tag_groups, 4)
+    params = [bank_id, start, end, *groups.params]
+    t = "COALESCE(mentioned_at, created_at)"
+    window = f"""(
+        SELECT id, text, fact_type, proof_count, {t} AS ts
+        FROM {fq_table("memory_units")}
+        WHERE bank_id = $1 AND {t} >= $2 AND {t} < $3 {groups.sql}
+    ) mu"""
+    docs = f"""(
+        SELECT tags FROM {fq_table("documents")}
+        WHERE bank_id = $1 AND created_at >= $2 AND created_at < $3 {groups.sql}
+    ) d"""
+
+    deadline = asyncio.get_running_loop().time() + STATS_SUMMARY_QUERY_TIMEOUT_S
+
+    async def bounded(query: Callable[[], Awaitable[T]]) -> T | None:
+        left = deadline - asyncio.get_running_loop().time()
+        if left <= 0:
+            return None
+        try:
+            return await asyncio.wait_for(query(), timeout=left)
+        except asyncio.TimeoutError:
+            logger.warning(f"[stats_summary] out of its {STATS_SUMMARY_QUERY_TIMEOUT_S}s budget for bank {bank_id}")
+            return None
+
+    first = await bounded(
+        lambda: conn.fetchrow(f"SELECT mu.text AS text, mu.ts AS ts FROM {window} ORDER BY mu.ts LIMIT 1", *params)
+    )
+    documents = await bounded(lambda: conn.fetchval(f"SELECT COUNT(*) FROM {docs}", *params))
+    tag_rows = (
+        f"{docs} CROSS APPLY JSON_TABLE(d.tags, '$[*]' COLUMNS (tag VARCHAR2(256) PATH '$')) jt"
+        if oracle
+        else f"{docs}, unnest(d.tags) AS jt(tag)"
+    )
+    harnesses = await bounded(
+        lambda: conn.fetch(
+            f"SELECT jt.tag AS tag, COUNT(*) AS n FROM {tag_rows} WHERE jt.tag LIKE 'harness:%' "
+            "GROUP BY jt.tag ORDER BY n DESC, jt.tag",
+            *params,
+        )
+    )
+    # NULLS LAST: proof_count is nullable (DEFAULT 1, no NOT NULL), and NULL sorts first descending.
+    strongest = await bounded(
+        lambda: conn.fetchrow(
+            f"SELECT mu.text AS text, mu.proof_count AS proof_count, mu.ts AS ts FROM {window} "
+            "WHERE mu.fact_type = 'observation' ORDER BY mu.proof_count DESC NULLS LAST, mu.ts LIMIT 1",
+            *params,
+        )
+    )
+    # Last: the join over every memory's entities is the one a very large bank runs out of time on.
+    entities = await bounded(
+        lambda: conn.fetch(
+            f"""
+            SELECT e.canonical_name AS name, COUNT(*) AS n
+            FROM {window}
+            JOIN {fq_table("unit_entities")} ue ON ue.unit_id = mu.id
+            JOIN {fq_table("entities")} e ON e.id = ue.entity_id
+            GROUP BY e.canonical_name
+            ORDER BY n DESC, e.canonical_name
+            LIMIT ${groups.next_param_offset}
+            """,
+            *params,
+            entity_limit,
+        )
+    )
+    return StatsSummaryAggregates(
+        documents=None if documents is None else int(documents),
+        harnesses=None
+        if harnesses is None
+        else [NameCount(name=r["tag"][len("harness:") :], count=int(r["n"])) for r in harnesses],
+        entities=None if entities is None else [NameCount(name=r["name"], count=int(r["n"])) for r in entities],
+        strongest_observation=SummaryMemory(
+            text=strongest["text"], time=_utc(strongest["ts"]), proof_count=int(strongest["proof_count"] or 1)
+        )
+        if strongest
+        else None,
+        first_memory=SummaryMemory(text=first["text"], time=_utc(first["ts"])) if first else None,
+    )
+
+
 async def observation_scope_counts(
     *,
     conn,
@@ -305,6 +427,7 @@ __all__ = [
     "document_memory_counts",
     "has_pending_consolidation",
     "link_counts",
+    "stats_summary",
     "memories_timeseries",
     "observation_scope_counts",
 ]

@@ -210,6 +210,37 @@ def document_attachment_filenames(record: "Mapping | None") -> dict[str, str]:
     return {str(k): str(v) for k, v in decoded.items() if k and v}
 
 
+# ------------------------------------------------------------------ stats summary types
+
+
+@dataclass(frozen=True)
+class NameCount:
+    """A name and how often it appears in a stats summary's window."""
+
+    name: str
+    count: int
+
+
+@dataclass(frozen=True)
+class SummaryMemory:
+    """One memory a stats summary quotes; ``proof_count`` is set for observations."""
+
+    text: str
+    time: datetime
+    proof_count: int | None = None
+
+
+@dataclass(frozen=True)
+class StatsSummaryAggregates:
+    """What ``stats_summary`` adds up for a window. ``None`` = this store can't say (cheaply)."""
+
+    documents: int | None = None
+    harnesses: list[NameCount] | None = None
+    entities: list[NameCount] | None = None
+    strongest_observation: SummaryMemory | None = None
+    first_memory: SummaryMemory | None = None
+
+
 # ------------------------------------------------------------------ document and chunk types
 
 
@@ -2496,6 +2527,31 @@ class MemoriesExtension(Extension, ABC):
         """
         raise NotImplementedError
 
+    async def stats_summary(
+        self,
+        *,
+        conn,
+        fq_table,
+        bank_id: str,
+        start: datetime,
+        end: datetime,
+        entity_limit: int,
+        tag_groups: "list[TagGroup] | None" = None,
+    ) -> StatsSummaryAggregates:
+        """A bank's ``[start, end)`` summed up, beyond the per-hour counts (those come from
+        ``memories_timeseries``).
+
+        Memories are placed on ``COALESCE(mentioned_at, created_at)``; documents on
+        ``created_at``. ``harnesses`` counts the window's documents per ``harness:<id>``
+        tag, ``entities`` the window's memories per mentioned entity (top ``entity_limit``),
+        ``strongest_observation`` is the one with the highest ``proof_count`` and
+        ``first_memory`` the earliest memory. A store must aggregate in place: no memory
+        list crosses the wire. Every answer is optional: leave out (``None``) any the store
+        cannot give within bounded work, or that ran out of its budget, so the endpoint
+        still answers with the rest. The default answers none of them.
+        """
+        return StatsSummaryAggregates()
+
     async def observation_scope_counts(
         self,
         *,
@@ -4682,4 +4738,7 @@ __all__ = [
     "build_fact_records",
     "build_text_signals",
     "source_key",
+    "NameCount",
+    "StatsSummaryAggregates",
+    "SummaryMemory",
 ]

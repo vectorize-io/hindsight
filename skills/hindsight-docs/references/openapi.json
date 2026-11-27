@@ -3045,6 +3045,92 @@
         }
       }
     },
+    "/v1/default/banks/{bank_id}/stats/summary": {
+      "get": {
+        "tags": [
+          "Banks"
+        ],
+        "summary": "Memories over a window, summed up",
+        "description": "Aggregates of a bank's memories and documents between two dates, computed in the database: counts per UTC hour by fact type, documents and their coding agents, the most mentioned entities, the strongest observation and the first memory. No memory list crosses the wire. Every answer but the hours is optional: null when the memory store can't give it within bounded work.",
+        "operationId": "get_stats_summary",
+        "parameters": [
+          {
+            "name": "bank_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bank Id"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "description": "ISO-8601, inclusive.",
+              "title": "Start Date"
+            },
+            "description": "ISO-8601, inclusive."
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "description": "ISO-8601, exclusive.",
+              "title": "End Date"
+            },
+            "description": "ISO-8601, exclusive."
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsSummaryResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The bank does not exist."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/default/banks/{bank_id}/entities": {
       "get": {
         "tags": [
@@ -23921,6 +24007,102 @@
         "title": "SourceFactsIncludeOptions",
         "description": "Options for including source facts for observation-type results."
       },
+      "StatsSummaryResponse": {
+        "properties": {
+          "bank_id": {
+            "type": "string",
+            "title": "Bank Id"
+          },
+          "start_date": {
+            "type": "string",
+            "title": "Start Date"
+          },
+          "end_date": {
+            "type": "string",
+            "title": "End Date"
+          },
+          "hours": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryTimeseriesBucket"
+            },
+            "type": "array",
+            "title": "Hours",
+            "description": "Memories per UTC hour by fact type, on mentioned_at (else created_at). Only hours that have memories, so a client can regroup them into its own time zone's days and hours."
+          },
+          "documents": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documents",
+            "description": "Documents created in the window; null when the store can't say."
+          },
+          "harnesses": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SummaryCount"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Harnesses",
+            "description": "Those documents per coding agent (`harness:<id>` tag), most first; null when the store can't say."
+          },
+          "entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SummaryCount"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entities",
+            "description": "The entities most memories in the window mention, most first; null when the store can't say."
+          },
+          "strongest_observation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SummaryMemory"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The window's observation backed by the most facts; null when there is none or the store can't say."
+          },
+          "first_memory": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SummaryMemory"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The window's earliest memory; null when there is none or the store can't say."
+          }
+        },
+        "type": "object",
+        "required": [
+          "bank_id",
+          "start_date",
+          "end_date"
+        ],
+        "title": "StatsSummaryResponse",
+        "description": "A bank's window summed up in the database: what a year-in-numbers view needs."
+      },
       "StrategyPreview": {
         "properties": {
           "active": {
@@ -24023,6 +24205,58 @@
         ],
         "title": "StrategyScopePreview",
         "description": "One existing observation scope in a consolidation-strategy preview."
+      },
+      "SummaryCount": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "count"
+        ],
+        "title": "SummaryCount",
+        "description": "A name and how often it appears in the window."
+      },
+      "SummaryMemory": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Time",
+            "description": "When it happened: mentioned_at, else created_at."
+          },
+          "proof_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proof Count",
+            "description": "Facts backing it (observations only)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "text",
+          "time"
+        ],
+        "title": "SummaryMemory",
+        "description": "One memory quoted by a stats summary."
       },
       "TagGroupAnd-Input": {
         "properties": {

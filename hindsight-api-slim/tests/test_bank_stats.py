@@ -6,8 +6,10 @@ Covers the new fields exposed by GET /v1/default/banks/{bank_id}/stats
 GET /v1/default/banks/{bank_id}/stats/memories-timeseries.
 """
 
+import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from types import MethodType
 
 import httpx
 import pytest
@@ -15,8 +17,11 @@ import pytest_asyncio
 
 from hindsight_api import RequestContext
 from hindsight_api.api import create_app
+from hindsight_api.engine.memories import get_memories
+from hindsight_api.engine.memories.base import MemoriesExtension, StatsSummaryAggregates
+from hindsight_api.engine.memories.pg import counts
 from hindsight_api.engine.memory_engine import get_current_schema
-from hindsight_api.engine.schema import fq_table
+from hindsight_api.engine.schema import fq_store_table, fq_table
 
 
 @pytest_asyncio.fixture
@@ -223,6 +228,142 @@ async def test_memories_timeseries_reflects_retained_memories(api_client, test_b
         assert latest["world"] + latest["experience"] + latest["observation"] >= 2
     finally:
         await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+async def test_stats_summary_sums_up_the_window(api_client, test_bank_id):
+    """The summary counts the window's memories per hour and its documents per coding agent,
+    quotes its first memory, and leaves out what falls outside the window."""
+    try:
+        response = await api_client.post(
+            f"/v1/default/banks/{test_bank_id}/memories",
+            json={
+                "items": [
+                    {
+                        "content": "Alice is a software engineer.",
+                        "context": "team",
+                        "document_id": "chat-1",
+                        "tags": ["harness:codex"],
+                    },
+                    {"content": "Bob works on infrastructure.", "context": "team", "document_id": "chat-2"},
+                ]
+            },
+        )
+        assert response.status_code == 200
+
+        now = datetime.now(timezone.utc)
+        url = f"/v1/default/banks/{test_bank_id}/stats/summary"
+        response = await api_client.get(
+            url,
+            params={
+                "start_date": (now - timedelta(days=1)).isoformat(),
+                "end_date": (now + timedelta(days=1)).isoformat(),
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert sum(h["world"] + h["experience"] + h["observation"] for h in body["hours"]) >= 2
+        assert body["documents"] == 2
+        assert body["harnesses"] == [{"name": "codex", "count": 1}]
+        assert body["first_memory"] is not None and body["first_memory"]["text"]
+
+        # A window before any of it holds nothing.
+        response = await api_client.get(
+            url, params={"start_date": "2000-01-01T00:00:00Z", "end_date": "2000-12-31T00:00:00Z"}
+        )
+        assert response.status_code == 200
+        empty = response.json()
+        assert (empty["hours"], empty["documents"], empty["entities"], empty["first_memory"]) == ([], 0, [], None)
+
+        response = await api_client.get(
+            url, params={"start_date": "2001-01-01T00:00:00Z", "end_date": "2000-01-01T00:00:00Z"}
+        )
+        assert response.status_code == 400
+        # More than a year of hourly buckets is refused.
+        response = await api_client.get(
+            url, params={"start_date": "2000-01-01T00:00:00Z", "end_date": "2002-01-01T00:00:00Z"}
+        )
+        assert response.status_code == 400
+    finally:
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("store", ["answers nothing", "runs out of time"])
+async def test_stats_summary_still_counts_the_hours_when_the_store_cannot_say(
+    api_client, test_bank_id, monkeypatch, store
+):
+    """Every answer but the hours is optional. A store that answers none of them (the
+    interface's default) or whose queries all run past their time limit still gets the
+    hours, from the timeseries, and nulls for the rest: never a 500."""
+    if store == "answers nothing":
+        # On the instance: the store's methods are wrapped there (call timing).
+        store = get_memories()
+        monkeypatch.setattr(store, "stats_summary", MethodType(MemoriesExtension.stats_summary, store))
+    else:
+        monkeypatch.setattr(counts, "STATS_SUMMARY_QUERY_TIMEOUT_S", 0)
+    try:
+        response = await api_client.post(
+            f"/v1/default/banks/{test_bank_id}/memories",
+            json={"items": [{"content": "Alice is a software engineer.", "document_id": "chat-1"}]},
+        )
+        assert response.status_code == 200
+        now = datetime.now(timezone.utc)
+        response = await api_client.get(
+            f"/v1/default/banks/{test_bank_id}/stats/summary",
+            params={
+                "start_date": (now - timedelta(days=1)).isoformat(),
+                "end_date": (now + timedelta(days=1)).isoformat(),
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert sum(h["world"] + h["experience"] + h["observation"] for h in body["hours"]) >= 1
+        unanswered = ("documents", "harnesses", "entities", "strongest_observation", "first_memory")
+        assert {k: body[k] for k in unanswered} == dict.fromkeys(unanswered)
+    finally:
+        await api_client.delete(f"/v1/default/banks/{test_bank_id}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.memory_backend_incompatible
+async def test_stats_summary_cancels_a_query_past_its_budget_and_keeps_the_connection(memory, monkeypatch):
+    """A query still running when the budget runs out is cancelled and the rest are skipped;
+    the pooled connection it ran on still answers the next query."""
+    monkeypatch.setattr(counts, "STATS_SUMMARY_QUERY_TIMEOUT_S", 0.5)
+
+    class FirstQuerySleeps:
+        def __init__(self, conn):
+            self.conn = conn
+            self.calls = 0
+
+        async def fetchrow(self, query, *args):
+            self.calls += 1
+            return await self.conn.fetchrow("SELECT pg_sleep(5)")
+
+        async def fetch(self, query, *args):
+            self.calls += 1
+            return await self.conn.fetch(query, *args)
+
+        async def fetchval(self, query, *args):
+            self.calls += 1
+            return await self.conn.fetchval(query, *args)
+
+    async with memory._pool.acquire() as conn:
+        slow = FirstQuerySleeps(conn)
+        started = time.monotonic()
+        answers = await counts.stats_summary(
+            conn=slow,
+            fq_table=fq_store_table,
+            bank_id="no-such-bank",
+            start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            end=datetime(2027, 1, 1, tzinfo=timezone.utc),
+            entity_limit=5,
+        )
+        assert time.monotonic() - started < 3, "the sleeping query must be cancelled, not waited out"
+        assert answers == StatsSummaryAggregates()
+        assert slow.calls == 1, "nothing runs once the budget is spent"
+        assert await conn.fetchval("SELECT 1") == 1
 
 
 @pytest.mark.asyncio

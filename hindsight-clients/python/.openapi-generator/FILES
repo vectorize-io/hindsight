@@ -231,9 +231,12 @@ hindsight_client_api/models/retry_operation_response.py
 hindsight_client_api/models/run_setting_model.py
 hindsight_client_api/models/set_bank_alias_primary_request.py
 hindsight_client_api/models/source_facts_include_options.py
+hindsight_client_api/models/stats_summary_response.py
 hindsight_client_api/models/strategy_preview.py
 hindsight_client_api/models/strategy_rule_preview.py
 hindsight_client_api/models/strategy_scope_preview.py
+hindsight_client_api/models/summary_count.py
+hindsight_client_api/models/summary_memory.py
 hindsight_client_api/models/tag_group_and_input.py
 hindsight_client_api/models/tag_group_and_output.py
 hindsight_client_api/models/tag_group_leaf.py

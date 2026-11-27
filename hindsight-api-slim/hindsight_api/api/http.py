@@ -3358,6 +3358,53 @@ class MemoriesTimeseriesResponse(BaseModel):
     )
 
 
+class SummaryCount(BaseModel):
+    """A name and how often it appears in the window."""
+
+    name: str
+    count: int
+
+
+class SummaryMemory(BaseModel):
+    """One memory quoted by a stats summary."""
+
+    text: str
+    time: datetime = Field(description="When it happened: mentioned_at, else created_at.")
+    proof_count: int | None = Field(default=None, description="Facts backing it (observations only).")
+
+
+class StatsSummaryResponse(BaseModel):
+    """A bank's window summed up in the database: what a year-in-numbers view needs."""
+
+    bank_id: str
+    start_date: str
+    end_date: str
+    hours: list[MemoryTimeseriesBucket] = Field(
+        default_factory=list,
+        description="Memories per UTC hour by fact type, on mentioned_at (else created_at). Only hours that "
+        "have memories, so a client can regroup them into its own time zone's days and hours.",
+    )
+    documents: int | None = Field(
+        default=None, description="Documents created in the window; null when the store can't say."
+    )
+    harnesses: list[SummaryCount] | None = Field(
+        default=None,
+        description="Those documents per coding agent (`harness:<id>` tag), most first; null when the store can't say.",
+    )
+    entities: list[SummaryCount] | None = Field(
+        default=None,
+        description="The entities most memories in the window mention, most first; null when the store can't say.",
+    )
+    strongest_observation: SummaryMemory | None = Field(
+        default=None,
+        description="The window's observation backed by the most facts; null when there is none or the store "
+        "can't say.",
+    )
+    first_memory: SummaryMemory | None = Field(
+        default=None, description="The window's earliest memory; null when there is none or the store can't say."
+    )
+
+
 # Mental Model models
 
 
@@ -6140,6 +6187,61 @@ def _register_routes(app: FastAPI):
             raise
         except Exception as e:
             raise _internal_error(e, f"/v1/default/banks/{bank_id}/stats/memories-timeseries")
+
+    @app.get(
+        "/v1/default/banks/{bank_id}/stats/summary",
+        response_model=StatsSummaryResponse,
+        summary="Memories over a window, summed up",
+        description="Aggregates of a bank's memories and documents between two dates, computed in the database: "
+        "counts per UTC hour by fact type, documents and their coding agents, the most mentioned entities, "
+        "the strongest observation and the first memory. No memory list crosses the wire. Every answer but the "
+        "hours is optional: null when the memory store can't give it within bounded work.",
+        operation_id="get_stats_summary",
+        tags=["Banks"],
+        responses=_BANK_NOT_FOUND_RESPONSES,
+    )
+    async def api_stats_summary(
+        bank_id: str,
+        start_date: datetime = Query(description="ISO-8601, inclusive."),
+        end_date: datetime = Query(description="ISO-8601, exclusive."),
+        request_context: RequestContext = Depends(get_request_context),
+    ):
+        try:
+            data = await app.state.memory.get_stats_summary(
+                bank_id,
+                start=start_date if start_date.tzinfo else start_date.replace(tzinfo=timezone.utc),
+                end=end_date if end_date.tzinfo else end_date.replace(tzinfo=timezone.utc),
+                request_context=request_context,
+            )
+            agg = data.aggregates
+            strongest, first = agg.strongest_observation, agg.first_memory
+            return StatsSummaryResponse(
+                bank_id=data.bank_id,
+                start_date=data.start_date,
+                end_date=data.end_date,
+                hours=[MemoryTimeseriesBucket(**h.as_dict()) for h in data.hours],
+                documents=agg.documents,
+                harnesses=None
+                if agg.harnesses is None
+                else [SummaryCount(name=h.name, count=h.count) for h in agg.harnesses],
+                entities=None
+                if agg.entities is None
+                else [SummaryCount(name=e.name, count=e.count) for e in agg.entities],
+                strongest_observation=SummaryMemory(
+                    text=strongest.text, time=strongest.time, proof_count=strongest.proof_count
+                )
+                if strongest
+                else None,
+                first_memory=SummaryMemory(text=first.text, time=first.time) if first else None,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except OperationValidationError as e:
+            raise HTTPException(status_code=e.status_code, detail=e.reason)
+        except (AuthenticationError, HTTPException):
+            raise
+        except Exception as e:
+            raise _internal_error(e, f"/v1/default/banks/{bank_id}/stats/summary")
 
     @app.get(
         "/v1/default/banks/{bank_id}/entities",
