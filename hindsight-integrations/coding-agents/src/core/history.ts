@@ -205,7 +205,11 @@ function claudeHistory(repoDir: string, home: string): HistoryImport {
  * Codex: rollouts are partitioned by DATE, not project, so the repo is read from the `session_meta`
  * header each file opens with — cheap enough to check without parsing the whole transcript.
  */
-function codexHistory(repoDir: string, home: string): HistoryImport {
+function codexHistory(
+  repoDir: string,
+  home: string,
+  skipOriginators: readonly string[]
+): HistoryImport {
   const root = join(home, ".codex", "sessions");
   if (!existsSync(root)) return { supported: true, sessions: [] };
   const files: string[] = [];
@@ -227,8 +231,13 @@ function codexHistory(repoDir: string, home: string): HistoryImport {
     try {
       const head = firstLine(file);
       if (!head) continue;
-      const meta = JSON.parse(head) as { payload?: { cwd?: string; id?: string } };
+      const meta = JSON.parse(head) as {
+        payload?: { cwd?: string; id?: string; originator?: string };
+      };
       if (!withinRepo(meta?.payload?.cwd, repoDir)) continue;
+      // The same opt-out the live write-back honours (#5507): importing these later would put the
+      // delegated jobs in the bank anyway, one import after the Stop hook skipped them.
+      if (meta.payload?.originator && skipOriginators.includes(meta.payload.originator)) continue;
       const s = toSession(meta.payload?.id ?? file, readCodexTranscript(file));
       if (s) sessions.push(s);
     } catch {
@@ -487,13 +496,15 @@ export function importLocalHistory(
   repoDir: string,
   home = homedir(),
   /** Seam for tests: runs `dcode <args>` and returns stdout. */
-  runDcodeCli?: (args: string[]) => string
+  runDcodeCli?: (args: string[]) => string,
+  /** Codex sessions started by these clients are not imported (`skipOriginators`, #5507). */
+  skipOriginators: readonly string[] = []
 ): HistoryImport {
   switch (harness) {
     case "claude-code":
       return claudeHistory(repoDir, home);
     case "codex":
-      return codexHistory(repoDir, home);
+      return codexHistory(repoDir, home, skipOriginators);
     case "dcode":
       return dcodeHistory(
         repoDir,

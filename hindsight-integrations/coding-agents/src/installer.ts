@@ -42,6 +42,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { applyEdits, modify } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
+import { deriveBankIdOrSkip } from "./core/bank";
+import { applyBankConfig, loadConfig, type Config } from "./core/config";
 import { importLocalHistory } from "./core/history";
 import { PRIME_AGENT_DIR_ENV, PRIME_SESSION_ID_ENV } from "./prime-agent";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
@@ -2513,6 +2515,13 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
 
 // ── CLI ─────────────────────────────────────────────────────────────────────────
 
+/** `skipOriginators` for one repo, through its `banks.<id>` and `paths.<dir>` sections — the same
+ *  resolution the Stop hook applies, so the import skips exactly what the live write-back skips. */
+export function importSkipOriginators(base: Config, harness: string, repo: string): string[] {
+  const id = deriveBankIdOrSkip(base, repo, harness);
+  return (id ? applyBankConfig(base, id, repo).cfg : base).skipOriginators;
+}
+
 /**
  * Backfill this repo's past sessions for one harness, by handing them to the same deepen engine a
  * session start uses. Deepen dedups by document id, so re-running is safe.
@@ -2522,7 +2531,13 @@ const HARNESS_ALIASES: Record<string, string> = { agy: "antigravity-cli" };
  */
 function importConversations(harness: string, ctx: InstallCtx): void {
   const repo = process.cwd();
-  const found = importLocalHistory(harness, repo);
+  const found = importLocalHistory(
+    harness,
+    repo,
+    homedir(),
+    undefined,
+    importSkipOriginators(loadConfig({ harness }), harness, repo)
+  );
   if (!found.supported) {
     ctx.log?.(`${harness}: --import-conversations skipped — ${found.reason}`);
     return;

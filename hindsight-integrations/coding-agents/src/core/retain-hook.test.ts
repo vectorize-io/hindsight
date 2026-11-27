@@ -8,6 +8,7 @@ import type { TransportTurn } from "./chat";
 import { type RawConfig, resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
 import { buildRetain, replayOrphanedSessions, runRetainHook } from "./retain-hook";
+import { HOOK_HARNESSES } from "../harness/hook-lifecycle";
 import { fingerprintTurns, memoryCursorStore, type RetainCursorStore } from "./retain-cursor";
 import { readClaudeTranscript } from "./transcript";
 import { readCodexTranscript } from "./transcript-codex";
@@ -32,7 +33,13 @@ vi.mock("./config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./config")>();
   return {
     ...actual,
-    loadConfig: () => actual.resolveConfig({ apiToken: "test-key", ...rawConfig }),
+    // The asking harness's `harnesses.<name>` section layered on top, as the real loader does.
+    loadConfig: (o?: { harness?: string }) =>
+      actual.resolveConfig({
+        apiToken: "test-key",
+        ...rawConfig,
+        ...(o?.harness ? rawConfig.harnesses?.[o.harness] : undefined),
+      }),
   };
 });
 
@@ -819,6 +826,25 @@ describe("replayOrphanedSessions (#6097)", () => {
       orphans: sessionIds.map((sessionId) => ({ sessionId, cursor: cursors.read(sessionId)! })),
     });
 
+  it("never writes an orphan whose originator is in skipOriginators (#5507)", async () => {
+    const cursors = memoryCursorStore();
+    await failedSession(cursors);
+    const client = stubClient();
+
+    await replayOrphanedSessions({
+      harness: "codex",
+      currentSessionId: "new",
+      cfg: resolveConfig({ apiToken: "test-key", skipOriginators: ["Claude Code"] }),
+      makeClient: () => client as unknown as HindsightClient,
+      originator: () => "Claude Code",
+      deadline: Date.now() + 60_000,
+      cursors,
+      orphans: [{ sessionId: "ended", cursor: cursors.read("ended")! }],
+    });
+
+    expect(client.retain).not.toHaveBeenCalled();
+  });
+
   it("writes the ended session's turns from a later session's Stop, with its own stamp", async () => {
     const cursors = memoryCursorStore();
     await failedSession(cursors);
@@ -987,6 +1013,45 @@ describe("runRetainHook honors retainSessions", () => {
     const untouched = stubClient();
     await runRetainHook(spec, untouched.makeClient);
     expect(untouched.retain).toHaveBeenCalledTimes(1);
+  });
+
+  it("skipOriginators: a matching originator is not written back; any other is (#5507)", async () => {
+    rawConfig = { harnesses: { codex: { skipOriginators: ["Claude Code"] } } };
+    const codexSpec = { ...spec, harness: "codex" };
+    const skipped = stubClient();
+    await runRetainHook({ ...codexSpec, originator: () => "Claude Code" }, skipped.makeClient);
+    expect(skipped.retain).not.toHaveBeenCalled();
+    expect(skipped.makeClient).not.toHaveBeenCalled();
+    expect(readFileSync(join(root, "diag.log"), "utf8")).toContain("retain_skipped_originator");
+
+    const kept = stubClient();
+    await runRetainHook({ ...codexSpec, originator: () => "Codex Desktop" }, kept.makeClient);
+    expect(kept.retain).toHaveBeenCalledTimes(1);
+
+    const unknown = stubClient();
+    await runRetainHook({ ...codexSpec, originator: () => undefined }, unknown.makeClient);
+    expect(unknown.retain).toHaveBeenCalledTimes(1);
+  });
+
+  it("the real Codex spec reads the rollout's originator and skips a listed one (#5507)", async () => {
+    const rollout = (originator: string) =>
+      [
+        JSON.stringify({ type: "session_meta", payload: { id: "c1", cwd: root, originator } }),
+        message("user", "we use zod for validation"),
+        message("assistant", "noted"),
+      ].join("\n");
+    rawConfig = { harnesses: { codex: { skipOriginators: ["Claude Code"] } } };
+    const codex = HOOK_HARNESSES.codex.retain;
+
+    writeFileSync(file, rollout("Claude Code"));
+    const skipped = stubClient();
+    await runRetainHook(codex, skipped.makeClient);
+    expect(skipped.retain).not.toHaveBeenCalled();
+
+    writeFileSync(file, rollout("Codex Desktop"));
+    const kept = stubClient();
+    await runRetainHook(codex, kept.makeClient);
+    expect(kept.retain).toHaveBeenCalledTimes(1);
   });
 
   it("a banks.<id> override turns write-back back on under a global opt-out", async () => {

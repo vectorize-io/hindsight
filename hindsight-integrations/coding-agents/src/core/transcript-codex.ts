@@ -285,3 +285,22 @@ export function readCodexTranscript(path: string): TransportTurn[] {
     )
     .map(({ unless: _unless, ...turn }) => turn);
 }
+
+/**
+ * Which client started this Codex session (`session_meta.originator`, e.g. "Claude Code" for a
+ * job delegated by Claude Code's Codex plugin), for `skipOriginators` (#5507). A sub-agent thread
+ * records its client's originator itself, so no lookup of its parent is needed. Undefined when the
+ * first line is not a `session_meta` header: the session is then retained as before.
+ */
+export function codexOriginator(path: string): string | undefined {
+  try {
+    for (const line of readJsonl(path)) {
+      const rec = JSON.parse(line) as { type?: string; payload?: { originator?: unknown } };
+      const originator = rec.type === "session_meta" ? rec.payload?.originator : undefined;
+      return typeof originator === "string" ? originator : undefined;
+    }
+  } catch {
+    /* malformed header: no originator */
+  }
+  return undefined;
+}
