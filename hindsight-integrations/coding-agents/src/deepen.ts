@@ -139,6 +139,7 @@ async function main() {
       // `banks.<id>.bank` rename below it can point many repos at one destination, so a renamed
       // bank is not this repo's either. Undefined gives the shared-bank scope (#4490).
       project: PAGE_PROJECT,
+      pageScope: cfg.pageScope,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,
       // Nobody waits on a background seed, and a 429 it gives up on is history missing from the

@@ -556,6 +556,9 @@ export async function runSessionStartHook(
       bank: bankId,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,
+      // Seeds the pages itself when deepen does not run (no git history, gitIngest "none"), so
+      // without it a bank's own `pageScope` never reached those pages (#6526).
+      pageScope: cfg.pageScope,
     });
 
     const out = await buildSessionStartContext({

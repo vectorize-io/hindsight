@@ -200,6 +200,15 @@ export interface RawConfig {
   /** Mental models and pages whose content goes into context when a session starts, in order:
    *  `mental_model:<id>` or `page:<id>` (a bare id is a mental model). Read once per session (#5714). */
   sessionContext?: string[];
+  /** Replaces the built-in list of moments the tool guide tells the agent to search memory
+   *  first (a bug report, writing a test, about to commit…), which are a code repository's. The
+   *  rest of the guide, crediting rule included, stays. For a bank that is not a code repo (#6526). */
+  toolGuideMoments?: string;
+  /** The sentence appended to every page question that says what the page is about. Unset: the
+   *  built-in one (scope to this repo; or, on a bank several projects share, attribute by project
+   *  and leave out the external tools they use). A string replaces it; "" drops it. Existing
+   *  pages are re-synced to the new wording on the next session (#6526). */
+  pageScope?: string;
   pageRefreshEveryTurns?: number; // page refresh cadence in user turns (default 1; 0 also means 1)
   /** What it COSTS to keep this project's pages current — the trigger stamped on every
    *  page this plugin creates (the seeded taxonomy and each captured initiative):
@@ -397,6 +406,8 @@ export interface Config {
   keepToolInputs: Record<string, KeptToolInput>;
   toolGuideExtra?: string;
   sessionContext: SessionContextRef[];
+  toolGuideMoments?: string;
+  pageScope?: string;
   pageRefreshEveryTurns: number;
   pageTriggerType: "auto-refresh" | "cron" | "manual";
   pageTriggerCron?: string;
@@ -735,6 +746,12 @@ export function resolveConfig(raw: RawConfig = {}): Config {
         ? raw.toolGuideExtra
         : undefined,
     sessionContext: parseSessionContext(raw.sessionContext),
+    toolGuideMoments:
+      typeof raw.toolGuideMoments === "string" && raw.toolGuideMoments.trim()
+        ? raw.toolGuideMoments
+        : undefined,
+    // "" is a value here, not a miss: it turns the sentence off.
+    pageScope: typeof raw.pageScope === "string" ? raw.pageScope : undefined,
     // Every turn, not every tenth. The guide is what tells the agent WHEN to reach for memory, and
     // at a cadence of 10 a normal session is told once, on turn 1, and never again. Measured over
     // 40 real Claude Code turns, moving this from 10 to 1 took searches from 15% of turns to 32.5%
@@ -892,6 +909,8 @@ const ENV_KEYS = {
   pageSearchLimit: "HINDSIGHT_PAGE_SEARCH_LIMIT",
   toolGuideExtra: "HINDSIGHT_TOOL_GUIDE_EXTRA",
   sessionContext: "HINDSIGHT_SESSION_CONTEXT",
+  toolGuideMoments: "HINDSIGHT_TOOL_GUIDE_MOMENTS",
+  pageScope: "HINDSIGHT_PAGE_SCOPE",
   autoReflect: "HINDSIGHT_AUTO_REFLECT",
   pageRefreshEveryTurns: "HINDSIGHT_PAGE_REFRESH_EVERY_TURNS",
   pageTriggerType: "HINDSIGHT_PAGE_TRIGGER_TYPE",

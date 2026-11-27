@@ -235,7 +235,10 @@ export interface PageSpec {
  * (`codingBankManifest`, #2492) — a mission-only fix would never reach an existing bank, while a
  * reworded query re-syncs through `seedPages()`'s drift PATCH on the next run.
  */
-export function pageScopeRule(project?: string): string {
+export function pageScopeRule(project?: string, pageScope?: string): string {
+  // `pageScope` (#6526): the user's own sentence in place of either clause below, or "" for none —
+  // for a bank whose subject IS the tools a code repo would merely use, which both clauses drop.
+  if (pageScope !== undefined) return pageScope.trim() ? ` ${pageScope.trim()}` : "";
   if (project === undefined)
     return (
       ` This bank is shared by several projects: attribute each thing you include to the ` +
@@ -341,9 +344,10 @@ export type CustomPagesConfig = Record<string, CustomPage>;
 export function pagesFor(
   project: string | undefined,
   pages: PagesConfig = {},
-  customPages: CustomPagesConfig = {}
+  customPages: CustomPagesConfig = {},
+  pageScope?: string
 ): PageSpec[] {
-  const scope = pageScopeRule(project);
+  const scope = pageScopeRule(project, pageScope);
   // Matched case-insensitively on the same key `seedPages` matches live pages by, so a config
   // entry and the page it names can't disagree about which page that is.
   const byName = new Map(

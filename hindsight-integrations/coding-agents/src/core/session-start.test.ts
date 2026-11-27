@@ -629,6 +629,26 @@ describe("runSessionStartHook host MCP registration", () => {
   });
 });
 
+describe("runSessionStartHook client", () => {
+  // Session start seeds the pages itself when deepen does not run, so the scope sentence it
+  // writes must be the bank's own (#6526).
+  it("hands the bank's pageScope to the client it seeds pages with", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hs-ss-scope-"));
+    rawConfig = { autoSeed: false, autoUpdate: false, pageScope: "" };
+    stdin = JSON.stringify({ cwd: dir, session_id: "sess-scope" });
+    const makeClient = vi.fn(() => ({ listPages: listPagesOk }) as never);
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      await runSessionStartHook(HOOK_HARNESSES["claude-code"].sessionStart, makeClient);
+    } finally {
+      write.mockRestore();
+      rawConfig = undefined;
+      rmSync(dir, { recursive: true, force: true });
+    }
+    expect(makeClient).toHaveBeenCalledWith(expect.objectContaining({ pageScope: "" }));
+  });
+});
+
 // Periodic re-survey (Option A): the survey baseline lives in the bank as `survey-baseline:<sha>`
 // marker docs. Warm sessions re-survey when the MIN reachable `<sha>..HEAD` count >= threshold.
 describe("buildSessionStartContext — periodic re-survey (bank-stored commit count)", () => {

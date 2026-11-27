@@ -110,6 +110,9 @@ export interface ClientOpts {
    *  names no project (#4490). Must be a property of the bank and never of the calling session's
    *  cwd: see `bankProjectName` (#4146). */
   project?: string;
+  /** cfg.pageScope: the user's own scope sentence for every page query, "" for none, or undefined
+   *  for the built-in clause `project` picks (#6526). */
+  pageScope?: string;
   log?: (msg: string) => void;
   /** Cap on concurrent retain-related requests (drain op polls, deepen pools). Default 10. */
   maxParallelRetains?: number;
@@ -240,6 +243,15 @@ function pagesPath(sub: string, legacy = false): string {
   return /^\/(tree|folders|search|export|nodes)\b/.test(sub)
     ? `/knowledge-base${sub}`
     : `/knowledge-base/pages${sub}`;
+}
+
+/** An initiative page's question before its scope clause: what `captureInitiative` writes, and what
+ *  `resyncInitiativeTriggers` recognises as ours to rewrite. */
+function initiativeQuery(title: string): string {
+  return (
+    `Summarize the "${title}" initiative: what is being built or changed and why, ` +
+    `and its current state — drawn from the project's memory.`
+  );
 }
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "error"]);
@@ -436,6 +448,7 @@ export class HindsightClient {
   private readonly extraHeaders: Record<string, string>;
   readonly bank: string;
   readonly project?: string;
+  private readonly pageScope?: string;
   readonly opIds: string[] = []; // async operation ids collected by retain(), for drain()
   /** Tri-state capability probe: unknown until the first page request, then cached. */
   pagesSupported: boolean | undefined;
@@ -457,6 +470,7 @@ export class HindsightClient {
     this.extraHeaders = o.headers ?? {};
     this.bank = o.bank;
     this.project = o.project;
+    this.pageScope = o.pageScope;
     this.log = o.log ?? (() => {});
     this.maxParallelRetains = o.maxParallelRetains || DEFAULT_MAX_PARALLEL_RETAINS;
     this.observationScopes = o.observationScopes ?? DEFAULT_OBSERVATION_SCOPES;
@@ -1168,7 +1182,7 @@ export class HindsightClient {
   ): Promise<void> {
     // No project = a bank no single repository owns: the shared-bank clause. Pages seeded under the
     // old bank-named clause drift from it and are PATCHed below, which rebuilds them (#4490).
-    const pages = pagesFor(this.project, pagesConfig, customPages);
+    const pages = pagesFor(this.project, pagesConfig, customPages, this.pageScope);
     const existing = new Map<string, PageNode>();
     let roots: PageNode[];
     try {
@@ -1286,11 +1300,18 @@ export class HindsightClient {
       (n) => n.kind === "folder" && (n.name || "").toLowerCase() === "initiatives"
     );
     const bankScope = pageScopeRule(this.bank);
+    const scope = pageScopeRule(this.project, this.pageScope);
     let updated = 0;
     for (const page of folder?.children ?? []) {
       if (page.kind !== "page") continue;
       const patch: { trigger?: PageTrigger; source_query?: string } = {};
-      const query = page.description?.replace(bankScope, pageScopeRule(this.project));
+      // A query this plugin wrote is rebuilt whole, so a changed `pageScope` — custom wording
+      // included, which leaves nothing to match on once it is gone — reaches it (#6526). One
+      // edited by hand keeps its wording; only the old bank-named clause is swapped out of it.
+      const ours = initiativeQuery(page.name ?? "");
+      const query = page.description?.startsWith(ours)
+        ? ours + scope
+        : page.description?.replace(bankScope, scope);
       if (query !== page.description) patch.source_query = query;
       // No trigger reported = policy unknown, not divergent (a server older than #3572).
       if (page.trigger != null) {
@@ -1359,10 +1380,7 @@ export class HindsightClient {
       // the server's page default happens to be, which is only coincidentally PAGE_MAX_TOKENS.
       const r = await this.pagesReq("POST", "", {
         name: args.title,
-        source_query:
-          `Summarize the "${args.title}" initiative: what is being built or changed and why, ` +
-          `and its current state — drawn from the project's memory.` +
-          pageScopeRule(this.project),
+        source_query: initiativeQuery(args.title) + pageScopeRule(this.project, this.pageScope),
         parent_id: folderId,
         tags: ["knowledge:feature-work"],
         max_tokens: PAGE_MAX_TOKENS,
