@@ -3331,6 +3331,8 @@ describe("importSkipOriginators (#5507)", () => {
     expect(id).toBeTruthy();
     const cfg = resolveConfig({ banks: { [id!]: { skipOriginators: ["Claude Code"] } } });
     expect(importSkipOriginators(cfg, "codex", repo)).toEqual(["Claude Code"]);
+    const byPath = resolveConfig({ paths: { [repo]: { skipOriginators: ["Claude Code"] } } });
+    expect(importSkipOriginators(byPath, "codex", repo)).toEqual(["Claude Code"]);
     expect(importSkipOriginators(resolveConfig(), "codex", repo)).toEqual([]);
   });
 });

@@ -381,6 +381,9 @@ export async function runRetainHook(
     }),
   });
 
+  // No client means this Stop saves nothing (write-back off, or a skipped originator), so it
+  // deliberately starts no daemon just to retry other sessions' failed saves: the user's own next
+  // Stop, which does save, runs that retry.
   if (client)
     await replayOrphanedSessions({
       harness: spec.harness,
