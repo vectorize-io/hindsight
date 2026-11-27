@@ -48,6 +48,16 @@ export interface WrappedStats {
   map?: MemoryMap | null;
 }
 
+/** Whether the server shows Wrapped at all: on unless `HINDSIGHT_CP_WRAPPED_ENABLED` is `false` or `0`. */
+export function wrappedEnabled(value = process.env.HINDSIGHT_CP_WRAPPED_ENABLED): boolean {
+  return !/^\s*(false|0)\s*$/i.test(value ?? "");
+}
+
+/** The button is shown through the January after the year, then goes by itself. */
+export function wrappedInSeason(year: number, now = new Date()): boolean {
+  return now < new Date(year + 1, 1, 1);
+}
+
 /** [start, end) of the year, in the viewer's local time. */
 export function yearRange(year: number): { start: Date; end: Date } {
   return { start: new Date(year, 0, 1), end: new Date(year + 1, 0, 1) };

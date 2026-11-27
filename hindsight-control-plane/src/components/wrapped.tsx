@@ -17,7 +17,14 @@ import { client } from "@/lib/api";
 import { useBank, type BankInfo } from "@/lib/bank-context";
 import { withBasePath } from "@/lib/base-path";
 import { resolveHarnessLogo } from "@/lib/harness-logo";
-import { computeWrapped, yearRange, type BankYear, type WrappedStats } from "@/lib/wrapped";
+import {
+  computeWrapped,
+  wrappedInSeason,
+  yearRange,
+  type BankYear,
+  type WrappedStats,
+} from "@/lib/wrapped";
+import { useFeatures } from "@/lib/features-context";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -190,31 +197,38 @@ const GRADIENT_TEXT_ON_LIGHT =
 export function WrappedButton() {
   const t = useTranslations("wrapped");
   const { bankInfos, banksLoading } = useBank();
+  const { features } = useFeatures();
+  // Off on the server (HINDSIGHT_CP_WRAPPED_ENABLED=false) or past January: no button, nothing read.
+  const shown = (features?.wrapped ?? false) && wrappedInSeason(YEAR);
   const stamp = useMemo(() => accountStamp(bankInfos), [bankInfos]);
   // The cache key needs the bank list, so nothing is read or computed before it is in.
   const cached = useMemo(() => (banksLoading ? null : readCache(stamp)), [banksLoading, stamp]);
-  const [computed, setComputed] = useState<WrappedStats | null>(null);
-  const stats = cached ?? computed;
+  // Kept with the account it was computed for, so switching account never shows the last one's year.
+  const [computed, setComputed] = useState<{ stamp: string | null; stats: WrappedStats } | null>(
+    null
+  );
+  const stats = cached ?? (computed?.stamp === stamp ? computed.stats : null);
   const [error, setError] = useState(false);
   const [open, setOpen] = useState(false);
 
   // Computed in the background, then kept: an empty or partial year is not cached, so it fills in later.
   useEffect(() => {
-    if (banksLoading || stats || !bankInfos.length) return;
+    if (!shown || banksLoading || stats || !bankInfos.length) return;
     let cancelled = false;
+    setError(false);
     loadWrapped()
       .then(({ stats: s, complete }) => {
         if (cancelled) return;
         if (complete && s.memories > 0) writeCache(stamp, s);
-        setComputed(s);
+        setComputed({ stamp, stats: s });
       })
       .catch(() => !cancelled && setError(true));
     return () => {
       cancelled = true;
     };
-  }, [banksLoading, bankInfos.length, stamp, stats]);
+  }, [shown, banksLoading, bankInfos.length, stamp, stats]);
 
-  if (!banksLoading && !bankInfos.length) return null;
+  if (!shown || (!banksLoading && !bankInfos.length)) return null;
   return (
     <>
       <Button

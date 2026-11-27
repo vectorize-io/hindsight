@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { localizeApiErrorPayload } from "@/lib/i18n/api-errors";
 import { sdk, lowLevelClient } from "@/lib/hindsight-client";
+import { wrappedEnabled } from "@/lib/wrapped";
 
 export async function GET(request: Request) {
   try {
@@ -22,6 +23,7 @@ export async function GET(request: Request) {
     const data = response.data as Record<string, unknown>;
     const features = (data.features ?? {}) as Record<string, boolean>;
     features.access_key_auth = !!process.env.HINDSIGHT_CP_ACCESS_KEY;
+    features.wrapped = wrappedEnabled();
     data.features = features;
 
     return NextResponse.json(data, { status: 200 });

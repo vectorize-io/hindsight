@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import type { StatsSummary } from "@/lib/api";
-import { computeWrapped, quote, type BankYear } from "@/lib/wrapped";
+import {
+  computeWrapped,
+  quote,
+  wrappedEnabled,
+  wrappedInSeason,
+  type BankYear,
+} from "@/lib/wrapped";
 
 const bank = (name: string, over: Partial<StatsSummary>): BankYear => ({
   name,
@@ -124,5 +130,21 @@ describe("computeWrapped", () => {
     const long = quote("word ".repeat(100));
     expect(long.length).toBeLessThanOrEqual(221);
     expect(long.endsWith("word…")).toBe(true);
+  });
+});
+
+describe("when Wrapped is shown", () => {
+  it("is on unless the server turns it off", () => {
+    expect(wrappedEnabled(undefined)).toBe(true);
+    expect(wrappedEnabled("true")).toBe(true);
+    expect(wrappedEnabled("false")).toBe(false);
+    expect(wrappedEnabled(" FALSE ")).toBe(false);
+    expect(wrappedEnabled("0")).toBe(false);
+  });
+
+  it("goes by itself after the January that follows the year", () => {
+    expect(wrappedInSeason(2026, new Date(2026, 10, 27))).toBe(true);
+    expect(wrappedInSeason(2026, new Date(2027, 0, 31, 23, 59))).toBe(true);
+    expect(wrappedInSeason(2026, new Date(2027, 1, 1))).toBe(false);
   });
 });
