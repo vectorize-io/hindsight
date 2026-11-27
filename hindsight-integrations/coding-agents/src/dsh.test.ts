@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { RuntimeCore } from "./core/runtime";
 import {
+  apply,
   createDshHooks,
+  readStoredSession,
   dshSessionEvents,
   ownEvents,
   readPastSession,
@@ -341,5 +344,43 @@ describe("toDshParameters", () => {
     expect(() => toDshParameters(spec({ limit: z.number().optional() as never }))).toThrow(
       /string parameters only/
     );
+  });
+});
+
+// A session whose write-back failed before the app quit has no live agent after a restart: a
+// workspace core reads it back through the host's session store, while the host provides one.
+describe("apply: the host's session store (#6559)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("gives every workspace core the injected store, and drops it on dispose", async () => {
+    vi.stubEnv("HINDSIGHT_API_TOKEN", "test-key"); // Cloud without a token counts as disabled
+    const setPast = vi.spyOn(RuntimeCore.prototype, "setPastSessionSource");
+    const turn = {
+      type: "user/message",
+      data: { role: "user", content: [{ type: "text", text: "lost" }], source: { kind: "user" } },
+    };
+    const store = {
+      open: vi.fn(async () => ({ read: async () => ({ events: [turn] }), close: async () => {} })),
+    };
+    let dispose = () => {};
+    apply({
+      on: () => {},
+      inject: (names: string[], callback: (ctx: unknown) => void) =>
+        names[0] === "tools"
+          ? callback({ tools: { register: () => {} } }) // builds the launch directory's core
+          : callback({
+              sessionPersistence: store,
+              on: (_: string, l: () => void) => (dispose = l),
+            }),
+    } as never);
+
+    expect(setPast).toHaveBeenCalledWith(readStoredSession);
+    expect(await readStoredSession("s-old")).toEqual([{ role: "user", content: "lost" }]);
+    expect(store.open).toHaveBeenCalledWith("s-old", "read");
+    dispose();
+    expect(await readStoredSession("s-old")).toEqual([]);
   });
 });

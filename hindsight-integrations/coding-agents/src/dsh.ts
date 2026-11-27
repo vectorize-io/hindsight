@@ -103,7 +103,10 @@ interface DshContext {
   inject(names: ["tools"], callback: (ctx: DshToolContext) => void): void;
   inject(
     names: ["sessionPersistence"],
-    callback: (ctx: { sessionPersistence: DshSessionPersistence }) => void
+    callback: (ctx: {
+      sessionPersistence: DshSessionPersistence;
+      on?(event: "dispose", listener: () => void): void;
+    }) => void
   ): void;
 }
 
@@ -120,8 +123,14 @@ export interface DshSessionPersistence {
   }>;
 }
 
-/** Set once the host provides it; until then a past session reads back as empty (not replayed). */
+/** Held while the host provides it (see `apply`); without it a past session reads back as empty,
+ *  so it is not replayed. */
 let sessionStore: DshSessionPersistence | undefined;
+
+/** Every workspace core's past-session source: whatever store the host provides right now. */
+export async function readStoredSession(sessionId: string): Promise<TransportTurn[]> {
+  return sessionStore ? readPastSession(sessionStore, sessionId) : [];
+}
 
 /** A stored session's own turns, read through the host's store — the same slice `ownEvents` takes. */
 export async function readPastSession(
@@ -230,9 +239,7 @@ function workspaceFor(root: string): Workspace | undefined {
   });
   // A session whose write-back failed before the app quit has no live agent any more: it is read
   // back from the host's store, so a later process can replay it (#6559).
-  core.setPastSessionSource(async (sessionId) =>
-    sessionStore ? readPastSession(sessionStore, sessionId) : []
-  );
+  core.setPastSessionSource(readStoredSession);
   const workspace: Workspace = { core, root };
   workspaces.set(root, workspace);
   return workspace;
@@ -519,8 +526,13 @@ export function apply(ctx: DshContext): void {
     registerTools(toolCtx, process.cwd());
   });
   // Optional too: without it, a session that failed to save before a restart is not retried.
-  ctx.inject(["sessionPersistence"], (store) => {
-    sessionStore = store.sessionPersistence;
+  ctx.inject(["sessionPersistence"], (scoped) => {
+    const store = scoped.sessionPersistence;
+    sessionStore = store;
+    // Cordis disposes this scope when the service goes away; a re-inject sets the new one.
+    scoped.on?.("dispose", () => {
+      if (sessionStore === store) sessionStore = undefined;
+    });
   });
 }
 

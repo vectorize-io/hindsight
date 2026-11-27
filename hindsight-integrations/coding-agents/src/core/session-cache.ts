@@ -278,8 +278,13 @@ export function orphanedCursors(
 }
 
 /**
- * Retain cursor for the hook harnesses: Stop runs in a fresh process every time, so "what have I
- * already written" cannot live in memory.
+ * Retain cursor for every harness. A hook harness's Stop runs in a fresh process every time, so
+ * "what have I already written" cannot live in memory; a persistent-plugin host keeps it here too, so
+ * a write that failed before the host exited is still owed after it (#6559).
+ *
+ * ONE store per harness per process: core/chat.ts serializes a session's write-backs per store
+ * object, and dsh (a core per workspace) or a replay alongside a live save would otherwise hold two
+ * stores for one session's file and race on its document.
  *
  * It lives in its OWN file rather than a field of the session cache. It shared that file until now,
  * and the prompt hook — which writes a fresh `{turns, reflectAnswer, pages}` object rather than
@@ -292,7 +297,15 @@ export function orphanedCursors(
  * Losing the file (temp cleanup, reboot) is still not a correctness problem — a missing cursor
  * means the next retain replaces the whole document, exactly as it did before appends existed.
  */
+const cursorStores = new Map<string, RetainCursorStore>();
+
 export function fileCursorStore(harness: string): RetainCursorStore {
+  let store = cursorStores.get(harness);
+  if (!store) cursorStores.set(harness, (store = newFileCursorStore(harness)));
+  return store;
+}
+
+function newFileCursorStore(harness: string): RetainCursorStore {
   return {
     read: (sessionId) => {
       try {

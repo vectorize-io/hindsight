@@ -248,12 +248,17 @@ export async function replayOrphanedSessions(args: {
     }
     let turns: TransportTurn[];
     try {
-      // Guarded: a reader can throw on a damaged file (see transcript-qwen.ts), a host on a session
-      // it no longer holds, and one bad old transcript must neither reject this Stop hook nor stop
-      // the others from being replayed.
+      // Guarded: a reader can throw on a damaged file (see transcript-qwen.ts), and one bad old
+      // transcript must neither reject this Stop hook nor stop the others from being replayed.
       turns = transcriptPath ? readTranscript(transcriptPath) : await args.fetchTurns!(sessionId);
     } catch (e) {
-      diag(harness, "retain_replay_failed", { error: describeError(e), session: sessionId });
+      // A host that no longer has the session (deleted, or another project's) is not a failed
+      // write: say so quietly. The cursor stays owed, so it is asked again — one cheap local read
+      // per save — until the age window drops it. ponytail: clear its owed flags if that shows up.
+      diag(harness, transcriptPath ? "retain_replay_failed" : "retain_replay_unavailable", {
+        error: describeError(e),
+        session: sessionId,
+      });
       continue;
     }
     if (!turns.length) continue;

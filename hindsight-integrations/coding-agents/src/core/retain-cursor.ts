@@ -230,14 +230,15 @@ export function planRetain(
   return { mode: "append", fromTurn: cursor.turns };
 }
 
-/** Per-session cursor storage. Hook harnesses are a fresh process per event so theirs is file-backed
- *  (core/session-cache.ts); the persistent-plugin runtime keeps its own in memory. */
+/** Per-session cursor storage. Every harness's is file-backed (core/session-cache.ts): hook
+ *  harnesses are a fresh process per event, and the persistent-plugin runtime used to keep its own in
+ *  memory until a write that failed before the host exited was lost with it (#6559). */
 export interface RetainCursorStore {
   read(sessionId: string): RetainCursor | undefined;
   write(sessionId: string, cursor: RetainCursor): void;
 }
 
-/** In-memory store for a long-lived host (opencode/kilo). */
+/** In-memory store, for tests: no production path uses it since #6559. */
 export function memoryCursorStore(): RetainCursorStore {
   const cursors = new Map<string, RetainCursor>();
   return {

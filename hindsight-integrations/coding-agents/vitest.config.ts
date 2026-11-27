@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +21,10 @@ export default defineConfig({
       // than with vi.stubEnv in a test: config.ts captures the path in a module-level constant, so
       // by the time a test body runs the value is already fixed. Points at a path with no file.
       HINDSIGHT_CONFIG: join(tmpdir(), "hindsight-coding-agent-test-absent.json"),
+      // Retain cursors are temp-dir files for every harness, persistent plugins included (#6559):
+      // a fresh temp dir per run keeps tests from writing into the developer's real one, and one
+      // run's cursors from turning the next run's first write-back into an append.
+      TMPDIR: mkdtempSync(join(tmpdir(), "hs-coding-agents-test-")),
     },
   },
 });

@@ -1,25 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveConfig } from "./config";
 import type { HindsightClient } from "./hindsight";
 import { RuntimeCore } from "./runtime";
-
-// Retain cursors are files in the temp dir now (#6559): give each test its own, so one run's
-// cursors never turn the next run's first write-back into an append.
-const realTmp = process.env.TMPDIR;
-let tmpRoot: string;
-beforeEach(() => {
-  tmpRoot = mkdtempSync(join(tmpdir(), "hs-runtime-"));
-  process.env.TMPDIR = tmpRoot;
-});
-afterEach(() => {
-  process.env.TMPDIR = realTmp;
-  if (realTmp === undefined) delete process.env.TMPDIR;
-  rmSync(tmpRoot, { recursive: true, force: true });
-});
 
 // The replay builds its own client per orphan bank (core/retain-hook.ts); hand it this stub.
 const replayRetain = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
@@ -618,6 +604,12 @@ describe("RuntimeCore replay of a failed session after a restart (#6559)", () =>
     ] as never;
   const client = (retain: () => Promise<void>) =>
     ({ bank: "bank-1", retain: vi.fn(retain), supportsAppendRetain: async () => true }) as never;
+  const ok = async () => {};
+  const down = async () => {
+    throw new Error("POST /memories -> 503");
+  };
+  /** Each test is its own harness, so no other test's owed sessions are in its temp folder. */
+  let harness: string;
 
   /** One host process: it writes back `sessionId`, then exits. */
   async function start(
@@ -625,7 +617,13 @@ describe("RuntimeCore replay of a failed session after a restart (#6559)", () =>
     sessionId: string,
     pastSessions?: (id: string) => Promise<never>
   ): Promise<void> {
-    const core = new RuntimeCore(client(retain), "bank-1", resolveConfig({}), "dsh", "/repos/one");
+    const core = new RuntimeCore(
+      client(retain),
+      "bank-1",
+      resolveConfig({}),
+      harness,
+      "/repos/one"
+    );
     core.setTranscriptSource(async () => turns(sessionId));
     if (pastSessions) core.setPastSessionSource(pastSessions);
     await core.onSessionIdle(sessionId);
@@ -634,16 +632,15 @@ describe("RuntimeCore replay of a failed session after a restart (#6559)", () =>
 
   /** The first process: Hindsight is down, the write-back fails, the host quits. */
   async function failedThenQuit(): Promise<void> {
-    await start(async () => {
-      throw new Error("POST /memories -> 503");
-    }, "orig");
+    await start(down, "orig");
     // Long enough ago that it is no longer a session that might still be running.
-    const cursor = join(tmpdir(), "hindsight-dsh", "orig.retain.json");
+    const cursor = join(tmpdir(), `hindsight-${harness}`, "orig.retain.json");
     const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
     utimesSync(cursor, anHourAgo, anHourAgo);
   }
 
   beforeEach(() => {
+    harness = `replay-${randomUUID()}`;
     replayRetain.mockClear();
     // The replay loads the config itself; Cloud without a token would count as disabled.
     vi.stubEnv("HINDSIGHT_API_TOKEN", "test-key");
@@ -654,19 +651,28 @@ describe("RuntimeCore replay of a failed session after a restart (#6559)", () =>
     await failedThenQuit();
     const fetch = vi.fn(async (id: string) => turns(id));
 
-    await start(async () => {}, "second", fetch);
+    await start(ok, "second", fetch);
     expect(fetch).toHaveBeenCalledExactlyOnceWith("orig");
     expect(replayRetain).toHaveBeenCalledOnce();
     expect(replayRetain.mock.calls[0]![0]).toContain("orig");
 
-    await start(async () => {}, "third", fetch);
+    await start(ok, "third", fetch);
     expect(fetch).toHaveBeenCalledOnce();
     expect(replayRetain).toHaveBeenCalledOnce();
   });
 
   it("does nothing on a host that cannot read a past session", async () => {
     await failedThenQuit();
-    await start(async () => {}, "second");
+    await start(ok, "second");
+    expect(replayRetain).not.toHaveBeenCalled();
+  });
+
+  // Only a save that landed says the server is back; one that failed would just fail the replay too.
+  it("does not start a replay from a save that failed", async () => {
+    await failedThenQuit();
+    const fetch = vi.fn(async (id: string) => turns(id));
+    await start(down, "second", fetch);
+    expect(fetch).not.toHaveBeenCalled();
     expect(replayRetain).not.toHaveBeenCalled();
   });
 });
