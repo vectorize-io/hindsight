@@ -151,8 +151,15 @@ export function readClaudeTranscript(path: string): TransportTurn[] {
   lines.forEach((l, i) => {
     if (l.requestSessionId && l.sessionId && l.requestSessionId !== l.sessionId) start = i + 1;
   });
+  // A session Claude Code continues under a new id starts with a byte-for-byte copy of the old
+  // file, its lines keeping the OLD sessionId and no requestSessionId, so the check above misses
+  // it and the whole old history was saved again under the new id (#6960). The file's last
+  // sessionId is the session being read; a line naming any other was copied in.
+  let own: string | undefined;
+  for (const l of lines) own = l.sessionId ?? own;
 
   for (const line of lines.slice(start)) {
+    if (line.sessionId && line.sessionId !== own) continue;
     // A message the human typed while a turn was still running is NOT a type:"user" line: Claude
     // Code stores it only as a `queued_command` attachment. Keep the human ones as user turns at
     // their position; other origins (e.g. `task-notification`) are not the human speaking (#6480).
