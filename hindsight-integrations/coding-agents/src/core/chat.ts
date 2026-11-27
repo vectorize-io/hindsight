@@ -441,10 +441,14 @@ async function writeSession(
     // stamps the document as this one did, instead of a replace that drops its configured tags.
     ...(stamp ? { stamp } : {}),
   };
+  // The last write this session's document moved to, claimed or confirmed. Every new operation id
+  // is derived from it, so an id names the whole chain of writes before it rather than only the
+  // position just before (#6988): A → B → A → B gives the second B a fresh id.
+  let lastOp = cursor?.lastOp;
   /** `next` plus the ops to check on the next write-back, with `id` newly accepted. */
   const accepted = (id?: string) => {
     if (id) ops = [...ops, id].slice(-MAX_CURSOR_OPS);
-    return ops.length ? { ...next, ops } : next;
+    return { ...next, ...(ops.length ? { ops } : {}), ...(lastOp ? { lastOp } : {}) };
   };
   // Still ours to retry only while the cursor holds the claim we write below.
   const stillOurs = () => {
@@ -462,9 +466,12 @@ async function writeSession(
     // Nothing to buffer: replace is idempotent by construction, so a later one re-establishes the
     // same truth from the same transcript. Claim the position unconfirmed so an outcome we never
     // learn resolves to another replace rather than an append onto an unknown state.
-    // The id also names what the document held before, from the cursor: content alone repeats
-    // when a session returns to an earlier branch (A → B → A), and the server acknowledges a
-    // completed id without applying it, leaving B stored (#5845).
+    // The id also names what came before it: content alone repeats when a session returns to an
+    // earlier branch (A → B → A), and the server acknowledges a completed id without applying it,
+    // leaving B stored (#5845). Naming only the position just before (turn count + fingerprint)
+    // still repeated one step later — A → B → A → B gave the second B the first B's id (#6988) —
+    // so the base is the previous write's id, which itself names everything before it. A cursor
+    // written before `lastOp` existed falls back to the position.
     // The claim below moves the cursor to the NEW position, so a retry reading it back would derive
     // a different base and so a different id: a replace the server did take, whose response was
     // lost, would then be extracted a second time (#6559). The base goes out with the claim, and is
@@ -478,11 +485,10 @@ async function writeSession(
       cursor.turns === next.turns &&
       cursor.fingerprint === next.fingerprint
         ? cursor.replaceBase
-        : cursor
-          ? `${cursor.turns}\n${cursor.fingerprint}`
-          : "";
-    cursors?.write(sessionId, { ...next, dirty: true, replaceBase: base });
+        : (cursor?.lastOp ?? (cursor ? `${cursor.turns}\n${cursor.fingerprint}` : ""));
     const operationId = opId("replace", `${base}\n${content}`);
+    lastOp = operationId;
+    cursors?.write(sessionId, { ...next, dirty: true, replaceBase: base, lastOp });
     await submitWithRetry(() => submit(content, operationId, false), stillOurs, retryUntil);
     ops = []; // the replace re-sends every turn, so nothing older can still lose any
     cursors?.write(sessionId, accepted(operationId));
@@ -495,7 +501,11 @@ async function writeSession(
       .slice(plan.fromTurn)
       .map((t) => JSON.stringify(t))
       .join("\n");
-    queue.push({ content, operationId: opId("append", content), at: Date.now() });
+    // Chained like a replace: the same bytes appended again after a rewind are a new operation.
+    const prev = queue.at(-1)?.operationId ?? lastOp;
+    const operationId = opId("append", prev ? `${prev}\n${content}` : content);
+    lastOp = operationId;
+    queue.push({ content, operationId, at: Date.now() });
   }
 
   // Claim the position BEFORE the request, WITH the bytes: a rejected retain — or a process the
