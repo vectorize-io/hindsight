@@ -3060,7 +3060,7 @@ class MemoryEngine(MemoryEngineInterface):
                                 Defaults to decision_model.decision_engine, the shared engine built
                                 from HINDSIGHT_API_DECISION_MODEL_*. Recall's reranker and consolidation
                                 triage are handed this same callable.
-            query_analyzer: Query analyzer implementation. If not provided, uses DateparserQueryAnalyzer.
+            query_analyzer: Query analyzer implementation. If not provided, uses HINDSIGHT_API_QUERY_ANALYZER (text2date by default).
             pool_min_size: Minimum number of connections in the pool. Defaults to HINDSIGHT_API_DB_POOL_MIN_SIZE.
             pool_max_size: Maximum number of connections in the pool. Defaults to HINDSIGHT_API_DB_POOL_MAX_SIZE.
             db_command_timeout: PostgreSQL command timeout in seconds. Defaults to HINDSIGHT_API_DB_COMMAND_TIMEOUT.
@@ -3177,9 +3177,9 @@ class MemoryEngine(MemoryEngineInterface):
         if query_analyzer is not None:
             self.query_analyzer = query_analyzer
         else:
-            from .query_analyzer import DateparserQueryAnalyzer
+            from .query_analyzer import create_query_analyzer
 
-            self.query_analyzer = DateparserQueryAnalyzer(languages=config.query_analyzer_languages)
+            self.query_analyzer = create_query_analyzer(config.query_analyzer, config.query_analyzer_languages)
 
         # Resolve each operation's effective per-request defaults: a per-op override
         # (``HINDSIGHT_API_RETAIN_LLM_TIMEOUT``, ``..._MAX_RETRIES``, ``..._INITIAL_BACKOFF``,

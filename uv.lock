@@ -1776,6 +1776,7 @@ dependencies = [
     { name = "regex" },
     { name = "rich" },
     { name = "sqlalchemy" },
+    { name = "text2date" },
     { name = "toktok-rs" },
     { name = "typer" },
     { name = "urllib3" },
@@ -1933,6 +1934,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'local-ml'", specifier = ">=6.2.0" },
     { name = "sqlalchemy", specifier = ">=2.0.44,<2.1" },
     { name = "testcontainers", marker = "extra == 'test'", specifier = ">=4.0.0" },
+    { name = "text2date", specifier = ">=0.1.0" },
     { name = "tokenizers", marker = "extra == 'local-ml'", specifier = ">=0.23.1,<0.24.0" },
     { name = "tokenizers", marker = "extra == 'local-onnx'", specifier = ">=0.23.1,<0.24.0" },
     { name = "toktok-rs", specifier = ">=0.5.0" },
@@ -5317,6 +5319,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/8b/02/ef62dec9e4f804189c44df23f0b86897c738d38e9c48282fcd410308632f/testcontainers-4.14.1.tar.gz", hash = "sha256:316f1bb178d829c003acd650233e3ff3c59a833a08d8661c074f58a4fbd42a64", size = 80148, upload-time = "2026-01-31T23:13:46.915Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/31/5e7b23f9e43ff7fd46d243808d70c5e8daf3bc08ecf5a7fb84d5e38f7603/testcontainers-4.14.1-py3-none-any.whl", hash = "sha256:03dfef4797b31c82e7b762a454b6afec61a2a512ad54af47ab41e4fa5415f891", size = 125640, upload-time = "2026-01-31T23:13:45.464Z" },
+]
+
+[[package]]
+name = "text2date"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8b/7d/819e356ef6ebdeadb9ed3eae0232abbcc142a0ce2a3061d1bd21309e9bc5/text2date-0.1.0.tar.gz", hash = "sha256:a441b57e442cf46f8ba1618471e13bf4c3c0441f476ce7e55b62bbd831dd0b11", size = 8995680, upload-time = "2026-11-27T10:46:43.876Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6c/dd/faee65ce9adbe5a0ea5561ee7e4359800561e4b9757dd80c445bf69f1f11/text2date-0.1.0-py3-none-any.whl", hash = "sha256:5eda5136c20260d2ad25bd5914f06c1429829291ab03909713ed535f3d494303", size = 8995385, upload-time = "2026-11-27T10:46:41.693Z" },
 ]
 
 [[package]]

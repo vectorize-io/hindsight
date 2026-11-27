@@ -22,7 +22,7 @@ from hindsight_api.engine.cross_encoder import (
     ZeroEntropyCrossEncoder,
 )
 from hindsight_api.engine.embeddings import CohereEmbeddings, OpenAIEmbeddings
-from hindsight_api.engine.query_analyzer import DateparserQueryAnalyzer
+from hindsight_api.engine.query_analyzer import Text2DateQueryAnalyzer
 from hindsight_api.engine.task_backend import SyncTaskBackend
 from hindsight_api.extensions import TenantContext, TenantExtension
 from hindsight_api.migrations import ensure_embedding_dimension, run_migrations
@@ -496,7 +496,7 @@ def cross_encoder():
 @pytest.fixture
 def query_analyzer():
     """Provide a query analyzer for tests."""
-    return DateparserQueryAnalyzer()
+    return Text2DateQueryAnalyzer()
 
 
 @pytest.fixture
