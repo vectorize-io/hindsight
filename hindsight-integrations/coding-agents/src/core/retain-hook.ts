@@ -200,7 +200,9 @@ const ORPHAN_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
  * Stop reads it — a session that ended on a failure kept its last turns out of the bank forever.
  * Any later Stop of the same harness now picks it up: the transcript is re-read with this harness's
  * own reader and written exactly as that session's next Stop would have, through the same cursor,
- * so a write that did land collapses into its original operation server-side.
+ * so a write that did land collapses into its original operation server-side. The persistent-plugin
+ * runtime (core/runtime.ts) also runs it after each of its own successful saves, reading an orphan's
+ * turns back from the host through `fetchTurns`, since those sessions have no transcript file (#6559).
  *
  * ponytail: the idle window is the only guard against replaying a session that is still running in
  * another process; a session resumed at the very moment of a replay can race it. A per-session

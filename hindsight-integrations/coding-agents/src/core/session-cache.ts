@@ -277,6 +277,8 @@ export function orphanedCursors(
   return out.sort((a, b) => b.mtime - a.mtime).map((o) => o.found);
 }
 
+const cursorStores = new Map<string, RetainCursorStore>();
+
 /**
  * Retain cursor for every harness. A hook harness's Stop runs in a fresh process every time, so
  * "what have I already written" cannot live in memory; a persistent-plugin host keeps it here too, so
@@ -297,8 +299,6 @@ export function orphanedCursors(
  * Losing the file (temp cleanup, reboot) is still not a correctness problem — a missing cursor
  * means the next retain replaces the whole document, exactly as it did before appends existed.
  */
-const cursorStores = new Map<string, RetainCursorStore>();
-
 export function fileCursorStore(harness: string): RetainCursorStore {
   let store = cursorStores.get(harness);
   if (!store) cursorStores.set(harness, (store = newFileCursorStore(harness)));
