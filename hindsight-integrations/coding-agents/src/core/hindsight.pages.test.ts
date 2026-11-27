@@ -1336,7 +1336,7 @@ describe("HindsightClient.captureInitiative", () => {
 
     // The returned id is the SERVER-ASSIGNED page id ("pg" from the mock), NOT the derived slug —
     // the /pages endpoint mints its own id.
-    expect(result).toEqual({ page_id: "pg" });
+    expect(result).toEqual({ page_id: "pg", action: "created" });
 
     // Page POST: name = title, nested under the Initiatives folder. The page itself carries NO
     // tags field at all (no tag taxonomy to maintain).
@@ -1416,7 +1416,7 @@ describe("HindsightClient.captureInitiative", () => {
     expect(await capture("Typo-tolerant tag matching")).not.toBe(one);
   });
 
-  it("enhancement (relatesToPageId): NO page POST; marker names the existing page id", async () => {
+  it("enhancement (pageId): NO page POST; marker names the existing page id", async () => {
     const calls: any[] = [];
     stubFetchRouted(calls, [
       {
@@ -1428,10 +1428,11 @@ describe("HindsightClient.captureInitiative", () => {
     const result = await c.captureInitiative({
       title: "More backoff tuning",
       summary: "Tweak the jitter window.",
-      relatesToPageId: "initiative-x",
+      pageId: "initiative-x",
     });
 
-    expect(result).toEqual({ page_id: "initiative-x" });
+    // The agent named the page, so there is nothing to tell it.
+    expect(result).toEqual({ page_id: "initiative-x", action: "updated" });
 
     // No new page created for enhancements.
     expect(calls.some((k) => k.method === "POST" && k.url.endsWith("/pages"))).toBe(false);
@@ -1449,6 +1450,82 @@ describe("HindsightClient.captureInitiative", () => {
     expect(item.content).toContain("Update to an existing initiative");
   });
 
+  // #6919: the agent lost the id it got back and recaptured by title, after the first page was moved
+  // into a subfolder — where the server's unique-name-per-folder 409 no longer catches it.
+  it("no pageId but a same-titled page under Initiatives (any depth, any case): updates it", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/pages/tree?detail=basic"),
+        json: {
+          roots: [
+            { id: "kp-root", kind: "page", name: "Example initiative" }, // not under Initiatives
+            {
+              id: "f-init",
+              kind: "folder",
+              name: "Initiatives",
+              children: [
+                {
+                  id: "f-sub",
+                  kind: "folder",
+                  name: "Sub",
+                  children: [{ id: "kp-moved", kind: "page", name: "Example Initiative " }],
+                },
+              ],
+            },
+          ],
+        },
+      },
+      { match: (m, u) => m === "POST" && u.endsWith("/memories"), json: { operation_id: "op" } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const result = await c.captureInitiative({ title: "example initiative", summary: "Shipped." });
+
+    expect(result.page_id).toBe("kp-moved");
+    expect(result.action).toBe("updated");
+    // The agent is handed back the id it lost, so its next capture can name the page.
+    expect(result.note).toContain('page_id="kp-moved"');
+    expect(calls.some((k) => k.method === "POST" && k.url.endsWith("/pages"))).toBe(false);
+    expect(calls.some((k) => k.method === "POST" && k.url.endsWith("/pages/folders"))).toBe(false);
+    const item = calls.find((k) => k.url.endsWith("/memories")).body.items[0];
+    expect(item.document_id).toBe("initiative-marker-kp-moved-update");
+    expect(item.content).toContain("Update to an existing initiative");
+    expect(item.context).toBe("initiative marker for [[page:kp-moved]]");
+  });
+
+  it("no pageId and no same-titled page: creates one in the existing Initiatives folder, one tree read", async () => {
+    const calls: any[] = [];
+    stubFetchRouted(calls, [
+      {
+        match: (m, u) => m === "GET" && u.endsWith("/pages/tree?detail=basic"),
+        json: {
+          roots: [
+            {
+              id: "f-init",
+              kind: "folder",
+              name: "Initiatives",
+              children: [{ id: "kp-other", kind: "page", name: "Another initiative" }],
+            },
+          ],
+        },
+      },
+      { match: (m, u) => m === "POST" && u.endsWith("/pages"), json: { page_id: "kp-new" } },
+      { match: (m, u) => m === "POST" && u.endsWith("/memories"), json: { operation_id: "op" } },
+    ]);
+    const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
+    const result = await c.captureInitiative({ title: "Example initiative", summary: "…" });
+
+    expect(result).toEqual({ page_id: "kp-new", action: "created" });
+    expect(calls.find((k) => k.method === "POST" && k.url.endsWith("/pages")).body.parent_id).toBe(
+      "f-init"
+    );
+    expect(
+      calls.filter((k) => k.method === "GET" && k.url.endsWith("/pages/tree?detail=basic"))
+    ).toHaveLength(1);
+    const item = calls.find((k) => k.url.endsWith("/memories")).body.items[0];
+    expect(item.document_id).toBe("initiative-marker-kp-new");
+  });
+
   // #5076: every update capture used to retain a NEW document (`…-<Date.now()>`), so an active
   // initiative grew the bank by one marker per plan change, forever.
   it("repeated update captures upsert one marker document, not one per call", async () => {
@@ -1458,7 +1535,7 @@ describe("HindsightClient.captureInitiative", () => {
     ]);
     const c = new HindsightClient({ apiUrl: "http://x", bank: "repo-a" });
     for (const title of ["Backoff tuning", "Backoff tuning, round two"])
-      await c.captureInitiative({ title, summary: "…", relatesToPageId: "kp-1" });
+      await c.captureInitiative({ title, summary: "…", pageId: "kp-1" });
     const ids = calls
       .filter((k) => k.method === "POST" && k.url.endsWith("/memories"))
       .map((k) => k.body.items[0].document_id);
@@ -1477,7 +1554,7 @@ describe("HindsightClient.captureInitiative", () => {
     await c.captureInitiative({
       title: "Attributed initiative",
       summary: "Keep its project provenance.",
-      relatesToPageId: "initiative-x",
+      pageId: "initiative-x",
       stamp: {
         tags: ["project:repo-a"],
         metadata: { project: "repo-a", source: "configured" },

@@ -100,7 +100,7 @@ const REFLECT_GUIDE =
 const WRITE_TOOLS_GUIDE =
   "- hindsight_capture_initiative(title, summary) — right after the user approves a plan or finishes brainstorming a " +
   "new feature/capability and you are about to start implementing (BEFORE you write any code), call this to " +
-  "record it as a tracked page; then call it AGAIN with relates_to_page_id set to that page whenever the goal, " +
+  "record it as a tracked page; then call it AGAIN with page_id set to that page whenever the goal, " +
   "scope, or rationale materially changes mid-work, so the page tracks the current plan and not the opening one. " +
   "Skip bug fixes, small tweaks, chores, and trivial course-corrections.\n" +
   "- hindsight_ingest_document(title, content) — save an external document or durable notes/findings you want " +

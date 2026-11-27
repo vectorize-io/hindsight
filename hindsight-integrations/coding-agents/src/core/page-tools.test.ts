@@ -264,7 +264,7 @@ describe("buildPageTools", () => {
     expect(opts.timeoutMs).toBeGreaterThan(300_000); // above the server's own reflect wall timeout
   });
 
-  it("hindsight_capture_initiative calls client.captureInitiative({title, summary, relatesToPageId}) and returns the page id", async () => {
+  it("hindsight_capture_initiative calls client.captureInitiative({title, summary, pageId}) and returns the page id", async () => {
     const client = stubClient({
       captureInitiative: vi.fn(async (_a: unknown) => ({ page_id: "initiative-retry-backoff" })),
     });
@@ -273,14 +273,29 @@ describe("buildPageTools", () => {
     const result = await tool.handler({
       title: "Retry backoff for the uploader",
       summary: "Add exponential backoff so transient upload failures self-heal.",
-      relates_to_page_id: "initiative-uploader",
+      page_id: "initiative-uploader",
     });
     expect(client.captureInitiative).toHaveBeenCalledWith({
       title: "Retry backoff for the uploader",
       summary: "Add exponential backoff so transient upload failures self-heal.",
-      relatesToPageId: "initiative-uploader",
+      pageId: "initiative-uploader",
     });
     expect(JSON.parse(result.content[0].text)).toEqual({ page_id: "initiative-retry-backoff" });
+  });
+
+  // Agents that learned the old name keep sending it; it must still reach the same page.
+  it("hindsight_capture_initiative still accepts the old relates_to_page_id name", async () => {
+    const client = stubClient();
+    await findTool(buildPageTools(client, "repo-a"), "hindsight_capture_initiative").handler({
+      title: "T",
+      summary: "S",
+      relates_to_page_id: "kp-old",
+    });
+    expect(client.captureInitiative).toHaveBeenCalledWith({
+      title: "T",
+      summary: "S",
+      pageId: "kp-old",
+    });
   });
 
   // Regression guard for the "ONCE, EARLY" contract that told agents to capture the opening plan
@@ -293,7 +308,9 @@ describe("buildPageTools", () => {
     expect(desc).toMatch(/goal, scope, or rationale/i);
     expect(desc).toMatch(/mid-implementation/i);
     // The recapture must reuse the existing page, not create a parallel one.
-    expect(desc).toMatch(/relates_to_page_id = that/i);
+    expect(desc).toMatch(/page_id = that/i);
+    // A lost id is caught by the title, so the agent is told to keep it.
+    expect(desc).toMatch(/title matches an existing/i);
     expect(desc).toMatch(/[Nn]ever mint a second page/);
     // Summary guidance must ask for the current intent, not the originally approved plan.
     expect(desc).toMatch(/CURRENT intent/);
@@ -310,11 +327,11 @@ describe("buildPageTools", () => {
       "utf8"
     );
     expect(md).toMatch(/plan that materially changed/i);
-    expect(md).toMatch(/`relates_to_page_id`/);
+    expect(md).toMatch(/`page_id`/);
     expect(md).toMatch(/never a second page/i);
   });
 
-  it("hindsight_capture_initiative passes relatesToPageId: undefined for a brand-new initiative", async () => {
+  it("hindsight_capture_initiative passes pageId: undefined for a brand-new initiative", async () => {
     const client = stubClient();
     const tools = buildPageTools(client, "repo-a");
     const tool = findTool(tools, "hindsight_capture_initiative");
@@ -322,7 +339,7 @@ describe("buildPageTools", () => {
     expect(client.captureInitiative).toHaveBeenCalledWith({
       title: "New thing",
       summary: "why",
-      relatesToPageId: undefined,
+      pageId: undefined,
     });
   });
 
@@ -341,7 +358,7 @@ describe("buildPageTools", () => {
     expect(client.captureInitiative).toHaveBeenCalledWith({
       title: "New thing",
       summary: "why",
-      relatesToPageId: undefined,
+      pageId: undefined,
       stamp: { tags: ["project:repo-a"], metadata: { project: "repo-a" } },
     });
 

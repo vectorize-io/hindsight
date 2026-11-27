@@ -55,7 +55,7 @@ describe("buildPagesPreamble", () => {
       buildRosterRefresh([]),
     ]) {
       expect(out).not.toMatch(/call this ONCE/i);
-      expect(out).toMatch(/call it AGAIN with relates_to_page_id/i);
+      expect(out).toMatch(/call it AGAIN with page_id/i);
       expect(out).toMatch(/goal, scope, or rationale materially changes/i);
     }
   });

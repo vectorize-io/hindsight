@@ -36,6 +36,31 @@ export const USER_AGENT = `hindsight-coding-agents/${PKG_VERSION}`;
  */
 const TREE = "/tree?detail=basic";
 
+/** What a capture did: made a new initiative page, or recorded an update on an existing one. */
+export interface CaptureInitiativeResult {
+  page_id: string;
+  action: "created" | "updated";
+  /** Set when an update was matched by title rather than by a page id the agent passed. */
+  note?: string;
+}
+
+/** A root folder by name, case-insensitive. */
+function findRootFolder(roots: PageNode[], name: string): PageNode | undefined {
+  const want = name.toLowerCase();
+  return roots.find((n) => n.kind === "folder" && (n.name ?? "").toLowerCase() === want);
+}
+
+/** The id of the first page named `name` (trimmed, case-insensitive) anywhere under `nodes`. */
+function findPageByName(nodes: PageNode[], name: string): string | undefined {
+  const want = name.trim().toLowerCase();
+  for (const n of nodes) {
+    if (n.kind === "page" && n.id && (n.name ?? "").trim().toLowerCase() === want) return n.id;
+    const hit = n.children?.length ? findPageByName(n.children, name) : undefined;
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 /** One node of GET /pages/tree. Only the fields this client reads. */
 export interface PageNode {
   id: string;
@@ -1355,8 +1380,13 @@ export class HindsightClient {
   /**
    * Active-path capture: register a major feature as a per-initiative page + a marker memory.
    * New initiative → creates a page under the Initiatives folder.
-   * Update (relatesToPageId) → no new page; only a marker accruing to the existing page, so an
-   * enhancement or a mid-work plan change lands on the initiative it belongs to.
+   * Update (pageId, or a page under Initiatives with the same title) → no new page; only a marker
+   * accruing to the existing page, so an enhancement or a mid-work plan change lands on the
+   * initiative it belongs to.
+   *
+   * The title match is what stops a second page when the agent lost the id it got back (#6919):
+   * the server's unique name per folder stops catching it once the first page is moved into a
+   * subfolder, so the whole Initiatives subtree is searched, case-insensitively.
    *
    * The marker carries its page id in two places, neither of them a tag (#3641):
    * `metadata.relatedPageId` for provenance (visible on the document, and to a reflect loop that
@@ -1368,19 +1398,26 @@ export class HindsightClient {
   async captureInitiative(args: {
     title: string;
     summary: string;
-    relatesToPageId?: string;
+    pageId?: string;
     stamp?: RetainStamp;
     /** Same refresh policy as the seeded pages — an initiative page is one of them, and used to
      *  carry its own hardcoded copy of this trigger. */
     pageTrigger?: PageTrigger;
-  }): Promise<{ page_id: string }> {
+  }): Promise<CaptureInitiativeResult> {
     // `POST /pages` mints its OWN page id (kp-…); we can't set it. So for a new initiative
     // we create the page first and adopt the server-assigned id — that id is what the return value
     // and the marker must use, or `hindsight_read_page(id)` 404s and the `[[page:<id>]]` link
     // points at nothing.
-    let pageId = args.relatesToPageId;
+    let pageId = args.pageId;
+    let folder: PageNode | undefined;
     if (!pageId) {
-      const folderId = await this.ensureFolder("Initiatives");
+      // Fail-open like `ensureFolder`: no tree means no match, and the create below still runs.
+      folder = findRootFolder(await this.tree().catch(() => []), "Initiatives");
+      pageId = folder && findPageByName(folder.children ?? [], args.title);
+    }
+    const isUpdate = !!pageId;
+    if (!pageId) {
+      const folderId = folder?.id ?? (await this.ensureFolder("Initiatives"));
       // Same subject scoping and budget as the seeded pages: an initiative page synthesizes from
       // the same bank, which also holds facts about the dependencies this repo merely uses, and
       // "the project's memory" alone never said WHICH project (#3476). `max_tokens` is stated for
@@ -1404,13 +1441,13 @@ export class HindsightClient {
     }
     // "Update", not "Enhancement": a recapture is just as often a plan change (scope/goal/why
     // rewritten) as an addition, and this string is what the page synthesis reads.
-    const verb = args.relatesToPageId ? "Update to an existing initiative" : "New initiative";
+    const verb = isUpdate ? "Update to an existing initiative" : "New initiative";
     const content = `${verb}: ${args.title}. ${args.summary}`;
     // A STABLE id per initiative, so a recapture upserts instead of adding one more document every
     // call (#5076). Keyed on the page, not the title — a recapture may reword it — and two slots:
     // the creation marker keeps what the initiative set out to do, the update marker holds the
     // latest plan change (a newer update supersedes the older one).
-    const markerId = `initiative-marker-${this.slugify(pageId)}${args.relatesToPageId ? "-update" : ""}`;
+    const markerId = `initiative-marker-${this.slugify(pageId)}${isUpdate ? "-update" : ""}`;
     const tags = [...new Set([...(args.stamp?.tags ?? []), "knowledge:feature-work"])];
     // The context rides on every fact extracted from this marker, verbatim (ExtractedFact.context),
     // so the Initiatives overview can link an initiative to its own page from what it retrieved.
@@ -1418,19 +1455,27 @@ export class HindsightClient {
     await this.retain(content, context, markerId, tags, "document", {
       metadata: { ...(args.stamp?.metadata ?? {}), relatedPageId: pageId },
     });
-    return { page_id: pageId };
+    if (!isUpdate) return { page_id: pageId, action: "created" };
+    return {
+      page_id: pageId,
+      action: "updated",
+      // Said only when the agent did not name the page, so it learns the id it lost (#6919).
+      ...(args.pageId
+        ? {}
+        : {
+            note:
+              `An initiative page titled "${args.title}" already existed, so this was recorded ` +
+              `as an update to it. Pass page_id="${pageId}" on later captures of this initiative.`,
+          }),
+    };
   }
 
   /** Find a root folder by name (case-insensitive) or create it; returns its id. Fail-open to undefined. */
   async ensureFolder(name: string): Promise<string | undefined> {
     try {
       const r = await this.pagesReq("GET", TREE);
-      const tree = (await r?.json()) as
-        | { roots?: { id?: string; kind?: string; name?: string }[] }
-        | undefined;
-      const hit = (tree?.roots || []).find(
-        (n) => n.kind === "folder" && (n.name || "").toLowerCase() === name.toLowerCase()
-      );
+      const tree = (await r?.json()) as { roots?: PageNode[] } | undefined;
+      const hit = findRootFolder(tree?.roots ?? [], name);
       if (hit?.id) return hit.id;
     } catch {
       /* fall through to create */
