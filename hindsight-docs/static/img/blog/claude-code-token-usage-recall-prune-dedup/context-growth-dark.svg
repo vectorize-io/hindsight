@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="358" viewBox="0 0 920 358" role="img" aria-labelledby="title desc">
+<title id="title">Conversation context before compaction</title>
+<desc id="desc">The schematic shows earlier turns sent again as the conversation grows.</desc>
+<g font-family="DejaVu Sans, sans-serif">
+<rect x="1" y="1" width="918" height="356" rx="18" fill="#18181b" stroke="#a1a1aa" stroke-width="2"/>
+<text x="40" y="58" fill="#e4e4e7" font-size="32" font-weight="700">Conversation context before compaction</text>
+<text x="40" y="94" fill="#a1a1aa" font-size="21" font-weight="400">Each request includes earlier turns and the new turn.</text>
+<text x="40" y="158" fill="#e4e4e7" font-size="21" font-weight="700">First request</text>
+<rect x="225" y="128" width="200" height="45" rx="8" fill="#27272a" stroke="#009296" stroke-width="2"/>
+<text x="240" y="157" fill="#e4e4e7" font-size="20" font-weight="400">New turn</text>
+<text x="40" y="225" fill="#e4e4e7" font-size="21" font-weight="700">Next request</text>
+<rect x="225" y="195" width="200" height="45" rx="8" fill="#27272a" stroke="#0074d9" stroke-width="2"/>
+<text x="240" y="224" fill="#e4e4e7" font-size="20" font-weight="400">Earlier turn</text>
+<rect x="439" y="195" width="200" height="45" rx="8" fill="#27272a" stroke="#009296" stroke-width="2"/>
+<text x="454" y="224" fill="#e4e4e7" font-size="20" font-weight="400">New turn</text>
+<text x="40" y="292" fill="#e4e4e7" font-size="21" font-weight="700">Later request</text>
+<rect x="225" y="262" width="200" height="45" rx="8" fill="#27272a" stroke="#0074d9" stroke-width="2"/>
+<text x="240" y="291" fill="#e4e4e7" font-size="20" font-weight="400">Earlier turn</text>
+<rect x="439" y="262" width="200" height="45" rx="8" fill="#27272a" stroke="#0074d9" stroke-width="2"/>
+<text x="454" y="291" fill="#e4e4e7" font-size="20" font-weight="400">Earlier turn</text>
+<rect x="653" y="262" width="200" height="45" rx="8" fill="#27272a" stroke="#009296" stroke-width="2"/>
+<text x="668" y="291" fill="#e4e4e7" font-size="20" font-weight="400">New turn</text>
+</g>
+</svg>

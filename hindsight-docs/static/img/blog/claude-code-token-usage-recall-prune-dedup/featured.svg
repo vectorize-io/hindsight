@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+<title id="title">Claude Code token usage: why the bill grows each turn</title>
+<desc id="desc">A growing conversation includes earlier turns again. A memory bank keeps project decisions and past conversations.</desc>
+<g font-family="DejaVu Sans, sans-serif">
+<rect x="0" y="0" width="1200" height="630" rx="0" fill="#18181b" stroke="none" stroke-width="2"/>
+<rect x="72" y="67" width="53" height="5" rx="8" fill="#0074d9" stroke="none" stroke-width="2"/>
+<rect x="132" y="67" width="48" height="5" rx="8" fill="#009296" stroke="none" stroke-width="2"/>
+<text x="73" y="137" fill="#e4e4e7" font-size="58" font-weight="700">Claude Code token usage:</text>
+<text x="73" y="210" fill="#e4e4e7" font-size="58" font-weight="700">why the bill grows each turn</text>
+<text x="73" y="305" fill="#a1a1aa" font-size="26" font-weight="700">Conversation context</text>
+<text x="779" y="305" fill="#a1a1aa" font-size="26" font-weight="700">Memory bank</text>
+<rect x="74" y="341" width="179" height="46" rx="8" fill="#27272a" stroke="#009296" stroke-width="2"/>
+<text x="90" y="371" fill="#e4e4e7" font-size="20" font-weight="400">New turn</text>
+<rect x="74" y="404" width="179" height="46" rx="8" fill="#27272a" stroke="#0074d9" stroke-width="2"/>
+<text x="90" y="434" fill="#e4e4e7" font-size="20" font-weight="400">Earlier turn</text>
+<rect x="268" y="404" width="179" height="46" rx="8" fill="#27272a" stroke="#009296" stroke-width="2"/>
+<text x="284" y="434" fill="#e4e4e7" font-size="20" font-weight="400">New turn</text>
+<rect x="74" y="467" width="179" height="46" rx="8" fill="#27272a" stroke="#0074d9" stroke-width="2"/>
+<text x="90" y="497" fill="#e4e4e7" font-size="20" font-weight="400">Earlier turn</text>
+<rect x="268" y="467" width="179" height="46" rx="8" fill="#27272a" stroke="#0074d9" stroke-width="2"/>
+<text x="284" y="497" fill="#e4e4e7" font-size="20" font-weight="400">Earlier turn</text>
+<rect x="462" y="467" width="179" height="46" rx="8" fill="#27272a" stroke="#009296" stroke-width="2"/>
+<text x="478" y="497" fill="#e4e4e7" font-size="20" font-weight="400">New turn</text>
+<rect x="779" y="341" width="348" height="172" rx="17" fill="#27272a" stroke="#009296" stroke-width="2"/>
+<text x="808" y="402" fill="#e4e4e7" font-size="27" font-weight="700">Project decisions</text>
+<text x="808" y="454" fill="#e4e4e7" font-size="25" font-weight="400">Past conversations</text>
+</g>
+</svg>
