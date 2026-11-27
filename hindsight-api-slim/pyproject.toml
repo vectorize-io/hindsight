@@ -61,7 +61,9 @@ dependencies = [
     "dateparser>=1.5.0",
     # Recall's default date finder (engine/query_analyzer.py Text2DateQueryAnalyzer): numpy only,
     # the hs-date-1 model ships inside the wheel. HINDSIGHT_API_QUERY_ANALYZER=dateparser switches back.
-    "text2date>=0.1.0",
+    # 0.1.2: one BLAS thread (OpenBLAS split tiny products across all cores, ~60x slower on a busy CPU)
+    # and ProcessParser (the model off the GIL, so recall's event loop never waits on it).
+    "text2date>=0.1.2",
     # Transitive via dateparser, pinned here because the floor is load-bearing:
     # 2025.11.3 turns concurrent entry into dateparser's locale caches into a SIGSEGV
     # inside _regex (verified -- exit 139 in seconds, 3/3; the same probe on 2026.9.3
