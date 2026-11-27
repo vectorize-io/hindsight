@@ -306,7 +306,7 @@ describe("buildPageTools", () => {
   // copied verbatim by skill-sync, so nothing else would catch it drifting back to "once".
   it("SKILL.md documents the same recapture-on-plan-change trigger", () => {
     const md = readFileSync(
-      fileURLToPath(new URL("../../skill/SKILL.md", import.meta.url)),
+      fileURLToPath(new URL("../../skill/hindsight-coding-agent/SKILL.md", import.meta.url)),
       "utf8"
     );
     expect(md).toMatch(/plan that materially changed/i);

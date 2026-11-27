@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { INSTALLERS } from "../installer";
-import { SKILL_DIRS } from "./skill-dirs";
-import { syncCompanionSkill } from "./skill-sync";
+import { SKILL_DIRS, SKILL_NAMES } from "./skill-dirs";
+import { replaceSkillDir, syncCompanionSkill } from "./skill-sync";
 
 describe("syncCompanionSkill", () => {
   const dirs: string[] = [];
@@ -20,7 +20,10 @@ describe("syncCompanionSkill", () => {
   const setup = (installedContent?: string) => {
     const home = tmp("skill-home-");
     const src = tmp("skill-src-");
-    writeFileSync(join(src, "SKILL.md"), "NEW CONTENT v2");
+    for (const name of SKILL_NAMES) {
+      mkdirSync(join(src, name));
+      writeFileSync(join(src, name, "SKILL.md"), "NEW CONTENT v2");
+    }
     if (installedContent !== undefined) {
       const dst = join(home, ".claude", "skills", "hindsight-coding-agent");
       mkdirSync(dst, { recursive: true });
@@ -51,6 +54,67 @@ describe("syncCompanionSkill", () => {
     expect(
       readFileSync(join(home, ".agents", "skills", "hindsight-coding-agent", "SKILL.md"), "utf8")
     ).toBe("NEW CONTENT v2");
+  });
+
+  it("adds the setup skill next to an everyday skill installed before it existed (#6749)", () => {
+    const { home, src } = setup("OLD CONTENT v1");
+    syncCompanionSkill("claude-code", { home, srcDir: src });
+    expect(
+      readFileSync(
+        join(home, ".claude", "skills", "hindsight-coding-agent-setup", "SKILL.md"),
+        "utf8"
+      )
+    ).toBe("NEW CONTENT v2");
+  });
+
+  it("replaces a stale skill directory whole, so a file the package dropped goes too", () => {
+    const { home, src } = setup("OLD CONTENT v1");
+    const dst = join(home, ".claude", "skills", "hindsight-coding-agent");
+    writeFileSync(join(dst, "dropped.md"), "from an older package");
+    syncCompanionSkill("claude-code", { home, srcDir: src });
+    expect(existsSync(join(dst, "dropped.md"))).toBe(false);
+  });
+
+  it("keeps the installed skill when the copy that would replace it fails", () => {
+    // Deleting first would leave no everyday skill, which the next sync reads as "uninstalled".
+    const { home } = setup("OLD CONTENT v1");
+    const dst = join(home, ".claude", "skills", "hindsight-coding-agent");
+    expect(() => replaceSkillDir(join(home, "no-such-package-dir"), dst)).toThrow();
+    expect(readFileSync(join(dst, "SKILL.md"), "utf8")).toBe("OLD CONTENT v1");
+    expect(existsSync(`${dst}.tmp-${process.pid}`)).toBe(false);
+  });
+
+  it("removes a temp copy a killed sync left behind, even with nothing to update", () => {
+    // A host loading every `<dir>/SKILL.md` would load the leftover as a duplicate skill.
+    const { home, src } = setup("NEW CONTENT v2");
+    const leftover = join(home, ".claude", "skills", "hindsight-coding-agent.tmp-99999");
+    mkdirSync(leftover);
+    writeFileSync(join(leftover, "SKILL.md"), "half-copied");
+    syncCompanionSkill("claude-code", { home, srcDir: src });
+    expect(existsSync(leftover)).toBe(false);
+  });
+
+  it("puts back a skill a killed sync had set aside, rather than reading it as uninstalled", () => {
+    const { home, src } = setup(undefined);
+    const skills = join(home, ".claude", "skills");
+    mkdirSync(join(skills, "hindsight-coding-agent.old-99999"), { recursive: true });
+    writeFileSync(join(skills, "hindsight-coding-agent.old-99999", "SKILL.md"), "OLD CONTENT v1");
+    syncCompanionSkill("claude-code", { home, srcDir: src });
+    expect(readFileSync(join(skills, "hindsight-coding-agent", "SKILL.md"), "utf8")).toBe(
+      "NEW CONTENT v2"
+    );
+    expect(existsSync(join(skills, "hindsight-coding-agent.old-99999"))).toBe(false);
+  });
+
+  it("leaves a user's own look-alike backup alone", () => {
+    const { home, src } = setup(undefined);
+    const backup = join(home, ".claude", "skills", "hindsight-coding-agent.old-backup");
+    mkdirSync(backup, { recursive: true });
+    writeFileSync(join(backup, "SKILL.md"), "mine");
+    syncCompanionSkill("claude-code", { home, srcDir: src });
+    expect(readFileSync(join(backup, "SKILL.md"), "utf8")).toBe("mine");
+    // Not restored either: the host stays uninstalled.
+    expect(existsSync(join(home, ".claude", "skills", "hindsight-coding-agent"))).toBe(false);
   });
 
   it("no-ops on identical content and on hosts without a skills mechanism", () => {

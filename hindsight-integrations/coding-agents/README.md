@@ -50,7 +50,7 @@ with it.
 
 ## Install
 
-<!-- skill:begin title="Install / update" -->
+<!-- skill:begin skill="setup" title="Install / update" -->
 
 ```bash
 npx @vectorize-io/hindsight-coding-agents install all          # every detected agent, wired natively
@@ -447,10 +447,12 @@ re-copies the runtime in place, leaving the wiring valid and every new session o
 `install` merges the native wiring (hooks + MCP registration where the host wants them) into each
 agent's own config, preserving everything already there; it is idempotent (re-run after moving the
 package) and backs up any pre-existing file it touches as `<file>.hindsight-backup`. `uninstall`
-removes only our entries. On Claude Code the install also ships a **companion skill**
-(`~/.claude/skills/hindsight-coding-agent`) that teaches the agent how this memory works — what
-"store this in hindsight" should do, the tool surface, per-repo configuration, debugging — so users
-can ask the agent itself. Manual wiring per harness, if you prefer:
+removes only our entries. On every skills-capable host the install also ships two **companion
+skills** into that host's skills directory (on Claude Code, `~/.claude/skills/`):
+`hindsight-coding-agent` teaches the agent everyday use — what "store this in hindsight" should do,
+the tool surface, correcting a wrong memory — and `hindsight-coding-agent-setup` covers install,
+per-repo configuration and debugging, so users can ask the agent itself. Manual wiring per harness,
+if you prefer:
 
 **opencode** and **opencode 2** install directly — point `opencode.json` at the package dir:
 
@@ -567,7 +569,7 @@ Nothing to sign up for and nothing to host — memory runs on your machine. The 
   otherwise the first of `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`;
   otherwise the Claude Code CLI, which needs no key. `install` tells you which it found.
 
-<!-- skill:begin title="Local daemon settings (daemon mode)" -->
+<!-- skill:begin skill="setup" title="Local daemon settings (daemon mode)" -->
 
 Daemon settings keep the names the old per-agent Claude Code plugin used, so an existing
 environment carries over unchanged:
@@ -586,7 +588,7 @@ no equivalent here.
 
 <!-- skill:end -->
 
-<!-- skill:begin -->
+<!-- skill:begin skill="setup" -->
 
 ## Configuration
 
@@ -1205,24 +1207,27 @@ docker run -d -p 8888:8888 -p 9999:9999 -e HINDSIGHT_API_LLM_PROVIDER=gemini \
 
 ## Companion skill (generated)
 
-Every skills-capable host gets `skill/SKILL.md`, which teaches the agent what this integration does
-and how to configure it. **It is generated — do not edit it.** This file is the single source: the
-regions between `<!-- skill:begin -->` and `<!-- skill:end -->` are copied into the skill (a region
-that starts mid-section names itself with `title="…"`, and heading levels are normalised so a marked
-`###` becomes the skill's `##`). Only the agent-facing half — which tools to call, crediting memory,
-correcting a wrong memory — lives outside it, in `skill-src/preamble.md`.
+Every skills-capable host gets two skills, so the one the agent loads most often stays short:
+`hindsight-coding-agent` (everyday use: storing, finding and correcting memory) and
+`hindsight-coding-agent-setup` (install, configuration, diagnostics). **Both are generated — do not
+edit `skill/`.** This file is the single source: the regions between `<!-- skill:begin -->` and
+`<!-- skill:end -->` are copied into a skill — `skill="setup"` sends a region to the setup skill,
+no `skill=` to the everyday one (a region that starts mid-section names itself with `title="…"`, and
+heading levels are normalised so a marked `###` becomes the skill's `##`). Only the agent-facing half
+— which tools to call, crediting memory, correcting a wrong memory — lives outside it, in
+`skill-src/preamble.md`; `skill-src/setup.md` heads the setup skill.
 
 ```bash
-npm run skill:build   # after editing this README or the preamble
+npm run skill:build   # after editing this README or skill-src/
 ```
 
-`src/docs-freshness.test.ts` fails when the skill is stale, and when a field of `RawConfig` is
+`src/docs-freshness.test.ts` fails when either skill is stale, and when a field of `RawConfig` is
 readable from a config file but named nowhere in this README — the drift that produced #3735, where
 the skill and the README each documented a different subset of the same settings. The docs site page
 is generated from this file too (`node hindsight-docs/scripts/sync-coding-agents-doc.mjs`), which
 drops the markers along with the contributor-only sections.
 
-<!-- skill:begin -->
+<!-- skill:begin skill="setup" -->
 
 ## Diagnostics & logging
 
@@ -1315,5 +1320,23 @@ memoryless turn and is recorded in the logs. "No memory" is therefore a log ques
 diag file for whether `session_start` and `deepen_started` ever fired for that bank. A session that
 was already running when the plugin was installed has no SessionStart behind it; its first prompt
 after the install self-heals.
+
+### Calling the Hindsight API directly
+
+To see what the server actually holds, call it with the URL and token the plugin uses: `apiUrl`
+and `apiToken` from the config (in daemon mode, `http://127.0.0.1:<apiPort>`), and the bank id
+from the session banner. A bank id like `coding-agent::my-repo` goes into the path as is.
+
+```bash
+API=https://api.hindsight.vectorize.io; BANK='coding-agent::my-repo'
+AUTH="Authorization: Bearer <apiToken>"   # drop the -H "$AUTH" for a server without auth
+curl -s -H "$AUTH" "$API/v1/default/banks/$BANK/stats"       # memory, document and pending counts
+curl -s -H "$AUTH" "$API/v1/default/banks/$BANK/documents"   # what was retained (gitlog, survey, sessions)
+curl -s -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"query": "retry policy"}' "$API/v1/default/banks/$BANK/memories/recall"
+```
+
+An empty bank, a 401, and a bank id that differs from the banner each point at a different fix:
+the seed has not run yet, the token is wrong, or bank resolution picked another bank.
 
 <!-- skill:end -->

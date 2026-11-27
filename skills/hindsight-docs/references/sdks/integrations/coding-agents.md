@@ -473,10 +473,12 @@ re-copies the runtime in place, leaving the wiring valid and every new session o
 `install` merges the native wiring (hooks + MCP registration where the host wants them) into each
 agent's own config, preserving everything already there; it is idempotent (re-run after moving the
 package) and backs up any pre-existing file it touches as `<file>.hindsight-backup`. `uninstall`
-removes only our entries. On Claude Code the install also ships a **companion skill**
-(`~/.claude/skills/hindsight-coding-agent`) that teaches the agent how this memory works — what
-"store this in hindsight" should do, the tool surface, per-repo configuration, debugging — so users
-can ask the agent itself. Manual wiring per harness, if you prefer:
+removes only our entries. On every skills-capable host the install also ships two **companion
+skills** into that host's skills directory (on Claude Code, `~/.claude/skills/`):
+`hindsight-coding-agent` teaches the agent everyday use — what "store this in hindsight" should do,
+the tool surface, correcting a wrong memory — and `hindsight-coding-agent-setup` covers install,
+per-repo configuration and debugging, so users can ask the agent itself. Manual wiring per harness,
+if you prefer:
 
 **opencode** and **opencode 2** install directly — point `opencode.json` at the package dir:
 
@@ -1290,3 +1292,21 @@ memoryless turn and is recorded in the logs. "No memory" is therefore a log ques
 diag file for whether `session_start` and `deepen_started` ever fired for that bank. A session that
 was already running when the plugin was installed has no SessionStart behind it; its first prompt
 after the install self-heals.
+
+### Calling the Hindsight API directly
+
+To see what the server actually holds, call it with the URL and token the plugin uses: `apiUrl`
+and `apiToken` from the config (in daemon mode, `http://127.0.0.1:<apiPort>`), and the bank id
+from the session banner. A bank id like `coding-agent::my-repo` goes into the path as is.
+
+```bash
+API=https://api.hindsight.vectorize.io; BANK='coding-agent::my-repo'
+AUTH="Authorization: Bearer <apiToken>"   # drop the -H "$AUTH" for a server without auth
+curl -s -H "$AUTH" "$API/v1/default/banks/$BANK/stats"       # memory, document and pending counts
+curl -s -H "$AUTH" "$API/v1/default/banks/$BANK/documents"   # what was retained (gitlog, survey, sessions)
+curl -s -H "$AUTH" -H 'Content-Type: application/json' \
+  -d '{"query": "retry policy"}' "$API/v1/default/banks/$BANK/memories/recall"
+```
+
+An empty bank, a 401, and a bank id that differs from the banner each point at a different fix:
+the seed has not run yet, the token is wrong, or bank resolution picked another bank.
