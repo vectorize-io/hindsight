@@ -147,6 +147,13 @@ function boundRecallQuery(prompt: string): string {
   return prompt.slice(0, end);
 }
 
+/** The prompt's first `maxChars` characters (code points, so a pair is never split), or all of it
+ *  when unset. The page search and recall bounds still apply on top (#5089). */
+export function capInjectQuery(prompt: string, maxChars: number | undefined): string {
+  if (maxChars === undefined) return prompt;
+  return Array.from(prompt).slice(0, maxChars).join("");
+}
+
 /** Page search for the prompt, formatted for injection. `null` = it ran and nothing
  *  matched (an answer); `undefined` = it FAILED (recorded as `${event}_failed`) and is worth
  *  retrying. The two used to be one value, which cached a transient failure as "this session has
@@ -250,6 +257,8 @@ export async function buildHookOutput(args: {
   color?: boolean;
 }): Promise<HookOutput> {
   const { harness, prompt, cfg, client, cacheFile } = args;
+  // What page search and recall search with; reflect still gets the whole prompt as its goal.
+  const query = capInjectQuery(prompt, cfg.injectQueryMaxChars);
 
   const cached = readSessionCache(cacheFile);
   const turns = (cached.turns ?? 0) + 1;
@@ -292,7 +301,7 @@ export async function buildHookOutput(args: {
     reflectAttempts++;
     const got = await injectPages(
       harness,
-      prompt,
+      query,
       client,
       cfg.injectTimeoutMs,
       "inject_pages",
@@ -308,7 +317,7 @@ export async function buildHookOutput(args: {
     reflectAttempts++;
     const got = await injectRecall(
       harness,
-      prompt,
+      query,
       client,
       cfg.injectTimeoutMs,
       "inject_recall",
@@ -364,7 +373,7 @@ export async function buildHookOutput(args: {
         query: prompt.slice(0, 80),
       });
       if (e instanceof ReflectError && e.fallbackEligible) {
-        fallback = await reflectFallback(harness, prompt, client, cfg.injectTimeoutMs);
+        fallback = await reflectFallback(harness, query, client, cfg.injectTimeoutMs);
         // The fallback body is cached exactly like a reflect answer: injected once, not retried.
         if (fallback) reflectAnswer = fallback;
       }
