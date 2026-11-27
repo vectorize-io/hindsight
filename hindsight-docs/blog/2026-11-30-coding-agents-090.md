@@ -2,18 +2,11 @@
 title: "What's new in Hindsight Coding Agents 0.9.0"
 description: Memory again after a compaction, pinned pages at session start, one bank for many repos, branch-aware memories, hooks that stay fast when the server is down, and a long round of saving fixes for the Hindsight memory plugin for coding agents
 authors: [nicoloboschi]
-date: 2026-11-27
+date: 2026-11-30
 hide_table_of_contents: true
 tags: [release, coding-agents]
 image: /img/blog/coding-agents-050-four-harnesses.png
-draft: true
 ---
-
-<!-- DRAFT. TODO before publishing:
-  - a 0.9.0 cover image (the image above is the 0.5.0 one)
-  - video embed, like the Hermes 2.0.0 post
-  - set the date to the release day and drop `draft: true`
--->
 
 Version 0.9.0 of [Hindsight Coding Agents](/sdks/integrations/coding-agents) gives your agent its memory back after a compaction, lets you pin pages that every session starts with, and lets one bank serve many repositories. It also keeps the hooks fast when the Hindsight server is slow or down, and fixes a long list of ways a conversation could be saved twice or not at all. A few defaults changed: the hook time limits are lower, and Prime Agent 0.9 is no longer supported. Read [what changed by default](#what-changed-by-default) before you update.
 
@@ -104,6 +97,7 @@ At the end of a turn the plugin saves the conversation. Each of these closes a w
 - **Pi shows Hindsight notices**, and **opencode reflects are no longer cut off at 300 seconds.**
 - **Pages work in folders that aren't git repositories.**
 - **Saving an initiative without its page id updates the page with the same title**, instead of creating a second one once the first was moved into a subfolder.
+- **A re-planned initiative's page shows only the current plan**, not the dropped one next to it.
 - **`--import-conversations` uses each agent's own settings.**
 - **`apiHeaders`** sends extra headers with every request, for a server behind Cloudflare Access or a similar proxy.
 
@@ -148,6 +142,7 @@ See [Install](/sdks/integrations/coding-agents#install) for every option, and th
 | Codex reader memory, Kimi session index, DeepSeek Harness import | [#6938](https://github.com/vectorize-io/hindsight/pull/6938) | [#6556](https://github.com/vectorize-io/hindsight/issues/6556), [#6457](https://github.com/vectorize-io/hindsight/issues/6457), [#5981](https://github.com/vectorize-io/hindsight/issues/5981) |
 | Pages outside git, DeepSeek Harness tools outside an opted-in project | [#6932](https://github.com/vectorize-io/hindsight/pull/6932) | [#5982](https://github.com/vectorize-io/hindsight/issues/5982), [#5817](https://github.com/vectorize-io/hindsight/issues/5817) |
 | Initiative capture without a page id updates the same-titled page | [#7003](https://github.com/vectorize-io/hindsight/pull/7003) | [#6919](https://github.com/vectorize-io/hindsight/issues/6919) |
+| A re-planned initiative's page shows only the current plan | [#7010](https://github.com/vectorize-io/hindsight/pull/7010) | [#7007](https://github.com/vectorize-io/hindsight/issues/7007) |
 | `--import-conversations` applies each agent's settings | [#6984](https://github.com/vectorize-io/hindsight/pull/6984) | [#6970](https://github.com/vectorize-io/hindsight/issues/6970) |
 | `--mcp-name`, never touch a user's own `hindsight` server | [#6985](https://github.com/vectorize-io/hindsight/pull/6985) | [#6958](https://github.com/vectorize-io/hindsight/issues/6958) |
 | `apiHeaders` | [#6969](https://github.com/vectorize-io/hindsight/pull/6969) | [#6651](https://github.com/vectorize-io/hindsight/issues/6651) |
