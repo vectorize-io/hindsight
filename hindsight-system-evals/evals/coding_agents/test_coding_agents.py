@@ -318,8 +318,6 @@ async def test_initiative_stays_one_page_through_a_plan_change(
     content = await read_page(client, bank_id, page.mental_model_id)
     _note(transcript, f"The initiative page {page.name!r}", content)
 
-    # Red until #7007: the creation marker keeps the opening plan, and the "done" update replaced the
-    # plan-change marker, so the page lists the dropped balance design next to the vouchers.
     context = "A coding agent tracked a gift-card feature on one page while the user changed its plan, then shipped it."
     trap = await evaluate(
         content,
