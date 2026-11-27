@@ -10,7 +10,6 @@ draft: true
 ---
 
 <!-- DRAFT. TODO before publishing:
-  - new agents section once their PRs merge (Amp, Muse Code, Crush, Command Code, Qoder), and add them to the intro and the table
   - a 0.9.0 cover image (the image above is the 0.5.0 one)
   - video embed, like the Hermes 2.0.0 post
   - set the date to the release day and drop `draft: true`
