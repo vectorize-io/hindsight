@@ -122,3 +122,26 @@ def test_default_analyzer_is_text2date(monkeypatch):
         datetime(2026, 11, 9),
         datetime.combine(datetime(2026, 11, 15).date(), time.max),
     )
+
+
+def test_model_runs_in_a_child_process(analyzer):
+    """Off the GIL: the temporal worker thread only waits on a pipe, so recall's event loop never stalls."""
+    from text2date import ProcessParser
+
+    assert isinstance(analyzer._parser, ProcessParser)
+    assert analyzer._parser._proc is not None and analyzer._parser._proc.poll() is None
+
+
+def test_falls_back_in_process_when_the_child_cannot_start(monkeypatch, caplog):
+    import text2date
+    from text2date import Parser
+
+    def fail(self):
+        raise RuntimeError("no subprocesses here")
+
+    monkeypatch.setattr(text2date.ProcessParser, "load", fail)
+    a = Text2DateQueryAnalyzer()
+    a.load()
+    assert isinstance(a._parser, Parser)
+    assert "running the model in-process" in caplog.text
+    assert _days(a, "what happened yesterday") == ("2026-11-17", "2026-11-17")
