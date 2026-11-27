@@ -346,26 +346,67 @@ function shapePage(page: unknown): unknown {
 /** Undici's cross-version handle on the dispatcher Node's global `fetch` uses. */
 const GLOBAL_DISPATCHER = Symbol.for("undici.globalDispatcher.1");
 
+/** The longest a connection may take to open. A live server, even over a relayed VPN, accepts well
+ *  inside this; past it nothing is listening. undici's own default is 10s. */
+const CONNECT_TIMEOUT_MS = 5_000;
+/** Connect-capped siblings of the global Agent, one per whole second up to CONNECT_TIMEOUT_MS
+ *  (so at most five), rebuilt if the global dispatcher changes. */
+let connectCapped: { base: unknown; bySecond: Map<number, unknown> } | undefined;
+
+/** The server never answered: refused, unreachable, unresolvable, or past our deadline — as
+ *  opposed to an answer that was an error. fetch() reports the transport failure as `TypeError:
+ *  fetch failed`, the reason in `cause.code`. */
+export function isNoAnswerError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  if (e.name === "TimeoutError" || e.name === "AbortError") return true;
+  const code = (e.cause as { code?: string } | undefined)?.code ?? "";
+  return /^(ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ENOTFOUND|EAI_AGAIN|UND_ERR_)/.test(
+    code
+  );
+}
+
 /**
  * The global dispatcher with undici's own header/body timeouts switched off, for a request that
  * already carries an AbortSignal deadline — or undefined where there is nothing to wrap.
  *
  * Node's fetch applies a 300s `headersTimeout` below our signal, so a reflect configured above
  * 300s (`reflectToolTimeoutMs` defaults to 330s, past the server's own reflect wall) died with
- * UND_ERR_HEADERS_TIMEOUT before the server could answer (#5504). Composing over the CURRENT
- * global dispatcher, instead of building a new undici `Agent`, needs no `undici` dependency (the
- * bundled one is not importable) and keeps any proxy dispatcher the host installed. Hosts whose
+ * UND_ERR_HEADERS_TIMEOUT before the server could answer (#5504). A plain global `Agent` gets a
+ * sibling from its own class (no `undici` dependency: the bundled one is not importable) that also
+ * caps the connect wait; anything else, such as a proxy dispatcher the host installed, is composed
+ * over and kept. Hosts whose
  * fetch is not undici's have no such dispatcher and ignore the option — which is why this alone left
  * Bun hosts (opencode) cut off at 300s: Bun has its own idle timeout, switched off in
  * `fetchWithAuth` (#6431).
  */
-function signalOnlyDispatcher(): unknown {
+function signalOnlyDispatcher(timeoutMs = CONNECT_TIMEOUT_MS): unknown {
   // Node loads undici — which installs the global dispatcher — lazily. Touching the `Headers`
   // global loads it; touching `fetch` does not (it is a wrapper until first called).
   void globalThis.Headers;
   const d = (globalThis as Record<symbol, unknown>)[GLOBAL_DISPATCHER] as
-    | { compose?: (interceptor: unknown) => unknown }
+    | { compose?: (interceptor: unknown) => unknown; constructor?: unknown }
     | undefined;
+  // A plain Agent (no proxy installed): a sibling built from the same class, which also caps the
+  // CONNECT wait at the request's own deadline. Aborting a fetch does not end the connect attempt
+  // under it, so on a host that drops packets undici's 10s connect timeout kept every hook process
+  // alive long after its own deadline, and its answer, had passed (#6553).
+  // ponytail: a host's own custom Agent loses its options (e.g. a private CA) for our requests;
+  // read them off the instance if one ever needs them.
+  if (typeof d?.constructor === "function" && d.constructor.name === "Agent") {
+    if (connectCapped?.base !== d) connectCapped = { base: d, bySecond: new Map() };
+    const seconds = Math.min(CONNECT_TIMEOUT_MS / 1000, Math.max(1, Math.ceil(timeoutMs / 1000)));
+    let agent = connectCapped.bySecond.get(seconds);
+    if (!agent) {
+      const AgentClass = d.constructor as new (opts: Record<string, unknown>) => unknown;
+      agent = new AgentClass({
+        connect: { timeout: seconds * 1000 },
+        headersTimeout: 0,
+        bodyTimeout: 0,
+      });
+      connectCapped.bySecond.set(seconds, agent);
+    }
+    return agent;
+  }
   if (typeof d?.compose !== "function") return undefined; // Node 18's undici predates compose()
   type Dispatch = (opts: Record<string, unknown>, handler: unknown) => boolean;
   return d.compose(
@@ -455,9 +496,13 @@ export class HindsightClient {
    * free even for retain. The retry shares the caller's `signal`, deliberately: one deadline still
    * bounds the whole call.
    */
-  private async fetchWithAuth(url: string, init: RequestInit): Promise<Response> {
+  private async fetchWithAuth(
+    url: string,
+    init: RequestInit,
+    timeoutMs?: number
+  ): Promise<Response> {
     // Only a request with its own deadline drops undici's timeouts; the drain poll has none.
-    const dispatcher = init.signal ? signalOnlyDispatcher() : undefined;
+    const dispatcher = init.signal ? signalOnlyDispatcher(timeoutMs) : undefined;
     // Bun has its own 300s socket-idle timeout below fetch, and ignores the undici dispatcher, so
     // a reflect configured above 300s still died there under opencode (#6431). A request with an
     // AbortSignal already has the caller's deadline, so disable that lower timeout just as the
@@ -502,11 +547,15 @@ export class HindsightClient {
     const payload = body ? JSON.stringify(body) : undefined;
     let r: Response;
     for (let attempt = 0, waited = 0; ; attempt++) {
-      r = await this.fetchWithAuth(url, {
-        method,
-        body: payload,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      r = await this.fetchWithAuth(
+        url,
+        {
+          method,
+          body: payload,
+          signal: AbortSignal.timeout(timeoutMs),
+        },
+        timeoutMs
+      );
       if (r.status !== 429 || tolerate.includes(429)) break;
       const asked = retryAfterMs(r.headers.get("retry-after"));
       const backoff = Math.min(RETRY_AFTER_CEILING_MS, RATE_LIMIT_BACKOFF_MS * 2 ** attempt);
@@ -620,13 +669,14 @@ export class HindsightClient {
    */
   async listDocumentIds(
     tag: string,
-    tagsMatch: "all" | "all_strict" = "all"
+    tagsMatch: "all" | "all_strict" = "all",
+    timeoutMs?: number
   ): Promise<Set<string>> {
     const ids = new Set<string>();
     const limit = 500;
     for (let offset = 0; ; offset += limit) {
       const q = `?tags=${encodeURIComponent(tag)}&tags_match=${tagsMatch}&limit=${limit}&offset=${offset}`;
-      const r = await this.req("GET", this.bankUrl(`/documents${q}`));
+      const r = await this.req("GET", this.bankUrl(`/documents${q}`), undefined, [], timeoutMs);
       let items: { id?: string }[] = [];
       let total = 0;
       try {
@@ -847,7 +897,7 @@ export class HindsightClient {
   /**
    * Reflect: synthesized, root-cause answer over the bank. Bounded so a slow server never hangs a
    * caller — but `timeoutMs` is REQUIRED, deliberately: the right deadline differs by an order of
-   * magnitude between the automatic hook (20s, to fit the host's window) and the agent-invoked
+   * magnitude between the automatic hook (15s, to fit the host's window) and the agent-invoked
    * tool (minutes, on a populated bank). This used to default to 120s, which silently overrode the
    * tool's configured window and aborted every high-budget synthesis mid-flight (#3590).
    */
@@ -855,11 +905,15 @@ export class HindsightClient {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
     try {
-      const resp = await this.fetchWithAuth(this.bankUrl("/reflect"), {
-        method: "POST",
-        body: JSON.stringify({ query, budget: opts.budget ?? "high" }),
-        signal: ctrl.signal,
-      });
+      const resp = await this.fetchWithAuth(
+        this.bankUrl("/reflect"),
+        {
+          method: "POST",
+          body: JSON.stringify({ query, budget: opts.budget ?? "high" }),
+          signal: ctrl.signal,
+        },
+        opts.timeoutMs
+      );
       // Keep the server's body: a bare "reflect 500" in the diag trail is undebuggable after the fact.
       if (!resp.ok)
         throw new ReflectError(
@@ -948,9 +1002,9 @@ export class HindsightClient {
    * The bank's page tree (folders + pages, nested). The tree carries names, source
    * queries and staleness but NOT synthesized content, so it is cheap enough to poll.
    */
-  async tree(): Promise<PageNode[]> {
+  async tree(timeoutMs?: number): Promise<PageNode[]> {
     if (this.pagesSupported === false) throw new PagesUnavailableError();
-    const r = await this.pagesReq("GET", "/tree");
+    const r = await this.pagesReq("GET", "/tree", undefined, [], timeoutMs);
     if (!r) throw new PagesUnavailableError();
     // Bank not created yet: it genuinely has no pages, and the capability stays UNKNOWN so the
     // next call (after the first retain mints the bank) asks again instead of short-circuiting.
@@ -972,7 +1026,7 @@ export class HindsightClient {
    * page read/update in this client goes through the same page ids, so a page id from
    * here, from `searchPages`, or from a `[[page:<id>]]` link all resolve identically.
    */
-  async listPages(): Promise<unknown> {
+  async listPages(opts: { timeoutMs?: number } = {}): Promise<unknown> {
     const items: { id: string; name: string; description?: string; folder?: string }[] = [];
     const walk = (nodes: PageNode[], folder?: string): void => {
       for (const n of nodes) {
@@ -988,7 +1042,7 @@ export class HindsightClient {
         if (n.children?.length) walk(n.children, n.kind === "folder" ? n.name : folder);
       }
     };
-    walk(await this.tree());
+    walk(await this.tree(opts.timeoutMs));
     return { items };
   }
 

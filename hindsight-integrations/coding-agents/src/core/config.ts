@@ -103,7 +103,7 @@ export interface RawConfig {
    *  200 while bursts get 429s means the server is rate-limiting concurrency, not total volume —
    *  lower this rather than raising it. */
   maxParallelRetains?: number;
-  /** Automatic session-reflect timeout (default 20000). The default, with the fallback chain after
+  /** Automatic session-reflect timeout (default 15000). The default, with the fallback chain after
    *  it, fits the 30s prompt-hook timeout the installer registers on hook harnesses; going higher
    *  there needs that host timeout raised too, or the host kills the hook mid-reflect. */
   reflectTimeoutMs?: number;
@@ -115,8 +115,9 @@ export interface RawConfig {
    *  server decides when to give up, not an arbitrary client deadline (#3590). Unset, it inherits
    *  an explicitly-raised `reflectTimeoutMs` — a user who raised that meant "let reflect run". */
   reflectToolTimeoutMs?: number;
-  /** Retrieval timeout for autoInject "pages"/"recall" (default 7000), and the shared budget for
-   *  the page-search -> recall fallback after a reflect timeout/5xx. On hook harnesses, the full
+  /** Retrieval timeout for autoInject "pages"/"recall" (default 5000), the shared budget for
+   *  the page-search -> recall fallback after a reflect timeout/5xx, and the limit on the page-list
+   *  fetches in the prompt and SessionStart hooks. On hook harnesses, the full
    *  reflect + fallback must fit the host's prompt-hook timeout (30s by default). */
   injectTimeoutMs?: number;
   /** Most characters of the prompt that autoInject "pages"/"recall" (and the reflect fallback)
@@ -503,11 +504,13 @@ function resolveCustomPages(raw: RawConfig["customPages"]): CustomPagesConfig {
 }
 
 /** Default timeout for the automatic hook reflect — see RawConfig.reflectTimeoutMs. */
-export const DEFAULT_REFLECT_TIMEOUT_MS = 20_000;
+// 15s + the 5s fallback below = 20s, leaving the 30s prompt-hook window room for Node start-up and
+// a slow server's TLS/connect (#6167). The page roster runs alongside, under injectTimeoutMs.
+export const DEFAULT_REFLECT_TIMEOUT_MS = 15_000;
 /** Default timeout for the agent-invoked `hindsight_reflect` tool — see RawConfig.reflectToolTimeoutMs. */
 export const DEFAULT_REFLECT_TOOL_TIMEOUT_MS = 330_000;
 /** Default retrieval budget for automatic injection — see RawConfig.injectTimeoutMs. */
-export const DEFAULT_INJECT_TIMEOUT_MS = 7_000;
+export const DEFAULT_INJECT_TIMEOUT_MS = 5_000;
 
 const REFLECT_BUDGETS = ["low", "mid", "high"] as const;
 

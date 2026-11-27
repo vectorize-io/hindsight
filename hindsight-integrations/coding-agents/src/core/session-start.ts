@@ -38,7 +38,7 @@ import type { ClientOpts, RetainOpts } from "./hindsight";
 import { buildPageTrigger, type PageTrigger, type RetainExtractionMode } from "./missions";
 import { buildRetainStamp } from "./retain-stamp";
 import { detectLegacyClaudePlugin, legacyClaudePluginWarning } from "./legacy";
-import { HindsightClient } from "./hindsight";
+import { HindsightClient, isNoAnswerError } from "./hindsight";
 import {
   sessionCacheFile,
   sessionRootDir,
@@ -48,11 +48,15 @@ import {
 
 /** Minimal client shape `buildSessionStartContext` needs. */
 interface SeedContextClient {
-  listDocumentIds(tag: string, tagsMatch?: "all" | "all_strict"): Promise<Set<string>>;
+  listDocumentIds(
+    tag: string,
+    tagsMatch?: "all" | "all_strict",
+    timeoutMs?: number
+  ): Promise<Set<string>>;
   // Optional: lets the git note see a git-log document written at a commit HEAD is behind
   // (gitLogIsCurrent). The minimal test clients omit it and keep the exact-HEAD check.
   documentTags?(documentId: string): Promise<string[] | undefined>;
-  listPages(): Promise<unknown>;
+  listPages(opts?: { timeoutMs?: number }): Promise<unknown>;
   // Optional: whether the bank holds any document at all. Without it the first-prompt reflect is
   // never deferred — only a confirmed-empty bank is.
   hasDocuments?(): Promise<boolean>;
@@ -100,6 +104,21 @@ export function buildSeedBanner(
     : `${brandWord(color)} is tracking the decisions, conventions and history of this repo`;
   const details = `  ↳ memory bank “${bankId}”` + (gitNote ? ` · ${gitNote}` : "");
   return `${headline}\n${details}`;
+}
+
+/** The banner when the server did not answer: say so, instead of the usual "tracking this repo"
+ *  that would claim memory is working (#6553). */
+export function buildUnreachableBanner(bankId: string, apiUrl: string, color = false): string {
+  let host = apiUrl;
+  try {
+    host = new URL(apiUrl).host; // never echo credentials or a path from the URL
+  } catch {
+    /* not a URL: show it as configured */
+  }
+  return (
+    `${brandWord(color)} can't reach ${host} — this session runs without memory\n` +
+    `  ↳ memory bank “${bankId}” · it will try again next session`
+  );
 }
 
 /**
@@ -207,6 +226,9 @@ export async function buildSessionStartContext(args: {
   let gitDocIds: Set<string> | undefined; // the cold-check's doc set, reused by the banner's git note
   let bankEmpty = false; // true only when the server confirmed the bank holds no documents
   let deepening = false; // the background deepen engine was started, and configures the bank
+  // The server did not answer one call (down, unreachable, too slow): every later call would wait
+  // the same way, so they are skipped. Each one waited ~10s on a dead host, 21s in all (#6553).
+  let noAnswer = false;
   const harness = args.harness ?? "claude-code";
   const hasGit = args.hasGit ?? hasGitHistory;
   const startSeed = args.startSeed ?? startBackgroundSeed;
@@ -260,9 +282,10 @@ export async function buildSessionStartContext(args: {
       {
         let docIds: Set<string> | undefined;
         try {
-          docIds = await client.listDocumentIds("source:git", "all_strict");
-        } catch {
+          docIds = await client.listDocumentIds("source:git", "all_strict", cfg.injectTimeoutMs);
+        } catch (e) {
           docIds = undefined; // server unreachable: transient — do nothing, try again next session
+          noAnswer = isNoAnswerError(e);
         }
 
         // No git documents is not the whole story: under `gitIngest: "none"` none are ever
@@ -367,7 +390,7 @@ export async function buildSessionStartContext(args: {
     }
   }
 
-  if (!deepening) {
+  if (!deepening && !noAnswer) {
     // The deepen engine is what configures the bank; without it a session write-back would name a
     // `conversation` strategy the bank does not have, and the server would extract it with its
     // generic rules (CL-Bench: "The user is working on Question 11", "The agent ran a query").
@@ -380,7 +403,10 @@ export async function buildSessionStartContext(args: {
       })
       .then(
         () => true,
-        () => false
+        (e: unknown) => {
+          noAnswer = isNoAnswerError(e);
+          return false;
+        }
       );
     // A directory with no git history gets its pages here too (#5982): they are written from the
     // bank's memories, not from git, so only `autoSeed: false` (which also stops deepen) skips them.
@@ -393,13 +419,16 @@ export async function buildSessionStartContext(args: {
   }
 
   let pages: PageRef[] = [];
-  try {
-    pages = parsePageList(await client.listPages());
-  } catch {
-    if (client.pagesSupported === false) {
-      diag(harness, "pages_unavailable", { bank: bankId });
+  if (!noAnswer) {
+    try {
+      pages = parsePageList(await client.listPages({ timeoutMs: cfg.injectTimeoutMs }));
+    } catch (e) {
+      noAnswer = isNoAnswerError(e);
+      if (client.pagesSupported === false) {
+        diag(harness, "pages_unavailable", { bank: bankId });
+      }
+      /* fail-open preamble */
     }
-    /* fail-open preamble */
   }
   const additionalContext = buildPagesPreamble(pages, toolGuideOpts(cfg));
   // An empty page roster is NOT an empty bank: a bank with memories and no pages still answers a
@@ -419,7 +448,9 @@ export async function buildSessionStartContext(args: {
       cold: cold === true,
     }).catch(() => undefined);
   }
-  systemMessage = buildSeedBanner(bankId, cold === true, gitNote, args.color === true);
+  systemMessage = noAnswer
+    ? buildUnreachableBanner(bankId, cfg.apiUrl, args.color === true)
+    : buildSeedBanner(bankId, cold === true, gitNote, args.color === true);
 
   // The old per-agent plugin keeps running next to this one until the user removes it — say so
   // where they will see it. Only Claude Code had that plugin.
@@ -432,7 +463,13 @@ export async function buildSessionStartContext(args: {
   }
 
   // ALWAYS record the session start (warm sessions used to log nothing — undebuggable).
-  diag(harness, "session_start", { bank: bankId, cold, pages: pages.length, ms: Date.now() - t0 });
+  diag(harness, "session_start", {
+    bank: bankId,
+    cold,
+    pages: pages.length,
+    noAnswer,
+    ms: Date.now() - t0,
+  });
 
   return { systemMessage, additionalContext, deferInitialReflect };
 }

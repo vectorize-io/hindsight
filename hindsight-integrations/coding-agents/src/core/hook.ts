@@ -94,7 +94,7 @@ export interface HookSpec {
 /** Minimal client shape `buildHookOutput` needs — `HindsightClient` satisfies it structurally. */
 interface HookClient {
   reflect(query: string, opts: { budget?: string; timeoutMs: number }): Promise<string>;
-  listPages(): Promise<unknown>;
+  listPages(opts?: { timeoutMs?: number }): Promise<unknown>;
   searchPages(
     query: string,
     opts?: { limit?: number; timeoutMs?: number }
@@ -260,6 +260,20 @@ export async function buildHookOutput(args: {
   const cached = readSessionCache(cacheFile);
   const turns = (cached.turns ?? 0) + 1;
 
+  // ── page roster (ids + titles only): refreshed on the cadence ────────
+  // Started HERE, alongside the auto-inject below, which it does not depend on, and bounded by
+  // injectTimeoutMs. Run after reflect with no limit, it pushed the hook past the host's 30s
+  // window, which then discarded the whole turn's output (#6167).
+  const cadence = cfg.pageRefreshEveryTurns;
+  const stale = !cached.pages || (cadence > 0 && turns - cached.pages.atTurn >= cadence);
+  const rosterT0 = Date.now();
+  const roster = stale
+    ? client
+        .listPages({ timeoutMs: cfg.injectTimeoutMs })
+        .then((raw) => ({ list: parsePageList(raw), ms: Date.now() - rosterT0 }))
+        .catch((e: unknown) => ({ error: e, ms: Date.now() - rosterT0 }))
+    : undefined;
+
   // ── auto-inject: once per session, on the first prompt ────────────────────────
   // cfg.autoInject picks the source: a reflect synthesis, a page search, or a recall of
   // observations. "none" = tool-only mode: the roster's tool guide instead sends new goals through
@@ -377,19 +391,16 @@ export async function buildHookOutput(args: {
     }
   }
 
-  // ── page roster (ids + titles only): refreshed on the cadence ────────
-  const cadence = cfg.pageRefreshEveryTurns;
-  const stale = !cached.pages || (cadence > 0 && turns - cached.pages.atTurn >= cadence);
   let pages = cached.pages?.list ?? [];
-  if (stale) {
-    const t0 = Date.now();
-    try {
-      pages = parsePageList(await client.listPages());
-      diag(harness, "pages_ok", { ms: Date.now() - t0, count: pages.length });
-    } catch (e) {
+  if (roster) {
+    const got = await roster;
+    if ("list" in got) {
+      pages = got.list;
+      diag(harness, "pages_ok", { ms: got.ms, count: pages.length });
+    } else {
       diag(harness, client.pagesSupported === false ? "pages_unavailable" : "pages_failed", {
-        ms: Date.now() - t0,
-        error: describeError(e),
+        ms: got.ms,
+        error: describeError(got.error),
       });
     }
   }
