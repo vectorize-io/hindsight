@@ -62,6 +62,10 @@ export interface RawConfig {
   serverMode?: "cloud" | "self-hosted" | "daemon";
   apiUrl?: string; // Hindsight API base URL (default https://api.hindsight.vectorize.io — Cloud; set to http://localhost:8888 for a local server)
   apiToken?: string; // bearer token (optional)
+  /** The name the installer registers the MCP server under in every agent (`install --mcp-name`,
+   *  default "hindsight"), so it can sit beside a server of the user's own called "hindsight".
+   *  Letters, digits, "-" and "_", at most 64. Top level only: never read from a layer. */
+  mcpServerName?: string;
   /** Extra HTTP headers sent with every request to the Hindsight API, e.g. the
    *  `CF-Access-Client-Id` / `CF-Access-Client-Secret` pair of a Cloudflare Access service token
    *  for a server behind Access (#6651). Fixed values: the plugin never runs a command to get them.
@@ -779,6 +783,17 @@ export function resolveConfig(raw: RawConfig = {}): Config {
       : "info",
     autoUpdate: raw.autoUpdate ?? true,
   };
+}
+
+export const DEFAULT_MCP_SERVER_NAME = "hindsight";
+/** Safe as a bare TOML key, a JSON key, a CLI argument, a `mcp__<name>__` tool prefix and inside
+ *  the SQL literal of Trae's enable switch. */
+export const MCP_SERVER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/** `mcpServerName` from the top level of the config file; the default when unset or invalid. */
+export function configuredMcpServerName(path: string = CONFIG_PATH): string {
+  const name = readRaw(path).mcpServerName;
+  return typeof name === "string" && MCP_SERVER_NAME_RE.test(name) ? name : DEFAULT_MCP_SERVER_NAME;
 }
 
 function readRaw(path: string): RawConfig {

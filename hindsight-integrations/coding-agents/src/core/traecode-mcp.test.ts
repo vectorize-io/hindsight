@@ -9,6 +9,8 @@ import {
   ensureTraecodeWorkspaceMcp,
   ensureWorkspaceMcpEnabled,
   markWorkspaceMcpEnabled,
+  registerTraecodeWorkspaceMcp,
+  removeTraecodeWorkspaceMcpEntry,
   traecodeUserSettingsPath,
   TRAECODE_WORKSPACE_ENABLED_KEY,
   workspaceEnableHint,
@@ -87,6 +89,23 @@ describe("ensureTraecodeWorkspaceMcp", () => {
       args: [join(dist, "mcp-server.js")],
       env: { HINDSIGHT_MCP_HARNESS: "traecode", HINDSIGHT_MCP_PROJECT_CWD: r },
     });
+  });
+
+  it("a renamed server moves our entry and never touches the user's own 'hindsight' (#6958)", () => {
+    const { repo: r, home } = repo();
+    // isOurMcpEntry recognises the package's real layout, <pkg>/dist/mcp-server.js.
+    const dist = join(tmp("traecode-mcp-pkg-"), "hindsight-coding-agents", "dist");
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(dist, "mcp-server.js"), "// stub");
+    const theirs = { command: "uvx", args: ["hindsight-local-mcp"] };
+    mkdirSync(join(r, ".trae"), { recursive: true });
+    writeFileSync(mcpFile(r), JSON.stringify({ mcpServers: { hindsight: theirs } }));
+    expect(registerTraecodeWorkspaceMcp(r, { dist, home })).toBe("skipped");
+    expect(registerTraecodeWorkspaceMcp(r, { dist, home, mcpName: "a" })).toBe("registered");
+    expect(registerTraecodeWorkspaceMcp(r, { dist, home, mcpName: "b" })).toBe("registered");
+    expect(Object.keys(readJson(r).mcpServers).sort()).toEqual(["b", "hindsight"]);
+    expect(removeTraecodeWorkspaceMcpEntry(r, { home })).toBe(true);
+    expect(readJson(r).mcpServers).toEqual({ hindsight: theirs });
   });
 
   it("is idempotent: a second run rewrites nothing", () => {
@@ -348,6 +367,14 @@ describe("workspace enable switch seed", () => {
     expect(query(db, TRAECODE_WORKSPACE_ENABLED_KEY)).toBe("true");
     expect(query(db, "some.other.key")).toBe("1"); // the rest of the table is untouched
     expect(ensureWorkspaceMcpEnabled(repo, { home })).toBe("on"); // idempotent skip
+  });
+
+  it.runIf(hasSqlite3)("seeds the switch under a renamed server (--mcp-name, #6958)", () => {
+    const repo = tmp("repo-");
+    const { home, db } = homeWithWorkspace(repo);
+    expect(ensureWorkspaceMcpEnabled(repo, { home, mcpName: "hindsight-code" })).toBe("seeded");
+    expect(query(db, "icubeAgentExtension.enabled.mcp.config.ws0.hindsight-code")).toBe("true");
+    expect(query(db, TRAECODE_WORKSPACE_ENABLED_KEY)).toBe(""); // the default name's switch stays off
   });
 
   it.runIf(hasSqlite3)("matches the repo by its file:// URL only", () => {

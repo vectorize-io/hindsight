@@ -177,6 +177,12 @@ describe("claude-code installer", () => {
 
   it("removes before adding so an existing registration is REPOINTED, not skipped", () => {
     const ctx = makeCtx();
+    // What `claude mcp add` left in ~/.claude.json from an install at an older package path.
+    writeJsonAt(join(ctx.home, ".claude.json"), {
+      mcpServers: {
+        hindsight: { command: "node", args: ["/old/hindsight-coding-agents/dist/mcp-server.js"] },
+      },
+    });
     run(["install", "claude-code"], ctx);
     const calls = ctx.claudeMcp.mock.calls.map((c) => c[0]);
     const removeAt = calls.findIndex((a) => a[1] === "remove");
@@ -223,6 +229,10 @@ describe("claude-code installer", () => {
     const foreign = { hooks: [{ type: "command", command: "echo other-tool", timeout: 5 }] };
     writeJsonAt(settingsPath(ctx), { hooks: { Stop: [foreign] } });
     run(["install", "claude-code"], ctx);
+    // The registration the real `claude mcp add` would have written.
+    writeJsonAt(join(ctx.home, ".claude.json"), {
+      mcpServers: { hindsight: { command: "node", args: [join(ctx.dist, "mcp-server.js")] } },
+    });
     run(["uninstall", "claude-code"], ctx);
     const settings = readJson(settingsPath(ctx));
     expect(settings.hooks.Stop).toEqual([foreign]);
@@ -292,7 +302,8 @@ describe("kimi-code installer", () => {
   it("registers a stdio MCP server that needs no bearer-token env var", () => {
     // A hand-written http entry needs HINDSIGHT_API_KEY exported into Kimi's environment, or it
     // 401s and the tools never appear. Ours is the packaged stdio server, which reads endpoint and
-    // token from ~/.hindsight/coding-agent.json — and it overwrites such an entry.
+    // token from ~/.hindsight/coding-agent.json. A hand-written "hindsight" is the user's, so
+    // install refuses to overwrite it (#6958) and --mcp-name puts ours beside it.
     const ctx = makeCtx();
     const mcpPath = join(ctx.home, ".kimi-code", "mcp.json");
     mkdirSync(dirname(mcpPath), { recursive: true });
@@ -305,13 +316,18 @@ describe("kimi-code installer", () => {
         },
       })
     );
-    expect(run(["install", "kimi-code"], ctx)).toBe(0);
+    const before = readFileSync(mcpPath, "utf8");
+    expect(run(["install", "kimi-code"], ctx)).toBe(1);
+    expect(readFileSync(mcpPath, "utf8")).toBe(before);
+    expect(run(["install", "kimi-code", "--mcp-name", "hindsight-code"], ctx)).toBe(0);
     const mcp = JSON.parse(readFileSync(mcpPath, "utf8"));
     expect(mcp.mcpServers.theirs.url).toBe("http://keep-me");
-    expect(mcp.mcpServers.hindsight.command).toBe("node");
-    expect(mcp.mcpServers.hindsight.env.HINDSIGHT_MCP_HARNESS).toBe("kimi-code");
-    expect(mcp.mcpServers.hindsight.bearerTokenEnvVar).toBeUndefined();
-    expect(mcp.mcpServers.hindsight.url).toBeUndefined();
+    expect(mcp.mcpServers.hindsight.url).toBe("http://old");
+    const ours = mcp.mcpServers["hindsight-code"];
+    expect(ours.command).toBe("node");
+    expect(ours.env.HINDSIGHT_MCP_HARNESS).toBe("kimi-code");
+    expect(ours.bearerTokenEnvVar).toBeUndefined();
+    expect(ours.url).toBeUndefined();
   });
 
   it("honours KIMI_CODE_HOME, where the CLI and the transcript reader both look", () => {
@@ -389,9 +405,15 @@ describe("qwen-code installer", () => {
 
   it("registers the MCP server through the qwen CLI, user scope", () => {
     const ctx = makeCtx();
+    // A registration of ours from an older package path: repointed, so removed before the add.
+    writeJsonAt(join(ctx.home, ".qwen", "settings.json"), {
+      mcpServers: {
+        hindsight: { command: "node", args: ["/old/hindsight-coding-agents/dist/mcp-server.js"] },
+      },
+    });
     expect(run(["install", "qwen-code"], ctx)).toBe(0);
     const argv = ctx.qwenMcp.mock.calls.map((c) => c[0].join(" "));
-    expect(argv.some((a) => a.startsWith("mcp remove"))).toBe(true);
+    expect(argv).toContain("mcp remove -s user hindsight");
     expect(
       argv.some((a) => a.includes("mcp add") && a.includes("HINDSIGHT_MCP_HARNESS=qwen-code"))
     ).toBe(true);
@@ -2286,7 +2308,7 @@ describe("grok-build installer", () => {
   it("replaces an unmarked legacy block instead of duplicating the TOML tables", () => {
     const ctx = makeCtx();
     mkdirSync(dirname(configPath(ctx)), { recursive: true });
-    writeFileSync(configPath(ctx), legacyToml(join("/opt", MARKER, "old-dist")));
+    writeFileSync(configPath(ctx), legacyToml(join("/old", MARKER, "dist")));
     expect(run(["install", "grok-build"], ctx)).toBe(0);
 
     const toml = readFileSync(configPath(ctx), "utf8");
@@ -2295,7 +2317,7 @@ describe("grok-build installer", () => {
     expect(Object.keys(parsed.mcp_servers)).toEqual(["hindsight"]);
     expect(toml.match(/\[mcp_servers\.hindsight\]/g)).toHaveLength(1);
     expect(parsed).not.toHaveProperty("hooks");
-    expect(toml).not.toContain(join("/opt", MARKER, "old-dist"));
+    expect(toml).not.toContain(join("/old", MARKER, "dist"));
     expect(toml).toContain(join(ctx.dist, "mcp-server.js"));
     expect(toml).toContain('[ui]\ntheme = "dark"'); // foreign config preserved
   });
@@ -2305,7 +2327,7 @@ describe("grok-build installer", () => {
     mkdirSync(dirname(configPath(ctx)), { recursive: true });
     writeFileSync(
       configPath(ctx),
-      `${legacyToml(join("/opt", MARKER, "old-dist"))}\n` +
+      `${legacyToml(join("/old", MARKER, "dist"))}\n` +
         `[mcp_servers.other]\ncommand = "other-server"\n\n` +
         `[[hooks.Stop]]\n  [[hooks.Stop.hooks]]\n  type = "command"\n  command = "my-own-script"\n`
     );
@@ -2325,7 +2347,7 @@ describe("grok-build installer", () => {
   it("repairs a config already broken by a duplicated block", () => {
     const ctx = makeCtx();
     mkdirSync(dirname(configPath(ctx)), { recursive: true });
-    const legacy = legacyToml(join("/opt", MARKER, "old-dist"));
+    const legacy = legacyToml(join("/old", MARKER, "dist"));
     writeFileSync(configPath(ctx), legacy);
     run(["install", "grok-build"], ctx);
     // Re-create the pre-fix damage: the marked block appended on top of the untouched legacy one.
@@ -2346,7 +2368,7 @@ describe("grok-build installer", () => {
   it("uninstall removes an unmarked legacy block too", () => {
     const ctx = makeCtx();
     mkdirSync(dirname(configPath(ctx)), { recursive: true });
-    writeFileSync(configPath(ctx), legacyToml(join("/opt", MARKER, "old-dist")));
+    writeFileSync(configPath(ctx), legacyToml(join("/old", MARKER, "dist")));
     run(["uninstall", "grok-build"], ctx);
 
     const toml = readFileSync(configPath(ctx), "utf8");
@@ -2359,7 +2381,7 @@ describe("grok-build installer", () => {
   it("moves the hooks a previous release kept in its marked block", () => {
     const ctx = makeCtx();
     mkdirSync(dirname(configPath(ctx)), { recursive: true });
-    const old = join("/opt", MARKER, "old-dist");
+    const old = join("/old", MARKER, "dist");
     writeFileSync(
       configPath(ctx),
       '[ui]\ntheme = "dark"\n\n# HINDSIGHT_CODING_AGENTS_GROK_START\n' +
