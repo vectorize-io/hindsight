@@ -70,6 +70,15 @@ describe("paths.<prefix> overrides", () => {
     expect(resolve(raw, otherRepo).cfg.apiUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
   });
 
+  it("sends extra headers only for the directory whose server needs them (#6651)", () => {
+    const headers = { "CF-Access-Client-Id": "id.access" };
+    const raw = {
+      paths: { [join(root, "work")]: { apiUrl: "https://behind-access", apiHeaders: headers } },
+    };
+    expect(resolve(raw, clientRepo).cfg.apiHeaders).toEqual(headers);
+    expect(resolve(raw, otherRepo).cfg.apiHeaders).toEqual({});
+  });
+
   it("picks the longest matching prefix", () => {
     const raw = {
       apiToken: "default-key",

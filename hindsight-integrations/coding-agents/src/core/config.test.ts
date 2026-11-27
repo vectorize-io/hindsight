@@ -81,6 +81,15 @@ describe("loadConfig layering", () => {
   });
 });
 
+describe("apiHeaders (#6651)", () => {
+  it("defaults to none and keeps only string values", () => {
+    expect(resolveConfig({}).apiHeaders).toEqual({});
+    const raw = { apiHeaders: { "CF-Access-Client-Id": "id", n: 1, o: {} } };
+    expect(resolveConfig(raw as never).apiHeaders).toEqual({ "CF-Access-Client-Id": "id" });
+    expect(resolveConfig({ apiHeaders: ["x"] } as never).apiHeaders).toEqual({});
+  });
+});
+
 describe("maxParallelRetains", () => {
   it("defaults to 10 when unset", () => {
     expect(loadConfig({ harness: "claude-code" }).maxParallelRetains).toBe(10);

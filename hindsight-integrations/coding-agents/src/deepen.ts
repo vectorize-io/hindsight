@@ -128,6 +128,7 @@ async function main() {
     const client = new HindsightClient({
       apiUrl: API_URL,
       apiToken: API_TOKEN,
+      headers: cfg.apiHeaders,
       bank: FINAL_BANK!,
       // Names the repository in every seeded page's query, so page synthesis can tell this
       // project's decisions from those of a dependency it merely discusses (#3476).

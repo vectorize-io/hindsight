@@ -245,6 +245,7 @@ export async function replayOrphanedSessions(args: {
     const client = args.makeClient({
       apiUrl: cfg.apiUrl,
       apiToken: cfg.apiToken,
+      headers: cfg.apiHeaders,
       bank: bankId,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,
@@ -337,6 +338,7 @@ export async function runRetainHook(
     client = makeClient({
       apiUrl: cfg.apiUrl,
       apiToken: cfg.apiToken,
+      headers: cfg.apiHeaders,
       bank: bankId,
       maxParallelRetains: cfg.maxParallelRetains,
       observationScopes: cfg.observationScopes,
